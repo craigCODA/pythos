@@ -19,6 +19,10 @@ FAILURE_MARKERS = [
 ]
 SLICE_MARKERS = {
     "loader-enter": ["PYTHOS:LOADER:ENTER"],
+    "gop-ready": [
+        "PYTHOS:LOADER:ENTER",
+        "PYTHOS:LOADER:GOP_READY",
+    ],
     "milestone-1": [
         "PYTHOS:LOADER:ENTER",
         "PYTHOS:LOADER:GOP_READY",
@@ -71,4 +75,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

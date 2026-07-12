@@ -10,8 +10,7 @@ image: build-loader
 	python scripts/build-image.py
 
 test-boot:
-	python scripts/test-boot.py --slice loader-enter
+	python scripts/test-boot.py --slice gop-ready
 
 clean:
 	cargo clean
-

@@ -35,7 +35,12 @@ The complete milestone 1 loader sequence is:
 8. Call `ExitBootServices()` successfully. After success, use no UEFI boot services. Emit `PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK` through direct serial I/O.
 9. Disable maskable interrupts, clear the direction flag, activate the temporary kernel page table, switch to the bootstrap stack, place `PythBootInfo` in `RDI`, and jump to PythCore.
 
-The first vertical slice implements only step 1.
+Verified vertical slices:
+
+* `loader-enter` implements step 1 through COM1 serial output.
+* `gop-ready` implements GOP discovery, direct-framebuffer mode selection, and `PYTHOS:LOADER:GOP_READY`.
+
+The active implementation still stops before EFI filesystem access, ELF loading, memory-map handoff, and `ExitBootServices()`.
 
 ## Kernel Entry Contract
 
@@ -119,5 +124,13 @@ PYTHOS:CORE:BOOTINFO_INVALID
 PYTHOS:CORE:MEMORY_INVALID
 ```
 
-The first vertical slice asserts only `PYTHOS:LOADER:ENTER` and still fails on any failure marker.
+The `loader-enter` slice asserts only `PYTHOS:LOADER:ENTER` and still fails on any failure marker.
 
+The `gop-ready` slice asserts:
+
+```text
+PYTHOS:LOADER:ENTER
+PYTHOS:LOADER:GOP_READY
+```
+
+It also fails on any failure marker.
