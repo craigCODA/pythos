@@ -23,11 +23,15 @@ pub extern "efiapi" fn efi_main(
         Err(()) => fail(),
     }
     match elf::load_pythcore(system_table) {
-        Ok(()) => serial::write_line("PYTHOS:LOADER:KERNEL_LOADED"),
+        Ok(loaded_kernel) if loaded_kernel.is_well_formed() => {
+            serial::write_line("PYTHOS:LOADER:KERNEL_LOADED");
+            loop {
+                core::hint::black_box(&loaded_kernel);
+                core::hint::spin_loop();
+            }
+        }
+        Ok(_) => fail(),
         Err(()) => fail(),
-    }
-    loop {
-        core::hint::spin_loop();
     }
 }
 

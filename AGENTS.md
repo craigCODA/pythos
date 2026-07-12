@@ -28,16 +28,20 @@ AI remains outside the trusted core.
 
 The active branch of work is `milestone/boot-core-handoff`.
 
-The first vertical slice is limited to:
+Verified vertical slices currently include:
 
 ```text
 OVMF
 -> BOOTX64.EFI
 -> COM1 initialized
 -> PYTHOS:LOADER:ENTER
+-> PYTHOS:LOADER:GOP_READY
+-> PYTHOS:LOADER:KERNEL_LOADED
 ```
 
-Do not proceed to ELF loading, GOP discovery, `ExitBootServices()`, or PythCore handoff until this slice is reproducible through QEMU serial capture.
+The loader currently stops after loading and retaining metadata for `PYTHCORE.ELF`.
+
+Do not jump to `ExitBootServices()` or PythCore handoff until loaded-segment metadata, `INIT.PAK`, the final UEFI memory map, and `PythBootInfo` ownership are correct and reproducible through QEMU serial capture.
 
 ## Scope Boundary
 
@@ -68,4 +72,3 @@ Every `unsafe` block must document:
 8. consequences of violation
 
 Keep unsafe regions small. Do not wrap large functions in `unsafe`.
-

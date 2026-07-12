@@ -43,11 +43,11 @@ const PAGE_SIZE: u64 = 4096;
 const EI_CLASS_64: u8 = 2;
 const EI_DATA_LITTLE_ENDIAN: u8 = 1;
 const ET_EXEC: u16 = 2;
-const ET_DYN: u16 = 3;
 const EM_X86_64: u16 = 0x3E;
 const PT_LOAD: u32 = 1;
 const PF_X: u32 = 0x1;
 const PF_W: u32 = 0x2;
+const PF_R: u32 = 0x4;
 const KERNEL_VIRT_MIN: u64 = 0xFFFF_FFFF_8000_0000;
 const MAX_LOAD_SEGMENTS: usize = 16;
 
@@ -81,7 +81,77 @@ struct LoadedFile {
     len: usize,
 }
 
-pub fn load_pythcore(system_table: *mut EfiSystemTable) -> Result<(), ()> {
+#[derive(Clone, Copy)]
+pub(crate) struct LoadedSegment {
+    pub(crate) physical_start: u64,
+    pub(crate) virtual_start: u64,
+    pub(crate) page_count: usize,
+    pub(crate) file_size: u64,
+    pub(crate) memory_size: u64,
+    pub(crate) permissions: SegmentPermissions,
+}
+
+const EMPTY_LOADED_SEGMENT: LoadedSegment = LoadedSegment {
+    physical_start: 0,
+    virtual_start: 0,
+    page_count: 0,
+    file_size: 0,
+    memory_size: 0,
+    permissions: SegmentPermissions {
+        readable: false,
+        writable: false,
+        executable: false,
+    },
+};
+
+#[derive(Clone, Copy)]
+pub(crate) struct SegmentPermissions {
+    pub(crate) readable: bool,
+    pub(crate) writable: bool,
+    pub(crate) executable: bool,
+}
+
+pub(crate) struct LoadedKernel {
+    pub(crate) entry: u64,
+    pub(crate) segments: [LoadedSegment; MAX_LOAD_SEGMENTS],
+    pub(crate) segment_count: usize,
+    pub(crate) physical_start: u64,
+    pub(crate) physical_end: u64,
+    pub(crate) virtual_start: u64,
+    pub(crate) virtual_end: u64,
+}
+
+impl LoadedKernel {
+    pub(crate) fn is_well_formed(&self) -> bool {
+        self.segment_count > 0
+            && self.segment_count <= MAX_LOAD_SEGMENTS
+            && self.entry >= self.virtual_start
+            && self.entry < self.virtual_end
+            && self.physical_start < self.physical_end
+            && self.virtual_start < self.virtual_end
+            && self
+                .segments
+                .iter()
+                .take(self.segment_count)
+                .all(LoadedSegment::is_well_formed)
+    }
+}
+
+impl LoadedSegment {
+    fn is_well_formed(&self) -> bool {
+        self.physical_start != 0
+            && self.virtual_start >= KERNEL_VIRT_MIN
+            && self.page_count > 0
+            && self.memory_size > 0
+            && self.file_size <= self.memory_size
+            && !(self.permissions.writable && self.permissions.executable)
+            && (self.permissions.readable
+                || self.permissions.writable
+                || self.permissions.executable)
+    }
+}
+
+pub fn load_pythcore(system_table: *mut EfiSystemTable) -> Result<LoadedKernel, ()> {
     let boot_services = uefi::boot_services(system_table).map_err(|_| ())?;
     let file = read_kernel_file(boot_services)?;
 
@@ -230,7 +300,7 @@ fn validate_elf(bytes: &[u8]) -> Result<ElfImage, ()> {
 
     let elf_type = read_u16(bytes, 16)?;
     let machine = read_u16(bytes, 18)?;
-    if !matches!(elf_type, ET_EXEC | ET_DYN) || machine != EM_X86_64 {
+    if elf_type != ET_EXEC || machine != EM_X86_64 {
         return Err(());
     }
 
@@ -330,7 +400,17 @@ fn load_segments(
     boot_services: *mut EfiBootServices,
     bytes: &[u8],
     image: &ElfImage,
-) -> Result<(), ()> {
+) -> Result<LoadedKernel, ()> {
+    let mut loaded = LoadedKernel {
+        entry: image.entry,
+        segments: [EMPTY_LOADED_SEGMENT; MAX_LOAD_SEGMENTS],
+        segment_count: 0,
+        physical_start: u64::MAX,
+        physical_end: 0,
+        virtual_start: u64::MAX,
+        virtual_end: 0,
+    };
+
     for segment in image.segments.iter().take(image.segment_count) {
         let pages = page_count(segment.memory_size)?;
         let mut physical: EfiPhysicalAddress = 0;
@@ -356,9 +436,35 @@ fn load_segments(
         }
 
         copy_segment(bytes, segment, physical, pages)?;
+        let physical_end = physical
+            .checked_add((pages as u64).checked_mul(PAGE_SIZE).ok_or(())?)
+            .ok_or(())?;
+        let virtual_end = segment.vaddr.checked_add(segment.memory_size).ok_or(())?;
+
+        loaded.physical_start = loaded.physical_start.min(physical);
+        loaded.physical_end = loaded.physical_end.max(physical_end);
+        loaded.virtual_start = loaded.virtual_start.min(segment.vaddr);
+        loaded.virtual_end = loaded.virtual_end.max(virtual_end);
+        loaded.segments[loaded.segment_count] = LoadedSegment {
+            physical_start: physical,
+            virtual_start: segment.vaddr,
+            page_count: pages,
+            file_size: segment.file_size,
+            memory_size: segment.memory_size,
+            permissions: SegmentPermissions {
+                readable: (segment.flags & PF_R) != 0,
+                writable: (segment.flags & PF_W) != 0,
+                executable: (segment.flags & PF_X) != 0,
+            },
+        };
+        loaded.segment_count += 1;
     }
 
-    Ok(())
+    if loaded.is_well_formed() {
+        Ok(loaded)
+    } else {
+        Err(())
+    }
 }
 
 fn copy_segment(
