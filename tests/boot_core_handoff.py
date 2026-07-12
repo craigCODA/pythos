@@ -43,6 +43,17 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_memory_map_ready_marker_is_observed_after_kernel_loaded(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", "memory-map-ready"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

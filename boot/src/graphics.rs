@@ -1,5 +1,6 @@
 use crate::uefi::{self, EFI_SUCCESS, EfiBootServices, EfiGuid, EfiStatus, EfiSystemTable};
 use core::ptr;
+use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 const GOP_GUID: EfiGuid = EfiGuid {
     data1: 0x9042_A9DE,
@@ -49,23 +50,23 @@ struct EfiGraphicsOutputModeInformation {
     horizontal_resolution: u32,
     vertical_resolution: u32,
     pixel_format: u32,
-    _pixel_information: EfiPixelBitmask,
+    pixel_information: EfiPixelBitmask,
     pixels_per_scan_line: u32,
 }
 
 #[repr(C)]
 struct EfiPixelBitmask {
-    _red_mask: u32,
-    _green_mask: u32,
-    _blue_mask: u32,
-    _reserved_mask: u32,
+    red_mask: u32,
+    green_mask: u32,
+    blue_mask: u32,
+    reserved_mask: u32,
 }
 
-pub fn initialize_gop(system_table: *mut EfiSystemTable) -> Result<(), ()> {
+pub fn initialize_gop(system_table: *mut EfiSystemTable) -> Result<PythFramebufferInfo, ()> {
     let boot_services = uefi::boot_services(system_table).map_err(|_| ())?;
     let gop = uefi::locate_protocol(boot_services, &GOP_GUID).map_err(|_| ())?;
     let selected = select_mode(boot_services, gop)?;
-    validate_current_mode(gop, selected)
+    current_framebuffer(gop, selected)
 }
 
 fn select_mode(
@@ -238,10 +239,10 @@ fn set_mode(gop: *mut EfiGraphicsOutputProtocol, mode_number: u32) -> Result<u32
     }
 }
 
-fn validate_current_mode(
+fn current_framebuffer(
     gop: *mut EfiGraphicsOutputProtocol,
     selected_mode: u32,
-) -> Result<(), ()> {
+) -> Result<PythFramebufferInfo, ()> {
     let mode = current_mode(gop)?;
     if mode.mode != selected_mode
         || mode.info.is_null()
@@ -255,5 +256,28 @@ fn validate_current_mode(
         return Err(());
     }
 
-    Ok(())
+    // SAFETY:
+    // 1. Invariant: `mode.info` points to the active GOP mode information structure.
+    // 2. Established by: firmware-populated GOP mode after successful `SetMode`.
+    // 3. Lifetime: valid until another GOP mode change or `ExitBootServices()`.
+    // 4. Pointer ownership: firmware owns the mode information; loader only reads it.
+    // 5. Alignment: UEFI mode structures are firmware-aligned.
+    // 6. Mapped length: at least `EfiGraphicsOutputModeInformation`.
+    // 7. Concurrency: no concurrent GOP mode changes are performed.
+    // 8. Violation: invalid mode info would make these reads fault or record garbage.
+    let info = unsafe { &*mode.info };
+
+    Ok(PythFramebufferInfo {
+        physical_base: mode.framebuffer_base,
+        mapped_virtual_base: mode.framebuffer_base,
+        byte_length: mode.framebuffer_size as u64,
+        width: info.horizontal_resolution,
+        height: info.vertical_resolution,
+        pixels_per_scanline: info.pixels_per_scan_line,
+        pixel_format: info.pixel_format,
+        red_mask: info.pixel_information.red_mask,
+        green_mask: info.pixel_information.green_mask,
+        blue_mask: info.pixel_information.blue_mask,
+        reserved_mask: info.pixel_information.reserved_mask,
+    })
 }

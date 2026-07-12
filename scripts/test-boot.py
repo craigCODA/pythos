@@ -28,6 +28,12 @@ SLICE_MARKERS = {
         "PYTHOS:LOADER:GOP_READY",
         "PYTHOS:LOADER:KERNEL_LOADED",
     ],
+    "memory-map-ready": [
+        "PYTHOS:LOADER:ENTER",
+        "PYTHOS:LOADER:GOP_READY",
+        "PYTHOS:LOADER:KERNEL_LOADED",
+        "PYTHOS:LOADER:MEMORY_MAP_READY",
+    ],
     "milestone-1": [
         "PYTHOS:LOADER:ENTER",
         "PYTHOS:LOADER:GOP_READY",

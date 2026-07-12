@@ -44,7 +44,7 @@ def main() -> int:
         pythos_dir / "BOOT.CFG",
         "serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
     )
-    (pythos_dir / "INIT.PAK").touch()
+    write_text_if_changed(pythos_dir / "INIT.PAK", "PYTHOS_INIT_PAK_V0\n")
     (pythos_dir / "FONT.PSF").touch()
 
     print(f"ESP_READY {ESP}")

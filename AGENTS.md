@@ -37,11 +37,12 @@ OVMF
 -> PYTHOS:LOADER:ENTER
 -> PYTHOS:LOADER:GOP_READY
 -> PYTHOS:LOADER:KERNEL_LOADED
+-> PYTHOS:LOADER:MEMORY_MAP_READY
 ```
 
-The loader currently stops after loading and retaining metadata for `PYTHCORE.ELF`.
+The loader currently stops after loading `INIT.PAK`, capturing the UEFI memory map, and constructing retained `PythBootInfo`.
 
-Do not jump to `ExitBootServices()` or PythCore handoff until loaded-segment metadata, `INIT.PAK`, the final UEFI memory map, and `PythBootInfo` ownership are correct and reproducible through QEMU serial capture.
+Do not jump to PythCore handoff until temporary page tables, bootstrap stack ownership, `ExitBootServices()` retry behavior, and post-exit serial output are correct and reproducible through QEMU serial capture.
 
 ## Scope Boundary
 

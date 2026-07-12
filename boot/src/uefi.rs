@@ -9,6 +9,7 @@ pub(crate) const EFI_LOAD_ERROR: EfiStatus = 1;
 pub(crate) const EFI_LOADER_DATA: u32 = 2;
 pub(crate) const EFI_ALLOCATE_ANY_PAGES: u32 = 0;
 pub(crate) const EFI_FILE_MODE_READ: u64 = 0x0000_0000_0000_0001;
+pub(crate) const EFI_BUFFER_TOO_SMALL: EfiStatus = (1usize << (usize::BITS - 1)) | 5;
 
 #[repr(C)]
 pub struct EfiSystemTable {
@@ -43,7 +44,7 @@ pub(crate) struct EfiBootServices {
     _restore_tpl: usize,
     pub(crate) allocate_pages: EfiAllocatePages,
     _free_pages: usize,
-    _get_memory_map: usize,
+    pub(crate) get_memory_map: EfiGetMemoryMap,
     pub(crate) allocate_pool: EfiAllocatePool,
     pub(crate) free_pool: EfiFreePool,
     _create_event: usize,
@@ -91,6 +92,14 @@ pub(crate) type EfiAllocatePool =
 
 pub(crate) type EfiFreePool = extern "efiapi" fn(buffer: *mut c_void) -> EfiStatus;
 
+pub(crate) type EfiGetMemoryMap = extern "efiapi" fn(
+    memory_map_size: *mut usize,
+    memory_map: *mut EfiMemoryDescriptor,
+    map_key: *mut usize,
+    descriptor_size: *mut usize,
+    descriptor_version: *mut u32,
+) -> EfiStatus;
+
 pub(crate) type EfiLocateProtocol = extern "efiapi" fn(
     protocol: *const EfiGuid,
     registration: *mut c_void,
@@ -103,6 +112,15 @@ pub(crate) struct EfiGuid {
     pub(crate) data2: u16,
     pub(crate) data3: u16,
     pub(crate) data4: [u8; 8],
+}
+
+#[repr(C)]
+pub(crate) struct EfiMemoryDescriptor {
+    pub(crate) memory_type: u32,
+    pub(crate) physical_start: u64,
+    pub(crate) virtual_start: u64,
+    pub(crate) number_of_pages: u64,
+    pub(crate) attribute: u64,
 }
 
 #[repr(C)]
@@ -168,6 +186,23 @@ pub(crate) fn boot_services(
         return Err(EFI_LOAD_ERROR);
     }
     Ok(boot_services)
+}
+
+pub(crate) fn runtime_services(system_table: *mut EfiSystemTable) -> *mut c_void {
+    if system_table.is_null() {
+        return ptr::null_mut();
+    }
+
+    // SAFETY:
+    // 1. Invariant: `system_table` is the UEFI system table pointer passed to `efi_main`.
+    // 2. Established by: UEFI firmware when invoking the EFI application entry point.
+    // 3. Lifetime: valid until `ExitBootServices()`; this only copies the pointer value.
+    // 4. Pointer ownership: firmware owns runtime services; loader does not dereference here.
+    // 5. Alignment: UEFI tables are naturally aligned by firmware.
+    // 6. Mapped length: at least through the runtime-services pointer field.
+    // 7. Concurrency: no loader threads mutate the system table.
+    // 8. Violation: a bogus pointer would make this read fault or return garbage.
+    unsafe { (*system_table)._runtime_services }
 }
 
 pub(crate) fn locate_protocol<T>(

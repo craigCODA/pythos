@@ -40,8 +40,9 @@ Verified vertical slices:
 * `loader-enter` implements step 1 through COM1 serial output.
 * `gop-ready` implements GOP discovery, direct-framebuffer mode selection, and `PYTHOS:LOADER:GOP_READY`.
 * `kernel-loaded` implements EFI filesystem access, bounded ELF64 `ET_EXEC` validation, physical page allocation for `PT_LOAD` segments, segment copy/zeroing, loaded segment metadata retention, and `PYTHOS:LOADER:KERNEL_LOADED`.
+* `memory-map-ready` implements `INIT.PAK` loading, retained framebuffer/kernel/init metadata, preallocated `PythBootInfo`, UEFI memory-map capture with spare descriptor capacity, and `PYTHOS:LOADER:MEMORY_MAP_READY`.
 
-The active implementation still stops before `INIT.PAK` loading, memory-map handoff, temporary page-table construction, and `ExitBootServices()`.
+The active implementation still stops before temporary page-table construction and `ExitBootServices()`.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -144,6 +145,17 @@ The `kernel-loaded` slice asserts:
 PYTHOS:LOADER:ENTER
 PYTHOS:LOADER:GOP_READY
 PYTHOS:LOADER:KERNEL_LOADED
+```
+
+It also fails on any failure marker.
+
+The `memory-map-ready` slice asserts:
+
+```text
+PYTHOS:LOADER:ENTER
+PYTHOS:LOADER:GOP_READY
+PYTHOS:LOADER:KERNEL_LOADED
+PYTHOS:LOADER:MEMORY_MAP_READY
 ```
 
 It also fails on any failure marker.

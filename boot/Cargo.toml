@@ -6,7 +6,9 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+pythos-shared = { path = "../shared" }
+
 [[bin]]
 name = "bootx64"
 path = "src/main.rs"
-
