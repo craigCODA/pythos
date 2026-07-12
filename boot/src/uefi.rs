@@ -9,6 +9,7 @@ pub(crate) const EFI_LOAD_ERROR: EfiStatus = 1;
 pub(crate) const EFI_LOADER_DATA: u32 = 2;
 pub(crate) const EFI_ALLOCATE_ANY_PAGES: u32 = 0;
 pub(crate) const EFI_FILE_MODE_READ: u64 = 0x0000_0000_0000_0001;
+pub(crate) const EFI_INVALID_PARAMETER: EfiStatus = (1usize << (usize::BITS - 1)) | 2;
 pub(crate) const EFI_BUFFER_TOO_SMALL: EfiStatus = (1usize << (usize::BITS - 1)) | 5;
 
 #[repr(C)]
@@ -66,7 +67,7 @@ pub(crate) struct EfiBootServices {
     _start_image: usize,
     _exit: usize,
     _unload_image: usize,
-    _exit_boot_services: usize,
+    pub(crate) exit_boot_services: EfiExitBootServices,
     _get_next_monotonic_count: usize,
     _stall: usize,
     _set_watchdog_timer: usize,
@@ -91,6 +92,9 @@ pub(crate) type EfiAllocatePool =
     extern "efiapi" fn(pool_type: u32, size: usize, buffer: *mut *mut c_void) -> EfiStatus;
 
 pub(crate) type EfiFreePool = extern "efiapi" fn(buffer: *mut c_void) -> EfiStatus;
+
+pub(crate) type EfiExitBootServices =
+    extern "efiapi" fn(image_handle: *mut c_void, map_key: usize) -> EfiStatus;
 
 pub(crate) type EfiGetMemoryMap = extern "efiapi" fn(
     memory_map_size: *mut usize,

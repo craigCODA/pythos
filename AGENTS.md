@@ -38,11 +38,12 @@ OVMF
 -> PYTHOS:LOADER:GOP_READY
 -> PYTHOS:LOADER:KERNEL_LOADED
 -> PYTHOS:LOADER:MEMORY_MAP_READY
+-> PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
 ```
 
-The loader currently stops after loading `INIT.PAK`, capturing the UEFI memory map, and constructing retained `PythBootInfo`.
+The loader currently stops after successfully calling `ExitBootServices()` and emitting the post-exit serial marker.
 
-Do not jump to PythCore handoff until temporary page tables, bootstrap stack ownership, `ExitBootServices()` retry behavior, and post-exit serial output are correct and reproducible through QEMU serial capture.
+Do not jump to PythCore handoff until loader-owned temporary page tables, bootstrap stack ownership, and the `RDI`/`RSP` entry contract are correct and reproducible through QEMU serial capture.
 
 ## Scope Boundary
 

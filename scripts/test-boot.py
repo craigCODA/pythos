@@ -34,6 +34,13 @@ SLICE_MARKERS = {
         "PYTHOS:LOADER:KERNEL_LOADED",
         "PYTHOS:LOADER:MEMORY_MAP_READY",
     ],
+    "exit-boot-services-ok": [
+        "PYTHOS:LOADER:ENTER",
+        "PYTHOS:LOADER:GOP_READY",
+        "PYTHOS:LOADER:KERNEL_LOADED",
+        "PYTHOS:LOADER:MEMORY_MAP_READY",
+        "PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK",
+    ],
     "milestone-1": [
         "PYTHOS:LOADER:ENTER",
         "PYTHOS:LOADER:GOP_READY",

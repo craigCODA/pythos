@@ -3,6 +3,7 @@
 
 mod boot_info;
 mod elf;
+mod exit_boot_services;
 mod graphics;
 mod initrd;
 mod memory_map;
@@ -16,7 +17,7 @@ type EfiStatus = usize;
 
 #[unsafe(no_mangle)]
 pub extern "efiapi" fn efi_main(
-    _image_handle: EfiHandle,
+    image_handle: EfiHandle,
     system_table: *mut uefi::EfiSystemTable,
 ) -> EfiStatus {
     serial::init_com1();
@@ -44,7 +45,7 @@ pub extern "efiapi" fn efi_main(
         Ok(allocated_boot_info) => allocated_boot_info,
         Err(()) => fail(),
     };
-    let memory_map = match memory_map::capture(system_table) {
+    let mut memory_map = match memory_map::capture(system_table) {
         Ok(memory_map) if memory_map.is_captured() => memory_map,
         Ok(_) => fail(),
         Err(()) => fail(),
@@ -60,6 +61,34 @@ pub extern "efiapi" fn efi_main(
         Err(()) => fail(),
     };
     serial::write_line("PYTHOS:LOADER:MEMORY_MAP_READY");
+
+    match exit_boot_services::exit_once(system_table, image_handle, memory_map.map_key) {
+        exit_boot_services::ExitBootServicesResult::Exited => {}
+        exit_boot_services::ExitBootServicesResult::StaleMapKey => {
+            if memory_map.refresh(system_table).is_err() {
+                fail();
+            }
+            if allocated_boot_info
+                .populate(
+                    system_table,
+                    framebuffer,
+                    &loaded_kernel,
+                    &init_bundle,
+                    &memory_map,
+                )
+                .is_err()
+            {
+                fail();
+            }
+            match exit_boot_services::exit_once(system_table, image_handle, memory_map.map_key) {
+                exit_boot_services::ExitBootServicesResult::Exited => {}
+                exit_boot_services::ExitBootServicesResult::StaleMapKey
+                | exit_boot_services::ExitBootServicesResult::Failed => fail(),
+            }
+        }
+        exit_boot_services::ExitBootServicesResult::Failed => fail(),
+    }
+    serial::write_line("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
 
     loop {
         core::hint::black_box(&loaded_kernel);

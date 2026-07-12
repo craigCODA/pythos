@@ -10,7 +10,7 @@ image: build-loader
 	python scripts/build-image.py
 
 test-boot:
-	python scripts/test-boot.py --slice memory-map-ready
+	python scripts/test-boot.py --slice exit-boot-services-ok
 
 clean:
 	cargo clean

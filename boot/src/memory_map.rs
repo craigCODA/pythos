@@ -10,6 +10,7 @@ const EXTRA_DESCRIPTOR_CAPACITY: usize = 16;
 pub(crate) struct CapturedMemoryMap {
     pub(crate) ptr: *mut EfiMemoryDescriptor,
     pub(crate) len: usize,
+    capacity: usize,
     pub(crate) map_key: usize,
     pub(crate) descriptor_size: usize,
     pub(crate) descriptor_version: u32,
@@ -19,9 +20,49 @@ impl CapturedMemoryMap {
     pub(crate) fn is_captured(&self) -> bool {
         !self.ptr.is_null()
             && self.len > 0
+            && self.capacity >= self.len
             && self.map_key != 0
             && self.descriptor_size >= core::mem::size_of::<EfiMemoryDescriptor>()
             && self.len.is_multiple_of(self.descriptor_size)
+    }
+
+    pub(crate) fn refresh(&mut self, system_table: *mut EfiSystemTable) -> Result<(), ()> {
+        if self.ptr.is_null() || self.capacity == 0 {
+            return Err(());
+        }
+        let boot_services = uefi::boot_services(system_table).map_err(|_| ())?;
+        let mut actual_size = self.capacity;
+        let mut map_key = 0usize;
+        let mut descriptor_size = 0usize;
+        let mut descriptor_version = 0u32;
+
+        // SAFETY:
+        // 1. Invariant: `self.ptr` points to a retained map buffer of `self.capacity` bytes.
+        // 2. Established by: `capture()` allocated this buffer before the first final map retrieval.
+        // 3. Lifetime: buffer remains loader-owned until handoff.
+        // 4. Pointer ownership: firmware writes descriptors into loader-owned memory.
+        // 5. Alignment: firmware pool allocation satisfies descriptor alignment.
+        // 6. Mapped length: `actual_size` initially equals the allocated capacity.
+        // 7. Concurrency: no allocations are performed by this refresh path.
+        // 8. Violation: invalid buffer/capacity would let firmware overwrite memory.
+        let status = unsafe {
+            ((*boot_services).get_memory_map)(
+                &mut actual_size,
+                self.ptr,
+                &mut map_key,
+                &mut descriptor_size,
+                &mut descriptor_version,
+            )
+        };
+        if status != EFI_SUCCESS || actual_size == 0 || descriptor_size == 0 {
+            return Err(());
+        }
+
+        self.len = actual_size;
+        self.map_key = map_key;
+        self.descriptor_size = descriptor_size;
+        self.descriptor_version = descriptor_version;
+        if self.is_captured() { Ok(()) } else { Err(()) }
     }
 }
 
@@ -86,6 +127,7 @@ pub(crate) fn capture(system_table: *mut EfiSystemTable) -> Result<CapturedMemor
     let captured = CapturedMemoryMap {
         ptr: buffer.cast(),
         len: actual_size,
+        capacity,
         map_key,
         descriptor_size,
         descriptor_version,

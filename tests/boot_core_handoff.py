@@ -54,6 +54,17 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_exit_boot_services_marker_is_observed_after_memory_map_ready(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", "exit-boot-services-ok"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()
