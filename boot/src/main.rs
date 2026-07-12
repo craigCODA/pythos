@@ -5,8 +5,10 @@ mod boot_info;
 mod elf;
 mod exit_boot_services;
 mod graphics;
+mod handoff;
 mod initrd;
 mod memory_map;
+mod paging;
 mod serial;
 mod uefi;
 
@@ -22,7 +24,7 @@ pub extern "efiapi" fn efi_main(
 ) -> EfiStatus {
     serial::init_com1();
     serial::write_line("PYTHOS:LOADER:ENTER");
-    let framebuffer = match graphics::initialize_gop(system_table) {
+    let mut framebuffer = match graphics::initialize_gop(system_table) {
         Ok(framebuffer) => {
             serial::write_line("PYTHOS:LOADER:GOP_READY");
             framebuffer
@@ -45,6 +47,15 @@ pub extern "efiapi" fn efi_main(
         Ok(allocated_boot_info) => allocated_boot_info,
         Err(()) => fail(),
     };
+    let stack = match paging::BootstrapStack::allocate(system_table) {
+        Ok(stack) => stack,
+        Err(()) => fail(),
+    };
+    let page_tables = match paging::build(system_table, &loaded_kernel, &framebuffer, &stack) {
+        Ok(page_tables) => page_tables,
+        Err(()) => fail(),
+    };
+    framebuffer.mapped_virtual_base = paging::DEVICE_VIRT_BASE;
     let mut memory_map = match memory_map::capture(system_table) {
         Ok(memory_map) if memory_map.is_captured() => memory_map,
         Ok(_) => fail(),
@@ -56,6 +67,7 @@ pub extern "efiapi" fn efi_main(
         &loaded_kernel,
         &init_bundle,
         &memory_map,
+        &stack,
     ) {
         Ok(boot_info) => boot_info,
         Err(()) => fail(),
@@ -75,6 +87,7 @@ pub extern "efiapi" fn efi_main(
                     &loaded_kernel,
                     &init_bundle,
                     &memory_map,
+                    &stack,
                 )
                 .is_err()
             {
@@ -90,12 +103,27 @@ pub extern "efiapi" fn efi_main(
     }
     serial::write_line("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
 
-    loop {
-        core::hint::black_box(&loaded_kernel);
-        core::hint::black_box(&init_bundle);
-        core::hint::black_box(&memory_map);
-        core::hint::black_box(&boot_info);
-        core::hint::spin_loop();
+    // SAFETY:
+    // 1. Invariant: `ExitBootServices()` succeeded, `page_tables` identity-map
+    //    the running loader and map the kernel image, framebuffer, boot info,
+    //    and bootstrap stack, `stack.virt_top` is the mapped stack top, and
+    //    `loaded_kernel.entry` is mapped executable.
+    // 2. Established by: the successful exit above, `paging::build()`, and
+    //    `elf::load_pythcore()` validation of the entry point.
+    // 3. Lifetime: the mappings remain valid because no code mutates them
+    //    between construction and this jump.
+    // 4. Pointer ownership: all loader allocations transfer to PythCore here.
+    // 5. Alignment: guaranteed by `paging::build()` and the ELF loader.
+    // 6. Mapped length: guaranteed by `paging::build()` page-count arithmetic.
+    // 7. Concurrency: single-core; `enter_pythcore` disables interrupts first.
+    // 8. Violation: a broken mapping faults with no handler and hangs.
+    unsafe {
+        handoff::enter_pythcore(
+            page_tables.pml4_phys(),
+            stack.virt_top,
+            boot_info,
+            loaded_kernel.entry,
+        )
     }
 }
 

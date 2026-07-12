@@ -1,6 +1,7 @@
 use crate::elf::LoadedKernel;
 use crate::initrd::LoadedInitBundle;
 use crate::memory_map::CapturedMemoryMap;
+use crate::paging::BootstrapStack;
 use crate::uefi::{self, EFI_LOADER_DATA, EFI_SUCCESS, EfiSystemTable};
 use core::ffi::c_void;
 use core::mem;
@@ -46,11 +47,14 @@ impl AllocatedBootInfo {
         kernel: &LoadedKernel,
         init_bundle: &LoadedInitBundle,
         memory_map: &CapturedMemoryMap,
+        stack: &BootstrapStack,
     ) -> Result<*const PythBootInfo, ()> {
         if self.ptr.is_null()
             || !kernel.is_well_formed()
             || !init_bundle.is_loaded()
             || !memory_map.is_captured()
+            || stack.physical_start == 0
+            || stack.virt_bottom >= stack.virt_top
         {
             return Err(());
         }
@@ -74,8 +78,8 @@ impl AllocatedBootInfo {
             kernel_phys_end: kernel.physical_end,
             kernel_virt_start: kernel.virtual_start,
             kernel_virt_end: kernel.virtual_end,
-            bootstrap_stack_bottom: 0,
-            bootstrap_stack_top: 0,
+            bootstrap_stack_bottom: stack.virt_bottom,
+            bootstrap_stack_top: stack.virt_top,
             init_bundle_phys: init_bundle.physical_start,
             init_bundle_len: init_bundle.len,
             runtime_services_ptr: uefi::runtime_services(system_table) as u64,
