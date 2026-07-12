@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
+import socket
 import subprocess
 import sys
 import time
@@ -51,6 +53,37 @@ def find_ovmf(explicit: str | None) -> str:
     raise SystemExit("missing OVMF code firmware; set PYTHOS_OVMF_CODE")
 
 
+QMP_PORT = 4488
+
+
+def read_qmp_message(sock_file) -> dict:
+    while True:
+        line = sock_file.readline()
+        if not line:
+            raise ConnectionError("QMP connection closed")
+        message = json.loads(line)
+        if "event" not in message:
+            return message
+
+
+def request_screendump(path: Path) -> None:
+    with socket.create_connection(("127.0.0.1", QMP_PORT), timeout=5) as sock:
+        sock_file = sock.makefile("rw", encoding="utf-8", newline="\n")
+        read_qmp_message(sock_file)
+        for command in (
+            {"execute": "qmp_capabilities"},
+            {
+                "execute": "screendump",
+                "arguments": {"filename": str(path), "format": "png"},
+            },
+        ):
+            sock_file.write(json.dumps(command) + "\n")
+            sock_file.flush()
+            reply = read_qmp_message(sock_file)
+            if "error" in reply:
+                raise RuntimeError(f"QMP error: {reply['error']}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--esp", type=Path, default=DEFAULT_ESP)
@@ -58,6 +91,7 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--qemu")
     parser.add_argument("--ovmf-code")
+    parser.add_argument("--screendump", type=Path)
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -87,13 +121,24 @@ def main() -> int:
         "-no-reboot",
         "-no-shutdown",
     ]
+    if args.screendump:
+        args.screendump.parent.mkdir(parents=True, exist_ok=True)
+        command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
 
     process = subprocess.Popen(command)
     deadline = time.monotonic() + args.timeout
+    screendump_at = deadline - 2.0
+    screendump_pending = args.screendump is not None
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 break
+            if screendump_pending and time.monotonic() >= screendump_at:
+                screendump_pending = False
+                try:
+                    request_screendump(args.screendump.resolve())
+                except (OSError, RuntimeError, ConnectionError) as error:
+                    print(f"screendump failed: {error}", file=sys.stderr)
             time.sleep(0.1)
     finally:
         if process.poll() is None:
