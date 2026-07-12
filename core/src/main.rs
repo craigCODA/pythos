@@ -2,6 +2,8 @@
 #![no_std]
 
 mod boot_info;
+mod font;
+mod framebuffer;
 mod serial;
 
 use core::panic::PanicInfo;
@@ -30,7 +32,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     // 6. Mapped length: one full `PythBootInfo` allocated by the loader.
     // 7. Concurrency: single-core execution with interrupts disabled.
     // 8. Violation: an invalid pointer faults with no handler and hangs.
-    let _boot_info = match unsafe { boot_info::validate(boot_info) } {
+    let boot_info = match unsafe { boot_info::validate(boot_info) } {
         Ok(info) => info,
         Err(()) => {
             serial::write_line("PYTHOS:CORE:BOOTINFO_INVALID");
@@ -38,6 +40,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
+
+    if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        halt();
+    }
+    serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
     halt();
 }
 
