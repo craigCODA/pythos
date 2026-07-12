@@ -1,0 +1,9 @@
+/target/
+/image/esp/EFI/BOOT/BOOTX64.EFI
+/image/esp/PYTHOS/BOOT.CFG
+/image/esp/PYTHOS/FONT.PSF
+/image/esp/PYTHOS/INIT.PAK
+/image/esp/PYTHOS/PYTHCORE.ELF
+__pycache__/
+*.pyc
+/image/esp/NvVars
