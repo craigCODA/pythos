@@ -39,11 +39,12 @@ OVMF
 -> PYTHOS:LOADER:KERNEL_LOADED
 -> PYTHOS:LOADER:MEMORY_MAP_READY
 -> PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
+-> PYTHOS:CORE:ENTER
 ```
 
-The loader currently stops after successfully calling `ExitBootServices()` and emitting the post-exit serial marker.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore currently emits `PYTHOS:CORE:ENTER` and halts.
 
-Do not jump to PythCore handoff until loader-owned temporary page tables, bootstrap stack ownership, and the `RDI`/`RSP` entry contract are correct and reproducible through QEMU serial capture.
+Do not proceed to memory ownership, GDT, IDT, or framebuffer work in a slice that has not first kept `PYTHOS:CORE:ENTER` reproducible through QEMU serial capture.
 
 ## Scope Boundary
 

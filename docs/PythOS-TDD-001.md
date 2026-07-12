@@ -42,8 +42,9 @@ Verified vertical slices:
 * `kernel-loaded` implements EFI filesystem access, bounded ELF64 `ET_EXEC` validation, physical page allocation for `PT_LOAD` segments, segment copy/zeroing, loaded segment metadata retention, and `PYTHOS:LOADER:KERNEL_LOADED`.
 * `memory-map-ready` implements `INIT.PAK` loading, retained framebuffer/kernel/init metadata, preallocated `PythBootInfo`, UEFI memory-map capture with spare descriptor capacity, and `PYTHOS:LOADER:MEMORY_MAP_READY`.
 * `exit-boot-services-ok` implements `ExitBootServices()` with one stale-map-key refresh using the retained memory-map buffer and emits `PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK` through direct serial output after firmware boot services are gone.
+* `core-enter` implements loader-owned temporary page tables (a 2 MiB-to-4 GiB identity map with the first 2 MiB left unmapped, kernel segments at their ELF virtual addresses with writable-XOR-executable leaf permissions, the framebuffer under the device region, and a guarded bootstrap stack), `EFER.NXE` enablement, the `CR3`/`RSP` switch, the `RDI` boot-info argument, the jump to `pythcore_entry`, and PythCore's direct-COM1 `PYTHOS:CORE:ENTER`.
 
-The active implementation still stops before loader-owned temporary page-table activation, bootstrap stack switch, and PythCore entry.
+The active implementation stops after PythCore entry. Boot-info validation, memory ownership, GDT, IDT, and framebuffer rendering remain unimplemented.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -169,6 +170,19 @@ PYTHOS:LOADER:GOP_READY
 PYTHOS:LOADER:KERNEL_LOADED
 PYTHOS:LOADER:MEMORY_MAP_READY
 PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
+```
+
+It also fails on any failure marker.
+
+The `core-enter` slice asserts:
+
+```text
+PYTHOS:LOADER:ENTER
+PYTHOS:LOADER:GOP_READY
+PYTHOS:LOADER:KERNEL_LOADED
+PYTHOS:LOADER:MEMORY_MAP_READY
+PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
+PYTHOS:CORE:ENTER
 ```
 
 It also fails on any failure marker.

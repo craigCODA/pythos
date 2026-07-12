@@ -11,7 +11,7 @@ milestone/boot-core-handoff
 Current head:
 
 ```text
-3501f1f boot: exit UEFI boot services
+boot: build temporary page tables and enter PythCore
 ```
 
 This document hands off the current implementation state for milestone 1. The project is building a native x86-64 UEFI boot path for PythOS. It is not a Linux distribution, browser simulation, Windows shell, or graphical mockup.
@@ -26,6 +26,7 @@ PYTHOS:LOADER:GOP_READY
 PYTHOS:LOADER:KERNEL_LOADED
 PYTHOS:LOADER:MEMORY_MAP_READY
 PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
+PYTHOS:CORE:ENTER
 ```
 
 This proves:
@@ -42,21 +43,23 @@ This proves:
 * The loader captures a UEFI memory map with spare descriptor capacity.
 * The loader calls `ExitBootServices()` successfully, including a stale-key retry path.
 * The post-exit marker is emitted by direct serial I/O after UEFI boot services are gone.
+* The loader builds temporary page tables (2 MiB-to-4 GiB identity map with the first 2 MiB unmapped, kernel segments at their ELF virtual addresses with W^X leaf permissions, framebuffer under `0xFFFF_C000_0000_0000`, guarded bootstrap stack under `0xFFFF_E000_0000_0000`).
+* The loader enables `EFER.NXE`, switches `CR3` and `RSP`, passes `PythBootInfo` in `RDI`, and jumps to `pythcore_entry`.
+* PythCore executes at its higher-half link address and emits `PYTHOS:CORE:ENTER` through direct COM1 output.
 
 ## Current Stop Point
 
-PythCore is loaded into memory, but it is not executing yet.
+PythCore is executing but does nothing beyond the entry marker.
 
-The loader currently stops after:
+The system currently stops after:
 
 ```text
-PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
+PYTHOS:CORE:ENTER
 ```
 
 The following required markers are not implemented or verified yet:
 
 ```text
-PYTHOS:CORE:ENTER
 PYTHOS:CORE:BOOTINFO_VALID
 PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
@@ -69,9 +72,7 @@ Do not claim milestone 1 completion until all required markers are emitted in or
 
 ## Important Caveat
 
-The loader exits UEFI boot services before it has created and activated loader-owned temporary kernel page tables or switched to a kernel bootstrap stack.
-
-The current post-exit serial marker is a real machine-control milestone, but it is not sufficient for PythCore entry. The next implementation must build the entry mappings and stack contract before jumping to the higher-half kernel entry point.
+The loader-built page tables are transitional. The 2 MiB-to-4 GiB identity map is writable and executable because the loader itself executes from it across the `CR3` switch; only the kernel image mappings enforce writable XOR executable. PythCore must replace these tables with kernel-owned mappings during the memory-ownership slice.
 
 ## Relevant Files
 
@@ -134,9 +135,7 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * QEMU termination is still timeout-based. Milestone completion should move toward a deterministic debug-exit device or controlled shutdown path.
 * ACPI RSDP and SMBIOS discovery are not yet populated in `PythBootInfo`.
 * `INIT.PAK` is loaded but not interpreted or format-validated.
-* No loader-owned temporary page tables exist yet.
-* No kernel bootstrap stack switch exists yet.
-* No transition to `pythcore_entry` exists yet.
+* The temporary identity map is writable and executable during the transition; kernel-owned tables replace it in a later slice.
 * PythCore has not validated `PythBootInfo`.
 * PythCore has not converted UEFI memory descriptors into page ownership states.
 * The physical page allocator, GDT, TSS, IDT, exception path, panic path, and post-UEFI framebuffer renderer remain unimplemented.
@@ -146,27 +145,19 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 The next smallest testable goal is:
 
 ```text
-retain current verified loader behavior
--> create loader-owned temporary page tables
--> map the loaded PythCore segments at their ELF virtual addresses
--> map PythBootInfo
--> map the retained UEFI memory-map copy
--> map INIT.PAK
--> map the framebuffer under the planned device region
--> allocate and map a bootstrap stack
--> switch CR3 and RSP
--> clear DF and disable maskable interrupts
--> pass PythBootInfo in RDI
--> jump to pythcore_entry
--> emit PYTHOS:CORE:ENTER
+retain current verified behavior
+-> PythCore validates PythBootInfo magic, ABI major version, and struct_size
+-> PythCore rejects null, misaligned, or short structures
+-> emit PYTHOS:CORE:BOOTINFO_VALID on success
+-> emit PYTHOS:CORE:BOOTINFO_INVALID and halt on failure
 ```
 
 Recommended test flow:
 
-1. Add a `core-enter` slice to `scripts/test-boot.py` and `tests/boot_core_handoff.py` that expects all current loader markers plus `PYTHOS:CORE:ENTER`.
+1. Add a `bootinfo-valid` slice to `scripts/test-boot.py` and `tests/boot_core_handoff.py` that expects all current markers plus `PYTHOS:CORE:BOOTINFO_VALID`.
 2. Make that test fail for the expected reason.
-3. Implement temporary page-table construction and the assembly handoff.
-4. Add direct COM1 output in PythCore before any allocator, GDT, IDT, or framebuffer work.
-5. Rerun the exact failing `core-enter` test until it passes.
+3. Implement validation in `core/src/boot_info.rs` reading through the identity-mapped physical pointer in `RDI`.
+4. Add host-testable validation logic where practical plus malformed-structure rejection paths.
+5. Rerun the exact failing `bootinfo-valid` test until it passes.
 
-Do not proceed to memory ownership, GDT, IDT, or framebuffer rendering until `PYTHOS:CORE:ENTER` is reproducible through QEMU serial capture.
+Do not proceed to memory ownership, GDT, IDT, or framebuffer rendering until `PYTHOS:CORE:BOOTINFO_VALID` is reproducible through QEMU serial capture.
