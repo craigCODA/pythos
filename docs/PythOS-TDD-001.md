@@ -43,8 +43,12 @@ Verified vertical slices:
 * `memory-map-ready` implements `INIT.PAK` loading, retained framebuffer/kernel/init metadata, preallocated `PythBootInfo`, UEFI memory-map capture with spare descriptor capacity, and `PYTHOS:LOADER:MEMORY_MAP_READY`.
 * `exit-boot-services-ok` implements `ExitBootServices()` with one stale-map-key refresh using the retained memory-map buffer and emits `PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK` through direct serial output after firmware boot services are gone.
 * `core-enter` implements loader-owned temporary page tables (a 2 MiB-to-4 GiB identity map with the first 2 MiB left unmapped, kernel segments at their ELF virtual addresses with writable-XOR-executable leaf permissions, the framebuffer under the device region, and a guarded bootstrap stack), `EFER.NXE` enablement, the `CR3`/`RSP` switch, the `RDI` boot-info argument, the jump to `pythcore_entry`, and PythCore's direct-COM1 `PYTHOS:CORE:ENTER`.
+* `bootinfo-valid` implements host-tested `PythBootInfo` structure validation in the shared ABI crate plus null/alignment checking in PythCore, emitting `PYTHOS:CORE:BOOTINFO_VALID` on success and `PYTHOS:CORE:BOOTINFO_INVALID` on rejection.
+* `framebuffer-ready` implements the post-firmware boot screen: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
-The active implementation stops after PythCore entry. Boot-info validation, memory ownership, GDT, IDT, and framebuffer rendering remain unimplemented.
+The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early; the slice order in section 20.3 of the master handoff is recommended, not binding. `PYTHOS:CORE:FRAMEBUFFER_READY` is currently emitted directly after `PYTHOS:CORE:BOOTINFO_VALID`; when the memory, GDT, and IDT slices land, the render call moves after `PYTHOS:CORE:IDT_READY` so the milestone 1 marker order is preserved.
+
+The active implementation stops after the boot screen renders. Memory ownership, GDT, IDT, and the exception path remain unimplemented.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -186,3 +190,5 @@ PYTHOS:CORE:ENTER
 ```
 
 It also fails on any failure marker.
+
+The `bootinfo-valid` slice appends `PYTHOS:CORE:BOOTINFO_VALID` to the `core-enter` assertions. The `framebuffer-ready` slice appends `PYTHOS:CORE:FRAMEBUFFER_READY` to the `bootinfo-valid` assertions. Both fail on any failure marker. Slice assertions are subsequence checks, so later markers interleaving between them (for example `PYTHOS:CORE:MEMORY_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`) keep earlier slices passing.

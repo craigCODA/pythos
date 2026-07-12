@@ -11,7 +11,7 @@ milestone/boot-core-handoff
 Current head:
 
 ```text
-boot: build temporary page tables and enter PythCore
+scripts: add QMP screendump capture to run-qemu
 ```
 
 This document hands off the current implementation state for milestone 1. The project is building a native x86-64 UEFI boot path for PythOS. It is not a Linux distribution, browser simulation, Windows shell, or graphical mockup.
@@ -27,6 +27,8 @@ PYTHOS:LOADER:KERNEL_LOADED
 PYTHOS:LOADER:MEMORY_MAP_READY
 PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
 PYTHOS:CORE:ENTER
+PYTHOS:CORE:BOOTINFO_VALID
+PYTHOS:CORE:FRAMEBUFFER_READY
 ```
 
 This proves:
@@ -46,27 +48,27 @@ This proves:
 * The loader builds temporary page tables (2 MiB-to-4 GiB identity map with the first 2 MiB unmapped, kernel segments at their ELF virtual addresses with W^X leaf permissions, framebuffer under `0xFFFF_C000_0000_0000`, guarded bootstrap stack under `0xFFFF_E000_0000_0000`).
 * The loader enables `EFER.NXE`, switches `CR3` and `RSP`, passes `PythBootInfo` in `RDI`, and jumps to `pythcore_entry`.
 * PythCore executes at its higher-half link address and emits `PYTHOS:CORE:ENTER` through direct COM1 output.
+* PythCore validates the `PythBootInfo` ABI (host-tested logic in the shared crate) and emits `PYTHOS:CORE:BOOTINFO_VALID`.
+* PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`. A live screendump is captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
 
 ## Current Stop Point
-
-PythCore is executing but does nothing beyond the entry marker.
 
 The system currently stops after:
 
 ```text
-PYTHOS:CORE:ENTER
+PYTHOS:CORE:FRAMEBUFFER_READY
 ```
 
 The following required markers are not implemented or verified yet:
 
 ```text
-PYTHOS:CORE:BOOTINFO_VALID
 PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
-PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
+
+The framebuffer slice was implemented before memory/GDT/IDT for early visible boot. When those slices land, the render call and `PYTHOS:CORE:FRAMEBUFFER_READY` emission move after `PYTHOS:CORE:IDT_READY` so the milestone 1 marker order is preserved.
 
 Do not claim milestone 1 completion until all required markers are emitted in order from a clean QEMU run.
 
@@ -136,7 +138,7 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * ACPI RSDP and SMBIOS discovery are not yet populated in `PythBootInfo`.
 * `INIT.PAK` is loaded but not interpreted or format-validated.
 * The temporary identity map is writable and executable during the transition; kernel-owned tables replace it in a later slice.
-* PythCore has not validated `PythBootInfo`.
+* The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * PythCore has not converted UEFI memory descriptors into page ownership states.
 * The physical page allocator, GDT, TSS, IDT, exception path, panic path, and post-UEFI framebuffer renderer remain unimplemented.
 
@@ -146,18 +148,20 @@ The next smallest testable goal is:
 
 ```text
 retain current verified behavior
--> PythCore validates PythBootInfo magic, ABI major version, and struct_size
--> PythCore rejects null, misaligned, or short structures
--> emit PYTHOS:CORE:BOOTINFO_VALID on success
--> emit PYTHOS:CORE:BOOTINFO_INVALID and halt on failure
+-> PythCore walks the retained UEFI memory descriptors
+-> converts descriptors into explicit page ownership states
+-> reserves kernel image, stack, boot info, memory map, page tables,
+   INIT.PAK, and framebuffer pages before exposing Free pages
+-> initializes the 4 KiB bitmap allocator
+-> emit PYTHOS:CORE:MEMORY_READY on success
+-> emit PYTHOS:CORE:MEMORY_INVALID and halt on failure
 ```
 
 Recommended test flow:
 
-1. Add a `bootinfo-valid` slice to `scripts/test-boot.py` and `tests/boot_core_handoff.py` that expects all current markers plus `PYTHOS:CORE:BOOTINFO_VALID`.
+1. Add a `memory-ready` slice to `scripts/test-boot.py` and `tests/boot_core_handoff.py` that expects all current markers plus `PYTHOS:CORE:MEMORY_READY`.
 2. Make that test fail for the expected reason.
-3. Implement validation in `core/src/boot_info.rs` reading through the identity-mapped physical pointer in `RDI`.
-4. Add host-testable validation logic where practical plus malformed-structure rejection paths.
-5. Rerun the exact failing `bootinfo-valid` test until it passes.
+3. Implement page-state conversion and the bitmap allocator in `core/src/memory/`, with host-testable pure logic where practical.
+4. Rerun the exact failing `memory-ready` test until it passes.
 
-Do not proceed to memory ownership, GDT, IDT, or framebuffer rendering until `PYTHOS:CORE:BOOTINFO_VALID` is reproducible through QEMU serial capture.
+After memory, implement GDT/TSS, then IDT with the deliberate exception test, then move the framebuffer render call after `PYTHOS:CORE:IDT_READY`, then the `milestone-1` slice.

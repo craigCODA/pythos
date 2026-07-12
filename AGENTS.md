@@ -40,11 +40,15 @@ OVMF
 -> PYTHOS:LOADER:MEMORY_MAP_READY
 -> PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
 -> PYTHOS:CORE:ENTER
+-> PYTHOS:CORE:BOOTINFO_VALID
+-> PYTHOS:CORE:FRAMEBUFFER_READY
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore currently emits `PYTHOS:CORE:ENTER` and halts.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, renders the post-firmware boot screen, and halts.
 
-Do not proceed to memory ownership, GDT, IDT, or framebuffer work in a slice that has not first kept `PYTHOS:CORE:ENTER` reproducible through QEMU serial capture.
+The framebuffer slice was deliberately implemented before memory ownership, GDT, and IDT for early visible boot; when those slices land, the `PYTHOS:CORE:FRAMEBUFFER_READY` emission moves after `PYTHOS:CORE:IDT_READY` to preserve the milestone 1 marker order.
+
+Do not land a slice that regresses any already-verified marker in QEMU serial capture.
 
 ## Scope Boundary
 
