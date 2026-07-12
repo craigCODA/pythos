@@ -1,11 +1,14 @@
-#![no_main]
-#![no_std]
+#![cfg_attr(not(test), no_main)]
+#![cfg_attr(not(test), no_std)]
 
+mod architecture;
 mod boot_info;
 mod font;
 mod framebuffer;
+mod memory;
 mod serial;
 
+#[cfg(not(test))]
 use core::panic::PanicInfo;
 use pythos_shared::boot_protocol::PythBootInfo;
 
@@ -41,11 +44,30 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
 
+    if memory::physical::initialize(boot_info).is_err() {
+        serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
+        halt();
+    }
+    serial::write_line("PYTHOS:CORE:MEMORY_READY");
+
+    if architecture::x86_64::gdt::initialize().is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        halt();
+    }
+    serial::write_line("PYTHOS:CORE:GDT_READY");
+
+    if architecture::x86_64::idt::initialize().is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        halt();
+    }
+    serial::write_line("PYTHOS:CORE:IDT_READY");
+
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
         serial::write_line("PYTHOS:PANIC");
         halt();
     }
     serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
+    serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
     halt();
 }
 
@@ -55,6 +77,7 @@ fn halt() -> ! {
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:PANIC");
