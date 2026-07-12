@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+mod serial;
+
 use core::panic::PanicInfo;
 use pythos_shared::boot_protocol::PythBootInfo;
 
@@ -15,6 +17,7 @@ use pythos_shared::boot_protocol::PythBootInfo;
 /// entry contract in `docs/PythOS-TDD-001.md`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pythcore_entry(_boot_info: *const PythBootInfo) -> ! {
+    serial::write_line("PYTHOS:CORE:ENTER");
     loop {
         core::hint::spin_loop();
     }
@@ -22,6 +25,7 @@ pub unsafe extern "C" fn pythcore_entry(_boot_info: *const PythBootInfo) -> ! {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
+    serial::write_line("PYTHOS:PANIC");
     loop {
         core::hint::spin_loop();
     }
