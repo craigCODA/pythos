@@ -23,6 +23,11 @@ SLICE_MARKERS = {
         "PYTHOS:LOADER:ENTER",
         "PYTHOS:LOADER:GOP_READY",
     ],
+    "kernel-loaded": [
+        "PYTHOS:LOADER:ENTER",
+        "PYTHOS:LOADER:GOP_READY",
+        "PYTHOS:LOADER:KERNEL_LOADED",
+    ],
     "milestone-1": [
         "PYTHOS:LOADER:ENTER",
         "PYTHOS:LOADER:GOP_READY",
@@ -64,6 +69,7 @@ def main() -> int:
     args = parser.parse_args()
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
     run([sys.executable, "scripts/build-image.py"])
     run([sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG)])
 

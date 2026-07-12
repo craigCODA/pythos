@@ -1,9 +1,6 @@
-use core::ffi::c_void;
+use crate::uefi::{self, EFI_SUCCESS, EfiBootServices, EfiGuid, EfiStatus, EfiSystemTable};
 use core::ptr;
 
-type EfiStatus = usize;
-
-const EFI_SUCCESS: EfiStatus = 0;
 const GOP_GUID: EfiGuid = EfiGuid {
     data1: 0x9042_A9DE,
     data2: 0x23DC,
@@ -17,90 +14,6 @@ const PIXEL_BIT_MASK: u32 = 2;
 const PIXEL_BLT_ONLY: u32 = 3;
 const PREFERRED_WIDTH: u32 = 1024;
 const PREFERRED_HEIGHT: u32 = 768;
-
-#[repr(C)]
-pub struct EfiSystemTable {
-    _header: EfiTableHeader,
-    _firmware_vendor: *mut u16,
-    _firmware_revision: u32,
-    _console_in_handle: *mut c_void,
-    _con_in: *mut c_void,
-    _console_out_handle: *mut c_void,
-    _con_out: *mut c_void,
-    _standard_error_handle: *mut c_void,
-    _std_err: *mut c_void,
-    _runtime_services: *mut c_void,
-    boot_services: *mut EfiBootServices,
-    _number_of_table_entries: usize,
-    _configuration_table: *mut c_void,
-}
-
-#[repr(C)]
-struct EfiTableHeader {
-    _signature: u64,
-    _revision: u32,
-    _header_size: u32,
-    _crc32: u32,
-    _reserved: u32,
-}
-
-#[repr(C)]
-struct EfiBootServices {
-    _header: EfiTableHeader,
-    _raise_tpl: usize,
-    _restore_tpl: usize,
-    _allocate_pages: usize,
-    _free_pages: usize,
-    _get_memory_map: usize,
-    _allocate_pool: usize,
-    free_pool: EfiFreePool,
-    _create_event: usize,
-    _set_timer: usize,
-    _wait_for_event: usize,
-    _signal_event: usize,
-    _close_event: usize,
-    _check_event: usize,
-    _install_protocol_interface: usize,
-    _reinstall_protocol_interface: usize,
-    _uninstall_protocol_interface: usize,
-    _handle_protocol: usize,
-    _reserved: usize,
-    _register_protocol_notify: usize,
-    _locate_handle: usize,
-    _locate_device_path: usize,
-    _install_configuration_table: usize,
-    _load_image: usize,
-    _start_image: usize,
-    _exit: usize,
-    _unload_image: usize,
-    _exit_boot_services: usize,
-    _get_next_monotonic_count: usize,
-    _stall: usize,
-    _set_watchdog_timer: usize,
-    _connect_controller: usize,
-    _disconnect_controller: usize,
-    _open_protocol: usize,
-    _close_protocol: usize,
-    _open_protocol_information: usize,
-    _protocols_per_handle: usize,
-    _locate_handle_buffer: usize,
-    locate_protocol: EfiLocateProtocol,
-}
-
-type EfiFreePool = extern "efiapi" fn(buffer: *mut c_void) -> EfiStatus;
-type EfiLocateProtocol = extern "efiapi" fn(
-    protocol: *const EfiGuid,
-    registration: *mut c_void,
-    interface: *mut *mut c_void,
-) -> EfiStatus;
-
-#[repr(C)]
-struct EfiGuid {
-    data1: u32,
-    data2: u16,
-    data3: u16,
-    data4: [u8; 8],
-}
 
 #[repr(C)]
 struct EfiGraphicsOutputProtocol {
@@ -149,52 +62,10 @@ struct EfiPixelBitmask {
 }
 
 pub fn initialize_gop(system_table: *mut EfiSystemTable) -> Result<(), ()> {
-    let boot_services = boot_services(system_table)?;
-    let gop = locate_gop(boot_services)?;
+    let boot_services = uefi::boot_services(system_table).map_err(|_| ())?;
+    let gop = uefi::locate_protocol(boot_services, &GOP_GUID).map_err(|_| ())?;
     let selected = select_mode(boot_services, gop)?;
     validate_current_mode(gop, selected)
-}
-
-fn boot_services(system_table: *mut EfiSystemTable) -> Result<*mut EfiBootServices, ()> {
-    if system_table.is_null() {
-        return Err(());
-    }
-
-    // SAFETY:
-    // 1. Invariant: `system_table` is the UEFI system table pointer passed to `efi_main`.
-    // 2. Established by: UEFI firmware when invoking the EFI application entry point.
-    // 3. Lifetime: valid until `ExitBootServices()`, which this slice does not call.
-    // 4. Pointer ownership: firmware owns the table; the loader only reads it.
-    // 5. Alignment: UEFI tables are naturally aligned by firmware.
-    // 6. Mapped length: at least the system-table header and fixed fields read here.
-    // 7. Concurrency: milestone 1 runs on one firmware-started CPU with no loader threads.
-    // 8. Violation: a bogus pointer would make this read fault or fetch an invalid service table.
-    let boot_services = unsafe { (*system_table).boot_services };
-    if boot_services.is_null() {
-        return Err(());
-    }
-    Ok(boot_services)
-}
-
-fn locate_gop(boot_services: *mut EfiBootServices) -> Result<*mut EfiGraphicsOutputProtocol, ()> {
-    let mut interface: *mut c_void = ptr::null_mut();
-
-    // SAFETY:
-    // 1. Invariant: `boot_services` points to the active UEFI boot services table.
-    // 2. Established by: `boot_services()` validated the system table field before use.
-    // 3. Lifetime: valid until `ExitBootServices()`, which this slice does not call.
-    // 4. Pointer ownership: firmware owns boot services and the returned protocol interface.
-    // 5. Alignment: UEFI function table and protocol pointers are firmware-aligned.
-    // 6. Mapped length: the boot services table includes `LocateProtocol`; `interface` is one pointer.
-    // 7. Concurrency: no concurrent boot-service mutation is performed by this loader.
-    // 8. Violation: an invalid table could call through a bad function pointer.
-    let status =
-        unsafe { ((*boot_services).locate_protocol)(&GOP_GUID, ptr::null_mut(), &mut interface) };
-
-    if status != EFI_SUCCESS || interface.is_null() {
-        return Err(());
-    }
-    Ok(interface.cast())
 }
 
 fn select_mode(

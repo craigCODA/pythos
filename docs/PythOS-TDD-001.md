@@ -39,8 +39,9 @@ Verified vertical slices:
 
 * `loader-enter` implements step 1 through COM1 serial output.
 * `gop-ready` implements GOP discovery, direct-framebuffer mode selection, and `PYTHOS:LOADER:GOP_READY`.
+* `kernel-loaded` implements EFI filesystem access, bounded ELF64 validation, physical page allocation for `PT_LOAD` segments, segment copy/zeroing, and `PYTHOS:LOADER:KERNEL_LOADED`.
 
-The active implementation still stops before EFI filesystem access, ELF loading, memory-map handoff, and `ExitBootServices()`.
+The active implementation still stops before `INIT.PAK` loading, memory-map handoff, temporary page-table construction, and `ExitBootServices()`.
 
 ## Kernel Entry Contract
 
@@ -131,6 +132,16 @@ The `gop-ready` slice asserts:
 ```text
 PYTHOS:LOADER:ENTER
 PYTHOS:LOADER:GOP_READY
+```
+
+It also fails on any failure marker.
+
+The `kernel-loaded` slice asserts:
+
+```text
+PYTHOS:LOADER:ENTER
+PYTHOS:LOADER:GOP_READY
+PYTHOS:LOADER:KERNEL_LOADED
 ```
 
 It also fails on any failure marker.

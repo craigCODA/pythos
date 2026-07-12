@@ -10,7 +10,7 @@ image: build-loader
 	python scripts/build-image.py
 
 test-boot:
-	python scripts/test-boot.py --slice gop-ready
+	python scripts/test-boot.py --slice kernel-loaded
 
 clean:
 	cargo clean
