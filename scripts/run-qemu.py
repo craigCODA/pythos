@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ESP = ROOT / "image" / "esp"
+DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
 
 
@@ -87,6 +88,7 @@ def request_screendump(path: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--esp", type=Path, default=DEFAULT_ESP)
+    parser.add_argument("--iso", type=Path)
     parser.add_argument("--serial-log", type=Path, default=DEFAULT_LOG)
     parser.add_argument("--timeout", type=float, default=10.0)
     parser.add_argument("--qemu")
@@ -96,6 +98,8 @@ def main() -> int:
 
     qemu = find_qemu(args.qemu)
     ovmf = find_ovmf(args.ovmf_code)
+    if args.iso and args.esp != DEFAULT_ESP:
+        raise SystemExit("--esp and --iso are mutually exclusive")
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
@@ -112,8 +116,6 @@ def main() -> int:
         "512M",
         "-drive",
         f"if=pflash,format=raw,readonly=on,file={ovmf}",
-        "-drive",
-        f"format=raw,file=fat:rw:{args.esp}",
         "-serial",
         f"file:{args.serial_log}",
         "-display",
@@ -121,6 +123,18 @@ def main() -> int:
         "-no-reboot",
         "-no-shutdown",
     ]
+    if args.iso:
+        command += [
+            "-drive",
+            f"if=ide,media=cdrom,readonly=on,file={args.iso}",
+            "-boot",
+            "order=d",
+        ]
+    else:
+        command += [
+            "-drive",
+            f"format=raw,file=fat:rw:{args.esp}",
+        ]
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
         command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
@@ -155,4 +169,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

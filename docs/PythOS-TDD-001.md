@@ -21,6 +21,11 @@ panic=halt
 runtime_bundle=/PYTHOS/INIT.PAK
 ```
 
+The same file set may be packaged as `target/pythos.iso` for UEFI CD-ROM boot.
+The ISO is an El Torito no-emulation UEFI image that embeds a FAT16 EFI System
+Partition and also exposes the required files through ISO9660 records. This is
+packaging only; it does not alter the boot ABI or the milestone marker order.
+
 ## Required Loader Sequence
 
 The complete milestone 1 loader sequence is:
@@ -110,6 +115,13 @@ Test name:
 
 ```text
 boot_core_handoff
+```
+
+The ESP-directory QEMU path remains the default test medium. The ISO medium must
+preserve the same serial oracle:
+
+```powershell
+python scripts/test-boot.py --slice milestone-1 --media iso
 ```
 
 Milestone 1 success markers, in order:

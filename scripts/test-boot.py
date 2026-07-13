@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SERIAL_LOG = ROOT / "target" / "boot-serial.log"
+ISO_IMAGE = ROOT / "target" / "pythos.iso"
 FAILURE_MARKERS = [
     "PYTHOS:LOADER:FAIL",
     "PYTHOS:PANIC",
@@ -139,12 +140,26 @@ def assert_markers(serial: str, expected: list[str]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--slice", choices=sorted(SLICE_MARKERS), default="loader-enter")
+    parser.add_argument("--media", choices=["esp", "iso"], default="esp")
     args = parser.parse_args()
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
-    run([sys.executable, "scripts/build-image.py"])
-    run([sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG)])
+    if args.media == "iso":
+        run([sys.executable, "scripts/build-iso.py", "--output", str(ISO_IMAGE)])
+        run(
+            [
+                sys.executable,
+                "scripts/run-qemu.py",
+                "--iso",
+                str(ISO_IMAGE),
+                "--serial-log",
+                str(SERIAL_LOG),
+            ]
+        )
+    else:
+        run([sys.executable, "scripts/build-image.py"])
+        run([sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG)])
 
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
     assert_markers(serial, SLICE_MARKERS[args.slice])

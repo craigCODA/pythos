@@ -103,6 +103,7 @@ Core:
 Build and test:
 
 * `scripts/build-image.py` builds the FAT EFI system partition tree.
+* `scripts/build-iso.py` builds `target/pythos.iso` as a UEFI El Torito bootable ISO containing the required PythOS boot files.
 * `scripts/run-qemu.py` starts QEMU with OVMF and serial capture.
 * `scripts/test-boot.py` checks marker ordering for individual vertical slices.
 * `tests/boot_core_handoff.py` runs QEMU-backed slice tests.
@@ -125,6 +126,9 @@ cargo build -p pythos-boot --target x86_64-unknown-uefi
 cargo build -p pythos-core --target x86_64-unknown-none
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
+python -m unittest tests.test_iso_image
+python scripts/build-iso.py --output target/pythos.iso
+python scripts/test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.boot_core_handoff
 python scripts/test-boot.py --slice exit-boot-services-ok
 ```
