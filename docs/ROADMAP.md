@@ -38,6 +38,12 @@ The `vm-ready` slice builds final kernel page tables inside PythCore, switches
 usable, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation.
 This slice is implemented.
 
+Before declaring Phase 1.5 complete, add a negative VM proof that an address
+which was reachable only through the loader's old broad identity map faults
+after the PythCore `CR3` switch. This should be paired with the exception
+diagnostic or controlled expected-fault harness so the test distinguishes the
+intended page fault from a hang or unrelated panic.
+
 The remaining `exceptions-diagnostic` slice makes fault reports actionable without relying
 on allocation or locks. The `bootinfo-complete` slice fills and validates ACPI,
 SMBIOS, boot-device filesystem resolution, and `INIT.PAK` metadata. The
@@ -58,3 +64,10 @@ PYTHOS:CORE:MILESTONE_1_COMPLETE
 Phase 2 adds timer and native tasks on top of the kernel-owned execution substrate. Phase 3 adds IPC and capabilities. Phase 4 embeds the first Python runtime. Phase 5 builds input and graphical shell. Phase 6 adds early native audio and the wake identity. Later phases add object storage, hardware-enforced isolation, package management, updates and recovery, networking, semantic indexing, optional local AI, and controlled physical hardware support.
 
 Deferred during early milestones: broad laptop compatibility, Wi-Fi, Bluetooth, accelerated 3D graphics, Windows or Linux binary compatibility, POSIX completeness, web browser, cloud account system, package marketplace, unrestricted AI control, voice recognition, SMP, hibernation, production secure boot, and full formal verification.
+
+## Parking Lot
+
+Datacenter capability brokering, remote workload orchestration, and cluster or
+tenant policy integration are long-term research directions only. They must not
+alter Milestone 1.5, Milestone 2, or Milestone 3 scope. Revisit them only after
+local IPC and kernel-enforced capabilities are implemented, tested, and boring.
