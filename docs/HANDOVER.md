@@ -31,6 +31,7 @@ PYTHOS:CORE:BOOTINFO_VALID
 PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -56,6 +57,7 @@ This proves:
 * PythCore walks the retained UEFI memory descriptors, classifies free versus reserved 4 KiB pages, reserves required loader/core ranges, initializes a fixed bitmap allocator backing store, and emits `PYTHOS:CORE:MEMORY_READY`.
 * PythCore installs a minimal 64-bit GDT with kernel code, kernel data, and TSS descriptors, reloads segment registers, loads `TR`, and emits `PYTHOS:CORE:GDT_READY`.
 * PythCore installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
+* PythCore allocates replacement page-table pages from its physical allocator, maps only the required kernel/boot/framebuffer/stack/page-table-management surfaces, switches `CR3` a second time, validates the active layout, and emits `PYTHOS:CORE:VM_READY`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
 
@@ -71,7 +73,7 @@ The framebuffer slice was implemented before memory/GDT/IDT for early visible bo
 
 ## Important Caveat
 
-The loader-built page tables are still transitional. The 2 MiB-to-4 GiB identity map is writable and executable because the loader itself executes from it across the `CR3` switch; only the kernel image mappings enforce writable XOR executable. The milestone-1 memory slice classifies page ownership and initializes a bitmap allocator, but it does not yet replace the loader page tables with kernel-owned mappings.
+The loader-built page tables are still used for the initial handoff into PythCore, but PythCore now replaces them with kernel-owned page tables before framebuffer rendering. The replacement tables omit the broad 2 MiB-to-4 GiB identity map, preserve the low guard, map linker-defined kernel regions with W^X permissions, and keep only required boot metadata, stack, framebuffer, and page-table-management surfaces. Loader page-table frames are left allocated for later reclamation.
 
 ## Relevant Files
 
@@ -96,6 +98,7 @@ Core:
 * `core/linker.ld` links PythCore into the intended higher-half image region.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/memory/physical.rs` owns milestone-1 page classification and fixed bitmap initialization.
+* `core/src/memory/virtual.rs` owns milestone-1.5 kernel page-table replacement and the second `CR3` switch.
 * `core/src/architecture/x86_64/gdt.rs` installs the minimal GDT and TSS selector.
 * `core/src/architecture/x86_64/idt.rs` installs the panic-loop exception IDT.
 * `core/src/framebuffer.rs` renders the post-firmware boot screen.
@@ -141,9 +144,8 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * QEMU termination is still timeout-based. Milestone completion should move toward a deterministic debug-exit device or controlled shutdown path.
 * ACPI RSDP and SMBIOS discovery are not yet populated in `PythBootInfo`.
 * `INIT.PAK` is loaded but not interpreted or format-validated.
-* The temporary identity map is writable and executable during the transition; kernel-owned tables replace it in a later slice.
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
-* PythCore has not replaced the loader-built page tables with final kernel-owned mappings.
+* Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
 * The IDT routes exceptions to a minimal panic loop. Detailed exception diagnostics and recovery are later work.
 
@@ -155,16 +157,15 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The locked sequence is:
+The `vm-ready` slice is implemented. The remaining locked sequence is:
 
 ```text
-vm-ready
 exceptions-diagnostic
 bootinfo-complete
 qemu-exit
 ```
 
-For `vm-ready`, the testable proof is:
+The `vm-ready` proof now covers:
 
 ```text
 current milestone-1 boot
@@ -218,7 +219,7 @@ impl KernelAddressSpace {
 }
 ```
 
-After `vm-ready`, add allocation-free exception diagnostics for INT3, invalid
+Next, add allocation-free exception diagnostics for INT3, invalid
 opcode, page fault, general-protection fault, and double-fault containment. Then
 complete ACPI RSDP, SMBIOS, boot-device filesystem resolution, and `INIT.PAK`
 validation. Finally, replace timeout-based QEMU termination with deterministic

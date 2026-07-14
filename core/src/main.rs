@@ -44,10 +44,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
 
-    if memory::physical::initialize(boot_info).is_err() {
-        serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
-        halt();
-    }
+    #[cfg_attr(test, allow(unused_mut, unused_variables))]
+    let mut physical_memory = match memory::physical::initialize(boot_info) {
+        Ok(memory) => memory,
+        Err(_) => {
+            serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
+            halt();
+        }
+    };
     serial::write_line("PYTHOS:CORE:MEMORY_READY");
 
     if architecture::x86_64::gdt::initialize().is_err() {
@@ -61,6 +65,37 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         halt();
     }
     serial::write_line("PYTHOS:CORE:IDT_READY");
+
+    #[cfg(not(test))]
+    {
+        let address_space =
+            match memory::r#virtual::KernelAddressSpace::build(&mut physical_memory, boot_info) {
+                Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    halt();
+                }
+            };
+        // SAFETY:
+        // 1. Invariant: `address_space` maps the currently executing PythCore
+        //    code, active bootstrap stack, boot metadata, framebuffer, COM1 code
+        //    path, and page-table frames required for validation.
+        // 2. Established by: successful `KernelAddressSpace::build` above.
+        // 3. Lifetime: the page tables are intentionally retained for this slice.
+        // 4. Pointer ownership: PythCore owns the newly allocated page tables.
+        // 5. Alignment: table root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is mapped.
+        // 7. Concurrency: single-core execution with interrupts disabled.
+        // 8. Violation: execution faults immediately after the CR3 switch.
+        unsafe {
+            address_space.activate();
+        }
+        if address_space.validate_active(boot_info).is_err() {
+            serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
+            halt();
+        }
+        serial::write_line("PYTHOS:CORE:VM_READY");
+    }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
         serial::write_line("PYTHOS:PANIC");

@@ -36,8 +36,9 @@ The `vm-ready` slice builds final kernel page tables inside PythCore, switches
 `CR3` a second time, removes the broad loader identity map, keeps the first
 2 MiB unmapped, preserves W^X kernel mappings, keeps framebuffer and COM1
 usable, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation.
+This slice is implemented.
 
-The `exceptions-diagnostic` slice makes fault reports actionable without relying
+The remaining `exceptions-diagnostic` slice makes fault reports actionable without relying
 on allocation or locks. The `bootinfo-complete` slice fills and validates ACPI,
 SMBIOS, boot-device filesystem resolution, and `INIT.PAK` metadata. The
 `qemu-exit` slice replaces timeout-based test termination with deterministic

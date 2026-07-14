@@ -2,12 +2,16 @@
 
 use core::cell::UnsafeCell;
 use core::mem;
+#[cfg(not(test))]
+use core::ptr;
 use pythos_shared::boot_protocol::PythBootInfo;
 
 pub const PAGE_SIZE: u64 = 4096;
 const MAX_MANAGED_PHYSICAL: u64 = 4 * 1024 * 1024 * 1024;
 const MAX_MANAGED_PAGES: usize = (MAX_MANAGED_PHYSICAL / PAGE_SIZE) as usize;
 const BITMAP_WORDS: usize = MAX_MANAGED_PAGES / 64;
+#[cfg(not(test))]
+const MIN_ALLOCATABLE_PHYSICAL: u64 = 2 * 1024 * 1024;
 
 #[cfg(test)]
 pub const EFI_BOOT_SERVICES_DATA: u32 = 4;
@@ -50,6 +54,8 @@ pub enum MemoryError {
     BadMemoryMap,
     RangeOverflow,
     OutOfManagedRange,
+    #[cfg(not(test))]
+    OutOfMemory,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -201,6 +207,61 @@ pub fn initialize(boot_info: &PythBootInfo) -> Result<PhysicalMemory, MemoryErro
         free_pages,
         reserved_pages,
     })
+}
+
+#[cfg(not(test))]
+impl PhysicalMemory {
+    pub fn allocate_zeroed_page(&mut self) -> Result<u64, MemoryError> {
+        // SAFETY:
+        // 1. Invariant: the global bitmap is only mutably accessed by early
+        //    PythCore initialization while interrupts remain disabled.
+        // 2. Established by: the milestone-1.5 boot contract, before any
+        //    scheduler, interrupt allocation, or second CPU exists.
+        // 3. Lifetime: the bitmap remains static for all early PythCore.
+        // 4. Pointer ownership: PythCore exclusively owns this bitmap.
+        // 5. Alignment: `UnsafeCell<[u64; N]>` preserves `u64` alignment.
+        // 6. Mapped length: exactly `BITMAP_WORDS * size_of::<u64>()` bytes.
+        // 7. Concurrency: single-core execution with interrupts disabled.
+        // 8. Violation: concurrent mutation would corrupt page ownership.
+        let bitmap = unsafe { &mut *BITMAP.0.get() };
+        let start_page = (MIN_ALLOCATABLE_PHYSICAL / PAGE_SIZE) as usize;
+        for page in start_page..MAX_MANAGED_PAGES {
+            if bitmap[page / 64] & (1u64 << (page % 64)) == 0 {
+                set_allocated(bitmap, page);
+                self.free_pages = self
+                    .free_pages
+                    .checked_sub(1)
+                    .ok_or(MemoryError::BadMemoryMap)?;
+                self.reserved_pages = self
+                    .reserved_pages
+                    .checked_add(1)
+                    .ok_or(MemoryError::RangeOverflow)?;
+                let physical = (page as u64)
+                    .checked_mul(PAGE_SIZE)
+                    .ok_or(MemoryError::RangeOverflow)?;
+                // SAFETY:
+                // 1. Invariant: `physical` is a free conventional page above
+                //    the low guard and currently reachable through the
+                //    loader's temporary identity mapping.
+                // 2. Established by: bitmap construction from the UEFI memory
+                //    map and `MIN_ALLOCATABLE_PHYSICAL`.
+                // 3. Lifetime: this function initializes the page before
+                //    handing exclusive ownership to its caller.
+                // 4. Pointer ownership: ownership transfers from the free
+                //    bitmap to the caller.
+                // 5. Alignment: pages are 4 KiB aligned by construction.
+                // 6. Mapped length: exactly one 4 KiB page is written.
+                // 7. Concurrency: single-core execution with interrupts
+                //    disabled.
+                // 8. Violation: a stale free bit would corrupt live memory.
+                unsafe {
+                    ptr::write_bytes(physical as *mut u8, 0, PAGE_SIZE as usize);
+                }
+                return Ok(physical);
+            }
+        }
+        Err(MemoryError::OutOfMemory)
+    }
 }
 
 #[cfg(test)]
