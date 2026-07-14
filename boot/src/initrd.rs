@@ -1,17 +1,11 @@
 use crate::uefi::{
     self, EFI_ALLOCATE_ANY_PAGES, EFI_FILE_MODE_READ, EFI_LOADER_DATA, EFI_SUCCESS,
-    EfiBootServices, EfiFileProtocol, EfiGuid, EfiPhysicalAddress, EfiSimpleFileSystemProtocol,
-    EfiSystemTable,
+    EfiBootServices, EfiFileProtocol, EfiPhysicalAddress, EfiSystemTable,
 };
 use core::ffi::c_void;
 use core::ptr;
-
-const SIMPLE_FILE_SYSTEM_GUID: EfiGuid = EfiGuid {
-    data1: 0x964E_5B22,
-    data2: 0x6459,
-    data3: 0x11D2,
-    data4: [0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B],
-};
+use core::slice;
+use pythos_shared::init_pak;
 
 const INIT_PAK_PATH: &[u16] = &[
     b'\\' as u16,
@@ -53,9 +47,27 @@ struct LoadedFile {
     len: usize,
 }
 
-pub(crate) fn load_init_pak(system_table: *mut EfiSystemTable) -> Result<LoadedInitBundle, ()> {
+pub(crate) fn load_init_pak(
+    system_table: *mut EfiSystemTable,
+    image_handle: *mut c_void,
+) -> Result<LoadedInitBundle, ()> {
     let boot_services = uefi::boot_services(system_table).map_err(|_| ())?;
-    let file = read_init_file(boot_services)?;
+    let file = read_init_file(system_table, image_handle, boot_services)?;
+    // SAFETY:
+    // 1. Invariant: `file.ptr` points to the pool buffer filled by UEFI with
+    //    exactly `file.len` bytes of INIT.PAK data.
+    // 2. Established by: `read_init_file()` successful allocation and read.
+    // 3. Lifetime: the slice is used before the pool is released below.
+    // 4. Pointer ownership: loader owns the pool buffer for this scope.
+    // 5. Alignment: byte slices require only 1-byte alignment.
+    // 6. Mapped length: exactly `file.len` bytes.
+    // 7. Concurrency: no concurrent access to the file buffer.
+    // 8. Violation: a bad pointer or length would make validation unsound.
+    let bytes = unsafe { slice::from_raw_parts(file.ptr.cast_const(), file.len) };
+    if init_pak::validate(bytes).is_err() {
+        free_pool(boot_services, file.ptr.cast());
+        return Err(());
+    }
     let pages = page_count(file.len)?;
     let mut physical: EfiPhysicalAddress = 0;
 
@@ -110,25 +122,12 @@ pub(crate) fn load_init_pak(system_table: *mut EfiSystemTable) -> Result<LoadedI
     }
 }
 
-fn read_init_file(boot_services: *mut EfiBootServices) -> Result<LoadedFile, ()> {
-    let filesystem: *mut EfiSimpleFileSystemProtocol =
-        uefi::locate_protocol(boot_services, &SIMPLE_FILE_SYSTEM_GUID).map_err(|_| ())?;
-    let mut root: *mut EfiFileProtocol = ptr::null_mut();
-
-    // SAFETY:
-    // 1. Invariant: `filesystem` is the Simple File System protocol returned by firmware.
-    // 2. Established by: successful `LocateProtocol()` for the Simple File System GUID.
-    // 3. Lifetime: valid until `ExitBootServices()`, which this slice does not call.
-    // 4. Pointer ownership: firmware owns the protocol; opened root handle is closed below.
-    // 5. Alignment: firmware returns aligned protocol pointers; `root` is an aligned output pointer.
-    // 6. Mapped length: protocol table contains `OpenVolume`; `root` is one pointer output.
-    // 7. Concurrency: no concurrent filesystem protocol use by this loader.
-    // 8. Violation: invalid protocol pointer could call through a bad function pointer.
-    let status = unsafe { ((*filesystem).open_volume)(filesystem, &mut root) };
-    if status != EFI_SUCCESS || root.is_null() {
-        return Err(());
-    }
-
+fn read_init_file(
+    system_table: *mut EfiSystemTable,
+    image_handle: *mut c_void,
+    boot_services: *mut EfiBootServices,
+) -> Result<LoadedFile, ()> {
+    let root = uefi::open_boot_volume(system_table, image_handle).map_err(|_| ())?;
     let mut file: *mut EfiFileProtocol = ptr::null_mut();
     // SAFETY:
     // 1. Invariant: `root` is an open EFI file handle for the ESP root directory.

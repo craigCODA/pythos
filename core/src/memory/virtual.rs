@@ -125,6 +125,7 @@ impl KernelAddressSpace {
             boot_info.init_bundle_len,
             PTE_NO_EXECUTE,
         )?;
+        map_firmware_tables(&mut tables, boot_info)?;
         tables.map_translated_range(
             boot_info.bootstrap_stack_bottom,
             boot_info
@@ -286,6 +287,10 @@ impl<'a> PageTableBuilder<'a> {
         let pt = self.ensure_table(pd, table_index(virt, 21))?;
         let index = table_index(virt, 12);
         if read_entry(pt, index) & PTE_PRESENT != 0 {
+            let existing = read_entry(pt, index);
+            if existing & ADDR_MASK == phys {
+                return Ok(());
+            }
             return Err(VmError::DuplicateMapping);
         }
         write_entry(pt, index, phys | leaf_flags | PTE_PRESENT);
@@ -342,6 +347,94 @@ fn map_kernel_segments(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError>
         PTE_WRITE | PTE_NO_EXECUTE,
     )?;
     Ok(())
+}
+
+fn map_firmware_tables(
+    tables: &mut PageTableBuilder<'_>,
+    boot_info: &PythBootInfo,
+) -> Result<(), VmError> {
+    if boot_info.acpi_rsdp == 0 || boot_info.smbios_entry == 0 {
+        return Err(VmError::BadBootInfo);
+    }
+
+    let rsdp_len = acpi_rsdp_len(boot_info.acpi_rsdp)?;
+    tables.map_physical_range(
+        boot_info.acpi_rsdp,
+        boot_info.acpi_rsdp,
+        rsdp_len,
+        PTE_NO_EXECUTE,
+    )?;
+    let root_table = acpi_root_table(boot_info.acpi_rsdp)?;
+    let root_len = acpi_sdt_len(root_table)?;
+    tables.map_physical_range(root_table, root_table, root_len, PTE_NO_EXECUTE)?;
+
+    let smbios_len = smbios_entry_len(boot_info.smbios_entry)?;
+    tables.map_physical_range(
+        boot_info.smbios_entry,
+        boot_info.smbios_entry,
+        smbios_len,
+        PTE_NO_EXECUTE,
+    )?;
+    Ok(())
+}
+
+fn acpi_rsdp_len(address: u64) -> Result<u64, VmError> {
+    if address == 0 {
+        return Err(VmError::BadBootInfo);
+    }
+    let revision = read_u8(address, 15);
+    if revision < 2 {
+        return Ok(20);
+    }
+    let length = u64::from(read_u32(address, 20));
+    if !(36..=4096).contains(&length) {
+        return Err(VmError::BadBootInfo);
+    }
+    Ok(length)
+}
+
+fn acpi_root_table(rsdp: u64) -> Result<u64, VmError> {
+    let revision = read_u8(rsdp, 15);
+    if revision >= 2 {
+        let xsdt = read_u64(rsdp, 24);
+        if xsdt != 0 {
+            return Ok(xsdt);
+        }
+    }
+    let rsdt = u64::from(read_u32(rsdp, 16));
+    if rsdt == 0 {
+        return Err(VmError::BadBootInfo);
+    }
+    Ok(rsdt)
+}
+
+fn acpi_sdt_len(address: u64) -> Result<u64, VmError> {
+    let length = u64::from(read_u32(address, 4));
+    if !(36..=4096).contains(&length) {
+        return Err(VmError::BadBootInfo);
+    }
+    Ok(length)
+}
+
+fn smbios_entry_len(address: u64) -> Result<u64, VmError> {
+    if address == 0 {
+        return Err(VmError::BadBootInfo);
+    }
+    if read_bytes_eq(address, b"_SM3_") {
+        let length = u64::from(read_u8(address, 6));
+        if length < 0x18 {
+            return Err(VmError::BadBootInfo);
+        }
+        return Ok(length);
+    }
+    if read_bytes_eq(address, b"_SM_") {
+        let length = u64::from(read_u8(address, 5));
+        if length < 0x1F {
+            return Err(VmError::BadBootInfo);
+        }
+        return Ok(length);
+    }
+    Err(VmError::BadBootInfo)
 }
 
 fn translate_active(virt: u64) -> Result<u64, VmError> {
@@ -421,6 +514,69 @@ fn write_entry(table_phys: u64, index: usize, value: u64) {
     // 7. Concurrency: single-core execution with interrupts disabled.
     // 8. Violation: writing outside the frame would corrupt memory.
     unsafe { (table_phys as *mut u64).add(index).write_volatile(value) }
+}
+
+fn read_u8(address: u64, offset: usize) -> u8 {
+    // SAFETY:
+    // 1. Invariant: `address + offset` is readable through the loader's
+    //    active identity mapping while replacement page tables are being built.
+    // 2. Established by: firmware table addresses were validated by the loader
+    //    before `ExitBootServices()` and are parsed before the second CR3 switch.
+    // 3. Lifetime: firmware metadata remains reserved during early boot.
+    // 4. Pointer ownership: firmware owns the table; PythCore reads it.
+    // 5. Alignment: byte reads require no stronger alignment.
+    // 6. Mapped length: caller reads fields within fixed firmware headers.
+    // 7. Concurrency: single-core early boot with interrupts disabled.
+    // 8. Violation: a bad firmware pointer would fault before VM activation.
+    unsafe { ((address as *const u8).add(offset)).read_volatile() }
+}
+
+fn read_u32(address: u64, offset: usize) -> u32 {
+    // SAFETY:
+    // 1. Invariant: `address + offset..offset+4` is readable through the
+    //    loader's active identity mapping while replacement tables are built.
+    // 2. Established by: loader-side firmware table validation and bounded
+    //    field offsets in ACPI headers.
+    // 3. Lifetime: firmware metadata remains reserved during early boot.
+    // 4. Pointer ownership: firmware owns the table; PythCore reads it.
+    // 5. Alignment: `read_unaligned` handles packed firmware fields.
+    // 6. Mapped length: 4 bytes at the requested offset.
+    // 7. Concurrency: single-core early boot with interrupts disabled.
+    // 8. Violation: a bad firmware pointer would fault before VM activation.
+    unsafe {
+        (address as *const u8)
+            .add(offset)
+            .cast::<u32>()
+            .read_unaligned()
+    }
+}
+
+fn read_u64(address: u64, offset: usize) -> u64 {
+    // SAFETY:
+    // 1. Invariant: `address + offset..offset+8` is readable through the
+    //    loader's active identity mapping while replacement tables are built.
+    // 2. Established by: loader-side RSDP validation and bounded field offsets.
+    // 3. Lifetime: firmware metadata remains reserved during early boot.
+    // 4. Pointer ownership: firmware owns the table; PythCore reads it.
+    // 5. Alignment: `read_unaligned` handles packed firmware fields.
+    // 6. Mapped length: 8 bytes at the requested offset.
+    // 7. Concurrency: single-core early boot with interrupts disabled.
+    // 8. Violation: a bad firmware pointer would fault before VM activation.
+    unsafe {
+        (address as *const u8)
+            .add(offset)
+            .cast::<u64>()
+            .read_unaligned()
+    }
+}
+
+fn read_bytes_eq(address: u64, expected: &[u8]) -> bool {
+    for (offset, &byte) in expected.iter().enumerate() {
+        if read_u8(address, offset) != byte {
+            return false;
+        }
+    }
+    true
 }
 
 fn table_index(virt: u64, shift: u32) -> usize {

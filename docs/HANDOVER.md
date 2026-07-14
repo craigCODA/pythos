@@ -35,6 +35,7 @@ PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
+PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -44,12 +45,13 @@ This proves:
 * OVMF executes `/EFI/BOOT/BOOTX64.EFI`.
 * The freestanding Rust UEFI loader initializes direct COM1 serial output.
 * The loader locates and validates a directly writable GOP framebuffer.
-* The loader opens the EFI system partition in the current QEMU single-disk setup.
+* The loader opens the EFI system partition through the loaded image's own device handle.
 * The loader reads `/PYTHOS/PYTHCORE.ELF`.
 * The loader validates ELF64 `ET_EXEC` for x86-64, rejects unsupported images, rejects writable-executable load segments, allocates pages, copies file bytes, and zeroes segment tails.
 * Loaded kernel segment metadata is retained for future mappings.
-* The loader reads `/PYTHOS/INIT.PAK`, allocates page-aligned storage for it, and records its physical range.
+* The loader reads `/PYTHOS/INIT.PAK`, validates its binary header and checksum, allocates page-aligned storage for it, and records its physical range.
 * The loader constructs `PythBootInfo` using the shared ABI.
+* The loader discovers and validates ACPI RSDP and SMBIOS entry points from UEFI configuration tables.
 * The loader captures a UEFI memory map with spare descriptor capacity.
 * The loader calls `ExitBootServices()` successfully, including a stale-key retry path.
 * The post-exit marker is emitted by direct serial I/O after UEFI boot services are gone.
@@ -63,6 +65,7 @@ This proves:
 * PythCore installs per-vector CPU exception stubs with allocation-free serial diagnostics and emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
 * PythCore allocates replacement page-table pages from its physical allocator, maps only the required kernel/boot/framebuffer/stack/page-table-management surfaces, switches `CR3` a second time, validates the active layout, and emits `PYTHOS:CORE:VM_READY`.
 * PythCore proves the old broad loader identity map is absent by confirming a former identity-range address is untranslated, taking and recovering from the expected page fault, and emitting `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
+* PythCore maps and revalidates ACPI, SMBIOS, and `INIT.PAK` metadata after the second `CR3` switch, confirms unsupported runtime-services pointers are zero, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
 
@@ -78,7 +81,7 @@ The framebuffer slice was implemented before memory/GDT/IDT for early visible bo
 
 ## Important Caveat
 
-The loader-built page tables are still used for the initial handoff into PythCore, but PythCore now replaces them with kernel-owned page tables before framebuffer rendering. The replacement tables omit the broad 2 MiB-to-4 GiB identity map, preserve the low guard, map linker-defined kernel regions with W^X permissions, and keep only required boot metadata, stack, framebuffer, and page-table-management surfaces. A controlled expected page fault against `0x0400_0000` verifies the old broad identity map is not active. Loader page-table frames are left allocated for later reclamation.
+The loader-built page tables are still used for the initial handoff into PythCore, but PythCore now replaces them with kernel-owned page tables before framebuffer rendering. The replacement tables omit the broad 2 MiB-to-4 GiB identity map, preserve the low guard, map linker-defined kernel regions with W^X permissions, and keep only required boot metadata, firmware metadata, stack, framebuffer, and page-table-management surfaces. A controlled expected page fault against `0x0400_0000` verifies the old broad identity map is not active. Loader page-table frames are left allocated for later reclamation.
 
 ## Relevant Files
 
@@ -87,6 +90,7 @@ Loader:
 * `boot/src/main.rs` coordinates the verified boot slices.
 * `boot/src/serial.rs` provides direct COM1 output.
 * `boot/src/uefi.rs` contains bounded UEFI table/protocol helpers.
+* `boot/src/firmware.rs` discovers and validates ACPI and SMBIOS configuration-table entries.
 * `boot/src/graphics.rs` discovers GOP and converts framebuffer metadata.
 * `boot/src/elf.rs` validates and loads `PYTHCORE.ELF`.
 * `boot/src/initrd.rs` loads `INIT.PAK`.
@@ -97,11 +101,13 @@ Loader:
 Shared ABI:
 
 * `shared/src/boot_protocol.rs` defines `PythBootInfo`, `PythFramebufferInfo`, constants, and pixel formats.
+* `shared/src/init_pak.rs` defines and validates the milestone-1.5 binary `INIT.PAK` header.
 
 Core:
 
 * `core/linker.ld` links PythCore into the intended higher-half image region.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
+* `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
 * `core/src/memory/physical.rs` owns milestone-1 page classification and fixed bitmap initialization.
 * `core/src/memory/virtual.rs` owns milestone-1.5 kernel page-table replacement and the second `CR3` switch.
 * `core/src/architecture/x86_64/gdt.rs` installs the minimal GDT and TSS selector.
@@ -145,10 +151,8 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 
 ## Known Risks and Gaps
 
-* The EFI filesystem is currently discovered through `LocateProtocol()` rather than `LoadedImageProtocol -> DeviceHandle -> SimpleFileSystemProtocol`. This is acceptable for the current single-disk QEMU slice, but should be fixed before multi-disk assumptions are introduced.
 * QEMU termination is still timeout-based. Milestone completion should move toward a deterministic debug-exit device or controlled shutdown path.
-* ACPI RSDP and SMBIOS discovery are not yet populated in `PythBootInfo`.
-* `INIT.PAK` is loaded but not interpreted or format-validated.
+* `INIT.PAK` is validated but not interpreted or executed.
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
@@ -162,10 +166,9 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `vm-ready` and `exceptions-diagnostic` slices are implemented. The remaining locked sequence is:
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, and `bootinfo-complete` slices are implemented. The remaining locked sequence is:
 
 ```text
-bootinfo-complete
 qemu-exit
 ```
 
@@ -189,6 +192,8 @@ current milestone-1 boot
 -> PYTHOS:CORE:VM_READY
 -> expected page fault proves old broad identity address is unreachable
 -> PYTHOS:CORE:IDENTITY_MAP_REMOVED
+-> ACPI, SMBIOS, boot-device filesystem path, and INIT.PAK validation succeed
+-> PYTHOS:CORE:BOOTINFO_COMPLETE
 -> framebuffer output survives the switch
 -> ESP and ISO boot paths continue to pass
 ```
@@ -201,6 +206,7 @@ PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
+PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -228,10 +234,9 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, complete ACPI RSDP, SMBIOS, boot-device filesystem resolution, and `INIT.PAK`
-validation. Finally, replace timeout-based QEMU termination with deterministic
-debug-exit outcomes for success, panic, unexpected reset, timeout, and marker
-ordering failure.
+Next, replace timeout-based QEMU termination with deterministic debug-exit
+outcomes for success, panic, unexpected reset, timeout, and marker ordering
+failure.
 
 Only after Milestone 1.5 should timer interrupts, native tasks, and scheduling
 begin.

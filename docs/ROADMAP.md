@@ -107,7 +107,7 @@ the functional dependency: diagnostics should be live before the risky second
    `PYTHOS:CORE:EXPECTED_PAGE_FAULT` then
    `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 
-4. `bootinfo-complete` - NOT STARTED. Next slice.
+4. `bootinfo-complete` - COMPLETE.
    * Loader, while it still has UEFI Boot Services access: discover and
      validate the ACPI RSDP via the UEFI configuration table lookup using the
      ACPI GUID, since RSDP discovery requires UEFI protocol access PythCore no
@@ -140,7 +140,7 @@ the functional dependency: diagnostics should be live before the risky second
    * Failure path: any missing or invalid table is a diagnosed panic through
      the Phase 1.5 exception path, not a silent skip.
 
-5. `qemu-exit` - NOT STARTED. Final slice.
+5. `qemu-exit` - NOT STARTED. Next and final slice.
    * Replace timeout-based QEMU test termination in `run-qemu.py` and `tests/`
      with deterministic exit codes.
    * Required outcomes, each with a distinct exit code the test harness can

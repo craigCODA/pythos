@@ -12,6 +12,20 @@ pub(crate) const EFI_FILE_MODE_READ: u64 = 0x0000_0000_0000_0001;
 pub(crate) const EFI_INVALID_PARAMETER: EfiStatus = (1usize << (usize::BITS - 1)) | 2;
 pub(crate) const EFI_BUFFER_TOO_SMALL: EfiStatus = (1usize << (usize::BITS - 1)) | 5;
 
+const LOADED_IMAGE_PROTOCOL_GUID: EfiGuid = EfiGuid {
+    data1: 0x5B1B_31A1,
+    data2: 0x9562,
+    data3: 0x11D2,
+    data4: [0x8E, 0x3F, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B],
+};
+
+const SIMPLE_FILE_SYSTEM_GUID: EfiGuid = EfiGuid {
+    data1: 0x964E_5B22,
+    data2: 0x6459,
+    data3: 0x11D2,
+    data4: [0x8E, 0x39, 0x00, 0xA0, 0xC9, 0x69, 0x72, 0x3B],
+};
+
 #[repr(C)]
 pub struct EfiSystemTable {
     _header: EfiTableHeader,
@@ -57,7 +71,7 @@ pub(crate) struct EfiBootServices {
     _install_protocol_interface: usize,
     _reinstall_protocol_interface: usize,
     _uninstall_protocol_interface: usize,
-    _handle_protocol: usize,
+    pub(crate) handle_protocol: EfiHandleProtocol,
     _reserved: usize,
     _register_protocol_notify: usize,
     _locate_handle: usize,
@@ -104,6 +118,12 @@ pub(crate) type EfiGetMemoryMap = extern "efiapi" fn(
     descriptor_version: *mut u32,
 ) -> EfiStatus;
 
+pub(crate) type EfiHandleProtocol = extern "efiapi" fn(
+    handle: *mut c_void,
+    protocol: *const EfiGuid,
+    interface: *mut *mut c_void,
+) -> EfiStatus;
+
 pub(crate) type EfiLocateProtocol = extern "efiapi" fn(
     protocol: *const EfiGuid,
     registration: *mut c_void,
@@ -116,6 +136,29 @@ pub(crate) struct EfiGuid {
     pub(crate) data2: u16,
     pub(crate) data3: u16,
     pub(crate) data4: [u8; 8],
+}
+
+#[repr(C)]
+pub(crate) struct EfiConfigurationTable {
+    pub(crate) vendor_guid: EfiGuid,
+    pub(crate) vendor_table: *mut c_void,
+}
+
+#[repr(C)]
+struct EfiLoadedImageProtocol {
+    _revision: u32,
+    _parent_handle: *mut c_void,
+    _system_table: *mut EfiSystemTable,
+    device_handle: *mut c_void,
+    _file_path: *mut c_void,
+    _reserved: *mut c_void,
+    _load_options_size: u32,
+    _load_options: *mut c_void,
+    _image_base: *mut c_void,
+    _image_size: u64,
+    _image_code_type: u32,
+    _image_data_type: u32,
+    _unload: usize,
 }
 
 #[repr(C)]
@@ -192,21 +235,32 @@ pub(crate) fn boot_services(
     Ok(boot_services)
 }
 
-pub(crate) fn runtime_services(system_table: *mut EfiSystemTable) -> *mut c_void {
+pub(crate) fn configuration_tables(
+    system_table: *mut EfiSystemTable,
+) -> Result<(*const EfiConfigurationTable, usize), EfiStatus> {
     if system_table.is_null() {
-        return ptr::null_mut();
+        return Err(EFI_LOAD_ERROR);
     }
 
     // SAFETY:
     // 1. Invariant: `system_table` is the UEFI system table pointer passed to `efi_main`.
     // 2. Established by: UEFI firmware when invoking the EFI application entry point.
-    // 3. Lifetime: valid until `ExitBootServices()`; this only copies the pointer value.
-    // 4. Pointer ownership: firmware owns runtime services; loader does not dereference here.
+    // 3. Lifetime: valid until `ExitBootServices()`; callers only inspect entries before then.
+    // 4. Pointer ownership: firmware owns the table and its entries.
     // 5. Alignment: UEFI tables are naturally aligned by firmware.
-    // 6. Mapped length: at least through the runtime-services pointer field.
-    // 7. Concurrency: no loader threads mutate the system table.
-    // 8. Violation: a bogus pointer would make this read fault or return garbage.
-    unsafe { (*system_table)._runtime_services }
+    // 6. Mapped length: fixed system-table fields through the configuration-table pointer.
+    // 7. Concurrency: milestone 1.5 loader code is single-threaded.
+    // 8. Violation: a bogus system table would fault or return invalid metadata.
+    let (entries, table) = unsafe {
+        (
+            (*system_table)._number_of_table_entries,
+            (*system_table)._configuration_table,
+        )
+    };
+    if entries == 0 || table.is_null() {
+        return Err(EFI_LOAD_ERROR);
+    }
+    Ok((table.cast(), entries))
 }
 
 pub(crate) fn locate_protocol<T>(
@@ -231,4 +285,73 @@ pub(crate) fn locate_protocol<T>(
         return Err(status);
     }
     Ok(interface.cast())
+}
+
+pub(crate) fn handle_protocol<T>(
+    boot_services: *mut EfiBootServices,
+    handle: *mut c_void,
+    guid: &EfiGuid,
+) -> Result<*mut T, EfiStatus> {
+    if handle.is_null() {
+        return Err(EFI_INVALID_PARAMETER);
+    }
+    let mut interface: *mut c_void = ptr::null_mut();
+
+    // SAFETY:
+    // 1. Invariant: `boot_services` points to active UEFI boot services and
+    //    `handle` is a firmware-provided EFI handle.
+    // 2. Established by: `boot_services()` and the caller's UEFI entry
+    //    arguments or protocol fields.
+    // 3. Lifetime: valid until `ExitBootServices()`.
+    // 4. Pointer ownership: firmware owns the handle and returned protocol.
+    // 5. Alignment: firmware protocol pointers and output pointer are aligned.
+    // 6. Mapped length: boot-services table includes `HandleProtocol`;
+    //    `interface` is one pointer output.
+    // 7. Concurrency: no concurrent protocol mutation is performed.
+    // 8. Violation: invalid firmware tables could call through a bad pointer.
+    let status = unsafe { ((*boot_services).handle_protocol)(handle, guid, &mut interface) };
+    if status != EFI_SUCCESS || interface.is_null() {
+        return Err(status);
+    }
+    Ok(interface.cast())
+}
+
+pub(crate) fn open_boot_volume(
+    system_table: *mut EfiSystemTable,
+    image_handle: *mut c_void,
+) -> Result<*mut EfiFileProtocol, EfiStatus> {
+    let boot_services = boot_services(system_table)?;
+    let loaded_image: *mut EfiLoadedImageProtocol =
+        handle_protocol(boot_services, image_handle, &LOADED_IMAGE_PROTOCOL_GUID)?;
+
+    // SAFETY:
+    // 1. Invariant: `loaded_image` is the EFI Loaded Image Protocol for the
+    //    currently executing BOOTX64.EFI image.
+    // 2. Established by: `HandleProtocol()` on the loader image handle.
+    // 3. Lifetime: protocol remains valid until `ExitBootServices()`.
+    // 4. Pointer ownership: firmware owns the protocol; loader reads one field.
+    // 5. Alignment: firmware returns aligned protocol pointers.
+    // 6. Mapped length: Loaded Image Protocol includes `DeviceHandle`.
+    // 7. Concurrency: no concurrent protocol mutation is performed.
+    // 8. Violation: invalid protocol layout would return a bad device handle.
+    let device_handle = unsafe { (*loaded_image).device_handle };
+    let filesystem: *mut EfiSimpleFileSystemProtocol =
+        handle_protocol(boot_services, device_handle, &SIMPLE_FILE_SYSTEM_GUID)?;
+    let mut root: *mut EfiFileProtocol = ptr::null_mut();
+
+    // SAFETY:
+    // 1. Invariant: `filesystem` is the Simple File System protocol attached
+    //    to the loaded image's own device handle.
+    // 2. Established by: `HandleProtocol()` on `LoadedImage.DeviceHandle`.
+    // 3. Lifetime: valid until `ExitBootServices()`; returned root is closed by callers.
+    // 4. Pointer ownership: firmware owns protocol internals; loader owns the open handle.
+    // 5. Alignment: protocol pointer and `root` output pointer are aligned.
+    // 6. Mapped length: protocol table contains `OpenVolume`; `root` is one pointer.
+    // 7. Concurrency: no concurrent filesystem access is performed.
+    // 8. Violation: invalid protocol pointer could call through a bad function pointer.
+    let status = unsafe { ((*filesystem).open_volume)(filesystem, &mut root) };
+    if status != EFI_SUCCESS || root.is_null() {
+        return Err(status);
+    }
+    Ok(root)
 }

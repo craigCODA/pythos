@@ -13,7 +13,25 @@ ESP = ROOT / "image" / "esp"
 BOOT_EFI = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
 PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
-INIT_PAK = b"PYTHOS_INIT_PAK_V0\n"
+INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
+INIT_PAK_HEADER_LEN = 64
+
+
+def build_init_pak(payload: bytes = b"") -> bytes:
+    checksum = sum(payload) & 0xFFFFFFFF
+    total_len = INIT_PAK_HEADER_LEN + len(payload)
+    header = bytearray(INIT_PAK_HEADER_LEN)
+    header[: len(INIT_PAK_MAGIC)] = INIT_PAK_MAGIC
+    header[18:20] = (0).to_bytes(2, "little")
+    header[20:22] = (0).to_bytes(2, "little")
+    header[22:26] = INIT_PAK_HEADER_LEN.to_bytes(4, "little")
+    header[26:34] = total_len.to_bytes(8, "little")
+    header[34:42] = len(payload).to_bytes(8, "little")
+    header[42:46] = checksum.to_bytes(4, "little")
+    return bytes(header) + payload
+
+
+INIT_PAK = build_init_pak()
 
 
 def write_binary_if_changed(path: Path, content: bytes) -> None:

@@ -3,6 +3,7 @@
 
 mod architecture;
 mod boot_info;
+mod boot_metadata;
 mod font;
 mod framebuffer;
 mod memory;
@@ -101,6 +102,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             halt();
         }
         serial::write_line("PYTHOS:CORE:IDENTITY_MAP_REMOVED");
+        if boot_metadata::validate_complete(boot_info).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            halt();
+        }
+        serial::write_line("PYTHOS:CORE:BOOTINFO_COMPLETE");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

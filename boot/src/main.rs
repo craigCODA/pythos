@@ -4,6 +4,7 @@
 mod boot_info;
 mod elf;
 mod exit_boot_services;
+mod firmware;
 mod graphics;
 mod handoff;
 mod initrd;
@@ -31,16 +32,20 @@ pub extern "efiapi" fn efi_main(
         }
         Err(()) => fail(),
     };
-    let loaded_kernel = match elf::load_pythcore(system_table) {
+    let loaded_kernel = match elf::load_pythcore(system_table, image_handle) {
         Ok(loaded_kernel) if loaded_kernel.is_well_formed() => loaded_kernel,
         Ok(_) => fail(),
         Err(()) => fail(),
     };
     serial::write_line("PYTHOS:LOADER:KERNEL_LOADED");
 
-    let init_bundle = match initrd::load_init_pak(system_table) {
+    let init_bundle = match initrd::load_init_pak(system_table, image_handle) {
         Ok(init_bundle) if init_bundle.is_loaded() => init_bundle,
         Ok(_) => fail(),
+        Err(()) => fail(),
+    };
+    let firmware_tables = match firmware::discover(system_table) {
+        Ok(tables) => tables,
         Err(()) => fail(),
     };
     let allocated_boot_info = match boot_info::AllocatedBootInfo::allocate(system_table) {
@@ -62,12 +67,12 @@ pub extern "efiapi" fn efi_main(
         Err(()) => fail(),
     };
     let boot_info = match allocated_boot_info.populate(
-        system_table,
         framebuffer,
         &loaded_kernel,
         &init_bundle,
         &memory_map,
         &stack,
+        firmware_tables,
     ) {
         Ok(boot_info) => boot_info,
         Err(()) => fail(),
@@ -82,12 +87,12 @@ pub extern "efiapi" fn efi_main(
             }
             if allocated_boot_info
                 .populate(
-                    system_table,
                     framebuffer,
                     &loaded_kernel,
                     &init_bundle,
                     &memory_map,
                     &stack,
+                    firmware_tables,
                 )
                 .is_err()
             {

@@ -1,4 +1,5 @@
 use crate::elf::LoadedKernel;
+use crate::firmware::FirmwareTables;
 use crate::initrd::LoadedInitBundle;
 use crate::memory_map::CapturedMemoryMap;
 use crate::paging::BootstrapStack;
@@ -42,12 +43,12 @@ impl AllocatedBootInfo {
 
     pub(crate) fn populate(
         &self,
-        system_table: *mut EfiSystemTable,
         framebuffer: PythFramebufferInfo,
         kernel: &LoadedKernel,
         init_bundle: &LoadedInitBundle,
         memory_map: &CapturedMemoryMap,
         stack: &BootstrapStack,
+        firmware_tables: FirmwareTables,
     ) -> Result<*const PythBootInfo, ()> {
         if self.ptr.is_null()
             || !kernel.is_well_formed()
@@ -72,8 +73,8 @@ impl AllocatedBootInfo {
             memory_descriptor_size: descriptor_size,
             memory_descriptor_version: memory_map.descriptor_version,
             framebuffer,
-            acpi_rsdp: 0,
-            smbios_entry: 0,
+            acpi_rsdp: firmware_tables.acpi_rsdp,
+            smbios_entry: firmware_tables.smbios_entry,
             kernel_phys_start: kernel.physical_start,
             kernel_phys_end: kernel.physical_end,
             kernel_virt_start: kernel.virtual_start,
@@ -82,7 +83,7 @@ impl AllocatedBootInfo {
             bootstrap_stack_top: stack.virt_top,
             init_bundle_phys: init_bundle.physical_start,
             init_bundle_len: init_bundle.len,
-            runtime_services_ptr: uefi::runtime_services(system_table) as u64,
+            runtime_services_ptr: 0,
             command_line_ptr: 0,
             command_line_len: 0,
             reserved: [0; 8],
