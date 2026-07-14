@@ -44,14 +44,15 @@ OVMF
 -> PYTHOS:CORE:MEMORY_READY
 -> PYTHOS:CORE:GDT_READY
 -> PYTHOS:CORE:IDT_READY
+-> PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 -> PYTHOS:CORE:VM_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, builds replacement kernel-owned page tables, switches `CR3` a second time, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and halts.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, builds replacement kernel-owned page tables, switches `CR3` a second time, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and halts.
 
-The current phase is Milestone 1.5: kernel-owned execution substrate. The `vm-ready` slice is implemented. The remaining locked sequence is `exceptions-diagnostic`, `bootinfo-complete`, then `qemu-exit`. Do not begin timer, scheduler, IPC, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work until Milestone 1.5 is complete.
+The current phase is Milestone 1.5: kernel-owned execution substrate. The `vm-ready` and `exceptions-diagnostic` slices are implemented. The remaining locked sequence is `bootinfo-complete`, then `qemu-exit`. Do not begin timer, scheduler, IPC, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work until Milestone 1.5 is complete.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. Loader page-table frames are not reclaimed in this slice.
 
@@ -59,6 +60,7 @@ The required Milestone 1.5 marker order extends the existing sequence with:
 
 ```text
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE

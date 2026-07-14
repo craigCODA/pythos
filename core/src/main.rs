@@ -65,6 +65,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         halt();
     }
     serial::write_line("PYTHOS:CORE:IDT_READY");
+    serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
 
     #[cfg(not(test))]
     {

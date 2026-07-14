@@ -31,6 +31,7 @@ PYTHOS:CORE:BOOTINFO_VALID
 PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
@@ -57,6 +58,7 @@ This proves:
 * PythCore walks the retained UEFI memory descriptors, classifies free versus reserved 4 KiB pages, reserves required loader/core ranges, initializes a fixed bitmap allocator backing store, and emits `PYTHOS:CORE:MEMORY_READY`.
 * PythCore installs a minimal 64-bit GDT with kernel code, kernel data, and TSS descriptors, reloads segment registers, loads `TR`, and emits `PYTHOS:CORE:GDT_READY`.
 * PythCore installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
+* PythCore installs per-vector CPU exception stubs with allocation-free serial diagnostics and emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
 * PythCore allocates replacement page-table pages from its physical allocator, maps only the required kernel/boot/framebuffer/stack/page-table-management surfaces, switches `CR3` a second time, validates the active layout, and emits `PYTHOS:CORE:VM_READY`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -147,7 +149,7 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
-* The IDT routes exceptions to a minimal panic loop. Detailed exception diagnostics and recovery are later work.
+* Exception diagnostics are serial-only and end in a panic loop. Recovery and expected-fault test harnessing are later work.
 
 ## Milestone 1.5: Kernel-Owned Execution Substrate
 
@@ -157,10 +159,9 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `vm-ready` slice is implemented. The remaining locked sequence is:
+The `vm-ready` and `exceptions-diagnostic` slices are implemented. The remaining locked sequence is:
 
 ```text
-exceptions-diagnostic
 bootinfo-complete
 qemu-exit
 ```
@@ -191,6 +192,7 @@ The required serial order keeps every existing loader and core marker and adds:
 
 ```text
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
@@ -219,9 +221,7 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, add allocation-free exception diagnostics for INT3, invalid
-opcode, page fault, general-protection fault, and double-fault containment. Then
-complete ACPI RSDP, SMBIOS, boot-device filesystem resolution, and `INIT.PAK`
+Next, complete ACPI RSDP, SMBIOS, boot-device filesystem resolution, and `INIT.PAK`
 validation. Finally, replace timeout-based QEMU termination with deterministic
 debug-exit outcomes for success, panic, unexpected reset, timeout, and marker
 ordering failure.

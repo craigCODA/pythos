@@ -67,7 +67,6 @@ unsafe impl Sync for IdtStorage {}
 static IDT: IdtStorage = IdtStorage(UnsafeCell::new([IdtEntry::missing(); IDT_ENTRIES]));
 
 pub fn initialize() -> Result<(), ()> {
-    let handler = exceptions::panic_stub as *const () as usize as u64;
     // SAFETY:
     // 1. Invariant: the static IDT is written once before `lidt` publishes it.
     // 2. Established by: milestone-1 boot is single-core with interrupts disabled.
@@ -78,7 +77,12 @@ pub fn initialize() -> Result<(), ()> {
     // 7. Concurrency: no other CPU or interrupt handler reads it during setup.
     // 8. Violation: a partially initialized IDT would fault on exceptions.
     let idt = unsafe { &mut *IDT.0.get() };
-    for entry in idt.iter_mut() {
+    for (index, entry) in idt.iter_mut().enumerate() {
+        let handler = if index < 32 {
+            exceptions::handler_for_vector(index)
+        } else {
+            exceptions::panic_stub as *const () as usize as u64
+        };
         *entry = IdtEntry::new(handler, gdt::KERNEL_CODE_SELECTOR);
     }
 

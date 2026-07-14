@@ -14,7 +14,22 @@ pub fn write_line(line: &str) {
     write_str("\r\n");
 }
 
-fn write_str(value: &str) {
+pub fn write_hex_u64(label: &str, value: u64) {
+    write_str(label);
+    write_str("0x");
+    for shift in (0..64).step_by(4).rev() {
+        let digit = ((value >> shift) & 0xF) as u8;
+        let byte = if digit < 10 {
+            b'0' + digit
+        } else {
+            b'A' + (digit - 10)
+        };
+        write_byte(byte);
+    }
+    write_str("\r\n");
+}
+
+pub fn write_str(value: &str) {
     for byte in value.bytes() {
         write_byte(byte);
     }

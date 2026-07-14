@@ -44,8 +44,9 @@ after the PythCore `CR3` switch. This should be paired with the exception
 diagnostic or controlled expected-fault harness so the test distinguishes the
 intended page fault from a hang or unrelated panic.
 
-The remaining `exceptions-diagnostic` slice makes fault reports actionable without relying
-on allocation or locks. The `bootinfo-complete` slice fills and validates ACPI,
+The `exceptions-diagnostic` slice makes fault reports actionable without relying
+on allocation or locks. This slice is implemented. The remaining
+`bootinfo-complete` slice fills and validates ACPI,
 SMBIOS, boot-device filesystem resolution, and `INIT.PAK` metadata. The
 `qemu-exit` slice replaces timeout-based test termination with deterministic
 success, panic, reset, timeout, and marker-order outcomes.
@@ -54,6 +55,7 @@ Exit condition:
 
 ```text
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE

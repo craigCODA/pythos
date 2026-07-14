@@ -52,13 +52,14 @@ Verified vertical slices:
 * `memory-ready` implements PythCore-side UEFI memory-descriptor walking, explicit free/reserved page ownership, required loader/core range reservation, a fixed 4 KiB bitmap allocator backing store, and `PYTHOS:CORE:MEMORY_READY`.
 * `gdt-ready` installs a minimal 64-bit GDT with kernel code, kernel data, and TSS descriptors, reloads segment registers, loads `TR`, and emits `PYTHOS:CORE:GDT_READY`.
 * `idt-ready` installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
+* `exceptions-diagnostic` installs per-vector exception stubs for CPU exception vectors 0 through 31 and an allocation-free diagnostic handler that reports vector, error code, `RIP`, `CS`, `RFLAGS`, `RSP`, `SS`, `CR2` for page faults, and current `CR3` over COM1 before entering the panic loop. It emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
 * `vm-ready` implements PythCore-owned replacement page tables, discovers currently active physical backing by walking the loader page tables before replacement, maps linker-defined kernel text/rodata/data regions with W^X permissions, maps boot information, memory map, `INIT.PAK`, the guarded bootstrap stack, framebuffer, and page-table frames needed for validation, switches `CR3` a second time, validates the active root, and emits `PYTHOS:CORE:VM_READY`.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-The active implementation stops after the boot screen renders and the milestone completion marker is emitted. The exception handlers are minimal panic-loop gates only; detailed exception diagnostics, scheduling, IPC, runtime bootstrap, and hostile-code isolation remain later work.
+The active implementation stops after the boot screen renders and the milestone completion marker is emitted. Exception diagnostics are serial-only and allocation-free; richer fault recovery, scheduling, IPC, runtime bootstrap, and hostile-code isolation remain later work.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -138,6 +139,7 @@ PYTHOS:CORE:BOOTINFO_VALID
 PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
@@ -218,4 +220,11 @@ PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:VM_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:VM_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `exceptions-diagnostic` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:VM_READY`, and `PYTHOS:CORE:VM_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
