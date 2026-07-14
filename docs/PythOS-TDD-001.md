@@ -54,6 +54,7 @@ Verified vertical slices:
 * `idt-ready` installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
 * `exceptions-diagnostic` installs per-vector exception stubs for CPU exception vectors 0 through 31 and an allocation-free diagnostic handler that reports vector, error code, `RIP`, `CS`, `RFLAGS`, `RSP`, `SS`, `CR2` for page faults, and current `CR3` over COM1 before entering the panic loop. It emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
 * `vm-ready` implements PythCore-owned replacement page tables, discovers currently active physical backing by walking the loader page tables before replacement, maps linker-defined kernel text/rodata/data regions with W^X permissions, maps boot information, memory map, `INIT.PAK`, the guarded bootstrap stack, framebuffer, and page-table frames needed for validation, switches `CR3` a second time, validates the active root, and emits `PYTHOS:CORE:VM_READY`.
+* `identity-map-removed` verifies that the old broad loader identity map is absent after the PythCore `CR3` switch by checking that `0x0400_0000` is untranslated, arming a one-shot expected page fault for that address, recovering through the exception handler, and emitting `PYTHOS:CORE:EXPECTED_PAGE_FAULT` followed by `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
@@ -141,6 +142,8 @@ PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -220,6 +223,14 @@ PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:VM_READY
 ```
 
+The `identity-map-removed` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:VM_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:IDENTITY_MAP_REMOVED
+```
+
 The `exceptions-diagnostic` slice asserts the full sequence through:
 
 ```text
@@ -227,4 +238,4 @@ PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:VM_READY`, and `PYTHOS:CORE:VM_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, and `PYTHOS:CORE:IDENTITY_MAP_REMOVED` before `PYTHOS:CORE:FRAMEBUFFER_READY`.

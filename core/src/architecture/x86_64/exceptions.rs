@@ -2,6 +2,7 @@
 
 use crate::serial;
 use core::arch::asm;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(not(test))]
 use core::arch::global_asm;
@@ -15,6 +16,17 @@ pub struct ExceptionFrame {
     rflags: u64,
     rsp: u64,
     ss: u64,
+}
+
+const PAGE_FAULT_VECTOR: u64 = 14;
+
+static EXPECTED_PAGE_FAULT_ADDR: AtomicU64 = AtomicU64::new(0);
+static EXPECTED_PAGE_FAULT_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn expect_page_fault(address: u64, recovery_rip: u64) {
+    EXPECTED_PAGE_FAULT_ADDR.store(address, Ordering::SeqCst);
+    EXPECTED_PAGE_FAULT_RECOVERY_RIP.store(recovery_rip, Ordering::SeqCst);
 }
 
 #[cfg(not(test))]
@@ -72,9 +84,8 @@ global_asm!(
     exception_common:
         mov rdi, rsp
         call exception_handler
-    1:
-        hlt
-        jmp 1b
+        add rsp, 16
+        iretq
     "#
 );
 
@@ -162,7 +173,11 @@ pub fn handler_for_vector(vector: usize) -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn exception_handler(frame: &ExceptionFrame) -> ! {
+pub extern "C" fn exception_handler(frame: &mut ExceptionFrame) {
+    if frame.vector == PAGE_FAULT_VECTOR && handle_expected_page_fault(frame) {
+        return;
+    }
+
     serial::write_line("PYTHOS:EXCEPTION");
     serial::write_hex_u64("vector=", frame.vector);
     serial::write_hex_u64("error_code=", frame.error_code);
@@ -199,6 +214,21 @@ fn read_cr2() -> u64 {
         asm!("mov {out}, cr2", out = out(reg) cr2, options(nomem, nostack, preserves_flags));
     }
     cr2
+}
+
+fn handle_expected_page_fault(frame: &mut ExceptionFrame) -> bool {
+    let cr2 = read_cr2();
+    let expected = EXPECTED_PAGE_FAULT_ADDR.load(Ordering::SeqCst);
+    let recovery = EXPECTED_PAGE_FAULT_RECOVERY_RIP.load(Ordering::SeqCst);
+    if expected == 0 || recovery == 0 || cr2 != expected {
+        return false;
+    }
+    EXPECTED_PAGE_FAULT_ADDR.store(0, Ordering::SeqCst);
+    EXPECTED_PAGE_FAULT_RECOVERY_RIP.store(0, Ordering::SeqCst);
+    frame.rip = recovery;
+    serial::write_line("PYTHOS:CORE:EXPECTED_PAGE_FAULT");
+    serial::write_hex_u64("cr2=", cr2);
+    true
 }
 
 fn read_cr3() -> u64 {

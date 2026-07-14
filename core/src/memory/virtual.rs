@@ -1,11 +1,14 @@
 //! PythCore-owned kernel page tables.
 
+use crate::architecture::x86_64::exceptions;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
 use core::arch::asm;
+use core::arch::global_asm;
 use core::mem;
 use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PythBootInfo};
 
 const TWO_MIB: u64 = 2 * 1024 * 1024;
+const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
 
@@ -24,6 +27,31 @@ unsafe extern "C" {
     static __pythcore_text_end: u8;
     static __pythcore_data_start: u8;
     static __pythcore_data_end: u8;
+    fn old_identity_probe_fault(address: u64) -> u64;
+}
+
+global_asm!(
+    r#"
+    .global old_identity_probe_fault
+    old_identity_probe_fault:
+        push rbx
+        mov rbx, rdi
+        lea rsi, [rip + .Lold_identity_probe_recovery]
+        call expect_page_fault_abi
+        mov al, byte ptr [rbx]
+        pop rbx
+        xor eax, eax
+        ret
+    .Lold_identity_probe_recovery:
+        pop rbx
+        mov eax, 1
+        ret
+    "#
+);
+
+#[unsafe(no_mangle)]
+pub extern "C" fn expect_page_fault_abi(address: u64, recovery_rip: u64) {
+    exceptions::expect_page_fault(address, recovery_rip);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -42,6 +70,33 @@ impl From<MemoryError> for VmError {
     fn from(error: MemoryError) -> Self {
         Self::Memory(error)
     }
+}
+
+pub fn prove_old_identity_map_removed() -> Result<(), VmError> {
+    if translate_active(OLD_IDENTITY_PROBE).is_ok() {
+        return Err(VmError::LowGuardMapping);
+    }
+
+    // SAFETY:
+    // 1. Invariant: `OLD_IDENTITY_PROBE` is intentionally unmapped after the
+    //    PythCore-owned `CR3` switch. The assembly probe arms the exception
+    //    handler with an internal recovery RIP, performs one byte read, and
+    //    returns 1 only if the exact expected page fault recovers there.
+    // 2. Established by: `translate_active(OLD_IDENTITY_PROBE)` returned an
+    //    unmapped result immediately before this call.
+    // 3. Lifetime: the probe runs synchronously and clears the expected-fault
+    //    metadata in the exception handler before returning.
+    // 4. Pointer ownership: no ownership is claimed over the old identity
+    //    address; it must fault.
+    // 5. Alignment: `OLD_IDENTITY_PROBE` is page-aligned.
+    // 6. Mapped length: expected to be zero; a successful read returns 0.
+    // 7. Concurrency: single-core execution with interrupts disabled.
+    // 8. Violation: an unexpected fault is reported by the diagnostic handler
+    //    and enters the panic loop.
+    if unsafe { old_identity_probe_fault(OLD_IDENTITY_PROBE) } != 1 {
+        return Err(VmError::LowGuardMapping);
+    }
+    Ok(())
 }
 
 pub struct KernelAddressSpace {

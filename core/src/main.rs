@@ -96,6 +96,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             halt();
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
+        if memory::r#virtual::prove_old_identity_map_removed().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            halt();
+        }
+        serial::write_line("PYTHOS:CORE:IDENTITY_MAP_REMOVED");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

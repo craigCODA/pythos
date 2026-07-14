@@ -38,11 +38,10 @@ The `vm-ready` slice builds final kernel page tables inside PythCore, switches
 usable, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation.
 This slice is implemented.
 
-Before declaring Phase 1.5 complete, add a negative VM proof that an address
-which was reachable only through the loader's old broad identity map faults
-after the PythCore `CR3` switch. This should be paired with the exception
-diagnostic or controlled expected-fault harness so the test distinguishes the
-intended page fault from a hang or unrelated panic.
+The `identity-map-removed` proof verifies the old broad loader identity map is
+absent by checking that `0x0400_0000` is untranslated, deliberately reading it,
+recovering from the expected page fault, and emitting
+`PYTHOS:CORE:IDENTITY_MAP_REMOVED`. This slice is implemented.
 
 The `exceptions-diagnostic` slice makes fault reports actionable without relying
 on allocation or locks. This slice is implemented. The remaining
@@ -57,6 +56,8 @@ Exit condition:
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```

@@ -33,6 +33,8 @@ PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -60,6 +62,7 @@ This proves:
 * PythCore installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
 * PythCore installs per-vector CPU exception stubs with allocation-free serial diagnostics and emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
 * PythCore allocates replacement page-table pages from its physical allocator, maps only the required kernel/boot/framebuffer/stack/page-table-management surfaces, switches `CR3` a second time, validates the active layout, and emits `PYTHOS:CORE:VM_READY`.
+* PythCore proves the old broad loader identity map is absent by confirming a former identity-range address is untranslated, taking and recovering from the expected page fault, and emitting `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
 
@@ -75,7 +78,7 @@ The framebuffer slice was implemented before memory/GDT/IDT for early visible bo
 
 ## Important Caveat
 
-The loader-built page tables are still used for the initial handoff into PythCore, but PythCore now replaces them with kernel-owned page tables before framebuffer rendering. The replacement tables omit the broad 2 MiB-to-4 GiB identity map, preserve the low guard, map linker-defined kernel regions with W^X permissions, and keep only required boot metadata, stack, framebuffer, and page-table-management surfaces. Loader page-table frames are left allocated for later reclamation.
+The loader-built page tables are still used for the initial handoff into PythCore, but PythCore now replaces them with kernel-owned page tables before framebuffer rendering. The replacement tables omit the broad 2 MiB-to-4 GiB identity map, preserve the low guard, map linker-defined kernel regions with W^X permissions, and keep only required boot metadata, stack, framebuffer, and page-table-management surfaces. A controlled expected page fault against `0x0400_0000` verifies the old broad identity map is not active. Loader page-table frames are left allocated for later reclamation.
 
 ## Relevant Files
 
@@ -149,7 +152,7 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
-* Exception diagnostics are serial-only and end in a panic loop. Recovery and expected-fault test harnessing are later work.
+* Exception diagnostics are serial-only. The only recovery path is the narrow expected page-fault harness used by the identity-map negative proof.
 
 ## Milestone 1.5: Kernel-Owned Execution Substrate
 
@@ -184,6 +187,8 @@ current milestone-1 boot
 -> PythCore switches CR3 a second time
 -> post-switch validation probe succeeds
 -> PYTHOS:CORE:VM_READY
+-> expected page fault proves old broad identity address is unreachable
+-> PYTHOS:CORE:IDENTITY_MAP_REMOVED
 -> framebuffer output survives the switch
 -> ESP and ISO boot paths continue to pass
 ```
@@ -194,6 +199,8 @@ The required serial order keeps every existing loader and core marker and adds:
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 PYTHOS:CORE:VM_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
