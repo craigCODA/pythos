@@ -12,12 +12,14 @@ ROOT = Path(__file__).resolve().parents[1]
 ESP = ROOT / "image" / "esp"
 BOOT_EFI = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
 PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
+BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
+INIT_PAK = b"PYTHOS_INIT_PAK_V0\n"
 
 
-def write_text_if_changed(path: Path, text: str) -> None:
-    if path.exists() and path.read_text(encoding="utf-8") == text:
+def write_binary_if_changed(path: Path, content: bytes) -> None:
+    if path.exists() and path.read_bytes() == content:
         return
-    path.write_text(text, encoding="utf-8")
+    path.write_bytes(content)
 
 
 def main() -> int:
@@ -40,12 +42,9 @@ def main() -> int:
 
     shutil.copy2(loader, boot_dir / "BOOTX64.EFI")
     shutil.copy2(kernel, pythos_dir / "PYTHCORE.ELF")
-    write_text_if_changed(
-        pythos_dir / "BOOT.CFG",
-        "serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
-    )
-    write_text_if_changed(pythos_dir / "INIT.PAK", "PYTHOS_INIT_PAK_V0\n")
-    (pythos_dir / "FONT.PSF").touch()
+    write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
+    write_binary_if_changed(pythos_dir / "INIT.PAK", INIT_PAK)
+    write_binary_if_changed(pythos_dir / "FONT.PSF", b"")
 
     print(f"ESP_READY {ESP}")
     return 0

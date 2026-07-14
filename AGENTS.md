@@ -41,12 +41,27 @@ OVMF
 -> PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK
 -> PYTHOS:CORE:ENTER
 -> PYTHOS:CORE:BOOTINFO_VALID
+-> PYTHOS:CORE:MEMORY_READY
+-> PYTHOS:CORE:GDT_READY
+-> PYTHOS:CORE:IDT_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
+-> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, renders the post-firmware boot screen, and halts.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and halts.
 
-The framebuffer slice was deliberately implemented before memory ownership, GDT, and IDT for early visible boot; when those slices land, the `PYTHOS:CORE:FRAMEBUFFER_READY` emission moves after `PYTHOS:CORE:IDT_READY` to preserve the milestone 1 marker order.
+The next phase is Milestone 1.5: kernel-owned execution substrate. Its locked sequence is `vm-ready`, `exceptions-diagnostic`, `bootinfo-complete`, then `qemu-exit`. Do not begin timer, scheduler, IPC, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work until Milestone 1.5 is complete.
+
+For `vm-ready`, PythCore must build and own replacement page tables, switch `CR3` a second time, remove the broad loader identity mapping, keep the first 2 MiB unmapped, preserve W^X kernel mappings, retain framebuffer and COM1 access, keep boot information and the memory map accessible, retain a guarded active kernel stack, and emit `PYTHOS:CORE:VM_READY` only after post-switch validation.
+
+The required Milestone 1.5 marker order extends the existing sequence with:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:VM_READY
+PYTHOS:CORE:FRAMEBUFFER_READY
+PYTHOS:CORE:MILESTONE_1_COMPLETE
+```
 
 Do not land a slice that regresses any already-verified marker in QEMU serial capture.
 

@@ -147,21 +147,83 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
 * The IDT routes exceptions to a minimal panic loop. Detailed exception diagnostics and recovery are later work.
 
-## Next Vertical Slice
+## Milestone 1.5: Kernel-Owned Execution Substrate
 
-The next smallest testable goal is:
+Before timer or scheduler work, the next phase must replace transitional loader
+execution state with PythCore-owned infrastructure. Step zero is keeping the
+boot media byte-stable and the repository clean/tracked: generated ESP payloads
+must be written in binary mode, the ISO and ESP paths must validate the same
+`INIT.PAK` bytes, and the branch must remain pushed to its remote.
+
+The locked sequence is:
 
 ```text
-retain current verified milestone-1 behavior
--> replace loader-built temporary mappings with kernel-owned page tables
--> keep null/low guard and W^X kernel/device mappings
--> keep serial and framebuffer diagnostics working
--> preserve all milestone-1 markers in QEMU serial capture
+vm-ready
+exceptions-diagnostic
+bootinfo-complete
+qemu-exit
 ```
 
-Recommended test flow:
+For `vm-ready`, the testable proof is:
 
-1. Add a page-table replacement slice that expects all current milestone-1 markers.
-2. Make the test fail for the expected reason.
-3. Build kernel-owned mappings from the page ownership model, with host-testable pure layout logic where practical.
-4. Rerun the exact failing test until it passes.
+```text
+current milestone-1 boot
+-> PythCore allocates and owns replacement page tables
+-> PythCore maps exact ELF segments
+-> kernel code is executable and read-only
+-> kernel read-only data is non-writable
+-> kernel writable data is non-executable
+-> framebuffer remains mapped and writable
+-> COM1 direct I/O still works
+-> boot information and memory map remain accessible
+-> active kernel stack remains mapped with a guard page
+-> first 2 MiB remains unmapped
+-> broad loader identity mapping is absent
+-> PythCore switches CR3 a second time
+-> post-switch validation probe succeeds
+-> PYTHOS:CORE:VM_READY
+-> framebuffer output survives the switch
+-> ESP and ISO boot paths continue to pass
+```
+
+The required serial order keeps every existing loader and core marker and adds:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:VM_READY
+PYTHOS:CORE:FRAMEBUFFER_READY
+PYTHOS:CORE:MILESTONE_1_COMPLETE
+```
+
+Recommended implementation boundary:
+
+```rust
+pub struct KernelAddressSpace {
+    root_table_phys: PhysAddr,
+    mappings: KernelMappings,
+}
+
+impl KernelAddressSpace {
+    pub fn build(
+        allocator: &mut PageAllocator,
+        boot_info: &PythBootInfo,
+    ) -> Result<Self, VmError>;
+
+    pub unsafe fn activate(&self);
+
+    pub fn validate_active_layout(
+        &self,
+        boot_info: &PythBootInfo,
+    ) -> Result<(), VmError>;
+}
+```
+
+After `vm-ready`, add allocation-free exception diagnostics for INT3, invalid
+opcode, page fault, general-protection fault, and double-fault containment. Then
+complete ACPI RSDP, SMBIOS, boot-device filesystem resolution, and `INIT.PAK`
+validation. Finally, replace timeout-based QEMU termination with deterministic
+debug-exit outcomes for success, panic, unexpected reset, timeout, and marker
+ordering failure.
+
+Only after Milestone 1.5 should timer interrupts, native tasks, and scheduling
+begin.

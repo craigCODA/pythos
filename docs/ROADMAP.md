@@ -20,9 +20,40 @@ Exit condition:
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
+## Phase 1.5: Kernel-Owned Execution Substrate
+
+Before timer and scheduler work, replace transitional loader execution state with
+PythCore-owned infrastructure. The locked sequence is:
+
+```text
+vm-ready
+exceptions-diagnostic
+bootinfo-complete
+qemu-exit
+```
+
+The `vm-ready` slice builds final kernel page tables inside PythCore, switches
+`CR3` a second time, removes the broad loader identity map, keeps the first
+2 MiB unmapped, preserves W^X kernel mappings, keeps framebuffer and COM1
+usable, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation.
+
+The `exceptions-diagnostic` slice makes fault reports actionable without relying
+on allocation or locks. The `bootinfo-complete` slice fills and validates ACPI,
+SMBIOS, boot-device filesystem resolution, and `INIT.PAK` metadata. The
+`qemu-exit` slice replaces timeout-based test termination with deterministic
+success, panic, reset, timeout, and marker-order outcomes.
+
+Exit condition:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:VM_READY
+PYTHOS:CORE:FRAMEBUFFER_READY
+PYTHOS:CORE:MILESTONE_1_COMPLETE
+```
+
 ## Later Phases
 
-Phase 2 adds timer and native tasks. Phase 3 adds IPC and capabilities. Phase 4 embeds the first Python runtime. Phase 5 builds input and graphical shell. Phase 6 adds early native audio and the wake identity. Later phases add object storage, hardware-enforced isolation, package management, updates and recovery, networking, semantic indexing, optional local AI, and controlled physical hardware support.
+Phase 2 adds timer and native tasks on top of the kernel-owned execution substrate. Phase 3 adds IPC and capabilities. Phase 4 embeds the first Python runtime. Phase 5 builds input and graphical shell. Phase 6 adds early native audio and the wake identity. Later phases add object storage, hardware-enforced isolation, package management, updates and recovery, networking, semantic indexing, optional local AI, and controlled physical hardware support.
 
 Deferred during early milestones: broad laptop compatibility, Wi-Fi, Bluetooth, accelerated 3D graphics, Windows or Linux binary compatibility, POSIX completeness, web browser, cloud account system, package marketplace, unrestricted AI control, voice recognition, SMP, hibernation, production secure boot, and full formal verification.
-
