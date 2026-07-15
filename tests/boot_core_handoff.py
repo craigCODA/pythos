@@ -153,6 +153,22 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_exception_entry_hardened_marker_is_observed_after_diagnostics(self) -> None:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/test-boot.py",
+                "--slice",
+                "exception-entry-hardening",
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_identity_map_removed_marker_is_observed_after_expected_page_fault(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/test-boot.py", "--slice", "identity-map-removed"],
