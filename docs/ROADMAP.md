@@ -140,7 +140,7 @@ the functional dependency: diagnostics should be live before the risky second
    * Failure path: any missing or invalid table is a diagnosed panic through
      the Phase 1.5 exception path, not a silent skip.
 
-5. `qemu-exit` - NOT STARTED. Next and final slice.
+5. `qemu-exit` - COMPLETE.
    * Replace timeout-based QEMU test termination in `run-qemu.py` and `tests/`
      with deterministic exit codes.
    * Required outcomes, each with a distinct exit code the test harness can

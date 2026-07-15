@@ -67,7 +67,8 @@ This proves:
 * PythCore proves the old broad loader identity map is absent by confirming a former identity-range address is untranslated, taking and recovering from the expected page fault, and emitting `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * PythCore maps and revalidates ACPI, SMBIOS, and `INIT.PAK` metadata after the second `CR3` switch, confirms unsupported runtime-services pointers are zero, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
-* PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
+* PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
+* The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
 
 ## Current Stop Point
 
@@ -151,7 +152,6 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 
 ## Known Risks and Gaps
 
-* QEMU termination is still timeout-based. Milestone completion should move toward a deterministic debug-exit device or controlled shutdown path.
 * `INIT.PAK` is validated but not interpreted or executed.
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
@@ -166,10 +166,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, and `bootinfo-complete` slices are implemented. The remaining locked sequence is:
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete.
 
 ```text
-qemu-exit
+next: Phase 2 exception-entry-hardening
 ```
 
 The `vm-ready` proof now covers:
@@ -196,6 +196,7 @@ current milestone-1 boot
 -> PYTHOS:CORE:BOOTINFO_COMPLETE
 -> framebuffer output survives the switch
 -> ESP and ISO boot paths continue to pass
+-> QEMU_OUTCOME success is reported without timeout termination
 ```
 
 The required serial order keeps every existing loader and core marker and adds:
@@ -234,9 +235,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, replace timeout-based QEMU termination with deterministic debug-exit
-outcomes for success, panic, unexpected reset, timeout, and marker ordering
-failure.
-
-Only after Milestone 1.5 should timer interrupts, native tasks, and scheduling
-begin.
+Next, begin Phase 2 with `exception-entry-hardening`. Timer interrupts, native
+tasks, and scheduling still must not begin until that prerequisite hardening
+slice passes.

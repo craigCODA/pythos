@@ -1,6 +1,6 @@
 //! Allocation-free x86-64 exception diagnostics.
 
-use crate::serial;
+use crate::{qemu_exit, serial};
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
 
@@ -191,12 +191,12 @@ pub extern "C" fn exception_handler(frame: &mut ExceptionFrame) {
     }
     serial::write_hex_u64("cr3=", read_cr3());
     serial::write_line("PYTHOS:PANIC");
-    halt();
+    qemu_exit::panic();
 }
 
 pub extern "C" fn panic_stub() -> ! {
     serial::write_line("PYTHOS:PANIC");
-    halt();
+    qemu_exit::panic();
 }
 
 fn read_cr2() -> u64 {
@@ -246,12 +246,6 @@ fn read_cr3() -> u64 {
         asm!("mov {out}, cr3", out = out(reg) cr3, options(nomem, nostack, preserves_flags));
     }
     cr3
-}
-
-fn halt() -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
 }
 
 #[cfg(test)]

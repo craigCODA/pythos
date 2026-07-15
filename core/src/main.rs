@@ -7,6 +7,7 @@ mod boot_metadata;
 mod font;
 mod framebuffer;
 mod memory;
+mod qemu_exit;
 mod serial;
 
 #[cfg(not(test))]
@@ -40,7 +41,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         Ok(info) => info,
         Err(()) => {
             serial::write_line("PYTHOS:CORE:BOOTINFO_INVALID");
-            halt();
+            qemu_exit::panic();
         }
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
@@ -50,20 +51,20 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         Ok(memory) => memory,
         Err(_) => {
             serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
-            halt();
+            qemu_exit::panic();
         }
     };
     serial::write_line("PYTHOS:CORE:MEMORY_READY");
 
     if architecture::x86_64::gdt::initialize().is_err() {
         serial::write_line("PYTHOS:PANIC");
-        halt();
+        qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:GDT_READY");
 
     if architecture::x86_64::idt::initialize().is_err() {
         serial::write_line("PYTHOS:PANIC");
-        halt();
+        qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:IDT_READY");
     serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
@@ -75,7 +76,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 Ok(address_space) => address_space,
                 Err(_) => {
                     serial::write_line("PYTHOS:PANIC");
-                    halt();
+                    qemu_exit::panic();
                 }
             };
         // SAFETY:
@@ -94,41 +95,33 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         if address_space.validate_active(boot_info).is_err() {
             serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
-            halt();
+            qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
         if memory::r#virtual::prove_old_identity_map_removed().is_err() {
             serial::write_line("PYTHOS:PANIC");
-            halt();
+            qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:IDENTITY_MAP_REMOVED");
         if boot_metadata::validate_complete(boot_info).is_err() {
             serial::write_line("PYTHOS:PANIC");
-            halt();
+            qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:BOOTINFO_COMPLETE");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
         serial::write_line("PYTHOS:PANIC");
-        halt();
+        qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
     serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
-    halt();
-}
-
-fn halt() -> ! {
-    loop {
-        core::hint::spin_loop();
-    }
+    qemu_exit::success();
 }
 
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:PANIC");
-    loop {
-        core::hint::spin_loop();
-    }
+    qemu_exit::panic();
 }

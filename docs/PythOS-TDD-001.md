@@ -56,6 +56,7 @@ Verified vertical slices:
 * `vm-ready` implements PythCore-owned replacement page tables, discovers currently active physical backing by walking the loader page tables before replacement, maps linker-defined kernel text/rodata/data regions with W^X permissions, maps boot information, memory map, `INIT.PAK`, the guarded bootstrap stack, framebuffer, and page-table frames needed for validation, switches `CR3` a second time, validates the active root, and emits `PYTHOS:CORE:VM_READY`.
 * `identity-map-removed` verifies that the old broad loader identity map is absent after the PythCore `CR3` switch by checking that `0x0400_0000` is untranslated, arming a one-shot expected page fault for that address, recovering through the exception handler, and emitting `PYTHOS:CORE:EXPECTED_PAGE_FAULT` followed by `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * `bootinfo-complete` resolves boot files through `LoadedImage.DeviceHandle`, validates ACPI RSDP and SMBIOS entry points in the loader, passes their physical addresses through `PythBootInfo`, maps the required firmware metadata under PythCore-owned page tables, revalidates ACPI RSDP/root table and SMBIOS checksums in PythCore, validates the binary `INIT.PAK` header and checksum in both loader and core, zeros unsupported runtime-services pointers, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
+* `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
@@ -248,3 +249,19 @@ PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
 ```
 
 The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, and `PYTHOS:CORE:BOOTINFO_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+
+`scripts/run-qemu.py --expect-outcome success` must print:
+
+```text
+QEMU_OUTCOME success
+```
+
+The runner exit-code contract is:
+
+```text
+success                 0
+panic                   20
+reset                   21
+timeout                 22
+marker-order-violation  23
+```

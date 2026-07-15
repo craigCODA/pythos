@@ -10,6 +10,7 @@ mod handoff;
 mod initrd;
 mod memory_map;
 mod paging;
+mod qemu_exit;
 mod serial;
 mod uefi;
 
@@ -134,15 +135,11 @@ pub extern "efiapi" fn efi_main(
 
 fn fail() -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
-    loop {
-        core::hint::spin_loop();
-    }
+    qemu_exit::panic();
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
-    loop {
-        core::hint::spin_loop();
-    }
+    qemu_exit::panic();
 }

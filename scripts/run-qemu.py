@@ -11,6 +11,7 @@ import socket
 import subprocess
 import sys
 import time
+from enum import Enum
 from pathlib import Path
 
 
@@ -18,6 +19,54 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ESP = ROOT / "image" / "esp"
 DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
+SUCCESS_MARKER = "PYTHOS:CORE:MILESTONE_1_COMPLETE"
+DEBUG_EXIT_CODES = {
+    "success": 0x10,
+    "panic": 0x11,
+}
+SCRIPT_EXIT_CODES = {
+    "success": 0,
+    "panic": 20,
+    "reset": 21,
+    "timeout": 22,
+    "marker-order-violation": 23,
+}
+PANIC_MARKERS = (
+    "PYTHOS:LOADER:FAIL",
+    "PYTHOS:PANIC",
+    "PYTHOS:CORE:BOOTINFO_INVALID",
+    "PYTHOS:CORE:MEMORY_INVALID",
+)
+
+
+class QemuOutcome(str, Enum):
+    SUCCESS = "success"
+    PANIC = "panic"
+    RESET = "reset"
+    TIMEOUT = "timeout"
+    MARKER_ORDER_VIOLATION = "marker-order-violation"
+
+
+def debug_exit_status(outcome: str) -> int:
+    return (DEBUG_EXIT_CODES[outcome] << 1) | 1
+
+
+def classify_qemu_exit(
+    returncode: int | None,
+    serial: str,
+    timed_out: bool = False,
+) -> QemuOutcome:
+    if any(marker in serial for marker in PANIC_MARKERS):
+        return QemuOutcome.PANIC
+    if SUCCESS_MARKER in serial:
+        return QemuOutcome.SUCCESS
+    if returncode == debug_exit_status("success"):
+        return QemuOutcome.SUCCESS
+    if returncode == debug_exit_status("panic"):
+        return QemuOutcome.PANIC
+    if timed_out or returncode is None:
+        return QemuOutcome.TIMEOUT
+    return QemuOutcome.RESET
 
 
 def find_qemu(explicit: str | None) -> str:
@@ -85,6 +134,25 @@ def request_screendump(path: Path) -> None:
                 raise RuntimeError(f"QMP error: {reply['error']}")
 
 
+def request_qmp_quit() -> None:
+    with socket.create_connection(("127.0.0.1", QMP_PORT), timeout=5) as sock:
+        sock_file = sock.makefile("rw", encoding="utf-8", newline="\n")
+        read_qmp_message(sock_file)
+        for command in (
+            {"execute": "qmp_capabilities"},
+            {"execute": "quit"},
+        ):
+            sock_file.write(json.dumps(command) + "\n")
+            sock_file.flush()
+            reply = read_qmp_message(sock_file)
+            if "error" in reply:
+                raise RuntimeError(f"QMP error: {reply['error']}")
+
+
+def read_serial_log(path: Path) -> str:
+    return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--esp", type=Path, default=DEFAULT_ESP)
@@ -94,6 +162,7 @@ def main() -> int:
     parser.add_argument("--qemu")
     parser.add_argument("--ovmf-code")
     parser.add_argument("--screendump", type=Path)
+    parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -122,6 +191,8 @@ def main() -> int:
         "none",
         "-no-reboot",
         "-no-shutdown",
+        "-device",
+        "isa-debug-exit,iobase=0x501,iosize=0x04",
     ]
     if args.iso:
         command += [
@@ -137,16 +208,38 @@ def main() -> int:
         ]
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
-        command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
+    command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
 
     process = subprocess.Popen(command)
     deadline = time.monotonic() + args.timeout
     screendump_at = deadline - 2.0
     screendump_pending = args.screendump is not None
+    timed_out = False
+    requested_quit = False
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 break
+            serial = read_serial_log(args.serial_log)
+            if not requested_quit:
+                terminal_outcome = None
+                if any(marker in serial for marker in PANIC_MARKERS):
+                    terminal_outcome = QemuOutcome.PANIC
+                elif SUCCESS_MARKER in serial:
+                    terminal_outcome = QemuOutcome.SUCCESS
+                if terminal_outcome is not None:
+                    if screendump_pending:
+                        screendump_pending = False
+                        try:
+                            request_screendump(args.screendump.resolve())
+                        except (OSError, RuntimeError, ConnectionError) as error:
+                            print(f"screendump failed: {error}", file=sys.stderr)
+                    requested_quit = True
+                    try:
+                        request_qmp_quit()
+                    except (OSError, RuntimeError, ConnectionError) as error:
+                        print(f"qmp quit failed: {error}", file=sys.stderr)
+                        process.terminate()
             if screendump_pending and time.monotonic() >= screendump_at:
                 screendump_pending = False
                 try:
@@ -156,6 +249,7 @@ def main() -> int:
             time.sleep(0.1)
     finally:
         if process.poll() is None:
+            timed_out = True
             process.terminate()
             try:
                 process.wait(timeout=2)
@@ -163,8 +257,17 @@ def main() -> int:
                 process.kill()
                 process.wait(timeout=2)
 
-    print(args.serial_log.read_text(encoding="utf-8", errors="replace") if args.serial_log.exists() else "")
-    return 0
+    serial = read_serial_log(args.serial_log)
+    print(serial)
+    outcome = classify_qemu_exit(process.returncode, serial, timed_out)
+    print(f"QEMU_OUTCOME {outcome.value}")
+    if args.expect_outcome and outcome.value != args.expect_outcome:
+        print(
+            f"expected QEMU outcome {args.expect_outcome}, got {outcome.value}",
+            file=sys.stderr,
+        )
+        return SCRIPT_EXIT_CODES[outcome.value]
+    return SCRIPT_EXIT_CODES[outcome.value]
 
 
 if __name__ == "__main__":

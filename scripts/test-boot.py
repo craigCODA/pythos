@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 SERIAL_LOG = ROOT / "target" / "boot-serial.log"
 ISO_IMAGE = ROOT / "target" / "pythos.iso"
+MARKER_ORDER_EXIT_CODE = 23
 FAILURE_MARKERS = [
     "PYTHOS:LOADER:FAIL",
     "PYTHOS:PANIC",
@@ -237,7 +238,11 @@ def main() -> int:
         )
 
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
-    assert_markers(serial, SLICE_MARKERS[args.slice])
+    try:
+        assert_markers(serial, SLICE_MARKERS[args.slice])
+    except AssertionError as error:
+        print(f"BOOT_TEST_OUTCOME marker-order-violation\n{error}", file=sys.stderr)
+        return MARKER_ORDER_EXIT_CODE
     print("BOOT_TEST_OK")
     return 0
 
