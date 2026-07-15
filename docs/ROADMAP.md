@@ -259,9 +259,10 @@ mask.
    diagnostic exception path, not silently corrupt an adjacent task. Emits
    `PYTHOS:CORE:KERNEL_STACKS_READY` after proving the active bootstrap stack's
    guard page faults and recovers through the diagnostic path.
-6. `context-switch` - save and restore full register state across a switch.
-   Prove correctness with two tasks that write distinguishable alternating
-   markers with no register or stack corruption.
+6. `context-switch` - COMPLETE. Save and restore register, stack, instruction
+   pointer, and flags state across a cooperative switch. Prove correctness with
+   two native contexts writing distinguishable alternating markers with no
+   stack corruption. Emits `PYTHOS:CORE:CONTEXT_SWITCH_READY`.
 7. `scheduler` - round-robin first. Document explicitly that priority
    scheduling is deferred. Do not build it speculatively.
 8. `idle-task` - a task that runs only when no other task is ready. Prove the

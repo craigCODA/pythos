@@ -43,6 +43,11 @@ PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:TASKS_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:KERNEL_STACKS_READY
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_A
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_B
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_A
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_B
+PYTHOS:CORE:CONTEXT_SWITCH_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -79,6 +84,7 @@ This proves:
 * PythCore exposes a read-only monotonic tick counter derived from the timer source and emits `PYTHOS:CORE:CLOCK_READY`.
 * PythCore initializes a fixed native task table, records the bootstrap task as running on the current kernel stack, and emits `PYTHOS:CORE:TASKS_READY`.
 * PythCore records guarded kernel stack ownership for the bootstrap task, proves the guard page below the active stack faults and recovers through the diagnostic path, and emits `PYTHOS:CORE:KERNEL_STACKS_READY`.
+* PythCore switches cooperatively between two fixed native contexts on separate stacks, emits alternating task markers, returns to bootstrap, and emits `PYTHOS:CORE:CONTEXT_SWITCH_READY`.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -179,10 +185,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, and `kernel-stacks` slices are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, and `context-switch` slices are implemented on the current branch.
 
 ```text
-next: Phase 2 context-switch
+next: Phase 2 scheduler
 ```
 
 The `vm-ready` proof now covers:
@@ -228,6 +234,11 @@ PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:TASKS_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:KERNEL_STACKS_READY
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_A
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_B
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_A
+PYTHOS:CORE:CONTEXT_SWITCH:TASK_B
+PYTHOS:CORE:CONTEXT_SWITCH_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -255,5 +266,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, continue Phase 2 with `context-switch`. Scheduler work still must not
-begin until context switching is verified in its own locked slice.
+Next, continue Phase 2 with `scheduler`. Do not pull in idle-task,
+preemption, task termination, IPC, Python, or any later phase while building
+the scheduler slice.
