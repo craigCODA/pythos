@@ -22,6 +22,8 @@ const EXPECTED_IDLE_RUNS: usize = 1;
 #[cfg(not(test))]
 const EXPECTED_PREEMPT_STEP: usize = 8;
 #[cfg(not(test))]
+const EXPECTED_SCHEDTEST_STEP: usize = 12;
+#[cfg(not(test))]
 const TERMINATION_READY: usize = 1;
 #[cfg(not(test))]
 const TERMINATION_RUNNING: usize = 2;
@@ -144,6 +146,15 @@ static PREEMPT_B_STACK: SchedulerStackStorage =
 static TERMINATION_STACK: SchedulerStackStorage =
     SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
 #[cfg(not(test))]
+static SCHEDTEST_A_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
+static SCHEDTEST_B_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
+static SCHEDTEST_C_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
 static BOOT_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
 static TASK_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
@@ -164,6 +175,15 @@ static TERMINATION_BOOT_CONTEXT: ContextStorage =
 #[cfg(not(test))]
 static TERMINATION_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
+static SCHEDTEST_BOOT_CONTEXT: ContextStorage =
+    ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static SCHEDTEST_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static SCHEDTEST_B_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static SCHEDTEST_C_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
 static TASK_A_RUNS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static TASK_B_RUNS: AtomicUsize = AtomicUsize::new(0);
@@ -173,6 +193,10 @@ static IDLE_RUNS: AtomicUsize = AtomicUsize::new(0);
 static PREEMPT_STEP: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static PREEMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(not(test))]
+static SCHEDTEST_STEP: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
+static SCHEDTEST_ACTIVE: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static TERMINATION_STATE: AtomicUsize = AtomicUsize::new(0);
 
@@ -256,6 +280,39 @@ pub fn run_idle_self_test() -> Result<(), SchedulerError> {
 }
 
 #[cfg(not(test))]
+pub fn run_scheduler_acceptance_self_test() -> Result<(), SchedulerError> {
+    SCHEDTEST_STEP.store(0, Ordering::SeqCst);
+    SCHEDTEST_ACTIVE.store(true, Ordering::SeqCst);
+
+    // SAFETY:
+    // 1. Invariant: scheduler acceptance frames and stacks are static, mapped,
+    //    aligned, and private to this three-task preemption proof.
+    // 2. Established by: Phase 2 VM, guarded-stack, and context-switch slices.
+    // 3. Lifetime: frames and stacks live for the full kernel lifetime.
+    // 4. Pointer ownership: this self-test owns the private acceptance contexts.
+    // 5. Alignment: `SchedulerStack` is 16-byte aligned; frames use `repr(C)`.
+    // 6. Mapped length: three stacks of `SCHEDULER_STACK_SIZE` bytes and four
+    //    `ContextFrame` values are accessible.
+    // 7. Concurrency: single-core execution; IRQ0 is the only switch trigger.
+    // 8. Violation: bad frames or stacks fault through diagnostics.
+    unsafe {
+        *SCHEDTEST_A_CONTEXT.0.get() =
+            ContextFrame::new(schedtest_task_a_entry, stack_top(SCHEDTEST_A_STACK.0.get()));
+        *SCHEDTEST_B_CONTEXT.0.get() =
+            ContextFrame::new(schedtest_task_b_entry, stack_top(SCHEDTEST_B_STACK.0.get()));
+        *SCHEDTEST_C_CONTEXT.0.get() =
+            ContextFrame::new(schedtest_task_c_entry, stack_top(SCHEDTEST_C_STACK.0.get()));
+        context_switch::switch(SCHEDTEST_BOOT_CONTEXT.0.get(), SCHEDTEST_A_CONTEXT.0.get());
+    }
+
+    SCHEDTEST_ACTIVE.store(false, Ordering::SeqCst);
+    if SCHEDTEST_STEP.load(Ordering::SeqCst) != EXPECTED_SCHEDTEST_STEP {
+        return Err(SchedulerError::BadScheduleOrder);
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
 pub fn run_task_termination_self_test() -> Result<(), SchedulerError> {
     TERMINATION_STATE.store(TERMINATION_READY, Ordering::SeqCst);
 
@@ -325,10 +382,15 @@ pub fn run_preemption_self_test() -> Result<(), SchedulerError> {
 
 #[cfg(not(test))]
 pub fn handle_timer_preemption() {
-    if !PREEMPT_ACTIVE.load(Ordering::SeqCst) {
-        return;
+    if PREEMPT_ACTIVE.load(Ordering::SeqCst) {
+        handle_preemption_tick();
+    } else if SCHEDTEST_ACTIVE.load(Ordering::SeqCst) {
+        handle_scheduler_acceptance_tick();
     }
+}
 
+#[cfg(not(test))]
+fn handle_preemption_tick() {
     match PREEMPT_STEP.load(Ordering::SeqCst) {
         1 => switch_on_timer(PREEMPT_A_CONTEXT.0.get(), PREEMPT_B_CONTEXT.0.get(), 2),
         3 => switch_on_timer(PREEMPT_B_CONTEXT.0.get(), PREEMPT_A_CONTEXT.0.get(), 4),
@@ -347,6 +409,47 @@ pub fn handle_timer_preemption() {
 }
 
 #[cfg(not(test))]
+fn handle_scheduler_acceptance_tick() {
+    match SCHEDTEST_STEP.load(Ordering::SeqCst) {
+        1 => switch_on_scheduler_test_timer(
+            SCHEDTEST_A_CONTEXT.0.get(),
+            SCHEDTEST_B_CONTEXT.0.get(),
+            2,
+        ),
+        3 => switch_on_scheduler_test_timer(
+            SCHEDTEST_B_CONTEXT.0.get(),
+            SCHEDTEST_C_CONTEXT.0.get(),
+            4,
+        ),
+        5 => switch_on_scheduler_test_timer(
+            SCHEDTEST_C_CONTEXT.0.get(),
+            SCHEDTEST_A_CONTEXT.0.get(),
+            6,
+        ),
+        7 => switch_on_scheduler_test_timer(
+            SCHEDTEST_A_CONTEXT.0.get(),
+            SCHEDTEST_B_CONTEXT.0.get(),
+            8,
+        ),
+        9 => switch_on_scheduler_test_timer(
+            SCHEDTEST_B_CONTEXT.0.get(),
+            SCHEDTEST_C_CONTEXT.0.get(),
+            10,
+        ),
+        11 => {
+            SCHEDTEST_STEP.store(EXPECTED_SCHEDTEST_STEP, Ordering::SeqCst);
+            SCHEDTEST_ACTIVE.store(false, Ordering::SeqCst);
+            switch_on_scheduler_test_timer(
+                SCHEDTEST_C_CONTEXT.0.get(),
+                SCHEDTEST_BOOT_CONTEXT.0.get(),
+                EXPECTED_SCHEDTEST_STEP,
+            );
+        }
+        _ => {}
+    }
+}
+
+#[cfg(not(test))]
 fn switch_on_timer(current: *mut ContextFrame, next: *const ContextFrame, next_step: usize) {
     PREEMPT_STEP.store(next_step, Ordering::SeqCst);
     // SAFETY:
@@ -354,6 +457,29 @@ fn switch_on_timer(current: *mut ContextFrame, next: *const ContextFrame, next_s
     //    `next` names an initialized runnable context.
     // 2. Established by: `run_preemption_self_test` before arming preemption and
     //    by the ordered `PREEMPT_STEP` state machine.
+    // 3. Lifetime: all context frames and stacks are static.
+    // 4. Pointer ownership: the IRQ0 handler is the only writer while active.
+    // 5. Alignment: `ContextFrame` statics preserve frame alignment.
+    // 6. Mapped length: exactly one current and one next frame are accessed.
+    // 7. Concurrency: interrupt gate disables nested maskable interrupts.
+    // 8. Violation: a stale or unmapped context faults through diagnostics.
+    unsafe {
+        context_switch::switch(current, next);
+    }
+}
+
+#[cfg(not(test))]
+fn switch_on_scheduler_test_timer(
+    current: *mut ContextFrame,
+    next: *const ContextFrame,
+    next_step: usize,
+) {
+    SCHEDTEST_STEP.store(next_step, Ordering::SeqCst);
+    // SAFETY:
+    // 1. Invariant: `current` names the interrupted scheduler-test task and
+    //    `next` names an initialized scheduler-test context.
+    // 2. Established by: `run_scheduler_acceptance_self_test` initialization and
+    //    the ordered `SCHEDTEST_STEP` state machine.
     // 3. Lifetime: all context frames and stacks are static.
     // 4. Pointer ownership: the IRQ0 handler is the only writer while active.
     // 5. Alignment: `ContextFrame` statics preserve frame alignment.
@@ -463,6 +589,51 @@ extern "C" fn preempt_task_b_entry() -> ! {
     loop {
         if PREEMPT_STEP.compare_exchange(6, 7, Ordering::SeqCst, Ordering::SeqCst) == Ok(6) {
             serial::write_line("PYTHOS:CORE:PREEMPT:TASK_B");
+        }
+        hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn schedtest_task_a_entry() -> ! {
+    if SCHEDTEST_STEP.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst) != Ok(0) {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_A");
+
+    loop {
+        if SCHEDTEST_STEP.compare_exchange(6, 7, Ordering::SeqCst, Ordering::SeqCst) == Ok(6) {
+            serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_A");
+        }
+        hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn schedtest_task_b_entry() -> ! {
+    if SCHEDTEST_STEP.compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst) != Ok(2) {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_B");
+
+    loop {
+        if SCHEDTEST_STEP.compare_exchange(8, 9, Ordering::SeqCst, Ordering::SeqCst) == Ok(8) {
+            serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_B");
+        }
+        hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn schedtest_task_c_entry() -> ! {
+    if SCHEDTEST_STEP.compare_exchange(4, 5, Ordering::SeqCst, Ordering::SeqCst) != Ok(4) {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_C");
+
+    loop {
+        if SCHEDTEST_STEP.compare_exchange(10, 11, Ordering::SeqCst, Ordering::SeqCst) == Ok(10) {
+            serial::write_line("PYTHOS:CORE:SCHEDTEST:TASK_C");
         }
         hint::spin_loop();
     }

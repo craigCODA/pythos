@@ -204,7 +204,7 @@ concept. Prefer stack or static parsing first.
 None yet. Phase 1.5 predates any typed-object or capability concept in the
 vision docs. The first applicable test is at Phase 3.
 
-## Phase 2: Timer and Native Tasks - IN PROGRESS
+## Phase 2: Timer and Native Tasks - COMPLETE
 
 ### Purpose
 
@@ -278,10 +278,10 @@ mask.
     its static scheduler slot is marked terminated/reclaimable, and the
     round-robin selector verifies the terminated slot is no longer ready. Emits
     `PYTHOS:CORE:TASK_TERMINATION_READY`.
-11. `scheduler-tests` - deterministic QEMU acceptance test asserting
-    interleaved, alternating serial markers from at least three native tasks
-    across multiple preemptions, using `qemu-exit` marker-order-violation
-    detection to catch corruption automatically rather than by eyeballing logs.
+11. `scheduler-tests` - COMPLETE. Deterministic QEMU acceptance asserts
+    interleaved, alternating serial markers from three native tasks across
+    multiple timer-forced preemptions using the serial marker-order oracle.
+    Emits `PYTHOS:CORE:SCHEDULER_TESTS_READY`.
 
 ### Exit Condition
 
@@ -305,7 +305,7 @@ suite under `tests/`.
 
 None yet.
 
-## Phase 3: IPC and Capabilities - NOT STARTED
+## Phase 3: IPC and Capabilities - IN PROGRESS
 
 ### Purpose
 

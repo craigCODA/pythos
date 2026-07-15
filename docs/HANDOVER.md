@@ -62,6 +62,13 @@ PYTHOS:CORE:PREEMPT:TASK_B
 PYTHOS:CORE:PREEMPT_READY
 PYTHOS:CORE:TASK_TERMINATED
 PYTHOS:CORE:TASK_TERMINATION_READY
+PYTHOS:CORE:SCHEDTEST:TASK_A
+PYTHOS:CORE:SCHEDTEST:TASK_B
+PYTHOS:CORE:SCHEDTEST:TASK_C
+PYTHOS:CORE:SCHEDTEST:TASK_A
+PYTHOS:CORE:SCHEDTEST:TASK_B
+PYTHOS:CORE:SCHEDTEST:TASK_C
+PYTHOS:CORE:SCHEDULER_TESTS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -103,6 +110,7 @@ This proves:
 * PythCore proves the scheduler idle path by observing an empty ready set, switching through a fixed idle context once, returning to bootstrap, and emitting `PYTHOS:CORE:IDLE_TASK_READY`.
 * PythCore proves timer-driven preemption by switching between spin-only native contexts from IRQ0 without voluntary yields, emitting alternating `PREEMPT:TASK_A` and `PREEMPT:TASK_B` markers, and returning to bootstrap with `PYTHOS:CORE:PREEMPT_READY`.
 * PythCore proves task termination by switching into a fixed native task that exits, returning to bootstrap, marking its scheduler slot terminated/reclaimable, and verifying the terminated slot is not selected again.
+* PythCore proves the Phase 2 scheduler exit condition with three spin-only native tasks interleaved by timer-forced preemption in deterministic `TASK_A`, `TASK_B`, `TASK_C`, `TASK_A`, `TASK_B`, `TASK_C` order.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -203,10 +211,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, and `task-termination` slices are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented on the current branch. Phase 2 is complete.
 
 ```text
-next: Phase 2 scheduler-tests
+next: Phase 3 service-identity ADR gate
 ```
 
 The `vm-ready` proof now covers:
@@ -271,6 +279,13 @@ PYTHOS:CORE:PREEMPT:TASK_B
 PYTHOS:CORE:PREEMPT_READY
 PYTHOS:CORE:TASK_TERMINATED
 PYTHOS:CORE:TASK_TERMINATION_READY
+PYTHOS:CORE:SCHEDTEST:TASK_A
+PYTHOS:CORE:SCHEDTEST:TASK_B
+PYTHOS:CORE:SCHEDTEST:TASK_C
+PYTHOS:CORE:SCHEDTEST:TASK_A
+PYTHOS:CORE:SCHEDTEST:TASK_B
+PYTHOS:CORE:SCHEDTEST:TASK_C
+PYTHOS:CORE:SCHEDULER_TESTS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -298,5 +313,7 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, complete Phase 2 with `scheduler-tests`. Do not pull in IPC, Python, or
-any later phase while building the scheduler-tests slice.
+Next, begin Phase 3 with the required ADR gate before `service-identity`: record
+TCB invariants, capability token representation, and revocation semantics. Do
+not implement IPC channels, bounded queues, request/reply, Python, or later
+phase work while opening `service-identity`.
