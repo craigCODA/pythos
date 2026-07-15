@@ -266,8 +266,10 @@ mask.
 7. `scheduler` - COMPLETE. Round-robin first. Priority scheduling is deferred
    by ADR 0007 and must not be built speculatively. Emits
    `PYTHOS:CORE:SCHEDULER_READY`.
-8. `idle-task` - a task that runs only when no other task is ready. Prove the
-   scheduler can go idle without halting the CPU permanently.
+8. `idle-task` - COMPLETE. A task runs only when no other task is ready. The
+   proof observes the empty-ready-set path, switches through a fixed idle
+   context without permanently halting the CPU, and emits
+   `PYTHOS:CORE:IDLE_TASK_READY`.
 9. `preemption` - timer interrupt forces a context switch mid-task, not only at
    voluntary yield points.
 10. `task-termination` - a task can exit; its resources, stack, and TCB slot

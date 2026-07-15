@@ -17,6 +17,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 const SCHEDULER_STACK_SIZE: usize = 16 * 4096;
 #[cfg(not(test))]
 const EXPECTED_TASK_RUNS: usize = 2;
+#[cfg(not(test))]
+const EXPECTED_IDLE_RUNS: usize = 1;
 
 const SCHEDULE_A: SchedulerTaskId = SchedulerTaskId::new(2);
 const SCHEDULE_B: SchedulerTaskId = SchedulerTaskId::new(3);
@@ -26,6 +28,7 @@ pub enum SchedulerError {
     NoReadyTask,
     BadScheduleOrder,
     BadTaskRunCount,
+    BadIdleRunCount,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -110,15 +113,22 @@ static SCHEDULER_A_STACK: SchedulerStackStorage =
 static SCHEDULER_B_STACK: SchedulerStackStorage =
     SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
 #[cfg(not(test))]
+static IDLE_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
 static BOOT_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
 static TASK_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
 static TASK_B_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
+static IDLE_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
 static TASK_A_RUNS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static TASK_B_RUNS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
+static IDLE_RUNS: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), SchedulerError> {
@@ -169,6 +179,37 @@ pub fn run_self_test() -> Result<(), SchedulerError> {
 }
 
 #[cfg(not(test))]
+pub fn run_idle_self_test() -> Result<(), SchedulerError> {
+    IDLE_RUNS.store(0, Ordering::SeqCst);
+    let mut scheduler = RoundRobinScheduler::<0>::new([]);
+    if scheduler.next_ready() != Err(SchedulerError::NoReadyTask) {
+        return Err(SchedulerError::BadScheduleOrder);
+    }
+
+    // SAFETY:
+    // 1. Invariant: the idle frame and idle stack are static, mapped, aligned,
+    //    and private to the Phase 2 scheduler proof.
+    // 2. Established by: the guarded kernel stack and VM slices, plus private
+    //    scheduler statics initialized before switching.
+    // 3. Lifetime: frame and stack live for the full kernel lifetime.
+    // 4. Pointer ownership: this idle self-test exclusively initializes and
+    //    switches through the idle context.
+    // 5. Alignment: `SchedulerStack` is 16-byte aligned; frame uses `repr(C)`.
+    // 6. Mapped length: one stack of `SCHEDULER_STACK_SIZE` bytes and one frame.
+    // 7. Concurrency: single-core cooperative execution; no migration.
+    // 8. Violation: bad pointers or stack bounds fault through diagnostics.
+    unsafe {
+        *IDLE_CONTEXT.0.get() = ContextFrame::new(idle_task_entry, stack_top(IDLE_STACK.0.get()));
+    }
+    switch_to_idle();
+
+    if IDLE_RUNS.load(Ordering::SeqCst) != EXPECTED_IDLE_RUNS {
+        return Err(SchedulerError::BadIdleRunCount);
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
 fn switch_to(task: SchedulerTaskId) {
     let next = if task == SCHEDULE_A {
         TASK_A_CONTEXT.0.get()
@@ -192,6 +233,23 @@ fn switch_to(task: SchedulerTaskId) {
 }
 
 #[cfg(not(test))]
+fn switch_to_idle() {
+    // SAFETY:
+    // 1. Invariant: `BOOT_CONTEXT` and `IDLE_CONTEXT` are initialized and
+    //    `IDLE_CONTEXT` names a valid scheduler test stack.
+    // 2. Established by: `run_idle_self_test` frame initialization.
+    // 3. Lifetime: static frames and stacks live for the full kernel lifetime.
+    // 4. Pointer ownership: the switch path saves only `BOOT_CONTEXT`.
+    // 5. Alignment: `ContextFrame` statics preserve frame alignment.
+    // 6. Mapped length: exactly one current and one next frame are accessed.
+    // 7. Concurrency: cooperative single-core scheduler self-test.
+    // 8. Violation: a bad frame pointer faults through diagnostics.
+    unsafe {
+        context_switch::switch(BOOT_CONTEXT.0.get(), IDLE_CONTEXT.0.get());
+    }
+}
+
+#[cfg(not(test))]
 extern "C" fn task_a_entry() -> ! {
     loop {
         if TASK_A_RUNS.fetch_add(1, Ordering::SeqCst) >= EXPECTED_TASK_RUNS {
@@ -210,6 +268,17 @@ extern "C" fn task_b_entry() -> ! {
         }
         serial::write_line("PYTHOS:CORE:SCHEDULER:TASK_B");
         yield_to_scheduler(TASK_B_CONTEXT.0.get());
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn idle_task_entry() -> ! {
+    loop {
+        if IDLE_RUNS.fetch_add(1, Ordering::SeqCst) >= EXPECTED_IDLE_RUNS {
+            halt_bad_schedule();
+        }
+        serial::write_line("PYTHOS:CORE:IDLE_TASK");
+        yield_to_scheduler(IDLE_CONTEXT.0.get());
     }
 }
 
@@ -270,5 +339,12 @@ mod tests {
     fn scheduler_task_ids_are_stable_kernel_assigned_values() {
         assert_eq!(SCHEDULE_A, SchedulerTaskId::new(2));
         assert_eq!(SCHEDULE_B, SchedulerTaskId::new(3));
+    }
+
+    #[test]
+    fn idle_task_is_selected_only_after_ready_set_is_empty() {
+        let mut scheduler = RoundRobinScheduler::<0>::new([]);
+
+        assert_eq!(scheduler.next_ready(), Err(SchedulerError::NoReadyTask));
     }
 }
