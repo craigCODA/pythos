@@ -1,6 +1,6 @@
 //! Minimal x86-64 IDT installation.
 
-use crate::architecture::x86_64::{exceptions, gdt};
+use crate::architecture::x86_64::{exceptions, gdt, interrupts};
 use core::arch::asm;
 use core::cell::UnsafeCell;
 
@@ -78,10 +78,10 @@ pub fn initialize() -> Result<(), ()> {
     // 8. Violation: a partially initialized IDT would fault on exceptions.
     let idt = unsafe { &mut *IDT.0.get() };
     for (index, entry) in idt.iter_mut().enumerate() {
-        let handler = if index < 32 {
-            exceptions::handler_for_vector(index)
-        } else {
-            exceptions::panic_stub as *const () as usize as u64
+        let handler = match index {
+            0..=31 => exceptions::handler_for_vector(index),
+            32..=47 => interrupts::handler_for_vector(index),
+            _ => exceptions::panic_stub as *const () as usize as u64,
         };
         *entry = IdtEntry::new(handler, gdt::KERNEL_CODE_SELECTOR);
     }

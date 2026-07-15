@@ -241,8 +241,8 @@ mask.
    reopen or regress the existing `exceptions-diagnostic` marker; it extends
    the entry path underneath it.
 
-1. `interrupt-controller` - bring up APIC, or PIC if APIC is deferred,
-   mask and unmask per vector, and route to the existing IDT. Emit
+1. `interrupt-controller` - COMPLETE. Bring up APIC, or PIC if APIC is deferred,
+   mask and unmask per vector, and route to the existing IDT. Emits
    `PYTHOS:CORE:INTERRUPTS_READY`.
 2. `timer` - configure a hardware timer, APIC timer or PIT, to a fixed
    deterministic tick rate suitable for QEMU determinism. Emit
