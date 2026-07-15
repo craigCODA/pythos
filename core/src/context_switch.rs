@@ -39,7 +39,7 @@ pub struct ContextFrame {
 }
 
 impl ContextFrame {
-    const fn empty() -> Self {
+    pub const fn empty() -> Self {
         Self {
             r15: 0,
             r14: 0,
@@ -63,7 +63,7 @@ impl ContextFrame {
     }
 
     #[cfg(not(test))]
-    fn new(entry: extern "C" fn() -> !, stack_top: u64) -> Self {
+    pub fn new(entry: extern "C" fn() -> !, stack_top: u64) -> Self {
         let mut frame = Self::empty();
         frame.rsp = stack_top - 8;
         frame.rip = entry as usize as u64;
@@ -115,6 +115,31 @@ pub enum ContextSwitchError {
 #[cfg(not(test))]
 unsafe extern "C" {
     fn context_switch_abi(current: *mut ContextFrame, next: *const ContextFrame);
+}
+
+#[cfg(not(test))]
+pub unsafe fn switch(current: *mut ContextFrame, next: *const ContextFrame) {
+    // SAFETY:
+    // 1. Invariant: `current` points to a writable mapped `ContextFrame`, and
+    //    `next` points to a readable mapped `ContextFrame` with valid `RSP`,
+    //    `RIP`, and `RFLAGS` fields for kernel-mode execution.
+    // 2. Established by: caller-owned context initialization for the active
+    //    boot slice before invoking this low-level switch helper.
+    // 3. Lifetime: both frames and the selected stack must remain live until
+    //    the switched-away context is resumed or intentionally abandoned.
+    // 4. Pointer ownership: the switch path mutably saves only `current` and
+    //    reads `next`; no other writer may mutate either during the switch.
+    // 5. Alignment: `ContextFrame` uses `repr(C)` and caller supplies aligned
+    //    frame storage; `next.rsp` must satisfy the callee entry contract.
+    // 6. Mapped length: exactly one `ContextFrame` at each pointer and the
+    //    active stack range named by `next.rsp` are mapped.
+    // 7. Concurrency: single-core cooperative switching; no concurrent task
+    //    migration, SMP, or scheduler mutation exists in this slice.
+    // 8. Violation: bad frames, stale stack pointers, or unmapped contexts
+    //    fault through the diagnostic exception path.
+    unsafe {
+        context_switch_abi(current, next);
+    }
 }
 
 #[cfg(not(test))]
@@ -190,7 +215,7 @@ pub fn run_self_test() -> Result<(), ContextSwitchError> {
     unsafe {
         *TASK_A_CONTEXT.0.get() = ContextFrame::new(task_a_entry, stack_top(TASK_A_STACK.0.get()));
         *TASK_B_CONTEXT.0.get() = ContextFrame::new(task_b_entry, stack_top(TASK_B_STACK.0.get()));
-        context_switch_abi(BOOT_CONTEXT.0.get(), TASK_A_CONTEXT.0.get());
+        switch(BOOT_CONTEXT.0.get(), TASK_A_CONTEXT.0.get());
     }
     if SWITCH_STEP.load(Ordering::SeqCst) != EXPECTED_SWITCH_STEPS {
         return Err(ContextSwitchError::BadSwitchOrder);
@@ -214,7 +239,7 @@ extern "C" fn task_a_entry() -> ! {
     // 7. Concurrency: cooperative single-core context switch.
     // 8. Violation: a bad frame pointer faults through diagnostics.
     unsafe {
-        context_switch_abi(TASK_A_CONTEXT.0.get(), TASK_B_CONTEXT.0.get());
+        switch(TASK_A_CONTEXT.0.get(), TASK_B_CONTEXT.0.get());
     }
 
     if SWITCH_STEP.compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst) != Ok(2) {
@@ -231,7 +256,7 @@ extern "C" fn task_a_entry() -> ! {
     // 7. Concurrency: cooperative single-core context switch.
     // 8. Violation: a bad frame pointer faults through diagnostics.
     unsafe {
-        context_switch_abi(TASK_A_CONTEXT.0.get(), TASK_B_CONTEXT.0.get());
+        switch(TASK_A_CONTEXT.0.get(), TASK_B_CONTEXT.0.get());
     }
     halt_bad_switch();
 }
@@ -252,7 +277,7 @@ extern "C" fn task_b_entry() -> ! {
     // 7. Concurrency: cooperative single-core context switch.
     // 8. Violation: a bad frame pointer faults through diagnostics.
     unsafe {
-        context_switch_abi(TASK_B_CONTEXT.0.get(), TASK_A_CONTEXT.0.get());
+        switch(TASK_B_CONTEXT.0.get(), TASK_A_CONTEXT.0.get());
     }
 
     if SWITCH_STEP.compare_exchange(3, 4, Ordering::SeqCst, Ordering::SeqCst) != Ok(3) {
@@ -269,7 +294,7 @@ extern "C" fn task_b_entry() -> ! {
     // 7. Concurrency: cooperative single-core context switch.
     // 8. Violation: a bad frame pointer faults through diagnostics.
     unsafe {
-        context_switch_abi(TASK_B_CONTEXT.0.get(), BOOT_CONTEXT.0.get());
+        switch(TASK_B_CONTEXT.0.get(), BOOT_CONTEXT.0.get());
     }
     halt_bad_switch();
 }

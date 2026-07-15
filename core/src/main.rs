@@ -10,6 +10,7 @@ mod framebuffer;
 mod kernel_stacks;
 mod memory;
 mod qemu_exit;
+mod scheduler;
 mod serial;
 mod tasks;
 
@@ -148,6 +149,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CONTEXT_SWITCH_READY");
+        if scheduler::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:SCHEDULER_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

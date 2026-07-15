@@ -13,6 +13,10 @@ pub const BOOTSTRAP_TASK_ID: TaskId = TaskId(1);
 pub struct TaskId(u64);
 
 impl TaskId {
+    pub const fn new(raw: u64) -> Self {
+        Self(raw)
+    }
+
     #[allow(dead_code)]
     pub const fn raw(self) -> u64 {
         self.0

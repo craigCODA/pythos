@@ -263,8 +263,9 @@ mask.
    pointer, and flags state across a cooperative switch. Prove correctness with
    two native contexts writing distinguishable alternating markers with no
    stack corruption. Emits `PYTHOS:CORE:CONTEXT_SWITCH_READY`.
-7. `scheduler` - round-robin first. Document explicitly that priority
-   scheduling is deferred. Do not build it speculatively.
+7. `scheduler` - COMPLETE. Round-robin first. Priority scheduling is deferred
+   by ADR 0007 and must not be built speculatively. Emits
+   `PYTHOS:CORE:SCHEDULER_READY`.
 8. `idle-task` - a task that runs only when no other task is ready. Prove the
    scheduler can go idle without halting the CPU permanently.
 9. `preemption` - timer interrupt forces a context switch mid-task, not only at
