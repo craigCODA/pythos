@@ -313,7 +313,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, begin Phase 3 with the required ADR gate before `service-identity`: record
-TCB invariants, capability token representation, and revocation semantics. Do
-not implement IPC channels, bounded queues, request/reply, Python, or later
-phase work while opening `service-identity`.
+Next, begin Phase 3 `service-identity`. The ADR gate is recorded in ADR 0008,
+ADR 0009, and ADR 0010. Do not implement IPC channels, bounded queues,
+request/reply, Python, or later phase work while opening `service-identity`.

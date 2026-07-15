@@ -321,8 +321,8 @@ scheduler tests passing in CI.
 
 `service-identity` also requires TCB invariants to be formally specified before
 implementation begins: slot reuse, `TaskId` stability, saved-frame offsets, and
-kernel stack bounds. Record this either by strengthening ADR 0007 or by adding a
-Phase 3 addendum ADR.
+kernel stack bounds. This is recorded in ADR 0008. The Phase 3 capability-token
+and revocation decisions are recorded in ADR 0009 and ADR 0010.
 
 ### Locked Slice Sequence
 
