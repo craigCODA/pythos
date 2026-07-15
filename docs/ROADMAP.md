@@ -247,8 +247,9 @@ mask.
 2. `timer` - COMPLETE. Configure a hardware timer, APIC timer or PIT, to a fixed
    deterministic tick rate suitable for QEMU determinism. Emits
    `PYTHOS:CORE:TIMER_READY`.
-3. `monotonic-clock` - expose a monotonic tick counter derived from the timer,
-   immune to reprogramming by task code. Emit `PYTHOS:CORE:CLOCK_READY`.
+3. `monotonic-clock` - COMPLETE. Expose a monotonic tick counter derived from
+   the timer, immune to reprogramming by task code. Emits
+   `PYTHOS:CORE:CLOCK_READY`.
 4. `task-structures` - define the native task control block: saved register
    state, kernel stack pointer, task id, and state enum for ready, running,
    blocked, and terminated. No allocation beyond a fixed static pool at this

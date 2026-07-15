@@ -59,6 +59,7 @@ Verified vertical slices:
 * `identity-map-removed` verifies that the old broad loader identity map is absent after the PythCore `CR3` switch by checking that `0x0400_0000` is untranslated, arming a one-shot expected page fault for that address, recovering through the exception handler, and emitting `PYTHOS:CORE:EXPECTED_PAGE_FAULT` followed by `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * `bootinfo-complete` resolves boot files through `LoadedImage.DeviceHandle`, validates ACPI RSDP and SMBIOS entry points in the loader, passes their physical addresses through `PythBootInfo`, maps the required firmware metadata under PythCore-owned page tables, revalidates ACPI RSDP/root table and SMBIOS checksums in PythCore, validates the binary `INIT.PAK` header and checksum in both loader and core, zeros unsupported runtime-services pointers, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
 * `timer` programs the PIT for a fixed 100 Hz tick, unmasks IRQ0, enables interrupts after final boot metadata validation, waits for one observed timer interrupt, and emits `PYTHOS:CORE:TIMER_READY`.
+* `monotonic-clock` exposes a read-only monotonic tick counter derived from the timer source without exposing timer reprogramming controls, validates the timer has observed at least one tick, and emits `PYTHOS:CORE:CLOCK_READY`.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -153,6 +154,7 @@ PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:TIMER_READY
+PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -281,7 +283,14 @@ PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:TIMER_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, and `PYTHOS:CORE:TIMER_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `monotonic-clock` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:TIMER_READY
+PYTHOS:CORE:CLOCK_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, and `PYTHOS:CORE:CLOCK_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 
