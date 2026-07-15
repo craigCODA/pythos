@@ -9,7 +9,11 @@ use crate::tasks::TaskId;
 const MAX_MESSAGE_SIZE: usize = 16;
 const CHANNEL_QUEUE_DEPTH: usize = 2;
 const IPC_MESSAGE_TYPE_BOOT_PROOF: u16 = 1;
+const IPC_MESSAGE_TYPE_QUEUE_PROOF: u16 = 2;
 const IPC_PROOF_PAYLOAD: [u8; 8] = [0x50, 0x59, 0x54, 0x48, 0x49, 0x50, 0x43, 0x31];
+const QUEUE_PROOF_A: [u8; 4] = [0x51, 0x41, 0x30, 0x31];
+const QUEUE_PROOF_B: [u8; 4] = [0x51, 0x42, 0x30, 0x32];
+const QUEUE_PROOF_C: [u8; 4] = [0x51, 0x43, 0x30, 0x33];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IpcError {
@@ -146,6 +150,36 @@ pub fn run_self_test() -> Result<(), IpcError> {
     Ok(())
 }
 
+pub fn run_bounded_queue_self_test() -> Result<(), IpcError> {
+    let mut identities = ServiceIdentityTable::new();
+    let sender = identities
+        .register_task(TaskId::new(22))
+        .map_err(|_| IpcError::InvalidEndpoint)?;
+    let receiver = identities
+        .register_task(TaskId::new(23))
+        .map_err(|_| IpcError::InvalidEndpoint)?;
+    let mut channel = IpcChannel::new(sender, receiver);
+    let first = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_A)?;
+    let second = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_B)?;
+    let overflow = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_C)?;
+
+    channel.send(sender, receiver, first)?;
+    channel.send(sender, receiver, second)?;
+    if channel.send(sender, receiver, overflow) != Err(IpcError::QueueFull) {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:IPC:QUEUE_FULL");
+
+    if channel.receive(receiver)? != first || channel.receive(receiver)? != second {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    if channel.receive(receiver) != Err(IpcError::QueueEmpty) {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    Ok(())
+}
+
 fn checksum(bytes: &[u8]) -> u32 {
     bytes
         .iter()
@@ -191,5 +225,26 @@ mod tests {
             IpcMessage::new(IPC_MESSAGE_TYPE_BOOT_PROOF, &too_large),
             Err(IpcError::MessageTooLarge)
         );
+    }
+
+    #[test]
+    fn full_queue_returns_explicit_error_without_dropping_messages() {
+        let mut identities = ServiceIdentityTable::new();
+        let sender = identities.register_task(TaskId::new(22)).unwrap();
+        let receiver = identities.register_task(TaskId::new(23)).unwrap();
+        let mut channel = IpcChannel::new(sender, receiver);
+        let first = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_A).unwrap();
+        let second = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_B).unwrap();
+        let overflow = IpcMessage::new(IPC_MESSAGE_TYPE_QUEUE_PROOF, &QUEUE_PROOF_C).unwrap();
+
+        assert_eq!(channel.send(sender, receiver, first), Ok(()));
+        assert_eq!(channel.send(sender, receiver, second), Ok(()));
+        assert_eq!(
+            channel.send(sender, receiver, overflow),
+            Err(IpcError::QueueFull)
+        );
+        assert_eq!(channel.receive(receiver), Ok(first));
+        assert_eq!(channel.receive(receiver), Ok(second));
+        assert_eq!(channel.receive(receiver), Err(IpcError::QueueEmpty));
     }
 }

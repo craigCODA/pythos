@@ -337,8 +337,11 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    `permission-validation` slices add authority checks. Emits
    `PYTHOS:CORE:IPC:SEND`, `PYTHOS:CORE:IPC:RECV`, and
    `PYTHOS:CORE:IPC_CHANNELS_READY` after an exact payload-integrity proof.
-3. `bounded-queues` - backpressure behavior defined and tested: sender blocks
-   or receives an explicit full-queue error, never silently drops.
+3. `bounded-queues` - COMPLETE. Backpressure behavior is defined and tested:
+   this early in-kernel channel returns an explicit `QueueFull` error when the
+   fixed queue is full and preserves already queued messages without silent
+   drop. Emits `PYTHOS:CORE:IPC:QUEUE_FULL` and
+   `PYTHOS:CORE:BOUNDED_QUEUES_READY`.
 4. `request-reply` - a synchronous request/reply pattern built on top of the
    channel primitive, with defined timeout behavior.
 5. `shared-memory-handles` - capability-gated shared memory region between two

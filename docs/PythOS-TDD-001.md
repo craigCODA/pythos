@@ -70,6 +70,7 @@ Verified vertical slices:
 * `scheduler-tests` runs three spin-only native contexts through timer-forced preemption, verifies deterministic A/B/C/A/B/C serial ordering under the QEMU marker oracle, returns to bootstrap, and emits `PYTHOS:CORE:SCHEDULER_TESTS_READY`.
 * `service-identity` assigns kernel-owned service identities separately from task ids and scheduler slots, proves a reused slot receives a fresh service identity, rejects stale identity lookup, and emits `PYTHOS:CORE:SERVICE_IDENTITY_READY`.
 * `ipc-channels` creates a trusted kernel-internal fixed channel between two known service identities, copies a typed bounded message into channel storage, receives it through the peer identity, validates exact type, length, checksum, and payload bytes, and emits `PYTHOS:CORE:IPC:SEND`, `PYTHOS:CORE:IPC:RECV`, and `PYTHOS:CORE:IPC_CHANNELS_READY`.
+* `bounded-queues` fills the fixed IPC queue, proves a further send returns the explicit `QueueFull` error instead of silently dropping data, drains the original messages unchanged, and emits `PYTHOS:CORE:IPC:QUEUE_FULL` followed by `PYTHOS:CORE:BOUNDED_QUEUES_READY`.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -198,6 +199,8 @@ PYTHOS:CORE:SERVICE_IDENTITY_READY
 PYTHOS:CORE:IPC:SEND
 PYTHOS:CORE:IPC:RECV
 PYTHOS:CORE:IPC_CHANNELS_READY
+PYTHOS:CORE:IPC:QUEUE_FULL
+PYTHOS:CORE:BOUNDED_QUEUES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -426,7 +429,15 @@ PYTHOS:CORE:IPC:RECV
 PYTHOS:CORE:IPC_CHANNELS_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, and `PYTHOS:CORE:IPC_CHANNELS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `bounded-queues` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:IPC_CHANNELS_READY
+PYTHOS:CORE:IPC:QUEUE_FULL
+PYTHOS:CORE:BOUNDED_QUEUES_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, and `PYTHOS:CORE:BOUNDED_QUEUES_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 
