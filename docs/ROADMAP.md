@@ -250,10 +250,10 @@ mask.
 3. `monotonic-clock` - COMPLETE. Expose a monotonic tick counter derived from
    the timer, immune to reprogramming by task code. Emits
    `PYTHOS:CORE:CLOCK_READY`.
-4. `task-structures` - define the native task control block: saved register
-   state, kernel stack pointer, task id, and state enum for ready, running,
-   blocked, and terminated. No allocation beyond a fixed static pool at this
-   slice.
+4. `task-structures` - COMPLETE. Define the native task control block: saved
+   register state, kernel stack pointer, task id, and state enum for ready,
+   running, blocked, and terminated. No allocation beyond a fixed static pool
+   at this slice. Emits `PYTHOS:CORE:TASKS_READY`.
 5. `kernel-stacks` - guarded per-task kernel stacks using the guard-page
    pattern from Phase 1.5. Stack overflow must fault into the diagnostic
    exception path, not silently corrupt an adjacent task.

@@ -9,6 +9,7 @@ mod framebuffer;
 mod memory;
 mod qemu_exit;
 mod serial;
+mod tasks;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -130,6 +131,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CLOCK_READY");
+        if tasks::initialize(boot_info).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:TASKS_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
