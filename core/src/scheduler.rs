@@ -21,6 +21,14 @@ const EXPECTED_TASK_RUNS: usize = 2;
 const EXPECTED_IDLE_RUNS: usize = 1;
 #[cfg(not(test))]
 const EXPECTED_PREEMPT_STEP: usize = 8;
+#[cfg(not(test))]
+const TERMINATION_READY: usize = 1;
+#[cfg(not(test))]
+const TERMINATION_RUNNING: usize = 2;
+#[cfg(not(test))]
+const TERMINATION_EXITED: usize = 3;
+#[cfg(not(test))]
+const TERMINATION_RECLAIMED: usize = 4;
 
 const SCHEDULE_A: SchedulerTaskId = SchedulerTaskId::new(2);
 const SCHEDULE_B: SchedulerTaskId = SchedulerTaskId::new(3);
@@ -31,6 +39,7 @@ pub enum SchedulerError {
     BadScheduleOrder,
     BadTaskRunCount,
     BadIdleRunCount,
+    BadTerminationState,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -45,6 +54,7 @@ impl SchedulerTaskId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum SchedulerTaskState {
     Ready,
+    Terminated,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -58,6 +68,13 @@ impl SchedulerTask {
         Self {
             id,
             state: SchedulerTaskState::Ready,
+        }
+    }
+
+    const fn terminated(id: SchedulerTaskId) -> Self {
+        Self {
+            id,
+            state: SchedulerTaskState::Terminated,
         }
     }
 }
@@ -124,6 +141,9 @@ static PREEMPT_A_STACK: SchedulerStackStorage =
 static PREEMPT_B_STACK: SchedulerStackStorage =
     SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
 #[cfg(not(test))]
+static TERMINATION_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
 static BOOT_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
 static TASK_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
@@ -139,6 +159,11 @@ static PREEMPT_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(Contex
 #[cfg(not(test))]
 static PREEMPT_B_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
+static TERMINATION_BOOT_CONTEXT: ContextStorage =
+    ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static TERMINATION_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
 static TASK_A_RUNS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static TASK_B_RUNS: AtomicUsize = AtomicUsize::new(0);
@@ -148,6 +173,8 @@ static IDLE_RUNS: AtomicUsize = AtomicUsize::new(0);
 static PREEMPT_STEP: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static PREEMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
+#[cfg(not(test))]
+static TERMINATION_STATE: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), SchedulerError> {
@@ -224,6 +251,43 @@ pub fn run_idle_self_test() -> Result<(), SchedulerError> {
 
     if IDLE_RUNS.load(Ordering::SeqCst) != EXPECTED_IDLE_RUNS {
         return Err(SchedulerError::BadIdleRunCount);
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+pub fn run_task_termination_self_test() -> Result<(), SchedulerError> {
+    TERMINATION_STATE.store(TERMINATION_READY, Ordering::SeqCst);
+
+    // SAFETY:
+    // 1. Invariant: the terminating task frame and stack are static, mapped,
+    //    aligned, and private to this termination proof.
+    // 2. Established by: Phase 2 VM, guarded-stack, and context-switch slices.
+    // 3. Lifetime: frame and stack live for the full kernel lifetime.
+    // 4. Pointer ownership: this self-test exclusively initializes and switches
+    //    through the terminating context.
+    // 5. Alignment: `SchedulerStack` is 16-byte aligned; frame uses `repr(C)`.
+    // 6. Mapped length: one stack of `SCHEDULER_STACK_SIZE` bytes and two frames.
+    // 7. Concurrency: single-core execution; IRQ0 may tick but does not inspect
+    //    this termination state.
+    // 8. Violation: bad pointers or stack bounds fault through diagnostics.
+    unsafe {
+        *TERMINATION_CONTEXT.0.get() =
+            ContextFrame::new(terminating_task_entry, stack_top(TERMINATION_STACK.0.get()));
+        context_switch::switch(
+            TERMINATION_BOOT_CONTEXT.0.get(),
+            TERMINATION_CONTEXT.0.get(),
+        );
+    }
+
+    if TERMINATION_STATE.load(Ordering::SeqCst) != TERMINATION_EXITED {
+        return Err(SchedulerError::BadTerminationState);
+    }
+    TERMINATION_STATE.store(TERMINATION_RECLAIMED, Ordering::SeqCst);
+
+    let mut scheduler = RoundRobinScheduler::new([SchedulerTask::terminated(SCHEDULE_A)]);
+    if scheduler.next_ready() != Err(SchedulerError::NoReadyTask) {
+        return Err(SchedulerError::BadTerminationState);
     }
     Ok(())
 }
@@ -405,6 +469,40 @@ extern "C" fn preempt_task_b_entry() -> ! {
 }
 
 #[cfg(not(test))]
+extern "C" fn terminating_task_entry() -> ! {
+    if TERMINATION_STATE.compare_exchange(
+        TERMINATION_READY,
+        TERMINATION_RUNNING,
+        Ordering::SeqCst,
+        Ordering::SeqCst,
+    ) != Ok(TERMINATION_READY)
+    {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:TASK_TERMINATED");
+    TERMINATION_STATE.store(TERMINATION_EXITED, Ordering::SeqCst);
+
+    // SAFETY:
+    // 1. Invariant: the terminating task and bootstrap context frames are
+    //    initialized and mapped.
+    // 2. Established by: `run_task_termination_self_test` before entering this
+    //    task.
+    // 3. Lifetime: static frames live for the full kernel lifetime.
+    // 4. Pointer ownership: the switch path saves only the exiting task frame.
+    // 5. Alignment: `ContextFrame` statics preserve frame alignment.
+    // 6. Mapped length: exactly one current and one next frame are accessed.
+    // 7. Concurrency: single-core execution; no scheduler migration exists.
+    // 8. Violation: bad context storage faults through diagnostics.
+    unsafe {
+        context_switch::switch(
+            TERMINATION_CONTEXT.0.get(),
+            TERMINATION_BOOT_CONTEXT.0.get(),
+        );
+    }
+    halt_bad_schedule();
+}
+
+#[cfg(not(test))]
 fn yield_to_scheduler(current: *mut ContextFrame) {
     // SAFETY:
     // 1. Invariant: `current` is the active scheduler test task frame and
@@ -453,6 +551,16 @@ mod tests {
     #[test]
     fn round_robin_reports_no_ready_task_without_priority_fallback() {
         let mut scheduler = RoundRobinScheduler::new([]);
+
+        assert_eq!(scheduler.next_ready(), Err(SchedulerError::NoReadyTask));
+    }
+
+    #[test]
+    fn round_robin_does_not_select_terminated_tasks() {
+        let mut scheduler = RoundRobinScheduler::new([
+            SchedulerTask::terminated(SCHEDULE_A),
+            SchedulerTask::terminated(SCHEDULE_B),
+        ]);
 
         assert_eq!(scheduler.next_ready(), Err(SchedulerError::NoReadyTask));
     }

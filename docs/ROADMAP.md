@@ -274,9 +274,10 @@ mask.
    native contexts without voluntary yield points, producing alternating
    `PREEMPT:TASK_A` and `PREEMPT:TASK_B` markers before
    `PYTHOS:CORE:PREEMPT_READY`.
-10. `task-termination` - a task can exit; its resources, stack, and TCB slot
-    return to the static pool cleanly. No dangling scheduler references after
-    termination.
+10. `task-termination` - COMPLETE. A fixed native task exits back to bootstrap,
+    its static scheduler slot is marked terminated/reclaimable, and the
+    round-robin selector verifies the terminated slot is no longer ready. Emits
+    `PYTHOS:CORE:TASK_TERMINATION_READY`.
 11. `scheduler-tests` - deterministic QEMU acceptance test asserting
     interleaved, alternating serial markers from at least three native tasks
     across multiple preemptions, using `qemu-exit` marker-order-violation
