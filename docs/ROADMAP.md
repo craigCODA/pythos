@@ -244,8 +244,8 @@ mask.
 1. `interrupt-controller` - COMPLETE. Bring up APIC, or PIC if APIC is deferred,
    mask and unmask per vector, and route to the existing IDT. Emits
    `PYTHOS:CORE:INTERRUPTS_READY`.
-2. `timer` - configure a hardware timer, APIC timer or PIT, to a fixed
-   deterministic tick rate suitable for QEMU determinism. Emit
+2. `timer` - COMPLETE. Configure a hardware timer, APIC timer or PIT, to a fixed
+   deterministic tick rate suitable for QEMU determinism. Emits
    `PYTHOS:CORE:TIMER_READY`.
 3. `monotonic-clock` - expose a monotonic tick counter derived from the timer,
    immune to reprogramming by task code. Emit `PYTHOS:CORE:CLOCK_READY`.

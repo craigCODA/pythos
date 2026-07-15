@@ -3,6 +3,8 @@
 
 use core::arch::asm;
 
+use crate::architecture::x86_64::timer;
+
 #[cfg(not(test))]
 use core::arch::global_asm;
 
@@ -213,6 +215,9 @@ pub fn handler_for_vector(vector: usize) -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn external_interrupt_handler(frame: &mut InterruptFrame) {
     if (PIC_MASTER_OFFSET as u64..(PIC_SLAVE_OFFSET as u64 + 8)).contains(&frame.vector) {
+        if frame.vector == PIC_MASTER_OFFSET as u64 {
+            timer::handle_timer_interrupt();
+        }
         send_eoi(frame.vector as u8);
     }
 }
