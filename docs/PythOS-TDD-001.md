@@ -53,6 +53,7 @@ Verified vertical slices:
 * `gdt-ready` installs a minimal 64-bit GDT with kernel code, kernel data, and TSS descriptors, reloads segment registers, loads `TR`, and emits `PYTHOS:CORE:GDT_READY`.
 * `idt-ready` installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
 * `exceptions-diagnostic` installs per-vector exception stubs for CPU exception vectors 0 through 31 and an allocation-free diagnostic handler that reports vector, error code, `RIP`, `CS`, `RFLAGS`, `RSP`, `SS`, `CR2` for page faults, and current `CR3` over COM1 before entering the panic loop. It emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
+* `exception-entry-hardening` extends the exception entry path to preserve all general-purpose registers, align the stack before calling Rust, expose a normalized saved-register frame to the handler, and prove handled exception return by running a controlled register-heavy `INT3` probe. It emits `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`.
 * `vm-ready` implements PythCore-owned replacement page tables, discovers currently active physical backing by walking the loader page tables before replacement, maps linker-defined kernel text/rodata/data regions with W^X permissions, maps boot information, memory map, `INIT.PAK`, the guarded bootstrap stack, framebuffer, and page-table frames needed for validation, switches `CR3` a second time, validates the active root, and emits `PYTHOS:CORE:VM_READY`.
 * `identity-map-removed` verifies that the old broad loader identity map is absent after the PythCore `CR3` switch by checking that `0x0400_0000` is untranslated, arming a one-shot expected page fault for that address, recovering through the exception handler, and emitting `PYTHOS:CORE:EXPECTED_PAGE_FAULT` followed by `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * `bootinfo-complete` resolves boot files through `LoadedImage.DeviceHandle`, validates ACPI RSDP and SMBIOS entry points in the loader, passes their physical addresses through `PythBootInfo`, maps the required firmware metadata under PythCore-owned page tables, revalidates ACPI RSDP/root table and SMBIOS checksums in PythCore, validates the binary `INIT.PAK` header and checksum in both loader and core, zeros unsupported runtime-services pointers, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
@@ -143,6 +144,7 @@ PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
@@ -219,10 +221,27 @@ It also fails on any failure marker.
 
 The `bootinfo-valid` slice appends `PYTHOS:CORE:BOOTINFO_VALID` to the `core-enter` assertions. The `framebuffer-ready` slice appends `PYTHOS:CORE:FRAMEBUFFER_READY` to the `bootinfo-valid` assertions. Both fail on any failure marker. Slice assertions are subsequence checks, so later markers interleaving between them (for example `PYTHOS:CORE:MEMORY_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`) keep earlier slices passing.
 
+The `exceptions-diagnostic` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+```
+
+The `exception-entry-hardening` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED
+```
+
 The `vm-ready` slice asserts the full sequence through:
 
 ```text
 PYTHOS:CORE:IDT_READY
+PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED
 PYTHOS:CORE:VM_READY
 ```
 
@@ -241,14 +260,7 @@ PYTHOS:CORE:IDENTITY_MAP_REMOVED
 PYTHOS:CORE:BOOTINFO_COMPLETE
 ```
 
-The `exceptions-diagnostic` slice asserts the full sequence through:
-
-```text
-PYTHOS:CORE:IDT_READY
-PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
-```
-
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, and `PYTHOS:CORE:BOOTINFO_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, and `PYTHOS:CORE:BOOTINFO_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

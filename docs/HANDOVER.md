@@ -32,6 +32,7 @@ PYTHOS:CORE:MEMORY_READY
 PYTHOS:CORE:GDT_READY
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
@@ -63,6 +64,7 @@ This proves:
 * PythCore installs a minimal 64-bit GDT with kernel code, kernel data, and TSS descriptors, reloads segment registers, loads `TR`, and emits `PYTHOS:CORE:GDT_READY`.
 * PythCore installs a 256-entry IDT of panic-loop exception gates and emits `PYTHOS:CORE:IDT_READY`.
 * PythCore installs per-vector CPU exception stubs with allocation-free serial diagnostics and emits `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY`.
+* PythCore preserves all general-purpose registers across handled exception entry, aligns the Rust handler call stack, proves the path with a controlled register-heavy `INT3`, and emits `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`.
 * PythCore allocates replacement page-table pages from its physical allocator, maps only the required kernel/boot/framebuffer/stack/page-table-management surfaces, switches `CR3` a second time, validates the active layout, and emits `PYTHOS:CORE:VM_READY`.
 * PythCore proves the old broad loader identity map is absent by confirming a former identity-range address is untranslated, taking and recovering from the expected page fault, and emitting `PYTHOS:CORE:IDENTITY_MAP_REMOVED`.
 * PythCore maps and revalidates ACPI, SMBIOS, and `INIT.PAK` metadata after the second `CR3` switch, confirms unsupported runtime-services pointers are zero, and emits `PYTHOS:CORE:BOOTINFO_COMPLETE`.
@@ -166,10 +168,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 prerequisite `exception-entry-hardening` slice is implemented on the current branch.
 
 ```text
-next: Phase 2 exception-entry-hardening
+next: Phase 2 interrupt-controller
 ```
 
 The `vm-ready` proof now covers:
@@ -204,6 +206,7 @@ The required serial order keeps every existing loader and core marker and adds:
 ```text
 PYTHOS:CORE:IDT_READY
 PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY
+PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED
 PYTHOS:CORE:VM_READY
 PYTHOS:CORE:EXPECTED_PAGE_FAULT
 PYTHOS:CORE:IDENTITY_MAP_REMOVED
@@ -235,6 +238,5 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, begin Phase 2 with `exception-entry-hardening`. Timer interrupts, native
-tasks, and scheduling still must not begin until that prerequisite hardening
-slice passes.
+Next, continue Phase 2 with `interrupt-controller`. Timer and scheduler work
+still must not begin until interrupt-controller routing is verified.

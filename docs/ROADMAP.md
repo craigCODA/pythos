@@ -204,7 +204,7 @@ concept. Prefer stack or static parsing first.
 None yet. Phase 1.5 predates any typed-object or capability concept in the
 vision docs. The first applicable test is at Phase 3.
 
-## Phase 2: Timer and Native Tasks - NOT STARTED
+## Phase 2: Timer and Native Tasks - IN PROGRESS
 
 ### Purpose
 
@@ -221,7 +221,7 @@ mask.
 
 ### Locked Slice Sequence
 
-0. `exception-entry-hardening` - NOT STARTED. Prerequisite added ahead of
+0. `exception-entry-hardening` - COMPLETE. Prerequisite added ahead of
    `interrupt-controller`. The Phase 1.5 `exceptions-diagnostic` slice is
    correctly complete for its own purpose, diagnosing a controlled synchronous
    fault, but its entry path is narrower than what preemptive scheduling needs.
@@ -235,9 +235,11 @@ mask.
    interrupt arbitrary Rust code, enter the handler with ABI-correct stack
    alignment, expose a complete saved register frame, and return without
    corrupting registers. Prove this with a test that deliberately interrupts a
-   register-heavy computation and verifies every register survives intact. This
-   does not reopen or regress the existing `exceptions-diagnostic` marker; it
-   extends the entry path underneath it.
+   register-heavy computation and verifies every register survives intact.
+   Emits `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` after the controlled `INT3`
+   probe returns with all general-purpose registers intact. This does not
+   reopen or regress the existing `exceptions-diagnostic` marker; it extends
+   the entry path underneath it.
 
 1. `interrupt-controller` - bring up APIC, or PIC if APIC is deferred,
    mask and unmask per vector, and route to the existing IDT. Emit

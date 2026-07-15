@@ -9,6 +9,21 @@ use core::arch::global_asm;
 
 #[repr(C)]
 pub struct ExceptionFrame {
+    r15: u64,
+    r14: u64,
+    r13: u64,
+    r12: u64,
+    r11: u64,
+    r10: u64,
+    r9: u64,
+    r8: u64,
+    rsi: u64,
+    rdi: u64,
+    rbp: u64,
+    rdx: u64,
+    rcx: u64,
+    rbx: u64,
+    rax: u64,
     vector: u64,
     error_code: u64,
     rip: u64,
@@ -18,10 +33,17 @@ pub struct ExceptionFrame {
     ss: u64,
 }
 
+const BREAKPOINT_VECTOR: u64 = 3;
 const PAGE_FAULT_VECTOR: u64 = 14;
 
+static EXPECTED_BREAKPOINT_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
 static EXPECTED_PAGE_FAULT_ADDR: AtomicU64 = AtomicU64::new(0);
 static EXPECTED_PAGE_FAULT_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(not(test))]
+extern "C" fn expect_breakpoint(recovery_rip: u64) {
+    EXPECTED_BREAKPOINT_RECOVERY_RIP.store(recovery_rip, Ordering::SeqCst);
+}
 
 #[cfg_attr(test, allow(dead_code))]
 pub fn expect_page_fault(address: u64, recovery_rip: u64) {
@@ -82,10 +104,116 @@ global_asm!(
 
     .global exception_common
     exception_common:
+        push rax
+        push rbx
+        push rcx
+        push rdx
+        push rbp
+        push rdi
+        push rsi
+        push r8
+        push r9
+        push r10
+        push r11
+        push r12
+        push r13
+        push r14
+        push r15
         mov rdi, rsp
+        mov r12, rsp
+        and rsp, -16
         call exception_handler
+        mov rsp, r12
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        pop r11
+        pop r10
+        pop r9
+        pop r8
+        pop rsi
+        pop rdi
+        pop rbp
+        pop rdx
+        pop rcx
+        pop rbx
+        pop rax
         add rsp, 16
         iretq
+
+    .global exception_entry_self_test
+    exception_entry_self_test:
+        push rbx
+        push rbp
+        push r12
+        push r13
+        push r14
+        push r15
+        lea rdi, [rip + 1f]
+        sub rsp, 8
+        call expect_breakpoint_abi
+        add rsp, 8
+
+        mov rax, 0x101
+        mov rbx, 0x202
+        mov rcx, 0x303
+        mov rdx, 0x404
+        mov rbp, 0x505
+        mov rdi, 0x606
+        mov rsi, 0x707
+        mov r8,  0x808
+        mov r9,  0x909
+        mov r10, 0xa0a
+        mov r11, 0xb0b
+        mov r12, 0xc0c
+        mov r13, 0xd0d
+        mov r14, 0xe0e
+        mov r15, 0xf0f
+        int3
+    1:
+        cmp rax, 0x101
+        jne 2f
+        cmp rbx, 0x202
+        jne 2f
+        cmp rcx, 0x303
+        jne 2f
+        cmp rdx, 0x404
+        jne 2f
+        cmp rbp, 0x505
+        jne 2f
+        cmp rdi, 0x606
+        jne 2f
+        cmp rsi, 0x707
+        jne 2f
+        cmp r8,  0x808
+        jne 2f
+        cmp r9,  0x909
+        jne 2f
+        cmp r10, 0xa0a
+        jne 2f
+        cmp r11, 0xb0b
+        jne 2f
+        cmp r12, 0xc0c
+        jne 2f
+        cmp r13, 0xd0d
+        jne 2f
+        cmp r14, 0xe0e
+        jne 2f
+        cmp r15, 0xf0f
+        jne 2f
+        mov rax, 1
+        jmp 3f
+    2:
+        xor rax, rax
+    3:
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        pop rbp
+        pop rbx
+        ret
     "#
 );
 
@@ -123,6 +251,30 @@ unsafe extern "C" {
     fn exception_stub_29();
     fn exception_stub_30();
     fn exception_stub_31();
+    fn exception_entry_self_test() -> u64;
+}
+
+#[cfg(not(test))]
+#[unsafe(no_mangle)]
+pub extern "C" fn expect_breakpoint_abi(recovery_rip: u64) {
+    expect_breakpoint(recovery_rip);
+}
+
+#[cfg(not(test))]
+pub fn verify_entry_hardening() -> bool {
+    // SAFETY:
+    // 1. Invariant: exception stubs are installed in the IDT before this probe runs.
+    // 2. Established by: `idt::initialize()` completing before the caller invokes this.
+    // 3. Lifetime: the probe owns no borrowed memory and returns before boot continues.
+    // 4. Pointer ownership: the recovery RIP is an internal assembly label only.
+    // 5. Alignment: the probe aligns its Rust ABI call and does not alter `RSP`.
+    // 6. Mapped length: the probe, exception stubs, and bootstrap stack are mapped.
+    // 7. Concurrency: boot remains single-core with maskable interrupts disabled.
+    // 8. Violation: a broken IDT or unmapped stack faults into the panic path.
+    unsafe {
+        exception_entry_self_test() == 1
+            && EXPECTED_BREAKPOINT_RECOVERY_RIP.load(Ordering::SeqCst) == 0
+    }
 }
 
 pub fn handler_for_vector(vector: usize) -> u64 {
@@ -174,6 +326,9 @@ pub fn handler_for_vector(vector: usize) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn exception_handler(frame: &mut ExceptionFrame) {
+    if frame.vector == BREAKPOINT_VECTOR && handle_expected_breakpoint(frame) {
+        return;
+    }
     if frame.vector == PAGE_FAULT_VECTOR && handle_expected_page_fault(frame) {
         return;
     }
@@ -231,6 +386,16 @@ fn handle_expected_page_fault(frame: &mut ExceptionFrame) -> bool {
     true
 }
 
+fn handle_expected_breakpoint(frame: &mut ExceptionFrame) -> bool {
+    let recovery = EXPECTED_BREAKPOINT_RECOVERY_RIP.load(Ordering::SeqCst);
+    if recovery == 0 {
+        return false;
+    }
+    EXPECTED_BREAKPOINT_RECOVERY_RIP.store(0, Ordering::SeqCst);
+    frame.rip = recovery;
+    true
+}
+
 fn read_cr3() -> u64 {
     let cr3: u64;
     // SAFETY:
@@ -253,9 +418,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn diagnostic_frame_layout_starts_with_vector_and_error_code() {
-        assert_eq!(core::mem::offset_of!(ExceptionFrame, vector), 0);
-        assert_eq!(core::mem::offset_of!(ExceptionFrame, error_code), 8);
-        assert_eq!(core::mem::offset_of!(ExceptionFrame, rip), 16);
+    fn diagnostic_frame_layout_preserves_registers_before_cpu_frame() {
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, r15), 0);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, rax), 112);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, vector), 120);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, error_code), 128);
+        assert_eq!(core::mem::offset_of!(ExceptionFrame, rip), 136);
     }
 }

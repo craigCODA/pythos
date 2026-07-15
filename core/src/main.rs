@@ -71,6 +71,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
     #[cfg(not(test))]
     {
+        if !architecture::x86_64::exceptions::verify_entry_hardening() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED");
+
         let address_space =
             match memory::r#virtual::KernelAddressSpace::build(&mut physical_memory, boot_info) {
                 Ok(address_space) => address_space,
