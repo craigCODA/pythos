@@ -824,19 +824,21 @@ point of reference in this file:
 
 1. Implement only the active milestone or slice. Do not prebuild a later
    phase's infrastructure because it is convenient.
-2. Do not invent or silently change an ABI. Every ABI-relevant decision, such
+2. At a phase boundary, halt and report after the final slice passes. Do not
+   begin the next phase's first slice without explicit re-invocation.
+3. Do not invent or silently change an ABI. Every ABI-relevant decision, such
    as boot-info layout, capability token format, syscall numbers, or on-disk
    object format, gets an ADR before or with the slice that introduces it.
-3. Every `unsafe` block documents: invariant, who established it, permitted
+4. Every `unsafe` block documents: invariant, who established it, permitted
    lifetime, pointer ownership, expected alignment, expected mapped length,
    concurrency assumptions, and consequences of violation.
-4. Every milestone or phase requires an automated acceptance test. Serial
+5. Every milestone or phase requires an automated acceptance test. Serial
    output, or from Phase 8 onward the adversarial test harness, is the test
    oracle. A successful compile is not a successful boot. A screenshot is not
    sufficient evidence.
-5. Do not land a slice that regresses any already verified marker.
-6. Do not claim full security where only logical isolation exists. This is
+6. Do not land a slice that regresses any already verified marker.
+7. Do not claim full security where only logical isolation exists. This is
    explicitly why Phase 8 exists as a separate, later phase from Phase 3.
-7. AI remains outside the trusted core through Phase 8. This is reevaluated, not
+8. AI remains outside the trusted core through Phase 8. This is reevaluated, not
    assumed, at the Phase 8 architectural test and again whenever Semantic
    Indexing or Local AI becomes active in Later Phases.

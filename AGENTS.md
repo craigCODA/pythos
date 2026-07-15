@@ -4,6 +4,9 @@ Read `docs/PythOS-SAS-001.md` and `docs/PythOS-TDD-001.md` before editing.
 
 Implement only the active milestone.
 
+At a phase boundary, halt and report after the final slice passes. Do not begin
+the next phase's first slice without explicit re-invocation.
+
 Do not invent or silently change an ABI.
 
 Do not add future features to the active milestone.
