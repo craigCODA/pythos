@@ -314,6 +314,11 @@ controlled communication and controlled authority between native tasks.
 Phase 2 exit condition reproducible: preemptive multitasking with automated
 scheduler tests passing in CI.
 
+`service-identity` also requires TCB invariants to be formally specified before
+implementation begins: slot reuse, `TaskId` stability, saved-frame offsets, and
+kernel stack bounds. Record this either by strengthening ADR 0007 or by adding a
+Phase 3 addendum ADR.
+
 ### Locked Slice Sequence
 
 1. `service-identity` - every task gains a stable, kernel-assigned identity
