@@ -86,13 +86,16 @@ OVMF
 -> PYTHOS:CORE:SCHEDTEST:TASK_C
 -> PYTHOS:CORE:SCHEDULER_TESTS_READY
 -> PYTHOS:CORE:SERVICE_IDENTITY_READY
+-> PYTHOS:CORE:IPC:SEND
+-> PYTHOS:CORE:IPC:RECV
+-> PYTHOS:CORE:IPC_CHANNELS_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, proves the active bootstrap kernel stack has an unmapped guard page through an expected page fault, performs a cooperative context-switch self-test with two alternating native contexts, runs a cooperative round-robin scheduler proof over fixed ready tasks, switches through a fixed idle context only after the ready set is empty, proves IRQ0-forced preemption between spin-only native contexts, exits a fixed native task and proves its terminated slot is no longer selectable, proves three native tasks interleave under timer-forced preemption, assigns service identities independently from task/slot identity and rejects stale identity reuse, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, proves the active bootstrap kernel stack has an unmapped guard page through an expected page fault, performs a cooperative context-switch self-test with two alternating native contexts, runs a cooperative round-robin scheduler proof over fixed ready tasks, switches through a fixed idle context only after the ready set is empty, proves IRQ0-forced preemption between spin-only native contexts, exits a fixed native task and proves its terminated slot is no longer selectable, proves three native tasks interleave under timer-forced preemption, assigns service identities independently from task/slot identity and rejects stale identity reuse, sends and receives a fixed typed IPC message between known service identities with exact payload validation, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
 
-Milestone 1.5 and Phase 2 are complete. Phase 3 is active. The `service-identity` slice is complete. The next locked slice is `ipc-channels`. Do not begin bounded queues, request/reply, shared memory, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work.
+Milestone 1.5 and Phase 2 are complete. Phase 3 is active. The `service-identity` and `ipc-channels` slices are complete. The next locked slice is `bounded-queues`. Do not begin request/reply, shared memory, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -139,6 +142,9 @@ PYTHOS:CORE:SCHEDTEST:TASK_B
 PYTHOS:CORE:SCHEDTEST:TASK_C
 PYTHOS:CORE:SCHEDULER_TESTS_READY
 PYTHOS:CORE:SERVICE_IDENTITY_READY
+PYTHOS:CORE:IPC:SEND
+PYTHOS:CORE:IPC:RECV
+PYTHOS:CORE:IPC_CHANNELS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```

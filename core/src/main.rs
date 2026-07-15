@@ -7,6 +7,7 @@ mod boot_metadata;
 mod context_switch;
 mod font;
 mod framebuffer;
+mod ipc_channels;
 mod kernel_stacks;
 mod memory;
 mod qemu_exit;
@@ -180,6 +181,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SERVICE_IDENTITY_READY");
+        if ipc_channels::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:IPC_CHANNELS_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

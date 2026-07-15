@@ -70,6 +70,9 @@ PYTHOS:CORE:SCHEDTEST:TASK_B
 PYTHOS:CORE:SCHEDTEST:TASK_C
 PYTHOS:CORE:SCHEDULER_TESTS_READY
 PYTHOS:CORE:SERVICE_IDENTITY_READY
+PYTHOS:CORE:IPC:SEND
+PYTHOS:CORE:IPC:RECV
+PYTHOS:CORE:IPC_CHANNELS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -113,6 +116,7 @@ This proves:
 * PythCore proves task termination by switching into a fixed native task that exits, returning to bootstrap, marking its scheduler slot terminated/reclaimable, and verifying the terminated slot is not selected again.
 * PythCore proves the Phase 2 scheduler exit condition with three spin-only native tasks interleaved by timer-forced preemption in deterministic `TASK_A`, `TASK_B`, `TASK_C`, `TASK_A`, `TASK_B`, `TASK_C` order.
 * PythCore assigns service identities separately from task ids and scheduler slots, proves slot reuse receives a fresh service identity, and rejects stale identity lookup.
+* PythCore creates a trusted kernel-internal IPC channel between two known service identities, sends a typed bounded message, receives it through the peer endpoint, and validates exact type, length, checksum, and payload bytes.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -156,6 +160,7 @@ Core:
 * `core/linker.ld` links PythCore into the intended higher-half image region.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
+* `core/src/ipc_channels.rs` implements the Phase 3 fixed typed IPC channel proof.
 * `core/src/memory/physical.rs` owns milestone-1 page classification and fixed bitmap initialization.
 * `core/src/memory/virtual.rs` owns milestone-1.5 kernel page-table replacement and the second `CR3` switch.
 * `core/src/architecture/x86_64/gdt.rs` installs the minimal GDT and TSS selector.
@@ -213,10 +218,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity` slice is implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity` and `ipc-channels` slices are implemented on the current branch.
 
 ```text
-next: Phase 3 ipc-channels
+next: Phase 3 bounded-queues
 ```
 
 The `vm-ready` proof now covers:
@@ -289,6 +294,9 @@ PYTHOS:CORE:SCHEDTEST:TASK_B
 PYTHOS:CORE:SCHEDTEST:TASK_C
 PYTHOS:CORE:SCHEDULER_TESTS_READY
 PYTHOS:CORE:SERVICE_IDENTITY_READY
+PYTHOS:CORE:IPC:SEND
+PYTHOS:CORE:IPC:RECV
+PYTHOS:CORE:IPC_CHANNELS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -316,6 +324,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, continue Phase 3 with `ipc-channels`. Do not implement bounded queues,
-request/reply, shared memory, Python, or later phase work while building the
-ipc-channels slice.
+Next, continue Phase 3 with `bounded-queues`. Do not implement request/reply,
+shared memory, Python, or later phase work while building the bounded-queues
+slice.

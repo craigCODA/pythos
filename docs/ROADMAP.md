@@ -330,9 +330,13 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    identity distinct from its scheduler TCB slot. Slot reuse gets a fresh
    service identity, and stale identities no longer resolve. Emits
    `PYTHOS:CORE:SERVICE_IDENTITY_READY`.
-2. `ipc-channels` - typed, bounded message channels between two known service
-   identities. Fixed maximum message size and queue depth at this slice. No
-   dynamic growth.
+2. `ipc-channels` - COMPLETE. Typed, bounded message channels between two
+   known service identities. Fixed maximum message size and queue depth at
+   this slice. No dynamic growth. Channel creation is a trusted
+   kernel-internal bootstrap operation until the later `capability-handles` and
+   `permission-validation` slices add authority checks. Emits
+   `PYTHOS:CORE:IPC:SEND`, `PYTHOS:CORE:IPC:RECV`, and
+   `PYTHOS:CORE:IPC_CHANNELS_READY` after an exact payload-integrity proof.
 3. `bounded-queues` - backpressure behavior defined and tested: sender blocks
    or receives an explicit full-queue error, never silently drops.
 4. `request-reply` - a synchronous request/reply pattern built on top of the
