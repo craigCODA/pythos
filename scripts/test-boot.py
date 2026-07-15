@@ -219,11 +219,22 @@ def main() -> int:
                 str(ISO_IMAGE),
                 "--serial-log",
                 str(SERIAL_LOG),
+                "--expect-outcome",
+                "success",
             ]
         )
     else:
         run([sys.executable, "scripts/build-image.py"])
-        run([sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG)])
+        run(
+            [
+                sys.executable,
+                "scripts/run-qemu.py",
+                "--serial-log",
+                str(SERIAL_LOG),
+                "--expect-outcome",
+                "success",
+            ]
+        )
 
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
     assert_markers(serial, SLICE_MARKERS[args.slice])
