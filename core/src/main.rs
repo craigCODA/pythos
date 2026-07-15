@@ -6,6 +6,7 @@ mod boot_info;
 mod boot_metadata;
 mod font;
 mod framebuffer;
+mod kernel_stacks;
 mod memory;
 mod qemu_exit;
 mod serial;
@@ -136,6 +137,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:TASKS_READY");
+        if kernel_stacks::initialize(boot_info).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:KERNEL_STACKS_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

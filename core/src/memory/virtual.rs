@@ -99,6 +99,10 @@ pub fn prove_old_identity_map_removed() -> Result<(), VmError> {
     Ok(())
 }
 
+pub fn active_mapping_present(virt: u64) -> bool {
+    translate_active(virt).is_ok()
+}
+
 pub struct KernelAddressSpace {
     root_table_phys: u64,
 }

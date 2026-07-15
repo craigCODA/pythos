@@ -61,6 +61,7 @@ Verified vertical slices:
 * `timer` programs the PIT for a fixed 100 Hz tick, unmasks IRQ0, enables interrupts after final boot metadata validation, waits for one observed timer interrupt, and emits `PYTHOS:CORE:TIMER_READY`.
 * `monotonic-clock` exposes a read-only monotonic tick counter derived from the timer source without exposing timer reprogramming controls, validates the timer has observed at least one tick, and emits `PYTHOS:CORE:CLOCK_READY`.
 * `task-structures` defines the fixed native task table, saved task-register frame, task id, task state enum, and bootstrap running task record without dynamic allocation. It emits `PYTHOS:CORE:TASKS_READY`.
+* `kernel-stacks` records guarded kernel stack ownership for the bootstrap task, verifies the active stack pages remain mapped, verifies the guard page below the stack is untranslated, performs a controlled write to that guard page, recovers through the diagnostic page-fault path, and emits `PYTHOS:CORE:KERNEL_STACKS_READY`.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -157,6 +158,8 @@ PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:TIMER_READY
 PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:TASKS_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:KERNEL_STACKS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -299,7 +302,15 @@ PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:TASKS_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, and `PYTHOS:CORE:TASKS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `kernel-stacks` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:TASKS_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:KERNEL_STACKS_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, and `PYTHOS:CORE:KERNEL_STACKS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

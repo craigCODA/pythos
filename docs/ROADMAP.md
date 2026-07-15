@@ -254,9 +254,11 @@ mask.
    register state, kernel stack pointer, task id, and state enum for ready,
    running, blocked, and terminated. No allocation beyond a fixed static pool
    at this slice. Emits `PYTHOS:CORE:TASKS_READY`.
-5. `kernel-stacks` - guarded per-task kernel stacks using the guard-page
-   pattern from Phase 1.5. Stack overflow must fault into the diagnostic
-   exception path, not silently corrupt an adjacent task.
+5. `kernel-stacks` - COMPLETE. Guarded per-task kernel stacks using the
+   guard-page pattern from Phase 1.5. Stack overflow must fault into the
+   diagnostic exception path, not silently corrupt an adjacent task. Emits
+   `PYTHOS:CORE:KERNEL_STACKS_READY` after proving the active bootstrap stack's
+   guard page faults and recovers through the diagnostic path.
 6. `context-switch` - save and restore full register state across a switch.
    Prove correctness with two tasks that write distinguishable alternating
    markers with no register or stack corruption.

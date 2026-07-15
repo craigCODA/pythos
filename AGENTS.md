@@ -29,7 +29,7 @@ AI remains outside the trusted core.
 
 ## Active Milestone
 
-The active branch of work is `milestone/task-structures`.
+The active branch of work is `milestone/kernel-stacks`.
 
 Verified vertical slices currently include:
 
@@ -57,13 +57,15 @@ OVMF
 -> PYTHOS:CORE:TIMER_READY
 -> PYTHOS:CORE:CLOCK_READY
 -> PYTHOS:CORE:TASKS_READY
+-> PYTHOS:CORE:EXPECTED_PAGE_FAULT
+-> PYTHOS:CORE:KERNEL_STACKS_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, proves the active bootstrap kernel stack has an unmapped guard page through an expected page fault, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
 
-Milestone 1.5: kernel-owned execution substrate is complete. Phase 2 is in progress. The `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, and `task-structures` slices are complete on the current branch. The next locked slice is `kernel-stacks`; do not begin scheduler, IPC, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work.
+Milestone 1.5: kernel-owned execution substrate is complete. Phase 2 is in progress. The `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, and `kernel-stacks` slices are complete on the current branch. The next locked slice is `context-switch`; do not begin scheduler, IPC, Python runtime, desktop, audio, storage, networking, AI, or hardware-expansion work.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -81,6 +83,8 @@ PYTHOS:CORE:BOOTINFO_COMPLETE
 PYTHOS:CORE:TIMER_READY
 PYTHOS:CORE:CLOCK_READY
 PYTHOS:CORE:TASKS_READY
+PYTHOS:CORE:EXPECTED_PAGE_FAULT
+PYTHOS:CORE:KERNEL_STACKS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
