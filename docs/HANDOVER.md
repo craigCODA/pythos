@@ -69,6 +69,7 @@ PYTHOS:CORE:SCHEDTEST:TASK_A
 PYTHOS:CORE:SCHEDTEST:TASK_B
 PYTHOS:CORE:SCHEDTEST:TASK_C
 PYTHOS:CORE:SCHEDULER_TESTS_READY
+PYTHOS:CORE:SERVICE_IDENTITY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -111,6 +112,7 @@ This proves:
 * PythCore proves timer-driven preemption by switching between spin-only native contexts from IRQ0 without voluntary yields, emitting alternating `PREEMPT:TASK_A` and `PREEMPT:TASK_B` markers, and returning to bootstrap with `PYTHOS:CORE:PREEMPT_READY`.
 * PythCore proves task termination by switching into a fixed native task that exits, returning to bootstrap, marking its scheduler slot terminated/reclaimable, and verifying the terminated slot is not selected again.
 * PythCore proves the Phase 2 scheduler exit condition with three spin-only native tasks interleaved by timer-forced preemption in deterministic `TASK_A`, `TASK_B`, `TASK_C`, `TASK_A`, `TASK_B`, `TASK_C` order.
+* PythCore assigns service identities separately from task ids and scheduler slots, proves slot reuse receives a fresh service identity, and rejects stale identity lookup.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -211,10 +213,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented on the current branch. Phase 2 is complete.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity` slice is implemented on the current branch.
 
 ```text
-next: Phase 3 service-identity ADR gate
+next: Phase 3 ipc-channels
 ```
 
 The `vm-ready` proof now covers:
@@ -286,6 +288,7 @@ PYTHOS:CORE:SCHEDTEST:TASK_A
 PYTHOS:CORE:SCHEDTEST:TASK_B
 PYTHOS:CORE:SCHEDTEST:TASK_C
 PYTHOS:CORE:SCHEDULER_TESTS_READY
+PYTHOS:CORE:SERVICE_IDENTITY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -313,6 +316,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, begin Phase 3 `service-identity`. The ADR gate is recorded in ADR 0008,
-ADR 0009, and ADR 0010. Do not implement IPC channels, bounded queues,
-request/reply, Python, or later phase work while opening `service-identity`.
+Next, continue Phase 3 with `ipc-channels`. Do not implement bounded queues,
+request/reply, shared memory, Python, or later phase work while building the
+ipc-channels slice.

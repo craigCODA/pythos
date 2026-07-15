@@ -326,9 +326,10 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
 
 ### Locked Slice Sequence
 
-1. `service-identity` - every task gains a stable, kernel-assigned identity
-   distinct from its scheduler TCB slot. Slots get reused; identity must not be
-   reusable in a way that lets a new task inherit an old task's grants.
+1. `service-identity` - COMPLETE. Every task gains a stable, kernel-assigned
+   identity distinct from its scheduler TCB slot. Slot reuse gets a fresh
+   service identity, and stale identities no longer resolve. Emits
+   `PYTHOS:CORE:SERVICE_IDENTITY_READY`.
 2. `ipc-channels` - typed, bounded message channels between two known service
    identities. Fixed maximum message size and queue depth at this slice. No
    dynamic growth.
