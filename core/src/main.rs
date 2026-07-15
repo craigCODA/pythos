@@ -159,6 +159,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:IDLE_TASK_READY");
+        if scheduler::run_preemption_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PREEMPT_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

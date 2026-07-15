@@ -65,6 +65,7 @@ Verified vertical slices:
 * `context-switch` initializes two fixed native contexts on separate stacks, switches cooperatively from bootstrap to task A to task B to task A to task B and back to bootstrap, and emits `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating task markers prove switch continuity.
 * `scheduler` selects fixed ready tasks with a round-robin cursor, drives the existing cooperative context-switch path through `TASK_A`, `TASK_B`, `TASK_A`, `TASK_B`, and emits `PYTHOS:CORE:SCHEDULER_READY`. Priority scheduling is explicitly deferred.
 * `idle-task` verifies the empty-ready-set path after the scheduler proof, switches through a fixed idle context once, returns to bootstrap without permanently halting the CPU, and emits `PYTHOS:CORE:IDLE_TASK_READY`.
+* `preemption` arms two spin-only native contexts, lets IRQ0 force context switches through the interrupt handler, produces alternating `PREEMPT:TASK_A` and `PREEMPT:TASK_B` markers without voluntary yield points, returns to bootstrap, and emits `PYTHOS:CORE:PREEMPT_READY`.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -175,6 +176,11 @@ PYTHOS:CORE:SCHEDULER:TASK_B
 PYTHOS:CORE:SCHEDULER_READY
 PYTHOS:CORE:IDLE_TASK
 PYTHOS:CORE:IDLE_TASK_READY
+PYTHOS:CORE:PREEMPT:TASK_A
+PYTHOS:CORE:PREEMPT:TASK_B
+PYTHOS:CORE:PREEMPT:TASK_A
+PYTHOS:CORE:PREEMPT:TASK_B
+PYTHOS:CORE:PREEMPT_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -355,7 +361,18 @@ PYTHOS:CORE:IDLE_TASK
 PYTHOS:CORE:IDLE_TASK_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, and `PYTHOS:CORE:IDLE_TASK_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `preemption` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:IDLE_TASK_READY
+PYTHOS:CORE:PREEMPT:TASK_A
+PYTHOS:CORE:PREEMPT:TASK_B
+PYTHOS:CORE:PREEMPT:TASK_A
+PYTHOS:CORE:PREEMPT:TASK_B
+PYTHOS:CORE:PREEMPT_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, and `PYTHOS:CORE:PREEMPT_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

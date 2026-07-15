@@ -270,8 +270,10 @@ mask.
    proof observes the empty-ready-set path, switches through a fixed idle
    context without permanently halting the CPU, and emits
    `PYTHOS:CORE:IDLE_TASK_READY`.
-9. `preemption` - timer interrupt forces a context switch mid-task, not only at
-   voluntary yield points.
+9. `preemption` - COMPLETE. IRQ0 forces context switches between spin-only
+   native contexts without voluntary yield points, producing alternating
+   `PREEMPT:TASK_A` and `PREEMPT:TASK_B` markers before
+   `PYTHOS:CORE:PREEMPT_READY`.
 10. `task-termination` - a task can exit; its resources, stack, and TCB slot
     return to the static pool cleanly. No dangling scheduler references after
     termination.

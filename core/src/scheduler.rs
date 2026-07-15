@@ -11,7 +11,7 @@ use core::cell::UnsafeCell;
 #[cfg(not(test))]
 use core::hint;
 #[cfg(not(test))]
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 #[cfg(not(test))]
 const SCHEDULER_STACK_SIZE: usize = 16 * 4096;
@@ -19,6 +19,8 @@ const SCHEDULER_STACK_SIZE: usize = 16 * 4096;
 const EXPECTED_TASK_RUNS: usize = 2;
 #[cfg(not(test))]
 const EXPECTED_IDLE_RUNS: usize = 1;
+#[cfg(not(test))]
+const EXPECTED_PREEMPT_STEP: usize = 8;
 
 const SCHEDULE_A: SchedulerTaskId = SchedulerTaskId::new(2);
 const SCHEDULE_B: SchedulerTaskId = SchedulerTaskId::new(3);
@@ -116,6 +118,12 @@ static SCHEDULER_B_STACK: SchedulerStackStorage =
 static IDLE_STACK: SchedulerStackStorage =
     SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
 #[cfg(not(test))]
+static PREEMPT_A_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
+static PREEMPT_B_STACK: SchedulerStackStorage =
+    SchedulerStackStorage(UnsafeCell::new(SchedulerStack([0; SCHEDULER_STACK_SIZE])));
+#[cfg(not(test))]
 static BOOT_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
 static TASK_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
@@ -124,11 +132,22 @@ static TASK_B_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFr
 #[cfg(not(test))]
 static IDLE_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
 #[cfg(not(test))]
+static PREEMPT_BOOT_CONTEXT: ContextStorage =
+    ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static PREEMPT_A_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
+static PREEMPT_B_CONTEXT: ContextStorage = ContextStorage(UnsafeCell::new(ContextFrame::empty()));
+#[cfg(not(test))]
 static TASK_A_RUNS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static TASK_B_RUNS: AtomicUsize = AtomicUsize::new(0);
 #[cfg(not(test))]
 static IDLE_RUNS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
+static PREEMPT_STEP: AtomicUsize = AtomicUsize::new(0);
+#[cfg(not(test))]
+static PREEMPT_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), SchedulerError> {
@@ -210,6 +229,79 @@ pub fn run_idle_self_test() -> Result<(), SchedulerError> {
 }
 
 #[cfg(not(test))]
+pub fn run_preemption_self_test() -> Result<(), SchedulerError> {
+    PREEMPT_STEP.store(0, Ordering::SeqCst);
+    PREEMPT_ACTIVE.store(true, Ordering::SeqCst);
+
+    // SAFETY:
+    // 1. Invariant: preemption proof frames and stacks are static, mapped,
+    //    aligned, and not shared with the cooperative scheduler proof.
+    // 2. Established by: Phase 2 VM, guarded-stack, and context-switch slices.
+    // 3. Lifetime: frames and stacks live for the full kernel lifetime.
+    // 4. Pointer ownership: this self-test owns these private contexts.
+    // 5. Alignment: `SchedulerStack` is 16-byte aligned; frames use `repr(C)`.
+    // 6. Mapped length: two stacks of `SCHEDULER_STACK_SIZE` bytes and three
+    //    `ContextFrame` values are accessible.
+    // 7. Concurrency: single-core execution; IRQ0 is the only switch trigger.
+    // 8. Violation: bad frames or stacks fault through diagnostics.
+    unsafe {
+        *PREEMPT_A_CONTEXT.0.get() =
+            ContextFrame::new(preempt_task_a_entry, stack_top(PREEMPT_A_STACK.0.get()));
+        *PREEMPT_B_CONTEXT.0.get() =
+            ContextFrame::new(preempt_task_b_entry, stack_top(PREEMPT_B_STACK.0.get()));
+        context_switch::switch(PREEMPT_BOOT_CONTEXT.0.get(), PREEMPT_A_CONTEXT.0.get());
+    }
+
+    PREEMPT_ACTIVE.store(false, Ordering::SeqCst);
+    if PREEMPT_STEP.load(Ordering::SeqCst) != EXPECTED_PREEMPT_STEP {
+        return Err(SchedulerError::BadScheduleOrder);
+    }
+    Ok(())
+}
+
+#[cfg(not(test))]
+pub fn handle_timer_preemption() {
+    if !PREEMPT_ACTIVE.load(Ordering::SeqCst) {
+        return;
+    }
+
+    match PREEMPT_STEP.load(Ordering::SeqCst) {
+        1 => switch_on_timer(PREEMPT_A_CONTEXT.0.get(), PREEMPT_B_CONTEXT.0.get(), 2),
+        3 => switch_on_timer(PREEMPT_B_CONTEXT.0.get(), PREEMPT_A_CONTEXT.0.get(), 4),
+        5 => switch_on_timer(PREEMPT_A_CONTEXT.0.get(), PREEMPT_B_CONTEXT.0.get(), 6),
+        7 => {
+            PREEMPT_STEP.store(EXPECTED_PREEMPT_STEP, Ordering::SeqCst);
+            PREEMPT_ACTIVE.store(false, Ordering::SeqCst);
+            switch_on_timer(
+                PREEMPT_B_CONTEXT.0.get(),
+                PREEMPT_BOOT_CONTEXT.0.get(),
+                EXPECTED_PREEMPT_STEP,
+            );
+        }
+        _ => {}
+    }
+}
+
+#[cfg(not(test))]
+fn switch_on_timer(current: *mut ContextFrame, next: *const ContextFrame, next_step: usize) {
+    PREEMPT_STEP.store(next_step, Ordering::SeqCst);
+    // SAFETY:
+    // 1. Invariant: `current` names the interrupted task's context storage and
+    //    `next` names an initialized runnable context.
+    // 2. Established by: `run_preemption_self_test` before arming preemption and
+    //    by the ordered `PREEMPT_STEP` state machine.
+    // 3. Lifetime: all context frames and stacks are static.
+    // 4. Pointer ownership: the IRQ0 handler is the only writer while active.
+    // 5. Alignment: `ContextFrame` statics preserve frame alignment.
+    // 6. Mapped length: exactly one current and one next frame are accessed.
+    // 7. Concurrency: interrupt gate disables nested maskable interrupts.
+    // 8. Violation: a stale or unmapped context faults through diagnostics.
+    unsafe {
+        context_switch::switch(current, next);
+    }
+}
+
+#[cfg(not(test))]
 fn switch_to(task: SchedulerTaskId) {
     let next = if task == SCHEDULE_A {
         TASK_A_CONTEXT.0.get()
@@ -279,6 +371,36 @@ extern "C" fn idle_task_entry() -> ! {
         }
         serial::write_line("PYTHOS:CORE:IDLE_TASK");
         yield_to_scheduler(IDLE_CONTEXT.0.get());
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn preempt_task_a_entry() -> ! {
+    if PREEMPT_STEP.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst) != Ok(0) {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:PREEMPT:TASK_A");
+
+    loop {
+        if PREEMPT_STEP.compare_exchange(4, 5, Ordering::SeqCst, Ordering::SeqCst) == Ok(4) {
+            serial::write_line("PYTHOS:CORE:PREEMPT:TASK_A");
+        }
+        hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+extern "C" fn preempt_task_b_entry() -> ! {
+    if PREEMPT_STEP.compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst) != Ok(2) {
+        halt_bad_schedule();
+    }
+    serial::write_line("PYTHOS:CORE:PREEMPT:TASK_B");
+
+    loop {
+        if PREEMPT_STEP.compare_exchange(6, 7, Ordering::SeqCst, Ordering::SeqCst) == Ok(6) {
+            serial::write_line("PYTHOS:CORE:PREEMPT:TASK_B");
+        }
+        hint::spin_loop();
     }
 }
 
