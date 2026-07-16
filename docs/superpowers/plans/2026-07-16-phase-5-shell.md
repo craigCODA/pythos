@@ -70,10 +70,10 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `core/src/window_interaction.rs`, marker tests, docs.
 
-- [ ] Add `window-interaction` marker tests and verify they fail.
-- [ ] Implement pointer cursor state, focus selection, and movement preserving object ids.
-- [ ] Emit `PYTHOS:CORE:POINTER_CURSOR_READY`, `PYTHOS:CORE:WINDOW_FOCUS_READY`, and `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
-- [ ] Verify and commit.
+- [x] Add `window-interaction` marker tests and verify they fail.
+- [x] Implement pointer cursor state, focus selection, and movement preserving object ids.
+- [x] Emit `PYTHOS:CORE:POINTER_CURSOR_READY`, `PYTHOS:CORE:WINDOW_FOCUS_READY`, and `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
+- [x] Verify and commit.
 
 ### Task 7: Widgets
 

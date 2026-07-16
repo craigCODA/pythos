@@ -573,8 +573,12 @@ capability-scoped.
    independently drawn bounded surfaces into a framebuffer target, prove target
    edge clipping, and emit `PYTHOS:CORE:COMPOSITOR:SURFACE`,
    `PYTHOS:CORE:COMPOSITOR:CLIP`, and `PYTHOS:CORE:COMPOSITOR_READY`.
-6. `pointer-cursor`, `window-focus`, `movable-windows` - standard interaction
-   primitives.
+6. `pointer-cursor`, `window-focus`, `movable-windows` - COMPLETE. Standard
+   interaction primitives now prove bounded cursor state, z-order focus
+   selection, and moving the focused window while preserving typed object
+   identity. Emits `PYTHOS:CORE:POINTER_CURSOR_READY`,
+   `PYTHOS:CORE:WINDOW_FOCUS_READY`, and
+   `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
 7. `buttons-and-text-fields` - minimal native widget set, enough for the next
    slice.
 8. `application-launcher`, `service-monitor`, `python-console`,

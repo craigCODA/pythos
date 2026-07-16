@@ -591,6 +591,17 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_window_interaction_markers_are_observed_after_compositor(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", "window-interaction"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_milestone_1_complete_marker_is_observed_after_framebuffer_ready(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/test-boot.py", "--slice", "milestone-1"],

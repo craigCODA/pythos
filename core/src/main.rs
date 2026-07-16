@@ -30,6 +30,7 @@ mod software_renderer;
 mod system_api;
 mod tasks;
 mod value_validation;
+mod window_interaction;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -314,6 +315,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:COMPOSITOR_READY");
+        if window_interaction::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
