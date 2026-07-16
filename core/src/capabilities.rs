@@ -118,6 +118,20 @@ impl CapabilityTable {
         }
         Ok(())
     }
+
+    pub fn revoke(&mut self, handle: CapabilityHandle) -> Result<(), CapabilityError> {
+        let entry = self
+            .entries
+            .get_mut(handle.slot as usize)
+            .and_then(Option::as_mut)
+            .ok_or(CapabilityError::InvalidHandle)?;
+        if entry.generation != handle.generation {
+            return Err(CapabilityError::InvalidHandle);
+        }
+        entry.state = CapabilityState::Revoked;
+        entry.generation = entry.generation.wrapping_add(1);
+        Ok(())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,7 +146,6 @@ struct CapabilityEntry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CapabilityState {
     Active,
-    #[allow(dead_code)]
     Revoked,
 }
 
@@ -154,6 +167,40 @@ pub fn run_capability_handle_self_test() -> Result<(), CapabilityError> {
     )?;
     #[cfg(not(test))]
     serial::write_line("PYTHOS:CORE:CAPABILITY:USE");
+    Ok(())
+}
+
+pub fn run_revocation_self_test() -> Result<(), CapabilityError> {
+    let mut identities = ServiceIdentityTable::new();
+    let holder = identities
+        .register_task(TaskId::new(32))
+        .map_err(|_| CapabilityError::InvalidHandle)?;
+    let mut table = CapabilityTable::new();
+    let revoked = table.grant(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)?;
+    let unaffected = table.grant(holder, ResourceId::new(0xC0DA_0002), PROOF_RIGHTS)?;
+
+    table.revoke(revoked)?;
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:CAPABILITY:REVOKE");
+
+    if table.validate(
+        holder,
+        revoked,
+        PROOF_RESOURCE_ID,
+        RightsMask::new(RightsMask::READ),
+    ) != Err(CapabilityError::InvalidHandle)
+    {
+        return Err(CapabilityError::InvalidHandle);
+    }
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:CAPABILITY:STALE_DENIED");
+
+    table.validate(
+        holder,
+        unaffected,
+        ResourceId::new(0xC0DA_0002),
+        RightsMask::new(RightsMask::READ),
+    )?;
     Ok(())
 }
 
@@ -200,6 +247,39 @@ mod tests {
                 RightsMask::new(RightsMask::READ)
             ),
             Err(CapabilityError::WrongHolder)
+        );
+    }
+
+    #[test]
+    fn revoked_handle_is_stale_but_other_handles_survive() {
+        let mut identities = ServiceIdentityTable::new();
+        let holder = identities.register_task(TaskId::new(32)).unwrap();
+        let mut table = CapabilityTable::new();
+        let revoked = table
+            .grant(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)
+            .unwrap();
+        let unaffected = table
+            .grant(holder, ResourceId::new(0xC0DA_0002), PROOF_RIGHTS)
+            .unwrap();
+
+        assert_eq!(table.revoke(revoked), Ok(()));
+        assert_eq!(
+            table.validate(
+                holder,
+                revoked,
+                PROOF_RESOURCE_ID,
+                RightsMask::new(RightsMask::READ)
+            ),
+            Err(CapabilityError::InvalidHandle)
+        );
+        assert_eq!(
+            table.validate(
+                holder,
+                unaffected,
+                ResourceId::new(0xC0DA_0002),
+                RightsMask::new(RightsMask::READ)
+            ),
+            Ok(())
         );
     }
 }

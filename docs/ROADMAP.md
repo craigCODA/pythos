@@ -368,9 +368,12 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    the actual capability. Emits `PYTHOS:CORE:PERMISSION:IPC_ALLOWED`,
    `PYTHOS:CORE:PERMISSION:IPC_DENIED`, and
    `PYTHOS:CORE:PERMISSION_VALIDATION_READY`.
-8. `revocation` - a capability holder can have a specific handle revoked
-   without affecting the holder's other handles and without requiring the
-   holder's cooperation.
+8. `revocation` - COMPLETE. A specific handle can be revoked without affecting
+   the holder's other handles and without requiring holder cooperation.
+   Revocation marks the entry revoked, bumps its generation, and stale handles
+   fail validation. Emits `PYTHOS:CORE:CAPABILITY:REVOKE`,
+   `PYTHOS:CORE:CAPABILITY:STALE_DENIED`, and
+   `PYTHOS:CORE:REVOCATION_READY`.
 9. `negative-authorization-tests` - required, not optional: automated tests
    proving a task is denied access when it has no capability, even when it
    knows the exact target resource and operation name. This is the load-bearing
