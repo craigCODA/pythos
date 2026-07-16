@@ -326,6 +326,11 @@ pub fn handler_for_vector(vector: usize) -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn exception_handler(frame: &mut ExceptionFrame) {
+    if frame.vector == BREAKPOINT_VECTOR
+        && crate::user_mode::handle_user_breakpoint(frame.cs, frame.ss)
+    {
+        return;
+    }
     if frame.vector == BREAKPOINT_VECTOR && handle_expected_breakpoint(frame) {
         return;
     }

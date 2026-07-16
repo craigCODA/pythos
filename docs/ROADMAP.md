@@ -844,7 +844,7 @@ why an object exists and what it blocks later, as described in
 `docs/vision/patch.md`; this phase intentionally does not build the query API,
 Causal Lens UI, or Patch.
 
-## Phase 8: Real Hardware Isolation - NOT STARTED
+## Phase 8: Real Hardware Isolation - IN PROGRESS
 
 ### Purpose
 
@@ -861,7 +861,16 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
 
 ### Locked Slice Sequence
 
-1. `ring-3-execution` - user-mode execution capability for tasks.
+1. `ring-3-execution` - COMPLETE. ADR 0026 records the first Phase 8
+   hardware-isolation step. PythCore installs ring-3 GDT code/data selectors,
+   sets `TSS.RSP0`, maps a fixed CPL3 proof code page and user stack in the
+   current address space, exposes the breakpoint gate at DPL3 for the proof,
+   enters user mode with `iretq`, verifies a user-originated trap frame, and
+   returns to a saved kernel stack. Emits `PYTHOS:CORE:USER_MODE:ENTER`,
+   `PYTHOS:CORE:USER_MODE:RETURN`, and
+   `PYTHOS:CORE:RING3_EXECUTION_READY`. This slice does not implement separate
+   address spaces, syscall entry, user process stacks, service-local runtimes,
+   or hostile-code containment.
 2. `separate-address-spaces` - per-task or per-service page-table isolation, a
    real extension of Phase 1.5 single kernel address space work.
 3. `syscall-entry` - a defined syscall gate, for example `syscall`/`sysret`,
@@ -904,6 +913,9 @@ ADR for the syscall ABI. This is the most consequential ABI in the project; once
 user-mode code exists against it, breaking changes have real cost. Adversarial
 test suite is a required deliverable with the same weight as Phase 3
 negative-authorization suite.
+
+ADR 0026 records the `ring-3-execution` proof. It is intentionally not the
+syscall ABI ADR and does not claim hostile-code containment.
 
 ### Architectural Test (Non-Binding)
 

@@ -114,13 +114,14 @@ Verified vertical slices:
 * `workspace-objects` records ADR 0023's first concrete persistent object kind, `WorkspaceSession`, and stores the Phase 5 shell window layout as bounded ADR 0022 fields. It emits `PYTHOS:CORE:WORKSPACE:SESSION_OBJECT`, `PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT`, and completes with `PYTHOS:CORE:WORKSPACE_OBJECTS_READY`. It does not implement object browser work, reboot persistence, or sector persistence.
 * `object-browser` records ADR 0024's minimal inspection app boundary and exposes a fixed Phase 5 typed window over the current object-store substrate. It lists typed objects, inspects typed relationships, inspects revision counts, emits `PYTHOS:CORE:OBJECT_BROWSER:LIST`, `PYTHOS:CORE:OBJECT_BROWSER:DETAIL`, and completes with `PYTHOS:CORE:OBJECT_BROWSER_READY`. It does not implement reboot persistence or sector persistence.
 * `save-and-restore-across-reboot` records ADR 0025's fixed checkpoint/recovery sector contract, writes and restores the Phase 7 typed workspace snapshot through virtio-blk sector I/O, and verifies a deliberately killed mid-commit boot recovers to the last committed state. It emits `PYTHOS:CORE:OBJECT_STORE:PERSISTED`, `PYTHOS:CORE:OBJECT_STORE:RESTORED`, and completes Phase 7 with `PYTHOS:CORE:PHASE_7_COMPLETE`. It does not implement a filesystem, dynamic object database, Phase 8 isolation, or any Causal Lens/Patch UI.
+* `ring-3-execution` records ADR 0026's first Phase 8 hardware-isolation step: GDT user code/data selectors, a TSS `RSP0`, a DPL3-callable breakpoint gate, and fixed user code/stack pages in the current address space. It enters CPL3 with `iretq`, proves a user-originated trap by checking the ring-3 `CS`/`SS` frame, returns to the saved kernel stack, emits `PYTHOS:CORE:USER_MODE:ENTER`, `PYTHOS:CORE:USER_MODE:RETURN`, and completes with `PYTHOS:CORE:RING3_EXECUTION_READY`. It does not implement separate address spaces, a syscall ABI, user process stacks, service-local runtimes, or hostile-code containment.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-Phase 7 `persistent-object-storage` is complete. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, and ADR 0025 records the checkpoint/recovery sector contract. The next allowed work is Phase 8 `ring-3-execution` only after explicit re-invocation. Do not begin networking, AI, SMP, hostile-code isolation beyond the Phase 8 slice sequence, or hardware expansion before their roadmap gates.
+Phase 7 `persistent-object-storage` is complete. Phase 8 `ring-3-execution` is complete. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the checkpoint/recovery sector contract, and ADR 0026 records the ring-3 execution proof. The next allowed work is Phase 8 `separate-address-spaces`. Do not begin `syscall-entry`, networking, AI, SMP, hostile-code isolation beyond the Phase 8 slice sequence, or hardware expansion before their roadmap gates.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -360,6 +361,9 @@ PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:OBJECT_STORE:PERSISTED
 PYTHOS:CORE:OBJECT_STORE:RESTORED
 PYTHOS:CORE:PHASE_7_COMPLETE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:RING3_EXECUTION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -873,6 +877,9 @@ PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:OBJECT_STORE:PERSISTED
 PYTHOS:CORE:OBJECT_STORE:RESTORED
 PYTHOS:CORE:PHASE_7_COMPLETE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:RING3_EXECUTION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -882,6 +889,8 @@ The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` befor
 Phase 6 further requires `PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY` after `PYTHOS:CORE:AUDIO:DEVICE_SELECTED`, `PYTHOS:CORE:AUDIO_DRIVER_READY` after `PYTHOS:CORE:AUDIO:DRIVER`, `PYTHOS:CORE:AUDIO_BUFFERS_READY` after `PYTHOS:CORE:AUDIO:BUFFER`, `PYTHOS:CORE:PCM_PLAYBACK_READY` after `PYTHOS:CORE:AUDIO:PCM_PLAYBACK`, `PYTHOS:CORE:AUDIO_MIXING_READY` after the three `PYTHOS:CORE:AUDIO:MIX:*` markers, `PYTHOS:CORE:BOOT_ASSETS_READY` after the three `PYTHOS:CORE:BOOT_ASSET:*` markers, `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY` after `PYTHOS:CORE:BOOT_SYNC:AUDIO`, `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY` after the audio fallback marker, `PYTHOS:CORE:PHASE_6_COMPLETE` after graceful fallback, and `PYTHOS:CORE:PHASE_6_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 Phase 7 requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` after `PYTHOS:CORE:STORAGE_SERVICE_READY`, `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY` after the journal append marker, `PYTHOS:CORE:STORAGE:CHECKSUM_VALID` after `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER` after the checksum marker, `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` after the commit marker, `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY` after `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK` after the recovery replay marker, `PYTHOS:CORE:CRASH_RECOVERY_READY` after the recovery rollback marker, `PYTHOS:CORE:OBJECT:STABLE_ID` after `PYTHOS:CORE:CRASH_RECOVERY_READY`, `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS` after the stable-id marker, `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY` after the versioned-fields marker, `PYTHOS:CORE:OBJECT:RELATIONSHIP` after `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`, `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY` after the relationship marker, `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` after the relationship-query marker, `PYTHOS:CORE:OBJECT:REVISION_RETAINED` after `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY`, `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE` after the retained marker, `PYTHOS:CORE:REVISION_HISTORY_READY` after the provenance marker, `PYTHOS:CORE:WORKSPACE:SESSION_OBJECT` after `PYTHOS:CORE:REVISION_HISTORY_READY`, `PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT` after the workspace session marker, `PYTHOS:CORE:WORKSPACE_OBJECTS_READY` after the workspace layout marker, `PYTHOS:CORE:OBJECT_BROWSER:LIST` after `PYTHOS:CORE:WORKSPACE_OBJECTS_READY`, `PYTHOS:CORE:OBJECT_BROWSER:DETAIL` after the browser-list marker, `PYTHOS:CORE:OBJECT_BROWSER_READY` after the browser-detail marker, `PYTHOS:CORE:OBJECT_STORE:PERSISTED` after `PYTHOS:CORE:OBJECT_BROWSER_READY`, `PYTHOS:CORE:OBJECT_STORE:RESTORED` after the persisted marker, `PYTHOS:CORE:PHASE_7_COMPLETE` after the restored marker, and `PYTHOS:CORE:PHASE_7_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+
+Phase 8 currently requires `PYTHOS:CORE:USER_MODE:ENTER` after `PYTHOS:CORE:PHASE_7_COMPLETE`, `PYTHOS:CORE:USER_MODE:RETURN` after the enter marker, `PYTHOS:CORE:RING3_EXECUTION_READY` after the return marker, and `PYTHOS:CORE:RING3_EXECUTION_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

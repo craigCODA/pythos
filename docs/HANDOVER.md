@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `persistent-object-storage` complete. Halt at the
-Phase 7 -> Phase 8 boundary.
+Current boundary: Phase 8 `ring-3-execution` complete. Halt at the
+`ring-3-execution` -> `separate-address-spaces` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -16,6 +16,7 @@ git status --short --branch
 git log --oneline -8
 python scripts\test-boot.py --slice object-browser
 python scripts\test-boot.py --slice save-and-restore-across-reboot
+python scripts\test-boot.py --slice ring-3-execution
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -30,7 +31,7 @@ Timeout termination is not success evidence.
 Expected branch:
 
 ```text
-milestone/phase7-persistent-object-storage
+milestone/phase8-real-hardware-isolation
 ```
 
 Expected state:
@@ -43,15 +44,16 @@ Phase 4 complete
 Phase 5 complete
 Phase 6 complete
 Phase 7 complete
-Next allowed phase: Phase 8 real-hardware-isolation
-Next allowed slice after explicit re-invocation: ring-3-execution
+Phase 8 ring-3-execution complete
+Next allowed slice: separate-address-spaces
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
 workspace-session object kind. ADR 0024 records the object-browser inspection
-boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. Do
-not start Phase 8, networking, AI, ring-3, SMP, or hardware-expansion work
-without explicit re-invocation at the roadmap gate.
+boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
+0026 records the Phase 8 ring-3 execution proof. Do not start
+`syscall-entry`, user stacks, service-local runtimes, networking, AI, SMP, or
+hardware-expansion work before their roadmap gates.
 
 ## Phase 6 Summary
 
@@ -98,6 +100,12 @@ revision-history
 workspace-objects
 object-browser
 save-and-restore-across-reboot
+```
+
+## Completed Phase 8 Slices
+
+```text
+ring-3-execution
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -174,7 +182,16 @@ kills QEMU during the commit window. It does not implement a filesystem,
 dynamic object database, Causal Lens UI, Patch, networking, or multi-user
 access control.
 
-## Phase 7 Marker Tail
+The ring-3-execution slice records ADR 0026 and implements the first Phase 8
+hardware-isolation proof. PythCore installs CPL3 GDT selectors, sets
+`TSS.RSP0`, maps fixed user code and stack proof pages in the current address
+space, enters ring 3 with `iretq`, accepts a user-originated breakpoint trap,
+verifies the ring-3 `CS`/`SS` trap frame, returns to a saved kernel stack, and
+emits `PYTHOS:CORE:RING3_EXECUTION_READY`. It does not implement separate
+address spaces, syscall entry, user process stacks, service-local runtimes, or
+hostile-code containment.
+
+## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
 `PYTHOS:CORE:PHASE_5_COMPLETE`:
@@ -233,6 +250,9 @@ PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:OBJECT_STORE:PERSISTED
 PYTHOS:CORE:OBJECT_STORE:RESTORED
 PYTHOS:CORE:PHASE_7_COMPLETE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:RING3_EXECUTION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -282,15 +302,21 @@ PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:OBJECT_STORE:PERSISTED
 PYTHOS:CORE:OBJECT_STORE:RESTORED
 PYTHOS:CORE:PHASE_7_COMPLETE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:RING3_EXECUTION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
 ## Important Files
 
-Phase 6 and Phase 7 code:
+Phase 6, Phase 7, and Phase 8 code:
 
 ```text
+core/src/architecture/x86_64/gdt.rs
+core/src/architecture/x86_64/idt.rs
+core/src/architecture/x86_64/tss.rs
 core/src/audio.rs
 core/src/block_device.rs
 core/src/boot_assets.rs
@@ -306,6 +332,7 @@ core/src/shell_objects.rs
 core/src/storage_journal.rs
 core/src/storage_service.rs
 core/src/typed_object_format.rs
+core/src/user_mode.rs
 core/src/workspace_objects.rs
 ```
 
@@ -336,6 +363,7 @@ docs/decisions/0022-on-disk-typed-object-format.md
 docs/decisions/0023-workspace-session-object-kind.md
 docs/decisions/0024-object-browser-inspection-app.md
 docs/decisions/0025-phase-7-object-store-checkpoint-recovery.md
+docs/decisions/0026-phase-8-ring3-execution.md
 ```
 
 Boot artifacts:
@@ -365,17 +393,22 @@ user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
 AI inside the trusted core
+separate address spaces
+syscall ABI
 ring-3 service isolation
+hostile-code containment
 SMP
 package management
 Open Surface
 Patch
 ```
 
-Capability separation is still architectural and cooperative for trusted
-kernel-mode services. Do not claim hostile-code isolation until Phase 8 lands.
+Ring-3 execution exists only as a fixed proof page in the current address
+space. Capability separation for services is still not a hostile-code boundary.
+Do not claim hostile-code isolation until the Phase 8 adversarial boundary
+tests land.
 
-## Next Phase
+## Next Slice
 
 Phase 8 is `real-hardware-isolation`.
 
@@ -388,19 +421,19 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the first Phase 8 slice from the roadmap:
+Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-ring-3-execution
+separate-address-spaces
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof for user-mode execution before changing the
-   CPU privilege path.
+1. Add a failing automated proof for per-task or per-service address-space
+   isolation before changing the page-table path.
 2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin syscall
-   ABI, separate address spaces, quotas, networking, AI, SMP, or hardware
-   expansion before their slice gates.
+   ABI, user stacks, quotas, networking, AI, SMP, or hardware expansion before
+   their slice gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary

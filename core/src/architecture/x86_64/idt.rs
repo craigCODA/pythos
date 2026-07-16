@@ -6,6 +6,7 @@ use core::cell::UnsafeCell;
 
 const IDT_ENTRIES: usize = 256;
 const INTERRUPT_GATE_PRESENT: u8 = 0x8E;
+const USER_INTERRUPT_GATE_PRESENT: u8 = 0xEE;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -32,12 +33,17 @@ impl IdtEntry {
         }
     }
 
+    #[cfg(test)]
     fn new(handler: u64, selector: u16) -> Self {
+        Self::new_with_attributes(handler, selector, INTERRUPT_GATE_PRESENT)
+    }
+
+    fn new_with_attributes(handler: u64, selector: u16, attributes: u8) -> Self {
         Self {
             offset_low: handler as u16,
             selector,
             ist: 0,
-            attributes: INTERRUPT_GATE_PRESENT,
+            attributes,
             offset_mid: (handler >> 16) as u16,
             offset_high: (handler >> 32) as u32,
             reserved: 0,
@@ -83,7 +89,12 @@ pub fn initialize() -> Result<(), ()> {
             32..=47 => interrupts::handler_for_vector(index),
             _ => exceptions::panic_stub as *const () as usize as u64,
         };
-        *entry = IdtEntry::new(handler, gdt::KERNEL_CODE_SELECTOR);
+        let attributes = if index == 3 {
+            USER_INTERRUPT_GATE_PRESENT
+        } else {
+            INTERRUPT_GATE_PRESENT
+        };
+        *entry = IdtEntry::new_with_attributes(handler, gdt::KERNEL_CODE_SELECTOR, attributes);
     }
 
     let idtr = DescriptorTablePointer {
@@ -125,5 +136,18 @@ mod tests {
         assert_eq!(ist, 0);
         assert_eq!(attributes, INTERRUPT_GATE_PRESENT);
         assert_eq!(reserved, 0);
+    }
+
+    #[test]
+    fn breakpoint_gate_can_be_invoked_from_ring3() {
+        let entry = IdtEntry::new_with_attributes(
+            0xFFFF_FFFF_8123_4567,
+            gdt::KERNEL_CODE_SELECTOR,
+            USER_INTERRUPT_GATE_PRESENT,
+        );
+        let attributes = entry.attributes;
+
+        assert_eq!(attributes, USER_INTERRUPT_GATE_PRESENT);
+        assert_eq!((attributes >> 5) & 0x3, 0x3);
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::architecture::x86_64::exceptions;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
+use crate::user_mode;
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
@@ -14,6 +15,7 @@ const MAX_TABLE_FRAMES: usize = 128;
 
 const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITE: u64 = 1 << 1;
+const PTE_USER: u64 = 1 << 2;
 const PTE_HUGE: u64 = 1 << 7;
 const PTE_NO_EXECUTE: u64 = 1 << 63;
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
@@ -118,6 +120,7 @@ impl KernelAddressSpace {
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
+        map_user_mode_proof_pages(&mut tables)?;
         tables.map_translated_range(
             align_down(boot_info as *const PythBootInfo as u64),
             mem::size_of::<PythBootInfo>() as u64,
@@ -250,6 +253,27 @@ impl<'a> PageTableBuilder<'a> {
         Ok(())
     }
 
+    fn map_user_translated_range(
+        &mut self,
+        virt_start: u64,
+        byte_len: u64,
+        flags: u64,
+    ) -> Result<(), VmError> {
+        let start = align_down(virt_start);
+        let end = align_up(
+            virt_start
+                .checked_add(byte_len)
+                .ok_or(VmError::RangeOverflow)?,
+        )?;
+        let mut virt = start;
+        while virt < end {
+            let phys = translate_active(virt)?;
+            self.map_4k_for_user(virt, phys, flags | PTE_USER)?;
+            virt = virt.checked_add(PAGE_SIZE).ok_or(VmError::RangeOverflow)?;
+        }
+        Ok(())
+    }
+
     fn map_physical_range(
         &mut self,
         virt_start: u64,
@@ -287,6 +311,21 @@ impl<'a> PageTableBuilder<'a> {
     }
 
     fn map_4k(&mut self, virt: u64, phys: u64, leaf_flags: u64) -> Result<(), VmError> {
+        self.map_4k_with_table_flags(virt, phys, leaf_flags, 0, false)
+    }
+
+    fn map_4k_for_user(&mut self, virt: u64, phys: u64, leaf_flags: u64) -> Result<(), VmError> {
+        self.map_4k_with_table_flags(virt, phys, leaf_flags, PTE_USER, true)
+    }
+
+    fn map_4k_with_table_flags(
+        &mut self,
+        virt: u64,
+        phys: u64,
+        leaf_flags: u64,
+        table_flags: u64,
+        update_existing_leaf: bool,
+    ) -> Result<(), VmError> {
         if virt < TWO_MIB {
             return Err(VmError::LowGuardMapping);
         }
@@ -296,13 +335,16 @@ impl<'a> PageTableBuilder<'a> {
         {
             return Err(VmError::RangeOverflow);
         }
-        let pdpt = self.ensure_table(self.root_table_phys, table_index(virt, 39))?;
-        let pd = self.ensure_table(pdpt, table_index(virt, 30))?;
-        let pt = self.ensure_table(pd, table_index(virt, 21))?;
+        let pdpt = self.ensure_table(self.root_table_phys, table_index(virt, 39), table_flags)?;
+        let pd = self.ensure_table(pdpt, table_index(virt, 30), table_flags)?;
+        let pt = self.ensure_table(pd, table_index(virt, 21), table_flags)?;
         let index = table_index(virt, 12);
         if read_entry(pt, index) & PTE_PRESENT != 0 {
             let existing = read_entry(pt, index);
             if existing & ADDR_MASK == phys {
+                if update_existing_leaf {
+                    write_entry(pt, index, phys | leaf_flags | PTE_PRESENT);
+                }
                 return Ok(());
             }
             return Err(VmError::DuplicateMapping);
@@ -311,17 +353,20 @@ impl<'a> PageTableBuilder<'a> {
         Ok(())
     }
 
-    fn ensure_table(&mut self, table_phys: u64, index: usize) -> Result<u64, VmError> {
+    fn ensure_table(&mut self, table_phys: u64, index: usize, flags: u64) -> Result<u64, VmError> {
         let entry = read_entry(table_phys, index);
         if entry & PTE_PRESENT != 0 {
             if entry & PTE_HUGE != 0 {
                 return Err(VmError::DuplicateMapping);
             }
+            if flags != 0 && entry & flags != flags {
+                write_entry(table_phys, index, entry | flags);
+            }
             return Ok(entry & ADDR_MASK);
         }
         let frame = self.allocator.allocate_zeroed_page()?;
         self.remember_frame(frame)?;
-        write_entry(table_phys, index, frame | PTE_PRESENT | PTE_WRITE);
+        write_entry(table_phys, index, frame | PTE_PRESENT | PTE_WRITE | flags);
         Ok(frame)
     }
 
@@ -360,6 +405,14 @@ fn map_kernel_segments(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError>
         )?,
         PTE_WRITE | PTE_NO_EXECUTE,
     )?;
+    Ok(())
+}
+
+fn map_user_mode_proof_pages(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError> {
+    let (code_start, code_len) = user_mode::user_code_region();
+    tables.map_user_translated_range(code_start, code_len, 0)?;
+    let (stack_start, stack_len) = user_mode::user_stack_region();
+    tables.map_user_translated_range(stack_start, stack_len, PTE_WRITE | PTE_NO_EXECUTE)?;
     Ok(())
 }
 

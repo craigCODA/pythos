@@ -41,6 +41,7 @@ mod storage_service;
 mod system_api;
 mod tasks;
 mod typed_object_format;
+mod user_mode;
 mod value_validation;
 mod widgets;
 mod window_interaction;
@@ -458,6 +459,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PHASE_7_COMPLETE");
+        if user_mode::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:RING3_EXECUTION_READY");
     }
 
     #[cfg(test)]

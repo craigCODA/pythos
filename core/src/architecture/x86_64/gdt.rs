@@ -7,10 +7,14 @@ use core::cell::UnsafeCell;
 pub const KERNEL_CODE_SELECTOR: u16 = 0x08;
 const KERNEL_DATA_SELECTOR: u16 = 0x10;
 const TSS_SELECTOR: u16 = 0x18;
+pub const USER_DATA_SELECTOR: u16 = 0x2B;
+pub const USER_CODE_SELECTOR: u16 = 0x33;
 
 const GDT_NULL: u64 = 0;
 const GDT_KERNEL_CODE: u64 = 0x00AF_9A00_0000_FFFF;
 const GDT_KERNEL_DATA: u64 = 0x00AF_9200_0000_FFFF;
+const GDT_USER_DATA: u64 = 0x00AF_F200_0000_FFFF;
+const GDT_USER_CODE: u64 = 0x00AF_FA00_0000_FFFF;
 
 #[repr(C, packed)]
 struct DescriptorTablePointer {
@@ -18,13 +22,13 @@ struct DescriptorTablePointer {
     base: u64,
 }
 
-struct GdtStorage(UnsafeCell<[u64; 5]>);
+struct GdtStorage(UnsafeCell<[u64; 7]>);
 
 // SAFETY: the GDT is initialized once during single-core milestone-1 boot,
 // before interrupts are enabled and before any concurrent readers exist.
 unsafe impl Sync for GdtStorage {}
 
-static GDT: GdtStorage = GdtStorage(UnsafeCell::new([0; 5]));
+static GDT: GdtStorage = GdtStorage(UnsafeCell::new([0; 7]));
 
 pub fn initialize() -> Result<(), ()> {
     let tss_descriptor = encode_tss_descriptor(tss::base(), tss::limit());
@@ -43,6 +47,8 @@ pub fn initialize() -> Result<(), ()> {
     gdt[2] = GDT_KERNEL_DATA;
     gdt[3] = tss_descriptor.low;
     gdt[4] = tss_descriptor.high;
+    gdt[5] = GDT_USER_DATA;
+    gdt[6] = GDT_USER_CODE;
 
     let gdtr = DescriptorTablePointer {
         limit: (core::mem::size_of_val(gdt) - 1) as u16,
@@ -119,5 +125,13 @@ mod tests {
                 | (descriptor.high << 32),
             0xFFFF_FFFF_8123_4000
         );
+    }
+
+    #[test]
+    fn user_selectors_are_ring3_segments_after_tss_descriptor() {
+        assert_eq!(USER_DATA_SELECTOR & 0x3, 0x3);
+        assert_eq!(USER_CODE_SELECTOR & 0x3, 0x3);
+        assert_eq!(USER_DATA_SELECTOR, 0x2B);
+        assert_eq!(USER_CODE_SELECTOR, 0x33);
     }
 }

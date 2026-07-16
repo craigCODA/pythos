@@ -693,6 +693,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_save_restore_markers_are_observed_after_object_browser(self) -> None:
         self.run_boot_slice("save-and-restore-across-reboot")
 
+    def test_ring3_execution_markers_are_observed_after_phase_7(self) -> None:
+        self.run_boot_slice("ring-3-execution")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
