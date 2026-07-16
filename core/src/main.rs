@@ -4,6 +4,7 @@
 mod architecture;
 mod audio;
 mod audit;
+mod block_device;
 mod boot_assets;
 mod boot_info;
 mod boot_metadata;
@@ -390,6 +391,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY");
         serial::write_line("PYTHOS:CORE:PHASE_6_COMPLETE");
+        let _block_device = match block_device::select_device() {
+            Ok(device) => device,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:BLOCK_DEVICE_READY");
     }
 
     #[cfg(test)]

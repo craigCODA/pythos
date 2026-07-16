@@ -1,6 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 6 complete, stop before Phase 7.
+Current boundary: Phase 7 `block-device-driver` complete; next slice is
+`storage-service`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -13,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice phase-6-complete
+python scripts\test-boot.py --slice block-device-driver
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -27,7 +28,7 @@ Timeout termination is not success evidence.
 Expected branch:
 
 ```text
-milestone/phase6-cinematic-boot
+milestone/phase7-persistent-object-storage
 ```
 
 Expected state:
@@ -39,11 +40,13 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Next allowed phase: Phase 7 persistent-object-storage
+Phase 7 block-device-driver complete
+Next allowed slice: storage-service
 ```
 
-Stop here unless explicitly re-invoked for Phase 7. Do not start
-`block-device-driver` or any storage work from this handover alone.
+Do not start `append-only-journal`, typed-object persistence, object browser
+work, networking, AI, ring-3, SMP, or hardware-expansion work before the
+roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -76,6 +79,20 @@ audio-visual-sync
 graceful-audio-fallback
 ```
 
+## Completed Phase 7 Slices
+
+```text
+block-device-driver
+```
+
+The first storage slice attaches a bounded raw QEMU storage image as a non-boot
+legacy `virtio-blk` PCI device. The ESP is now attached explicitly as an
+`ide-hd` boot device so OVMF does not try to boot the empty storage disk. PythCore
+selects vendor `0x1AF4` device `0x1001`, validates the legacy I/O BAR, enables
+I/O and bus-master command bits, reads capacity and queue metadata, and emits
+the block-device markers. This slice does not implement raw sector I/O,
+storage-service mediation, journaling, object records, or crash recovery.
+
 ## Phase 6 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -104,6 +121,8 @@ PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY
 PYTHOS:CORE:AUDIO:FALLBACK_ARMED
 PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
+PYTHOS:CORE:BLOCK:DEVICE_SELECTED
+PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -122,6 +141,8 @@ PYTHOS:CORE:PCM_PLAYBACK_READY
 PYTHOS:CORE:AUDIO:FALLBACK
 PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
+PYTHOS:CORE:BLOCK:DEVICE_SELECTED
+PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -132,6 +153,7 @@ Phase 6 code:
 
 ```text
 core/src/audio.rs
+core/src/block_device.rs
 core/src/boot_assets.rs
 core/src/cinematic_boot.rs
 core/src/framebuffer.rs
@@ -169,6 +191,7 @@ Boot artifacts:
 target\esp
 target\pythos.iso
 target\boot-serial.log
+target\pythos-store.img
 ```
 
 The ISO path is:
@@ -183,7 +206,11 @@ Do not assume any of the following exists:
 
 ```text
 persistent object storage
-block device driver
+storage service
+append-only journal
+checksummed commit markers
+crash recovery
+on-disk typed object format
 filesystem
 storage recovery
 user-configurable boot themes
@@ -204,7 +231,7 @@ kernel-mode services. Do not claim hostile-code isolation until Phase 8 lands.
 
 Phase 7 is `persistent-object-storage`.
 
-Before any Phase 7 code lands, re-read:
+Before continuing Phase 7, re-read:
 
 ```text
 AGENTS.md
@@ -213,17 +240,16 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the first Phase 7 slice from the roadmap:
+Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-block-device-driver
+storage-service
 ```
 
-Expected TDD posture for the first Phase 7 slice:
+Expected TDD posture for the next Phase 7 slice:
 
-1. Add or confirm a failing test/harness expectation for the first storage
+1. Add or confirm a failing test/harness expectation for the storage-service
    marker.
-2. Implement only the minimal virtual block device support needed by that
-   slice.
-3. Preserve the entire Phase 6 marker chain.
+2. Implement only capability-gated mediation over the selected block device.
+3. Do not implement append-only journaling or object records in this slice.
 4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

@@ -103,13 +103,14 @@ Verified vertical slices:
 * `boot-asset-storage` embeds Phase 6 visual frame, PCM shape, and timing/sync assets in PythCore without pulling persistent storage forward, emits the three `PYTHOS:CORE:BOOT_ASSET:*` markers, and completes with `PYTHOS:CORE:BOOT_ASSETS_READY`.
 * `audio-visual-sync` renders the compositor-backed wake phrase `PythOS [HISS] We Are Woken` against PIT-derived sync points while audio playback is active or silently skipped, emits `PYTHOS:CORE:BOOT_VISUAL:FRAME` and `PYTHOS:CORE:BOOT_SYNC:AUDIO`, and completes with `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY`.
 * `phase-6-complete` proves the graceful audio fallback boundary, emits `PYTHOS:CORE:AUDIO:FALLBACK_ARMED` when AC97 is present or `PYTHOS:CORE:AUDIO:FALLBACK` when no audio device is configured, emits `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY`, and completes Phase 6 with `PYTHOS:CORE:PHASE_6_COMPLETE`. It does not implement persistent storage, user-configurable boot themes, physical audio hardware support, networking, AI, ring-3, or SMP.
+* `block-device-driver` attaches an explicit boot ESP plus a non-boot QEMU legacy `virtio-blk` raw storage image, scans the primary PCI bus for vendor `0x1AF4` device `0x1001`, validates the legacy I/O BAR, enables I/O and bus-master command bits, reads bounded capacity and queue metadata, emits `PYTHOS:CORE:BLOCK:DEVICE_SELECTED`, and completes with `PYTHOS:CORE:BLOCK_DEVICE_READY`. It does not implement storage-service mediation, data I/O, journaling, object records, or crash recovery.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-The active implementation stops at the Phase 6 -> Phase 7 boundary after the cinematic boot sequence, graceful no-audio fallback proof, framebuffer marker, and milestone completion marker are emitted. Persistent object storage, physical audio hardware expansion, networking, AI, ring-3, SMP, and hostile-code isolation remain later work.
+The active implementation is in Phase 7 `persistent-object-storage`. The `block-device-driver` slice is complete; the next allowed slice is `storage-service`. Do not begin append-only journaling, typed objects, object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -318,6 +319,8 @@ PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY
 PYTHOS:CORE:AUDIO:FALLBACK_ARMED
 PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
+PYTHOS:CORE:BLOCK:DEVICE_SELECTED
+PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -800,6 +803,8 @@ PYTHOS:CORE:PCM_PLAYBACK_READY
 PYTHOS:CORE:AUDIO:FALLBACK
 PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
+PYTHOS:CORE:BLOCK:DEVICE_SELECTED
+PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -807,6 +812,8 @@ PYTHOS:CORE:MILESTONE_1_COMPLETE
 The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, `PYTHOS:CORE:REQUEST_REPLY_READY` after the request/reply markers, `PYTHOS:CORE:CAPABILITY_HANDLES_READY` after capability grant/use, `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` after the shared-memory markers, `PYTHOS:CORE:PERMISSION_VALIDATION_READY` after permission validation, `PYTHOS:CORE:REVOCATION_READY` after revocation, `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY` after the known-target denial proof, `PYTHOS:CORE:PHASE_3_COMPLETE` after audit logging, `PYTHOS:CORE:RUNTIME_SELECTED` after `PYTHOS:CORE:PHASE_3_COMPLETE`, `PYTHOS:CORE:INIT_PAK_LOADED` after `PYTHOS:CORE:RUNTIME_SELECTED`, `PYTHOS:CORE:INTERPRETER_BOOTED` after `PYTHOS:CORE:INIT_PAK_LOADED`, `PYTHOS:CORE:SYSTEM_API_READY` after `PYTHOS:CORE:SYSTEM:LOG`, `PYTHOS:CORE:VALUE_VALIDATION_READY` after `PYTHOS:CORE:SYSTEM_API_READY`, `PYTHOS:CORE:SERVICE_MANAGER_READY` after `PYTHOS:CORE:SERVICE:READY`, `PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED` after `PYTHOS:CORE:SERVICE:EXCEPTION`, `PYTHOS:CORE:SERVICE_RESTART_READY` after `PYTHOS:CORE:SERVICE:RESTART`, `PYTHOS:CORE:ASYNC_EVENTS_READY` after `PYTHOS:CORE:SERVICE:EVENT`, `PYTHOS:CORE:INPUT_DRIVERS_READY` after `PYTHOS:CORE:INPUT:MOUSE`, `PYTHOS:CORE:INPUT_EVENT_SERVICE_READY` after `PYTHOS:CORE:INPUT:EVENT`, `PYTHOS:CORE:SOFTWARE_RENDERER_READY` after `PYTHOS:CORE:RENDER:RECT`, `PYTHOS:CORE:FONT_SYSTEM_READY` after `PYTHOS:CORE:FONT:PSF_LOADED`, `PYTHOS:CORE:COMPOSITOR_READY` after `PYTHOS:CORE:COMPOSITOR:CLIP`, `PYTHOS:CORE:MOVABLE_WINDOWS_READY` after `PYTHOS:CORE:WINDOW_FOCUS_READY`, `PYTHOS:CORE:WIDGETS_READY` after `PYTHOS:CORE:WIDGET:TEXT_FIELD`, `PYTHOS:CORE:PHASE_5_COMPLETE` after `PYTHOS:CORE:APP:SETTINGS_PANEL`, and `PYTHOS:CORE:PHASE_5_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 Phase 6 further requires `PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY` after `PYTHOS:CORE:AUDIO:DEVICE_SELECTED`, `PYTHOS:CORE:AUDIO_DRIVER_READY` after `PYTHOS:CORE:AUDIO:DRIVER`, `PYTHOS:CORE:AUDIO_BUFFERS_READY` after `PYTHOS:CORE:AUDIO:BUFFER`, `PYTHOS:CORE:PCM_PLAYBACK_READY` after `PYTHOS:CORE:AUDIO:PCM_PLAYBACK`, `PYTHOS:CORE:AUDIO_MIXING_READY` after the three `PYTHOS:CORE:AUDIO:MIX:*` markers, `PYTHOS:CORE:BOOT_ASSETS_READY` after the three `PYTHOS:CORE:BOOT_ASSET:*` markers, `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY` after `PYTHOS:CORE:BOOT_SYNC:AUDIO`, `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY` after the audio fallback marker, `PYTHOS:CORE:PHASE_6_COMPLETE` after graceful fallback, and `PYTHOS:CORE:PHASE_6_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+
+Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, and `PYTHOS:CORE:BLOCK_DEVICE_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

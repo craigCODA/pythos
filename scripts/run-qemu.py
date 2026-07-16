@@ -19,6 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ESP = ROOT / "image" / "esp"
 DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
+DEFAULT_STORAGE_IMAGE = ROOT / "target" / "pythos-store.img"
+DEFAULT_STORAGE_SIZE_BYTES = 16 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 20.0
 SUCCESS_MARKER = "PYTHOS:CORE:MILESTONE_1_COMPLETE"
 DEBUG_EXIT_CODES = {
@@ -154,6 +156,13 @@ def read_serial_log(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
 
 
+def ensure_storage_image(path: Path, size_bytes: int = DEFAULT_STORAGE_SIZE_BYTES) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if not path.exists():
+        with path.open("wb") as image:
+            image.truncate(size_bytes)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--esp", type=Path, default=DEFAULT_ESP)
@@ -166,6 +175,7 @@ def main() -> int:
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
     parser.add_argument("--no-audio-device", action="store_true")
     parser.add_argument("--audio-wav", type=Path)
+    parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -227,8 +237,17 @@ def main() -> int:
     else:
         command += [
             "-drive",
-            f"format=raw,file=fat:rw:{args.esp}",
+            f"if=none,id=pythos_esp,format=raw,file=fat:rw:{args.esp}",
+            "-device",
+            "ide-hd,drive=pythos_esp,bootindex=1",
         ]
+    ensure_storage_image(args.storage_image)
+    command += [
+        "-drive",
+        f"if=none,id=pythos_store,format=raw,file={args.storage_image}",
+        "-device",
+        "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
+    ]
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
     command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]

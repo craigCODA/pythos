@@ -696,7 +696,7 @@ python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 
 None. This phase has no vision-doc dependency.
 
-## Phase 7: Persistent Object Storage - NOT STARTED
+## Phase 7: Persistent Object Storage - IN PROGRESS
 
 ### Purpose
 
@@ -710,8 +710,14 @@ Phase 6 exit condition reproducible.
 
 ### Locked Slice Sequence
 
-1. `block-device-driver` - virtual block device driver, with virtio-blk in
-   QEMU as the first target.
+1. `block-device-driver` - COMPLETE. Virtual block device driver selection,
+   with QEMU legacy `virtio-blk` as the first target. The QEMU harness now
+   attaches an explicit boot ESP plus a non-boot raw storage image, PythCore
+   selects vendor `0x1AF4` device `0x1001`, validates the legacy I/O BAR,
+   enables I/O and bus-master command bits, reads bounded capacity and queue
+   metadata, and emits `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` followed by
+   `PYTHOS:CORE:BLOCK_DEVICE_READY`. This slice does not implement the
+   storage service, raw read/write operations, journaling, or object storage.
 2. `storage-service` - capability-gated service mediating all block access. No
    other service touches the block device directly.
 3. `append-only-journal` - write path is journal-first.

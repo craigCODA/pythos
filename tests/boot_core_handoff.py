@@ -660,6 +660,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_phase_6_complete_marker_is_observed_after_fallback_ready(self) -> None:
         self.run_boot_slice("phase-6-complete")
 
+    def test_block_device_driver_marker_is_observed_after_phase_6(self) -> None:
+        self.run_boot_slice("block-device-driver")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
