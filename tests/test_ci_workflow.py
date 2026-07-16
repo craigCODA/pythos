@@ -17,6 +17,7 @@ class CiWorkflowTest(unittest.TestCase):
             "pull_request:",
             "qemu-system-x86",
             "ovmf",
+            'PYTHOS_TEST_BOOT_TIMEOUT: "60"',
             "rustup target add x86_64-unknown-uefi x86_64-unknown-none",
             "cargo fmt --check",
             "cargo test -p pythos-shared",
@@ -25,9 +26,10 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings",
             "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow",
             "python scripts/test-boot.py --slice phase-6-complete",
-            "python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device",
-            "python scripts/test-boot.py --slice milestone-1",
-            "python scripts/test-boot.py --slice milestone-1 --media iso",
+            "python scripts/test-boot.py --slice phase-6-complete --timeout 60",
+            "python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device --timeout 60",
+            "python scripts/test-boot.py --slice milestone-1 --timeout 60",
+            "python scripts/test-boot.py --slice milestone-1 --media iso --timeout 60",
             "python -m unittest tests.boot_core_handoff",
         )
 

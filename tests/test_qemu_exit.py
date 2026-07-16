@@ -67,6 +67,12 @@ class QemuExitTest(unittest.TestCase):
 
         self.assertGreaterEqual(run_qemu.DEFAULT_TIMEOUT_SECONDS, 20.0)
 
+    def test_test_boot_passes_optional_timeout_to_qemu_runner(self) -> None:
+        test_boot = load_test_boot_module()
+
+        self.assertEqual(test_boot.qemu_timeout_args(None), [])
+        self.assertEqual(test_boot.qemu_timeout_args(60.0), ["--timeout", "60.0"])
+
 
 if __name__ == "__main__":
     unittest.main()

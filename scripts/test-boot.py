@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -1164,6 +1165,15 @@ def run(command: list[str]) -> None:
     subprocess.run(command, cwd=ROOT, check=True)
 
 
+def default_qemu_timeout() -> float | None:
+    value = os.environ.get("PYTHOS_TEST_BOOT_TIMEOUT")
+    return float(value) if value else None
+
+
+def qemu_timeout_args(timeout: float | None) -> list[str]:
+    return [] if timeout is None else ["--timeout", str(timeout)]
+
+
 def assert_markers(serial: str, expected: list[str]) -> None:
     for failure in FAILURE_MARKERS:
         if failure in serial:
@@ -1182,7 +1192,9 @@ def main() -> int:
     parser.add_argument("--slice", choices=sorted(SLICE_MARKERS), default="loader-enter")
     parser.add_argument("--media", choices=["esp", "iso"], default="esp")
     parser.add_argument("--no-audio-device", action="store_true")
+    parser.add_argument("--timeout", type=float, default=default_qemu_timeout())
     args = parser.parse_args()
+    timeout_args = qemu_timeout_args(args.timeout)
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
@@ -1199,6 +1211,7 @@ def main() -> int:
                 "--expect-outcome",
                 "success",
             ]
+            + timeout_args
             + (["--no-audio-device"] if args.no_audio_device else [])
         )
     else:
@@ -1212,6 +1225,7 @@ def main() -> int:
                 "--expect-outcome",
                 "success",
             ]
+            + timeout_args
             + (["--no-audio-device"] if args.no_audio_device else [])
         )
 

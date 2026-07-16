@@ -8,6 +8,8 @@ jobs:
   qemu-acceptance:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      PYTHOS_TEST_BOOT_TIMEOUT: "60"
 
     steps:
       - name: Checkout
@@ -52,10 +54,10 @@ jobs:
 
       - name: QEMU milestone acceptance
         run: |
-          python scripts/test-boot.py --slice phase-6-complete
-          python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device
-          python scripts/test-boot.py --slice milestone-1
-          python scripts/test-boot.py --slice milestone-1 --media iso
+          python scripts/test-boot.py --slice phase-6-complete --timeout 60
+          python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device --timeout 60
+          python scripts/test-boot.py --slice milestone-1 --timeout 60
+          python scripts/test-boot.py --slice milestone-1 --media iso --timeout 60
 
       - name: Full QEMU slice handoff suite
         run: python -m unittest tests.boot_core_handoff
