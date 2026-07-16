@@ -356,11 +356,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
         };
         serial::write_line("PYTHOS:CORE:AUDIO_BUFFERS_READY");
-        if audio::play_fixed_pcm(audio_driver, audio_buffers).is_err() {
+        let pcm_playback = match audio::play_fixed_pcm(audio_driver, audio_buffers) {
+            Ok(playback) => playback,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:PCM_PLAYBACK_READY");
+        if audio::mix_boot_audio(audio_driver, audio_buffers, pcm_playback).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
-        serial::write_line("PYTHOS:CORE:PCM_PLAYBACK_READY");
+        serial::write_line("PYTHOS:CORE:AUDIO_MIXING_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

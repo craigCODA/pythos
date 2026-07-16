@@ -85,6 +85,12 @@ pub struct Ac97Playback {
     pub sample_count: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AudioMix {
+    pub source_count: u8,
+    pub frame_count: u16,
+}
+
 #[repr(C, align(4096))]
 struct PcmBuffer {
     samples: [i16; PCM_SAMPLE_COUNT],
@@ -138,6 +144,10 @@ const AC97_PCM_CONTROL_RESET: u8 = 1 << 1;
 const AC97_PCM_CONTROL_RUN: u8 = 1 << 0;
 const FIXED_PCM_AMPLITUDE: i32 = 12_000;
 const FIXED_PCM_PERIOD_FRAMES: usize = 109;
+const MIX_SOURCE_COUNT: u8 = 3;
+const HISS_SEED: u32 = 0x5059_5448;
+const SUB_BASS_PERIOD_FRAMES: usize = 873;
+const TREMOLO_PERIOD_FRAMES: usize = 480;
 const EMPTY_DESCRIPTOR: Ac97BufferDescriptor = Ac97BufferDescriptor {
     buffer_phys: 0,
     control_length: 0,
@@ -208,6 +218,34 @@ pub fn play_fixed_pcm(
         (AudioDriver::Silent, AudioBuffers::Silent) => {
             serial::write_line("PYTHOS:CORE:AUDIO:PCM_SKIPPED");
             Ok(PcmPlayback::Silent)
+        }
+        _ => Err(AudioError::InvalidBar),
+    }
+}
+
+pub fn mix_boot_audio(
+    driver: AudioDriver,
+    buffers: AudioBuffers,
+    playback: PcmPlayback,
+) -> Result<AudioMix, AudioError> {
+    match (driver, buffers, playback) {
+        (AudioDriver::Ac97(ac97), AudioBuffers::Ac97(buffers), PcmPlayback::Ac97(_playback)) => {
+            stop_ac97_pcm(ac97)?;
+            fill_mixed_pcm_buffer();
+            start_ac97_pcm(ac97, buffers)?;
+            emit_mix_markers();
+            Ok(AudioMix {
+                source_count: MIX_SOURCE_COUNT,
+                frame_count: AC97_PCM_FRAME_COUNT as u16,
+            })
+        }
+        (AudioDriver::Silent, AudioBuffers::Silent, PcmPlayback::Silent) => {
+            let _ = mixed_boot_sample(0);
+            emit_mix_markers();
+            Ok(AudioMix {
+                source_count: MIX_SOURCE_COUNT,
+                frame_count: AC97_PCM_FRAME_COUNT as u16,
+            })
         }
         _ => Err(AudioError::InvalidBar),
     }
@@ -521,6 +559,93 @@ fn fixed_pcm_sample(frame: usize) -> i16 {
 }
 
 #[cfg(not(test))]
+fn fill_mixed_pcm_buffer() {
+    // SAFETY:
+    // 1. Invariant: `PCM_BUFFER` is stopped before being rewritten.
+    // 2. Established by: caller invokes `stop_ac97_pcm` before this function.
+    // 3. Lifetime: the buffer remains static for the whole boot.
+    // 4. Pointer ownership: PythCore owns writes before AC97 is restarted.
+    // 5. Alignment: `PCM_BUFFER` is page aligned and `i16` aligned.
+    // 6. Mapped length: exactly `PCM_SAMPLE_COUNT` samples.
+    // 7. Concurrency: single-core boot and PCM-out run bit is cleared.
+    // 8. Violation: writes during DMA would tear the active audio buffer.
+    let samples = unsafe { (&raw mut PCM_BUFFER.samples).cast::<i16>() };
+    for frame in 0..AC97_PCM_FRAME_COUNT {
+        let sample = mixed_boot_sample(frame);
+        let left = frame * AC97_PCM_CHANNELS;
+        let right = left + 1;
+        // SAFETY:
+        // 1. Invariant: `left` and `right` stay within the interleaved buffer.
+        // 2. Established by: frame bound is `AC97_PCM_FRAME_COUNT`.
+        // 3. Lifetime: the PCM buffer remains static for all playback.
+        // 4. Pointer ownership: PythCore initializes samples before DMA restarts.
+        // 5. Alignment: the pointer is aligned for `i16`.
+        // 6. Mapped length: `PCM_SAMPLE_COUNT` samples.
+        // 7. Concurrency: AC97 run bit has been cleared.
+        // 8. Violation: out-of-range writes would corrupt kernel data.
+        unsafe {
+            samples.add(left).write_volatile(sample);
+            samples.add(right).write_volatile(sample);
+        }
+    }
+}
+
+#[cfg(test)]
+fn fill_mixed_pcm_buffer() {}
+
+fn mixed_boot_sample(frame: usize) -> i16 {
+    let hiss = hiss_sample(frame);
+    let sub_bass = triangle_sample(frame, SUB_BASS_PERIOD_FRAMES, 7_000);
+    let tremolo = 96 + triangle_sample(frame, TREMOLO_PERIOD_FRAMES, 32);
+    clamp_i16((hiss + sub_bass) * tremolo / 128)
+}
+
+fn hiss_sample(frame: usize) -> i32 {
+    let current = noise_byte(frame) - 128;
+    let previous = if frame == 0 {
+        0
+    } else {
+        noise_byte(frame - 1) - 128
+    };
+    let sweep = 24 + ((frame as i32) * 48 / AC97_PCM_FRAME_COUNT as i32);
+    (current - previous) * sweep
+}
+
+fn noise_byte(frame: usize) -> i32 {
+    let mut value = HISS_SEED ^ (frame as u32).wrapping_mul(0x45D9_F3B);
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    ((value >> 16) & 0xFF) as i32
+}
+
+fn triangle_sample(frame: usize, period: usize, amplitude: i32) -> i32 {
+    let phase = (frame % period) as i32;
+    let half = (period / 2) as i32;
+    if phase < half {
+        -amplitude + (phase * amplitude * 2 / half)
+    } else {
+        amplitude - ((phase - half) * amplitude * 2 / ((period as i32) - half))
+    }
+}
+
+fn clamp_i16(value: i32) -> i16 {
+    if value > i32::from(i16::MAX) {
+        i16::MAX
+    } else if value < i32::from(i16::MIN) {
+        i16::MIN
+    } else {
+        value as i16
+    }
+}
+
+fn emit_mix_markers() {
+    serial::write_line("PYTHOS:CORE:AUDIO:MIX:HISS");
+    serial::write_line("PYTHOS:CORE:AUDIO:MIX:SUB_BASS");
+    serial::write_line("PYTHOS:CORE:AUDIO:MIX:TREMOLO");
+}
+
+#[cfg(not(test))]
 fn start_ac97_pcm(driver: Ac97Driver, buffers: Ac97Buffers) -> Result<(), AudioError> {
     outb(
         ac97_bus_port(driver.device, AC97_PCM_OUT_CONTROL)?,
@@ -545,6 +670,18 @@ fn start_ac97_pcm(driver: Ac97Driver, buffers: Ac97Buffers) -> Result<(), AudioE
 
 #[cfg(test)]
 fn start_ac97_pcm(_driver: Ac97Driver, _buffers: Ac97Buffers) -> Result<(), AudioError> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn stop_ac97_pcm(driver: Ac97Driver) -> Result<(), AudioError> {
+    outb(ac97_bus_port(driver.device, AC97_PCM_OUT_CONTROL)?, 0);
+    io_delay();
+    Ok(())
+}
+
+#[cfg(test)]
+fn stop_ac97_pcm(_driver: Ac97Driver) -> Result<(), AudioError> {
     Ok(())
 }
 
@@ -826,5 +963,20 @@ mod tests {
             fixed_pcm_sample(FIXED_PCM_PERIOD_FRAMES),
             fixed_pcm_sample(0)
         );
+    }
+
+    #[test]
+    fn mixed_audio_contains_layered_sources() {
+        let sample = mixed_boot_sample(12);
+
+        assert_ne!(sample, fixed_pcm_sample(12));
+        assert_ne!(hiss_sample(12), 0);
+        assert_ne!(triangle_sample(12, SUB_BASS_PERIOD_FRAMES, 7_000), 0);
+    }
+
+    #[test]
+    fn mixer_output_is_clamped_to_pcm_range() {
+        assert_eq!(clamp_i16(i32::from(i16::MAX) + 1), i16::MAX);
+        assert_eq!(clamp_i16(i32::from(i16::MIN) - 1), i16::MIN);
     }
 }
