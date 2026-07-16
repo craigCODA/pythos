@@ -568,9 +568,11 @@ capability-scoped.
    fields, reserves and maps the font bytes, validates PSF metadata, and emits
    `PYTHOS:CORE:FONT:PSF_LOADED` followed by
    `PYTHOS:CORE:FONT_SYSTEM_READY`.
-5. `compositor`, `surfaces`, `clipping` - windowing primitives:
-   independently drawn regions composited without one surface corrupting
-   another's framebuffer region.
+5. `compositor`, `surfaces`, `clipping` - COMPLETE. Windowing primitives now
+   create typed drawable objects with separate presentation bindings, compose
+   independently drawn bounded surfaces into a framebuffer target, prove target
+   edge clipping, and emit `PYTHOS:CORE:COMPOSITOR:SURFACE`,
+   `PYTHOS:CORE:COMPOSITOR:CLIP`, and `PYTHOS:CORE:COMPOSITOR_READY`.
 6. `pointer-cursor`, `window-focus`, `movable-windows` - standard interaction
    primitives.
 7. `buttons-and-text-fields` - minimal native widget set, enough for the next

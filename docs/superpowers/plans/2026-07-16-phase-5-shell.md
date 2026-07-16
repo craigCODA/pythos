@@ -61,10 +61,10 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `core/src/shell_objects.rs`, `core/src/compositor.rs`, marker tests, docs.
 
-- [ ] Add `compositor` marker tests and verify they fail.
-- [ ] Implement typed objects, presentation bindings, surface composition, and clipping proof.
-- [ ] Emit `PYTHOS:CORE:COMPOSITOR:SURFACE`, `PYTHOS:CORE:COMPOSITOR:CLIP`, and `PYTHOS:CORE:COMPOSITOR_READY`.
-- [ ] Verify and commit.
+- [x] Add `compositor` marker tests and verify they fail.
+- [x] Implement typed objects, presentation bindings, surface composition, and clipping proof.
+- [x] Emit `PYTHOS:CORE:COMPOSITOR:SURFACE`, `PYTHOS:CORE:COMPOSITOR:CLIP`, and `PYTHOS:CORE:COMPOSITOR_READY`.
+- [x] Verify and commit.
 
 ### Task 6: Pointer, Focus, Movable Windows
 

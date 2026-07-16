@@ -51,8 +51,9 @@ file and update the handover before continuing.
 ## Current Stop Point
 
 PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver`,
-`input-event-service`, `software-renderer`, and `font-system` slices are
-complete; `compositor` / `surfaces` / `clipping` is the next active slice.
+`input-event-service`, `software-renderer`, `font-system`, and `compositor` /
+`surfaces` / `clipping` slices are complete; `pointer-cursor` /
+`window-focus` / `movable-windows` is the next active slice.
 
 Completed:
 
@@ -75,19 +76,19 @@ Phase 5    keyboard-driver / mouse-driver
 Phase 5    input-event-service
 Phase 5    software-renderer
 Phase 5    font-system
+Phase 5    compositor / surfaces / clipping
 ```
 
 Next slice:
 
 ```text
-Phase 5: compositor / surfaces / clipping
+Phase 5: pointer-cursor / window-focus / movable-windows
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
 alignment:
 
 ```text
-pointer interaction
 widgets
 shell applications
 audio
@@ -132,9 +133,10 @@ origin tracking the same branch. Verify the latest commit with `git log`
 instead of trusting this text.
 
 Phase 4 is complete. Phase 5 has completed input drivers, input event
-normalization, the software renderer, and the font system. The next allowed
-work is Phase 5 `compositor` / `surfaces` / `clipping`. Do not start Phase 6,
-audio, storage, networking, AI, ring-3, or SMP work.
+normalization, the software renderer, the font system, and the compositor /
+surfaces / clipping proof. The next allowed work is Phase 5 `pointer-cursor` /
+`window-focus` / `movable-windows`. Do not start Phase 6, audio, storage,
+networking, AI, ring-3, or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
 proof. Any slice must be enforced by scripts/test-boot.py or an equivalent
@@ -251,6 +253,9 @@ PYTHOS:CORE:RENDER:RECT
 PYTHOS:CORE:SOFTWARE_RENDERER_READY
 PYTHOS:CORE:FONT:PSF_LOADED
 PYTHOS:CORE:FONT_SYSTEM_READY
+PYTHOS:CORE:COMPOSITOR:SURFACE
+PYTHOS:CORE:COMPOSITOR:CLIP
+PYTHOS:CORE:COMPOSITOR_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -269,22 +274,17 @@ QEMU_OUTCOME success
 BOOT_TEST_OK
 ```
 
-## Last Full Verification Set
+## Last Targeted Verification Set
 
-These commands passed immediately before the latest pushed implementation
-commits:
+These commands passed immediately before the compositor implementation commit:
 
 ```powershell
 cargo fmt --check
-cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
-cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice font-system
-python scripts\test-boot.py --slice milestone-1
-python scripts\test-boot.py --slice milestone-1 --media iso
-python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
-python -m unittest tests.boot_core_handoff
+python -m unittest tests.test_boot_marker_contract
+python scripts\test-boot.py --slice compositor
+git diff --check
 ```
 
 Important notes:
@@ -502,6 +502,10 @@ Verified Phase 5 so far:
 * The loader loads a deterministic PSF1 `/PYTHOS/FONT.PSF`, PythCore reserves
   and maps the font range, and the font-system proof validates PSF metadata
   before emitting `PYTHOS:CORE:FONT_SYSTEM_READY`.
+* Typed shell drawable objects now carry stable object ids and typed kinds
+  separately from presentation bindings.
+* The compositor composes bounded surfaces into a bounded framebuffer target,
+  proves target-edge clipping, and emits `PYTHOS:CORE:COMPOSITOR_READY`.
 
 ## What Does Not Exist Yet
 
@@ -515,9 +519,8 @@ Do not imply these are implemented:
 * Dynamic service spawning from arbitrary Python source.
 * Broad service restart policy beyond the fixed noncritical proof.
 * General async runtime or coroutine scheduler.
-* GUI shell.
-* Compositor, surfaces, clipping, focus, movable windows, widgets, or shell
-  applications.
+* Full GUI shell.
+* Pointer cursor state, focus, movable windows, widgets, or shell applications.
 * Audio driver or cinematic boot sequence.
 * Persistent object storage.
 * Networking.
@@ -545,17 +548,17 @@ validated INIT.PAK runtime payload
 
 It is not a general Python runtime yet.
 
-## Active Slice: Phase 5 compositor / surfaces / clipping
+## Active Slice: Phase 5 pointer-cursor / window-focus / movable-windows
 
-Phase 4 is complete. The next allowed roadmap work is Phase 5 `compositor`,
-`surfaces`, and `clipping`.
+Phase 4 is complete. The next allowed roadmap work is Phase 5 `pointer-cursor`,
+`window-focus`, and `movable-windows`.
 
 Roadmap intent:
 
 ```text
-Create the first typed drawable shell objects, bind them to presentation
-surfaces, composite independent regions into a bounded framebuffer-sized
-surface, and prove clipping prevents one surface from corrupting another.
+Add standard window interaction primitives on top of the completed typed-object
+and presentation-binding compositor surface: cursor state, focus selection, and
+window movement that preserves object identity.
 ```
 
 Recommended first scope for the next agent:
@@ -565,11 +568,11 @@ Recommended first scope for the next agent:
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice compositor
+   python scripts\test-boot.py --slice window-interaction
    ```
 
 3. The first run should fail because the new completion marker is missing.
-4. Keep the marker order after `PYTHOS:CORE:ASYNC_EVENTS_READY` and before
+4. Keep the marker order after `PYTHOS:CORE:COMPOSITOR_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
 5. Preserve ADR 0018's object-id and presentation-binding split.
 6. Preserve the completed Phase 4 runtime proof path.
@@ -656,6 +659,8 @@ core/src/main.rs
 core/src/boot_metadata.rs
 core/src/framebuffer.rs
 core/src/font_system.rs
+core/src/shell_objects.rs
+core/src/compositor.rs
 core/src/input_drivers.rs
 core/src/input_events.rs
 core/src/software_renderer.rs
@@ -853,7 +858,7 @@ Follow these strictly:
 Specific things not allowed in the next slice:
 
 ```text
-GUI
+general GUI shell applications
 audio
 storage
 networking
@@ -913,12 +918,11 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker for the Phase 5 compositor slice
+   missing marker for the Phase 5 window-interaction slice
    ```
 
-5. Implement only typed shell objects, presentation bindings, surface
-   composition, and clipping. Do not build pointer interaction, widgets, or
-   shell applications early.
+5. Implement only cursor state, focus selection, and movement preserving
+   object ids. Do not build widgets or shell applications early.
 
 6. Keep the marker order:
 
@@ -935,6 +939,7 @@ Suggested disciplined flow:
    PYTHOS:CORE:INPUT_EVENT_SERVICE_READY
    PYTHOS:CORE:SOFTWARE_RENDERER_READY
    PYTHOS:CORE:FONT_SYSTEM_READY
+   PYTHOS:CORE:COMPOSITOR_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -980,6 +985,7 @@ Phase 5 input drivers              complete
 Phase 5 input event service        complete
 Phase 5 software renderer          complete
 Phase 5 font system                complete
+Phase 5 compositor                 complete
 GUI shell                          in progress
 Audio/cinematic boot               not started
 Persistent object storage          not started
@@ -990,4 +996,4 @@ The base is no longer only a loader. PythCore boots after UEFI, owns its own
 execution substrate, schedules native tasks, enforces local kernel-mode
 capabilities, runs the intentionally narrow Python-native runtime path, and has
 entered Phase 5 graphical-shell groundwork. The next work is the Phase 5
-`compositor` / `surfaces` / `clipping` slice.
+`pointer-cursor` / `window-focus` / `movable-windows` slice.
