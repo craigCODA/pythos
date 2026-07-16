@@ -14,6 +14,7 @@ pub enum ServiceLifecycleError {
     UnknownService,
     InvalidTransition,
     ContainmentFailed,
+    RestartFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -27,6 +28,7 @@ pub enum ManagedServiceState {
 struct ManagedService {
     identity: ServiceId,
     state: ManagedServiceState,
+    generation: u32,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -40,6 +42,7 @@ impl ServiceManager {
             service: ManagedService {
                 identity,
                 state: ManagedServiceState::Starting,
+                generation: 0,
             },
         }
     }
@@ -73,8 +76,33 @@ impl ServiceManager {
         Ok(self.service.state)
     }
 
+    pub fn restart_failed(
+        &mut self,
+        identity: ServiceId,
+    ) -> Result<ManagedServiceState, ServiceLifecycleError> {
+        if self.service.identity != identity {
+            return Err(ServiceLifecycleError::UnknownService);
+        }
+        if self.service.state != ManagedServiceState::Failed {
+            return Err(ServiceLifecycleError::InvalidTransition);
+        }
+        self.service.generation = self
+            .service
+            .generation
+            .checked_add(1)
+            .ok_or(ServiceLifecycleError::RestartFailed)?;
+        self.service.state = ManagedServiceState::Starting;
+        #[cfg(not(test))]
+        serial::write_line("PYTHOS:CORE:SERVICE:RESTART");
+        Ok(self.service.state)
+    }
+
     pub const fn state(&self) -> ManagedServiceState {
         self.service.state
+    }
+
+    pub const fn generation(&self) -> u32 {
+        self.service.generation
     }
 }
 
@@ -110,6 +138,28 @@ pub fn run_exception_containment_self_test() -> Result<(), ServiceLifecycleError
     }
     if primary_manager.state() != ManagedServiceState::Ready {
         return Err(ServiceLifecycleError::ContainmentFailed);
+    }
+    Ok(())
+}
+
+pub fn run_service_restart_self_test() -> Result<(), ServiceLifecycleError> {
+    let mut identities = ServiceIdentityTable::new();
+    let service = identities
+        .register_task(TaskId::new(72))
+        .map_err(|_| ServiceLifecycleError::RestartFailed)?;
+    let mut manager = ServiceManager::new(service);
+
+    manager.contain_exception(service)?;
+    if manager.state() != ManagedServiceState::Failed {
+        return Err(ServiceLifecycleError::RestartFailed);
+    }
+    manager.restart_failed(service)?;
+    if manager.state() != ManagedServiceState::Starting || manager.generation() != 1 {
+        return Err(ServiceLifecycleError::RestartFailed);
+    }
+    manager.mark_ready(service)?;
+    if manager.state() != ManagedServiceState::Ready {
+        return Err(ServiceLifecycleError::RestartFailed);
     }
     Ok(())
 }
@@ -191,5 +241,25 @@ mod tests {
         );
         assert_eq!(healthy_manager.state(), ManagedServiceState::Ready);
         assert_eq!(failing_manager.state(), ManagedServiceState::Failed);
+    }
+
+    #[test]
+    fn failed_service_can_restart_to_fresh_starting_generation() {
+        let mut identities = ServiceIdentityTable::new();
+        let service = identities
+            .register_task(crate::tasks::TaskId::new(72))
+            .unwrap();
+        let mut manager = ServiceManager::new(service);
+
+        assert_eq!(
+            manager.contain_exception(service),
+            Ok(ManagedServiceState::Failed)
+        );
+        assert_eq!(
+            manager.restart_failed(service),
+            Ok(ManagedServiceState::Starting)
+        );
+        assert_eq!(manager.generation(), 1);
+        assert_eq!(manager.mark_ready(service), Ok(ManagedServiceState::Ready));
     }
 }

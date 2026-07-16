@@ -496,8 +496,10 @@ migration, not a rediscovered one.
    by an unhandled runtime exception without panicking PythCore or changing an
    unrelated ready service. Emits `PYTHOS:CORE:SERVICE:EXCEPTION` and
    `PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED`.
-8. `service-restart` - a failed noncritical service can be restarted by the
-   service manager without a full system reboot.
+8. `service-restart` - COMPLETE. A failed noncritical managed service can
+   restart into a fresh starting generation and return to ready without reboot.
+   Emits `PYTHOS:CORE:SERVICE:RESTART` and
+   `PYTHOS:CORE:SERVICE_RESTART_READY`.
 9. `async-events` - asynchronous event delivery from native or kernel events
    into Python service handlers, for example IPC message arrival triggering an
    `async def` handler.
