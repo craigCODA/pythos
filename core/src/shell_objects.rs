@@ -32,6 +32,7 @@ pub enum ObjectKind {
     PythonConsoleWindow,
     SettingsPanelWindow,
     WorkspaceSession,
+    ObjectBrowserWindow,
     ButtonWidget,
     TextFieldWidget,
 }

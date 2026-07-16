@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `workspace-objects` complete; next slice is
-`object-browser`.
+Current boundary: Phase 7 `object-browser` complete; next slice is
+`save-and-restore-across-reboot`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice workspace-objects
+python scripts\test-boot.py --slice object-browser
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,14 +40,14 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 workspace-objects complete
-Next allowed slice: object-browser
+Phase 7 object-browser complete
+Next allowed slice: save-and-restore-across-reboot
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
-workspace-session object kind. Do not start save/restore across reboot,
-networking, AI, ring-3, SMP, or hardware-expansion work before the roadmap gate
-for that slice.
+workspace-session object kind. ADR 0024 records the object-browser inspection
+boundary. Do not start Phase 8, networking, AI, ring-3, SMP, or
+hardware-expansion work before the roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -92,6 +92,7 @@ typed-object-format
 object-relationships
 revision-history
 workspace-objects
+object-browser
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -153,6 +154,12 @@ presentation geometry in ADR 0022 fields, then proves the session survives
 through the current revision-history substrate. It does not implement object
 browser work, reboot persistence, or sector persistence.
 
+The object-browser slice records ADR 0024 and implements a minimal Phase 5
+app-facing inspection surface over the current object-store substrate. It
+creates a typed object-browser window, lists stored typed objects, inspects a
+typed relationship target, and inspects retained revision counts. It does not
+implement reboot persistence or sector persistence.
+
 ## Phase 7 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -206,6 +213,9 @@ PYTHOS:CORE:REVISION_HISTORY_READY
 PYTHOS:CORE:WORKSPACE:SESSION_OBJECT
 PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT
 PYTHOS:CORE:WORKSPACE_OBJECTS_READY
+PYTHOS:CORE:OBJECT_BROWSER:LIST
+PYTHOS:CORE:OBJECT_BROWSER:DETAIL
+PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -249,6 +259,9 @@ PYTHOS:CORE:REVISION_HISTORY_READY
 PYTHOS:CORE:WORKSPACE:SESSION_OBJECT
 PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT
 PYTHOS:CORE:WORKSPACE_OBJECTS_READY
+PYTHOS:CORE:OBJECT_BROWSER:LIST
+PYTHOS:CORE:OBJECT_BROWSER:DETAIL
+PYTHOS:CORE:OBJECT_BROWSER_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -265,6 +278,7 @@ core/src/cinematic_boot.rs
 core/src/framebuffer.rs
 core/src/font.rs
 core/src/main.rs
+core/src/object_browser.rs
 core/src/object_relationships.rs
 core/src/revision_history.rs
 core/src/shell_objects.rs
@@ -297,6 +311,7 @@ docs/decisions/0020-phase-6-ac97-audio-target.md
 docs/decisions/0021-loader-kernel-file-bound.md
 docs/decisions/0022-on-disk-typed-object-format.md
 docs/decisions/0023-workspace-session-object-kind.md
+docs/decisions/0024-object-browser-inspection-app.md
 ```
 
 Boot artifacts:
@@ -322,7 +337,6 @@ Do not assume any of the following exists:
 completed persistent object store
 filesystem
 raw sector persistence
-object browser
 user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
@@ -353,15 +367,18 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-object-browser
+save-and-restore-across-reboot
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Build a minimal Phase 5 app-facing object-browser inspection surface over
-   the existing object store substrate.
-2. Add or confirm a failing test/harness expectation for listing stored objects
-   and showing relationships/revision history for inspection.
-3. Do not implement reboot persistence, sector persistence, or save/restore
-   across reboot in this slice.
-4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.
+1. Add a failing automated harness expectation that creates typed objects,
+   relationships, and revision history, reboots QEMU, and re-queries identical
+   state.
+2. Add a deliberately interrupted mid-commit scenario that recovers to the
+   last consistent committed state, not corruption.
+3. Preserve ADR 0022's on-disk format; any format change after ADR 0022 is a
+   migration, not a silent rewrite.
+4. Do not begin Phase 8, networking, AI, ring-3, SMP, or hardware expansion in
+   this slice.
+5. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

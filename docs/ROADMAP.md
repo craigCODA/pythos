@@ -780,9 +780,14 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT`, and
    `PYTHOS:CORE:WORKSPACE_OBJECTS_READY`. This slice does not implement object
    browser work, reboot persistence, or sector persistence.
-10. `object-browser` - a Phase 5 application exposing the object store for
-    inspection: list, view relationships, and view revision history. This is
-    the first user-facing consumer of this data, deliberately minimal.
+10. `object-browser` - COMPLETE. ADR 0024 defines a minimal Phase 5
+    app-facing inspection surface over the object-store substrate. It creates
+    a typed object-browser window, lists stored typed objects, inspects typed
+    relationships, and inspects retained revision counts. Emits
+    `PYTHOS:CORE:OBJECT_BROWSER:LIST`,
+    `PYTHOS:CORE:OBJECT_BROWSER:DETAIL`, and
+    `PYTHOS:CORE:OBJECT_BROWSER_READY`. This slice does not implement reboot
+    persistence or sector persistence.
 11. `save-and-restore-across-reboot` - end-to-end proof: create objects,
     reboot, confirm identical state including relationships and revision
     history is recoverable.

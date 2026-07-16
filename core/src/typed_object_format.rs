@@ -248,6 +248,7 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::ButtonWidget => 6,
         ObjectKind::TextFieldWidget => 7,
         ObjectKind::WorkspaceSession => 8,
+        ObjectKind::ObjectBrowserWindow => 9,
     }
 }
 
@@ -261,6 +262,7 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         6 => Ok(ObjectKind::ButtonWidget),
         7 => Ok(ObjectKind::TextFieldWidget),
         8 => Ok(ObjectKind::WorkspaceSession),
+        9 => Ok(ObjectKind::ObjectBrowserWindow),
         _ => Err(ObjectFormatError::InvalidKind),
     }
 }
