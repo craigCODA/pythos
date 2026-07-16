@@ -361,6 +361,17 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_capability_handle_markers_are_observed_after_request_reply(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", "capability-handles"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_milestone_1_complete_marker_is_observed_after_framebuffer_ready(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/test-boot.py", "--slice", "milestone-1"],
