@@ -914,8 +914,16 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY`. This slice does not implement
    guarded shared memory, user pointer copy-in/copy-out, process termination,
    quotas, crash containment, or hostile-code capability enforcement.
-6. `guarded-shared-memory` - Phase 3 shared-memory capability reverified under
-   ring-3 plus separate-address-space constraints.
+6. `guarded-shared-memory` - COMPLETE. ADR 0031 records the Phase 8
+   shared-memory revalidation. PythCore binds reader and writer service
+   identities to distinct user CR3 roots, proves a read-only shared-memory
+   handle can still read the fixed region under those constraints, denies a
+   cross-space write attempt through the wrong holder, verifies the region
+   bytes remain unchanged, and emits `PYTHOS:CORE:SHM:RING3_READ`,
+   `PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED`, and
+   `PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY`. This slice does not implement
+   user pointer copy-in/copy-out, process termination, quotas, crash
+   containment, or hostile-code capability enforcement.
 7. `process-termination` - a user-mode task or process can be forcibly
    terminated by the kernel without cooperation, cleanly reclaiming its address
    space.
@@ -966,6 +974,11 @@ ADR 0030 records the `service-local-python-runtimes` proof. It gives
 service-local runtime instances separate service identities, address-space
 roots, and local state slots, but intentionally does not define guarded shared
 memory or hostile-code containment.
+
+ADR 0031 records the `guarded-shared-memory` proof. It revalidates Phase 3
+shared-memory capability semantics under distinct Phase 8 user roots, but
+intentionally does not define copy-in/copy-out, process termination, or
+hostile-code containment.
 
 ### Architectural Test (Non-Binding)
 

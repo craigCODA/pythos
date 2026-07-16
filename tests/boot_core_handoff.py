@@ -708,6 +708,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_service_local_runtime_markers_are_observed_after_user_stacks(self) -> None:
         self.run_boot_slice("service-local-python-runtimes")
 
+    def test_guarded_shared_memory_markers_are_observed_after_service_local_runtimes(self) -> None:
+        self.run_boot_slice("guarded-shared-memory")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

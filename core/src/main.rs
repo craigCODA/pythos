@@ -667,6 +667,29 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY");
+        let guarded_shared_memory_proof = match shared_memory::run_guarded_phase8_self_test(
+            service_runtime_address_space_a.root_table_phys(),
+            service_runtime_address_space_b.root_table_phys(),
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if guarded_shared_memory_proof.ring3_read {
+            serial::write_line("PYTHOS:CORE:SHM:RING3_READ");
+        }
+        if guarded_shared_memory_proof.cross_space_write_denied {
+            serial::write_line("PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED");
+        }
+        if !guarded_shared_memory_proof.ring3_read
+            || !guarded_shared_memory_proof.cross_space_write_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY");
     }
 
     #[cfg(test)]

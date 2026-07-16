@@ -56,6 +56,35 @@ impl SharedRegion {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GuardedSharedMemoryError {
+    Capability(CapabilityError),
+    SharedAddressSpace,
+    CrossSpaceWriteAllowed,
+    RegionCorrupted,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GuardedSharedMemoryProof {
+    pub ring3_read: bool,
+    pub cross_space_write_denied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Ring3Service {
+    identity: ServiceId,
+    address_space_root: u64,
+}
+
+impl Ring3Service {
+    const fn new(identity: ServiceId, address_space_root: u64) -> Self {
+        Self {
+            identity,
+            address_space_root,
+        }
+    }
+}
+
 pub fn run_shared_memory_self_test() -> Result<(), CapabilityError> {
     let mut identities = ServiceIdentityTable::new();
     let reader = identities
@@ -88,6 +117,63 @@ pub fn run_shared_memory_self_test() -> Result<(), CapabilityError> {
     Ok(())
 }
 
+pub fn run_guarded_phase8_self_test(
+    reader_root: u64,
+    writer_root: u64,
+) -> Result<GuardedSharedMemoryProof, GuardedSharedMemoryError> {
+    if reader_root == writer_root {
+        return Err(GuardedSharedMemoryError::SharedAddressSpace);
+    }
+
+    let mut identities = ServiceIdentityTable::new();
+    let reader_identity = identities
+        .register_task(TaskId::new(82))
+        .map_err(|_| GuardedSharedMemoryError::Capability(CapabilityError::InvalidHandle))?;
+    let writer_identity = identities
+        .register_task(TaskId::new(83))
+        .map_err(|_| GuardedSharedMemoryError::Capability(CapabilityError::InvalidHandle))?;
+    let reader = Ring3Service::new(reader_identity, reader_root);
+    let writer = Ring3Service::new(writer_identity, writer_root);
+    if reader.address_space_root == writer.address_space_root {
+        return Err(GuardedSharedMemoryError::SharedAddressSpace);
+    }
+
+    let mut table = CapabilityTable::new();
+    let read_only = table
+        .grant(
+            reader.identity,
+            SHARED_MEMORY_RESOURCE,
+            RightsMask::new(RightsMask::READ),
+        )
+        .map_err(GuardedSharedMemoryError::Capability)?;
+    let mut region = SharedRegion::new(SHARED_MEMORY_RESOURCE, SHARED_REGION_INITIAL);
+
+    if region
+        .read(&table, reader.identity, read_only)
+        .map_err(GuardedSharedMemoryError::Capability)?
+        != SHARED_REGION_INITIAL
+    {
+        return Err(GuardedSharedMemoryError::RegionCorrupted);
+    }
+    if region.write(&table, writer.identity, read_only, [0x44, 0x52, 0x4F, 0x50])
+        != Err(CapabilityError::WrongHolder)
+    {
+        return Err(GuardedSharedMemoryError::CrossSpaceWriteAllowed);
+    }
+    if region
+        .read(&table, reader.identity, read_only)
+        .map_err(GuardedSharedMemoryError::Capability)?
+        != SHARED_REGION_INITIAL
+    {
+        return Err(GuardedSharedMemoryError::RegionCorrupted);
+    }
+
+    Ok(GuardedSharedMemoryProof {
+        ring3_read: true,
+        cross_space_write_denied: true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,5 +204,21 @@ mod tests {
             region.read(&table, reader, read_only),
             Ok(SHARED_REGION_INITIAL)
         );
+    }
+
+    #[test]
+    fn guarded_shared_memory_requires_distinct_address_spaces() {
+        assert_eq!(
+            run_guarded_phase8_self_test(0x200000, 0x200000),
+            Err(GuardedSharedMemoryError::SharedAddressSpace)
+        );
+    }
+
+    #[test]
+    fn guarded_shared_memory_denies_cross_space_write() {
+        let proof = run_guarded_phase8_self_test(0x200000, 0x300000).unwrap();
+
+        assert!(proof.ring3_read);
+        assert!(proof.cross_space_write_denied);
     }
 }

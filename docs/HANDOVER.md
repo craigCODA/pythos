@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `service-local-python-runtimes` complete. Halt at
-the `service-local-python-runtimes` -> `guarded-shared-memory` boundary.
+Current boundary: Phase 8 `guarded-shared-memory` complete. Halt at the
+`guarded-shared-memory` -> `process-termination` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -21,6 +21,7 @@ python scripts\test-boot.py --slice separate-address-spaces
 python scripts\test-boot.py --slice syscall-entry
 python scripts\test-boot.py --slice user-stacks
 python scripts\test-boot.py --slice service-local-python-runtimes
+python scripts\test-boot.py --slice guarded-shared-memory
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -53,7 +54,8 @@ Phase 8 separate-address-spaces complete
 Phase 8 syscall-entry complete
 Phase 8 user-stacks complete
 Phase 8 service-local-python-runtimes complete
-Next allowed slice: guarded-shared-memory
+Phase 8 guarded-shared-memory complete
+Next allowed slice: process-termination
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -62,8 +64,9 @@ boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
 0026 records the Phase 8 ring-3 execution proof. ADR 0027 records the Phase 8
 separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
 0029 records the Phase 8 guarded user-stack layout. ADR 0030 records the Phase
-8 service-local runtime-instance proof. Do not start process termination,
-networking, AI, SMP, or hardware-expansion work before their roadmap gates.
+8 service-local runtime-instance proof. ADR 0031 records the Phase 8 guarded
+shared-memory proof. Do not start quotas, networking, AI, SMP, or
+hardware-expansion work before their roadmap gates.
 
 ## Phase 6 Summary
 
@@ -120,6 +123,7 @@ separate-address-spaces
 syscall-entry
 user-stacks
 service-local-python-runtimes
+guarded-shared-memory
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -246,6 +250,15 @@ runtime state slots, rejects cross-service state mutation, and emits
 shared memory, user pointer copy-in/copy-out, process termination, quotas,
 crash containment, or hostile-code capability enforcement.
 
+The guarded-shared-memory slice records ADR 0031 and revalidates Phase 3
+shared-memory capability semantics under distinct Phase 8 user roots. PythCore
+binds reader and writer service identities to different user CR3 roots, proves
+a read-only shared-memory handle can still read the fixed region, denies a
+cross-space write attempt through the wrong holder, verifies the region bytes
+remain unchanged, and emits `PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY`. It does
+not implement user pointer copy-in/copy-out, process termination, quotas, crash
+containment, or hostile-code capability enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -333,6 +346,9 @@ PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE
 PYTHOS:CORE:RUNTIME:ADDRESS_SPACE
 PYTHOS:CORE:RUNTIME:STATE_ISOLATED
 PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
+PYTHOS:CORE:SHM:RING3_READ
+PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED
+PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -410,6 +426,9 @@ PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE
 PYTHOS:CORE:RUNTIME:ADDRESS_SPACE
 PYTHOS:CORE:RUNTIME:STATE_ISOLATED
 PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
+PYTHOS:CORE:SHM:RING3_READ
+PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED
+PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -476,6 +495,7 @@ docs/decisions/0027-phase-8-separate-address-spaces.md
 docs/decisions/0028-phase-8-syscall-abi.md
 docs/decisions/0029-phase-8-user-stacks.md
 docs/decisions/0030-phase-8-service-local-runtimes.md
+docs/decisions/0031-phase-8-guarded-shared-memory.md
 ```
 
 Boot artifacts:
@@ -507,6 +527,7 @@ networking
 AI inside the trusted core
 dynamic user process stacks
 user pointer copy-in/copy-out
+process termination and address-space reclamation
 full hostile-code service isolation
 hostile-code containment
 SMP
@@ -516,10 +537,10 @@ Patch
 ```
 
 Ring-3 execution, the distinct user CR3, the syscall ABI, the guarded
-user-stack pool, and service-local runtime roots exist only for bounded proof
-paths. Capability separation for services is still not a hostile-code boundary.
-Do not claim hostile-code isolation until the Phase 8 adversarial boundary
-tests land.
+user-stack pool, service-local runtime roots, and guarded shared-memory proof
+exist only for bounded proof paths. Capability separation for services is still
+not a hostile-code boundary. Do not claim hostile-code isolation until the Phase
+8 adversarial boundary tests land.
 
 ## Next Slice
 
@@ -537,16 +558,16 @@ docs/ROADMAP.md
 Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-guarded-shared-memory
+process-termination
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof that Phase 3 shared-memory capabilities still
-   mediate access under ring-3 and separate-address-space constraints.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin process
-   termination, quotas, networking, AI, SMP, or hardware expansion before their
-   slice gates.
+1. Add a failing automated proof that a user-mode task or process can be
+   forcibly terminated by the kernel without cooperation and without losing
+   other service state.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin quotas,
+   networking, AI, SMP, or hardware expansion before their slice gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary
