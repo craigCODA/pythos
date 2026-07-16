@@ -747,11 +747,17 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK`, and
    `PYTHOS:CORE:CRASH_RECOVERY_READY`. This slice does not implement typed
    objects, sector I/O, or object browser work.
-6. `typed-object-format` - on-disk representation for typed objects with a
-   stable id, kind, and versioned fields. This is the concrete implementation
-   of the typed-object concept referenced throughout the vision docs. Build it
-   as real OS storage infrastructure, evaluated on its own merits for
-   durability and versioning correctness, not as a Causal Lens feature.
+6. `typed-object-format` - COMPLETE. ADR 0022 defines the fixed on-disk typed
+   object record with magic, format version, record length, stable `ObjectId`,
+   `ObjectKind` code, object schema version, and bounded versioned field
+   slots. PythCore validates stable identity and versioned field round-trips
+   and rejects bad magic, unsupported versions, invalid kind codes, invalid
+   field counts, nonzero reserved fields, and oversized field values. Emits
+   `PYTHOS:CORE:OBJECT:STABLE_ID`,
+   `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS`, and
+   `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`. This slice does not implement
+   relationships, revision history, workspace objects, object browser work, or
+   sector persistence.
 7. `object-relationships` - typed, queryable relationships between objects,
    for example blocks, created-by, and depends-on, stored alongside the objects
    themselves.

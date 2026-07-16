@@ -675,6 +675,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_crash_recovery_markers_are_observed_after_commit_markers(self) -> None:
         self.run_boot_slice("crash-recovery")
 
+    def test_typed_object_format_markers_are_observed_after_crash_recovery(self) -> None:
+        self.run_boot_slice("typed-object-format")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

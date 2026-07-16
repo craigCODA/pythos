@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `crash-recovery` complete; next slice is
-`typed-object-format`.
+Current boundary: Phase 7 `typed-object-format` complete; next slice is
+`object-relationships`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice crash-recovery
+python scripts\test-boot.py --slice typed-object-format
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,13 +40,13 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 crash-recovery complete
-Next allowed slice: typed-object-format
+Phase 7 typed-object-format complete
+Next allowed slice: object-relationships
 ```
 
-Record the on-disk typed-object format ADR before or with the next slice. Do
-not start object browser work, networking, AI, ring-3, SMP, or
-hardware-expansion work before the roadmap gate for that slice.
+ADR 0022 records the on-disk typed-object format. Do not start revision
+history, workspace objects, object browser work, networking, AI, ring-3, SMP,
+or hardware-expansion work before the roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -87,6 +87,7 @@ storage-service
 append-only-journal
 checksums-and-commit-markers
 crash-recovery
+typed-object-format
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -121,6 +122,13 @@ back the first invalid tail plus everything after it. It proves an interrupted
 write without a commit marker recovers to the last committed sequence and that
 checksum mismatch tails are also rolled back. It does not implement typed
 objects, raw sector I/O, or object browser work.
+
+The typed-object-format slice records ADR 0022 and implements the fixed
+little-endian object record with magic, format version, record length, stable
+`ObjectId`, `ObjectKind` code, object schema version, and bounded versioned
+field slots. It rejects invalid format inputs and preserves ADR 0018's identity
+versus presentation split. It does not implement relationships, revision
+history, workspace objects, object browser work, or sector persistence.
 
 ## Phase 6 Marker Tail
 
@@ -163,6 +171,9 @@ PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
 PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
 PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
 PYTHOS:CORE:CRASH_RECOVERY_READY
+PYTHOS:CORE:OBJECT:STABLE_ID
+PYTHOS:CORE:OBJECT:VERSIONED_FIELDS
+PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -194,6 +205,9 @@ PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
 PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
 PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
 PYTHOS:CORE:CRASH_RECOVERY_READY
+PYTHOS:CORE:OBJECT:STABLE_ID
+PYTHOS:CORE:OBJECT:VERSIONED_FIELDS
+PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -213,6 +227,7 @@ core/src/main.rs
 core/src/shell_objects.rs
 core/src/storage_journal.rs
 core/src/storage_service.rs
+core/src/typed_object_format.rs
 ```
 
 Test and harness code:
@@ -236,6 +251,7 @@ docs/PythOS-SAS-001.md
 docs/PythOS-TDD-001.md
 docs/decisions/0020-phase-6-ac97-audio-target.md
 docs/decisions/0021-loader-kernel-file-bound.md
+docs/decisions/0022-on-disk-typed-object-format.md
 ```
 
 Boot artifacts:
@@ -259,7 +275,7 @@ Do not assume any of the following exists:
 
 ```text
 completed persistent object store
-on-disk typed object format
+object relationships
 filesystem
 storage recovery
 user-configurable boot themes
@@ -292,15 +308,14 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-typed-object-format
+object-relationships
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Read ADR 0018 before designing the on-disk format.
-2. Record the on-disk typed-object format ADR before or with the code.
-3. Add or confirm a failing test/harness expectation for stable id, kind, and
-   versioned fields.
-4. Do not implement relationships, revision history, workspace objects, or
-   object browser work in this slice.
+1. Build relationships on the ADR 0022 typed object record.
+2. Add or confirm a failing test/harness expectation for typed, queryable
+   relationships such as `blocks`, `created-by`, or `depends-on`.
+3. Do not implement revision history, workspace objects, or object browser
+   work in this slice.
 5. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

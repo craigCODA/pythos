@@ -18,6 +18,10 @@ impl ObjectId {
     pub const fn new(raw: u64) -> Self {
         Self(raw)
     }
+
+    pub const fn raw(self) -> u64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

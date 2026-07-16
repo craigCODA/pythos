@@ -36,6 +36,7 @@ mod storage_journal;
 mod storage_service;
 mod system_api;
 mod tasks;
+mod typed_object_format;
 mod value_validation;
 mod widgets;
 mod window_interaction;
@@ -421,6 +422,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CRASH_RECOVERY_READY");
+        if typed_object_format::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY");
     }
 
     #[cfg(test)]
