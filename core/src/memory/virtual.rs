@@ -69,6 +69,7 @@ pub enum VmError {
     NotIsolated,
     UserAccessViolation,
     UserStackGuardViolation,
+    ActiveAddressSpace,
 }
 
 impl From<MemoryError> for VmError {
@@ -210,6 +211,8 @@ impl KernelAddressSpace {
 
 pub struct UserAddressSpace {
     root_table_phys: u64,
+    table_frames: [u64; MAX_TABLE_FRAMES],
+    table_frame_count: usize,
 }
 
 impl UserAddressSpace {
@@ -222,9 +225,13 @@ impl UserAddressSpace {
         map_user_mode_proof_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
         tables.map_allocated_table_frames()?;
+        let table_frames = tables.allocated_frames;
+        let table_frame_count = tables.allocated_count;
 
         Ok(Self {
             root_table_phys: tables.root_table_phys,
+            table_frames,
+            table_frame_count,
         })
     }
 
@@ -269,6 +276,22 @@ impl UserAddressSpace {
 
     pub const fn root_table_phys(&self) -> u64 {
         self.root_table_phys
+    }
+
+    pub const fn table_frame_count(&self) -> usize {
+        self.table_frame_count
+    }
+
+    pub fn reclaim(self, allocator: &mut PhysicalMemory) -> Result<usize, VmError> {
+        if read_cr3() == self.root_table_phys {
+            return Err(VmError::ActiveAddressSpace);
+        }
+        let mut reclaimed = 0;
+        while reclaimed < self.table_frame_count {
+            allocator.release_allocated_page(self.table_frames[reclaimed])?;
+            reclaimed += 1;
+        }
+        Ok(reclaimed)
     }
 
     pub unsafe fn activate(&self) {

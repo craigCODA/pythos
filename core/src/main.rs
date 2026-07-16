@@ -25,6 +25,7 @@ mod object_browser;
 mod object_relationships;
 mod permission_validation;
 mod persistent_objects;
+mod process;
 mod qemu_exit;
 mod revision_history;
 mod runtime_loader;
@@ -155,6 +156,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                     qemu_exit::panic();
                 }
             };
+        let process_address_space =
+            match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
+                Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
         if user_address_space
             .validate_isolated_from(&address_space)
             .is_err()
@@ -166,6 +175,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             .validate_isolated_from(&address_space)
             .is_err()
             || service_runtime_address_space_b
+                .validate_isolated_from(&address_space)
+                .is_err()
+            || process_address_space
                 .validate_isolated_from(&address_space)
                 .is_err()
         {
@@ -690,6 +702,58 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY");
+        let process_root = process_address_space.root_table_phys();
+        let process_table_frame_count = process_address_space.table_frame_count();
+        let free_pages_before_process_reclaim = physical_memory.free_pages;
+        let reclaimed_frame_count = match process_address_space.reclaim(&mut physical_memory) {
+            Ok(count) => count,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let expected_free_pages =
+            match free_pages_before_process_reclaim.checked_add(reclaimed_frame_count as u64) {
+                Some(count) => count,
+                None => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+        if reclaimed_frame_count != process_table_frame_count
+            || physical_memory.free_pages != expected_free_pages
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        let process_termination_proof = match process::run_termination_self_test(
+            process_root,
+            process_table_frame_count,
+            reclaimed_frame_count,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if process_termination_proof.terminated {
+            serial::write_line("PYTHOS:CORE:PROCESS:TERMINATED");
+        }
+        if process_termination_proof.unschedulable {
+            serial::write_line("PYTHOS:CORE:PROCESS:UNSCHEDULABLE");
+        }
+        if process_termination_proof.address_space_reclaimed {
+            serial::write_line("PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED");
+        }
+        if !process_termination_proof.terminated
+            || !process_termination_proof.unschedulable
+            || !process_termination_proof.address_space_reclaimed
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PROCESS_TERMINATION_READY");
     }
 
     #[cfg(test)]

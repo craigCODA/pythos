@@ -55,6 +55,8 @@ pub enum MemoryError {
     RangeOverflow,
     OutOfManagedRange,
     #[cfg(not(test))]
+    NotAllocated,
+    #[cfg(not(test))]
     OutOfMemory,
 }
 
@@ -261,6 +263,43 @@ impl PhysicalMemory {
             }
         }
         Err(MemoryError::OutOfMemory)
+    }
+
+    pub fn release_allocated_page(&mut self, physical: u64) -> Result<(), MemoryError> {
+        if !physical.is_multiple_of(PAGE_SIZE) {
+            return Err(MemoryError::BadMemoryMap);
+        }
+        let page = physical / PAGE_SIZE;
+        if page as usize >= MAX_MANAGED_PAGES || physical < MIN_ALLOCATABLE_PHYSICAL {
+            return Err(MemoryError::OutOfManagedRange);
+        }
+
+        // SAFETY:
+        // 1. Invariant: the global bitmap is only mutably accessed by early
+        //    PythCore initialization while interrupts remain disabled.
+        // 2. Established by: Phase 8 process-termination runs before SMP,
+        //    asynchronous allocator use, or user-mode task migration exists.
+        // 3. Lifetime: the bitmap remains static for all early PythCore.
+        // 4. Pointer ownership: PythCore exclusively owns this bitmap.
+        // 5. Alignment: `UnsafeCell<[u64; N]>` preserves `u64` alignment.
+        // 6. Mapped length: exactly `BITMAP_WORDS * size_of::<u64>()` bytes.
+        // 7. Concurrency: single-core execution with interrupts disabled.
+        // 8. Violation: concurrent mutation would corrupt page ownership.
+        let bitmap = unsafe { &mut *BITMAP.0.get() };
+        let index = page as usize;
+        if bitmap[index / 64] & (1u64 << (index % 64)) == 0 {
+            return Err(MemoryError::NotAllocated);
+        }
+        clear_allocated(bitmap, index);
+        self.free_pages = self
+            .free_pages
+            .checked_add(1)
+            .ok_or(MemoryError::RangeOverflow)?;
+        self.reserved_pages = self
+            .reserved_pages
+            .checked_sub(1)
+            .ok_or(MemoryError::BadMemoryMap)?;
+        Ok(())
     }
 }
 

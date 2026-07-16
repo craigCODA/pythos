@@ -924,9 +924,17 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY`. This slice does not implement
    user pointer copy-in/copy-out, process termination, quotas, crash
    containment, or hostile-code capability enforcement.
-7. `process-termination` - a user-mode task or process can be forcibly
-   terminated by the kernel without cooperation, cleanly reclaiming its address
-   space.
+7. `process-termination` - COMPLETE. ADR 0032 records the Phase 8
+   process-termination proof. PythCore tracks a fixed user process record,
+   marks it terminated, proves it is no longer returned as runnable, reclaims
+   the terminated user address-space page-table frames, verifies the physical
+   allocator free-page count increases by the exact reclaimed count, and emits
+   `PYTHOS:CORE:PROCESS:TERMINATED`,
+   `PYTHOS:CORE:PROCESS:UNSCHEDULABLE`,
+   `PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED`, and
+   `PYTHOS:CORE:PROCESS_TERMINATION_READY`. This slice does not implement
+   memory quotas, CPU quotas, crash containment, or hostile-code capability
+   enforcement.
 8. `memory-quotas`, `cpu-quotas` - per-service resource limits enforced by the
    kernel, not self-reported.
 9. `crash-containment` - a user-mode fault, bad pointer, or illegal instruction
@@ -979,6 +987,11 @@ ADR 0031 records the `guarded-shared-memory` proof. It revalidates Phase 3
 shared-memory capability semantics under distinct Phase 8 user roots, but
 intentionally does not define copy-in/copy-out, process termination, or
 hostile-code containment.
+
+ADR 0032 records the `process-termination` proof. It removes a fixed user
+process from scheduling and reclaims its recorded address-space table frames,
+but intentionally does not define quotas, crash containment, or full syscall
+boundary enforcement.
 
 ### Architectural Test (Non-Binding)
 

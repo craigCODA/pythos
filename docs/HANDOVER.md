@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `guarded-shared-memory` complete. Halt at the
-`guarded-shared-memory` -> `process-termination` boundary.
+Current boundary: Phase 8 `process-termination` complete. Halt at the
+`process-termination` -> `memory-quotas` / `cpu-quotas` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -22,6 +22,7 @@ python scripts\test-boot.py --slice syscall-entry
 python scripts\test-boot.py --slice user-stacks
 python scripts\test-boot.py --slice service-local-python-runtimes
 python scripts\test-boot.py --slice guarded-shared-memory
+python scripts\test-boot.py --slice process-termination
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -55,7 +56,8 @@ Phase 8 syscall-entry complete
 Phase 8 user-stacks complete
 Phase 8 service-local-python-runtimes complete
 Phase 8 guarded-shared-memory complete
-Next allowed slice: process-termination
+Phase 8 process-termination complete
+Next allowed slice: memory-quotas and cpu-quotas
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -65,8 +67,9 @@ boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
 separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
 0029 records the Phase 8 guarded user-stack layout. ADR 0030 records the Phase
 8 service-local runtime-instance proof. ADR 0031 records the Phase 8 guarded
-shared-memory proof. Do not start quotas, networking, AI, SMP, or
-hardware-expansion work before their roadmap gates.
+shared-memory proof. ADR 0032 records the Phase 8 process-termination proof.
+Do not start networking, AI, SMP, or hardware-expansion work before their
+roadmap gates.
 
 ## Phase 6 Summary
 
@@ -124,6 +127,7 @@ syscall-entry
 user-stacks
 service-local-python-runtimes
 guarded-shared-memory
+process-termination
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -259,6 +263,15 @@ remain unchanged, and emits `PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY`. It does
 not implement user pointer copy-in/copy-out, process termination, quotas, crash
 containment, or hostile-code capability enforcement.
 
+The process-termination slice records ADR 0032 and proves a fixed user process
+can be forcibly terminated without cooperation. PythCore tracks the process by
+task id and user CR3 root, marks it terminated, proves it is no longer returned
+as runnable, reclaims the terminated user address-space page-table frames,
+verifies the physical allocator free-page count increases by the exact
+reclaimed frame count, and emits
+`PYTHOS:CORE:PROCESS_TERMINATION_READY`. It does not implement memory quotas,
+CPU quotas, crash containment, or hostile-code capability enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -349,6 +362,10 @@ PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
 PYTHOS:CORE:SHM:RING3_READ
 PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED
 PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY
+PYTHOS:CORE:PROCESS:TERMINATED
+PYTHOS:CORE:PROCESS:UNSCHEDULABLE
+PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED
+PYTHOS:CORE:PROCESS_TERMINATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -429,6 +446,10 @@ PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
 PYTHOS:CORE:SHM:RING3_READ
 PYTHOS:CORE:SHM:CROSS_SPACE_WRITE_DENIED
 PYTHOS:CORE:GUARDED_SHARED_MEMORY_READY
+PYTHOS:CORE:PROCESS:TERMINATED
+PYTHOS:CORE:PROCESS:UNSCHEDULABLE
+PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED
+PYTHOS:CORE:PROCESS_TERMINATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -496,6 +517,7 @@ docs/decisions/0028-phase-8-syscall-abi.md
 docs/decisions/0029-phase-8-user-stacks.md
 docs/decisions/0030-phase-8-service-local-runtimes.md
 docs/decisions/0031-phase-8-guarded-shared-memory.md
+docs/decisions/0032-phase-8-process-termination.md
 ```
 
 Boot artifacts:
@@ -555,13 +577,14 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the next Phase 8 slice from the roadmap:
+Then begin only the next Phase 8 slices from the roadmap:
 
 ```text
-process-termination
+memory-quotas
+cpu-quotas
 ```
 
-Expected TDD posture for the next Phase 8 slice:
+Expected TDD posture for the next Phase 8 slices:
 
 1. Add a failing automated proof that a user-mode task or process can be
    forcibly terminated by the kernel without cooperation and without losing
