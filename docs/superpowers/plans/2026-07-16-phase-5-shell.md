@@ -24,29 +24,29 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `core/src/input_drivers.rs`, `core/src/main.rs`, `scripts/test-boot.py`, `tests/boot_core_handoff.py`, docs.
 
-- [ ] Add `keyboard-driver` marker tests and verify they fail.
-- [ ] Implement fixed keyboard and mouse event decoding behind capability checks.
-- [ ] Emit `PYTHOS:CORE:INPUT:KEYBOARD`, `PYTHOS:CORE:INPUT:MOUSE`, and `PYTHOS:CORE:INPUT_DRIVERS_READY`.
-- [ ] Run `cargo test -p pythos-core` and `python scripts\test-boot.py --slice keyboard-driver`.
-- [ ] Commit.
+- [x] Add `keyboard-driver` marker tests and verify they fail.
+- [x] Implement fixed keyboard and mouse event decoding behind capability checks.
+- [x] Emit `PYTHOS:CORE:INPUT:KEYBOARD`, `PYTHOS:CORE:INPUT:MOUSE`, and `PYTHOS:CORE:INPUT_DRIVERS_READY`.
+- [x] Run `cargo test -p pythos-core` and `python scripts\test-boot.py --slice keyboard-driver`.
+- [x] Commit.
 
 ### Task 2: Input Event Service
 
 **Files:** `core/src/input_events.rs`, `core/src/main.rs`, marker tests, docs.
 
-- [ ] Add `input-event-service` marker tests and verify they fail.
-- [ ] Normalize raw keyboard/mouse events into typed input events and require subscriber capability.
-- [ ] Emit `PYTHOS:CORE:INPUT:EVENT` and `PYTHOS:CORE:INPUT_EVENT_SERVICE_READY`.
-- [ ] Verify and commit.
+- [x] Add `input-event-service` marker tests and verify they fail.
+- [x] Normalize raw keyboard/mouse events into typed input events and require subscriber capability.
+- [x] Emit `PYTHOS:CORE:INPUT:EVENT` and `PYTHOS:CORE:INPUT_EVENT_SERVICE_READY`.
+- [x] Verify and commit.
 
 ### Task 3: Software Renderer
 
 **Files:** `core/src/software_renderer.rs`, `core/src/main.rs`, marker tests, docs.
 
-- [ ] Add `software-renderer` marker tests and verify they fail.
-- [ ] Implement clipped fill-rect and textless pixel-buffer primitives.
-- [ ] Emit `PYTHOS:CORE:RENDER:RECT` and `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
-- [ ] Verify and commit.
+- [x] Add `software-renderer` marker tests and verify they fail.
+- [x] Implement clipped fill-rect and textless pixel-buffer primitives.
+- [x] Emit `PYTHOS:CORE:RENDER:RECT` and `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
+- [x] Verify and commit.
 
 ### Task 4: Font System
 
@@ -93,4 +93,3 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 - [ ] Render the shell screen through the compositor path.
 - [ ] Emit `PYTHOS:CORE:APP:LAUNCHER`, `PYTHOS:CORE:APP:SERVICE_MONITOR`, `PYTHOS:CORE:APP:PYTHON_CONSOLE`, `PYTHOS:CORE:APP:SETTINGS_PANEL`, and `PYTHOS:CORE:PHASE_5_COMPLETE`.
 - [ ] Run full ESP/ISO verification, update handover docs, commit, push, and stop at the Phase 5 -> Phase 6 boundary.
-

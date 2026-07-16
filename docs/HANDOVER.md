@@ -50,9 +50,9 @@ file and update the handover before continuing.
 
 ## Current Stop Point
 
-PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver` and
-`input-event-service` slices are complete; `software-renderer` is the next
-active slice.
+PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver`,
+`input-event-service`, and `software-renderer` slices are complete;
+`font-system` is the next active slice.
 
 Completed:
 
@@ -73,12 +73,13 @@ Phase 4    service-restart
 Phase 4    async-events
 Phase 5    keyboard-driver / mouse-driver
 Phase 5    input-event-service
+Phase 5    software-renderer
 ```
 
 Next slice:
 
 ```text
-Phase 5: software-renderer
+Phase 5: font-system
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
@@ -124,13 +125,13 @@ Use the live git tree as the source of truth. First run:
   git log --oneline --decorate -10
 
 The expected current branch is milestone/phase4-runtime-selection, with
-origin tracking the same branch. The expected latest committed slice is:
+origin tracking the same branch. Verify the latest commit with `git log`
+instead of trusting this text.
 
-  cd4b887 core: deliver runtime service events
-
-Phase 4 is complete. The next allowed work is Phase 5
-keyboard-driver/mouse-driver. Do not start GUI shell, audio, storage,
-networking, AI, ring-3, or SMP work.
+Phase 4 is complete. Phase 5 has completed input drivers, input event
+normalization, and the software renderer. The next allowed work is Phase 5
+`font-system`. Do not start Phase 6, audio, storage, networking, AI, ring-3,
+or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
 proof. Any slice must be enforced by scripts/test-boot.py or an equivalent
@@ -243,6 +244,8 @@ PYTHOS:CORE:INPUT:MOUSE
 PYTHOS:CORE:INPUT_DRIVERS_READY
 PYTHOS:CORE:INPUT:EVENT
 PYTHOS:CORE:INPUT_EVENT_SERVICE_READY
+PYTHOS:CORE:RENDER:RECT
+PYTHOS:CORE:SOFTWARE_RENDERER_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -272,7 +275,7 @@ cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice input-event-service
+python scripts\test-boot.py --slice software-renderer
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
@@ -477,6 +480,19 @@ Verified Phase 4 so far:
 * A fixed native event dispatches only to a ready managed service.
 * The successful Phase 4 path emits `PYTHOS:CORE:ASYNC_EVENTS_READY`.
 
+Verified Phase 5 so far:
+
+* ADR 0018 records the native Phase 5 input-event service and shell object
+  contract.
+* ADR 0019 records the planned `FONT.PSF` boot-info extension for the next
+  slice.
+* Fixed keyboard and mouse driver proofs decode input only through explicit
+  input capabilities.
+* A native input-event service normalizes those raw events into typed input
+  events for a capability-holding subscriber.
+* The software renderer fills clipped rectangles into a bounded native pixel
+  buffer and emits `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
+
 ## What Does Not Exist Yet
 
 Do not imply these are implemented:
@@ -490,7 +506,9 @@ Do not imply these are implemented:
 * Broad service restart policy beyond the fixed noncritical proof.
 * General async runtime or coroutine scheduler.
 * GUI shell.
-* Keyboard or mouse driver.
+* Font loading from `FONT.PSF`.
+* Compositor, surfaces, clipping, focus, movable windows, widgets, or shell
+  applications.
 * Audio driver or cinematic boot sequence.
 * Persistent object storage.
 * Networking.
@@ -518,16 +536,16 @@ validated INIT.PAK runtime payload
 
 It is not a general Python runtime yet.
 
-## Active Slice: Phase 5 entry
+## Active Slice: Phase 5 font-system
 
-Phase 4 is complete. The next allowed roadmap work is Phase 5
-`keyboard-driver` / `mouse-driver`.
+Phase 4 is complete. The next allowed roadmap work is Phase 5 `font-system`.
 
 Roadmap intent:
 
 ```text
-Native drivers, capability-gated input event sources, and the start of the real
-graphical shell phase.
+Load the boot image's `/PYTHOS/FONT.PSF` asset, pass it through boot info, map
+it under PythCore-owned page tables, and parse enough PSF metadata to replace
+the embedded diagnostic font path later in Phase 5.
 ```
 
 Recommended first scope for the next agent:
@@ -537,13 +555,13 @@ Recommended first scope for the next agent:
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice keyboard-driver
+   python scripts\test-boot.py --slice font-system
    ```
 
 3. The first run should fail because the new completion marker is missing.
 4. Keep the marker order after `PYTHOS:CORE:ASYNC_EVENTS_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
-5. Add ADRs before introducing durable input-device ABI or capability contracts.
+5. Implement ADR 0019's font boot-info extension and keep the ABI bump explicit.
 6. Preserve the completed Phase 4 runtime proof path.
 
 Do not let Phase 5 entry become:
@@ -578,6 +596,8 @@ docs/decisions/0014-init-pak-runtime-payload.md
 docs/decisions/0015-custom-minimal-interpreter-bootstrap.md
 docs/decisions/0016-system-api-surface.md
 docs/decisions/0017-runtime-value-validation.md
+docs/decisions/0018-phase-5-shell-object-and-input-contracts.md
+docs/decisions/0019-font-psf-bootinfo-extension.md
 ```
 
 Most relevant for Phase 5 entry:
@@ -589,6 +609,8 @@ Most relevant for Phase 5 entry:
 0015  exact-shape interpreter bootstrap
 0016  initial system.* API surface
 0017  runtime value-validation boundary
+0018  Phase 5 shell object and input contract
+0019  FONT.PSF boot-info extension
 ```
 
 ## Important Files By Area
@@ -622,6 +644,9 @@ Core entry and boot metadata:
 core/src/main.rs
 core/src/boot_metadata.rs
 core/src/framebuffer.rs
+core/src/input_drivers.rs
+core/src/input_events.rs
+core/src/software_renderer.rs
 core/linker.ld
 ```
 
@@ -862,6 +887,8 @@ Suggested disciplined flow:
    docs/decisions/0015-custom-minimal-interpreter-bootstrap.md
    docs/decisions/0016-system-api-surface.md
    docs/decisions/0017-runtime-value-validation.md
+   docs/decisions/0018-phase-5-shell-object-and-input-contracts.md
+   docs/decisions/0019-font-psf-bootinfo-extension.md
    ```
 
 3. Add the failing test first:
@@ -874,11 +901,11 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker for the chosen Phase 5 driver slice
+   missing marker for the Phase 5 font-system slice
    ```
 
-5. Implement only the first input-driver marker proof required by the Phase 5
-   roadmap. Do not build the shell early.
+5. Implement only the `FONT.PSF` load/pass/map/parse proof required by ADR
+   0019. Do not build the compositor or shell applications early.
 
 6. Keep the marker order:
 
@@ -891,6 +918,9 @@ Suggested disciplined flow:
    PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED
    PYTHOS:CORE:SERVICE_RESTART_READY
    PYTHOS:CORE:ASYNC_EVENTS_READY
+   PYTHOS:CORE:INPUT_DRIVERS_READY
+   PYTHOS:CORE:INPUT_EVENT_SERVICE_READY
+   PYTHOS:CORE:SOFTWARE_RENDERER_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -932,7 +962,10 @@ Python service manager             complete
 Python exception containment       complete
 Python service restart             complete
 Python async event delivery        complete
-GUI shell                          next phase, not started
+Phase 5 input drivers              complete
+Phase 5 input event service        complete
+Phase 5 software renderer          complete
+GUI shell                          in progress
 Audio/cinematic boot               not started
 Persistent object storage          not started
 Ring-3 isolation                   not started
@@ -940,6 +973,6 @@ Ring-3 isolation                   not started
 
 The base is no longer only a loader. PythCore boots after UEFI, owns its own
 execution substrate, schedules native tasks, enforces local kernel-mode
-capabilities, and has begun the intentionally narrow Python-native runtime path.
-The next work is to make every native/runtime value crossing explicit and
-validated before adding service lifecycle behavior.
+capabilities, runs the intentionally narrow Python-native runtime path, and has
+entered Phase 5 graphical-shell groundwork. The next work is the Phase 5
+`font-system` slice.

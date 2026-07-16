@@ -534,7 +534,7 @@ Exception-containment test suite.
 
 None new at this phase. The typed-object question applies starting Phase 7.
 
-## Phase 5: Real Graphical Shell - NOT STARTED
+## Phase 5: Real Graphical Shell - IN PROGRESS
 
 ### Purpose
 
@@ -559,7 +559,10 @@ capability-scoped.
    typed event stream only for a capability-holding subscriber, emits
    `PYTHOS:CORE:INPUT:EVENT`, and completes with
    `PYTHOS:CORE:INPUT_EVENT_SERVICE_READY`.
-3. `software-renderer` - framebuffer-target 2D drawing primitives.
+3. `software-renderer` - COMPLETE. Framebuffer-target 2D drawing primitives
+   fill clipped rectangles into a bounded native pixel buffer and emit
+   `PYTHOS:CORE:RENDER:RECT` followed by
+   `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
 4. `font-system` - replaces the embedded 8x8 diagnostic font with `FONT.PSF`
    loading. The ISO already carries a `FONT.PSF` slot from Phase 1; this is
    where it stops being an empty placeholder.

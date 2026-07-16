@@ -23,6 +23,7 @@ mod serial;
 mod service_identity;
 mod service_manager;
 mod shared_memory;
+mod software_renderer;
 mod system_api;
 mod tasks;
 mod value_validation;
@@ -295,6 +296,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:INPUT_EVENT_SERVICE_READY");
+        if software_renderer::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:SOFTWARE_RENDERER_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
