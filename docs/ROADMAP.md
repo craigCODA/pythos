@@ -197,7 +197,9 @@ concept. Prefer stack or static parsing first.
   `docs/decisions/0002-kernel-owned-page-tables.md`.
 * ADR for `qemu-exit`. The exit-code contract is a test-infrastructure ABI.
 * `AGENTS.md` Active Milestone section updated after each slice merges.
-* CI workflow added or updated in the `qemu-exit` slice.
+* CI workflow added or updated in the `qemu-exit` slice. Satisfied by
+  `.github/workflows/qemu-acceptance.yml`, with
+  `tests/test_ci_workflow.py` guarding the workflow contract.
 
 ### Architectural Test (Non-Binding)
 

@@ -1,0 +1,69 @@
+name: QEMU Acceptance
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  qemu-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y qemu-system-x86 ovmf
+          if [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then
+            echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd" >> "$GITHUB_ENV"
+          elif [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then
+            echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE.fd" >> "$GITHUB_ENV"
+          else
+            echo "missing OVMF code firmware" >&2
+            exit 1
+          fi
+
+      - name: Install Rust toolchain
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.93.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.93.1
+          rustup target add x86_64-unknown-uefi x86_64-unknown-none
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Rust unit tests
+        run: |
+          cargo test -p pythos-shared
+          cargo test -p pythos-core
+
+      - name: Clippy
+        run: |
+          cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
+
+      - name: Python harness tests
+        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow
+
+      - name: QEMU milestone acceptance
+        run: |
+          python scripts/test-boot.py --slice phase-6-complete
+          python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device
+          python scripts/test-boot.py --slice milestone-1
+          python scripts/test-boot.py --slice milestone-1 --media iso
+
+      - name: Full QEMU slice handoff suite
+        run: python -m unittest tests.boot_core_handoff
+
+      - name: Upload serial log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-serial-log
+          path: target/boot-serial.log
+          if-no-files-found: ignore

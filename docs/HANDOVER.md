@@ -143,10 +143,12 @@ core/src/shell_objects.rs
 Test and harness code:
 
 ```text
+.github/workflows/qemu-acceptance.yml
 scripts/run-qemu.py
 scripts/test-boot.py
 tests/boot_core_handoff.py
 tests/test_boot_marker_contract.py
+tests/test_ci_workflow.py
 tests/test_qemu_exit.py
 ```
 
