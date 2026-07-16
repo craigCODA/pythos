@@ -10,6 +10,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class BootCoreHandoffTest(unittest.TestCase):
+    def run_boot_slice(self, slice_name: str, *extra_args: str) -> str:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", slice_name, *extra_args],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+        return result.stdout
+
     def test_loader_enter_marker_is_observed_in_serial_output(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/test-boot.py", "--slice", "loader-enter"],
@@ -623,6 +635,33 @@ class BootCoreHandoffTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout)
+
+    def test_audio_device_selection_marker_is_observed_after_phase_5(self) -> None:
+        self.run_boot_slice("audio-device-selection")
+
+    def test_audio_driver_marker_is_observed_after_device_selection(self) -> None:
+        self.run_boot_slice("audio-driver")
+
+    def test_audio_buffer_marker_is_observed_after_driver(self) -> None:
+        self.run_boot_slice("audio-buffers")
+
+    def test_pcm_playback_marker_is_observed_after_audio_buffers(self) -> None:
+        self.run_boot_slice("pcm-playback")
+
+    def test_audio_mixing_markers_are_observed_after_pcm_playback(self) -> None:
+        self.run_boot_slice("audio-mixing")
+
+    def test_boot_asset_markers_are_observed_after_mixing(self) -> None:
+        self.run_boot_slice("boot-asset-storage")
+
+    def test_audio_visual_sync_marker_is_observed_after_boot_assets(self) -> None:
+        self.run_boot_slice("audio-visual-sync")
+
+    def test_phase_6_complete_marker_is_observed_after_fallback_ready(self) -> None:
+        self.run_boot_slice("phase-6-complete")
+
+    def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
+        self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
     def test_milestone_1_complete_marker_is_observed_after_framebuffer_ready(self) -> None:
         result = subprocess.run(

@@ -119,7 +119,7 @@ mod tests {
     use std::vec;
     use std::vec::Vec;
 
-    const HELLO_SERVICE: &[u8] = b"class HelloService(Service):\n    async def start(self):\n        system.log(\"hello from Python\")\n        self.ready()\n";
+    const HELLO_SERVICE: &[u8] = b"class HelloService(Service):\n    async def start(self):\n        system.log(\"PythOS [HISS] We Are Woken\")\n        self.ready()\n";
 
     fn bundle(source: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0u8; RUNTIME_PAYLOAD_HEADER_LEN as usize];

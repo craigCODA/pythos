@@ -632,13 +632,13 @@ Answer by inspecting whether the compositor's surface abstraction could host a
 non-native-widget presentation, such as arbitrary drawn content, without kernel
 or compositor changes. Do not build Open Surface itself.
 
-## Phase 6: Cinematic Boot and Voice - NOT STARTED
+## Phase 6: Cinematic Boot and Voice - COMPLETE
 
 ### Purpose
 
 Replace the current diagnostic boot screen with the native identity sequence:
-"PythOS initiated. sssssssssss. We are woken." It must be natively
-implemented, not the existing prototype HTML boot animation.
+"PythOS [HISS] We Are Woken." It must be natively implemented, not the
+existing prototype HTML boot animation.
 
 ### Preconditions
 
@@ -647,24 +647,25 @@ functional.
 
 ### Locked Slice Sequence
 
-1. `audio-device-selection` - choose one QEMU-supported audio device target,
-   for example AC97 or HDA, and record the choice via ADR.
-2. `audio-driver` - native driver for the chosen device.
-3. `audio-buffers` - buffer or DMA configuration for deterministic playback.
-4. `pcm-playback` - play a fixed, deterministic PCM asset.
-5. `audio-mixing` - support more than one simultaneous PCM source, needed for
-   the layered hiss, sub-bass, and tremolo design already prototyped in the
+1. `audio-device-selection` - COMPLETE. ADR 0020 chooses QEMU AC97 and records
+   the no-audio fallback posture.
+2. `audio-driver` - COMPLETE. PythCore configures the selected AC97 mixer and
+   bus-master interface, or enters a silent driver state when absent.
+3. `audio-buffers` - COMPLETE. A page-contained PCM buffer and AC97 BDL are
+   configured for deterministic playback.
+4. `pcm-playback` - COMPLETE. A fixed deterministic PCM asset is submitted to
+   AC97.
+5. `audio-mixing` - COMPLETE. More than one simultaneous PCM source is mixed
+   for the layered hiss, sub-bass, and tremolo design already prototyped in the
    HTML boot animation.
-6. `boot-asset-storage` - store the three boot assets: visual sequence data,
-   PCM audio, and timing/sync data, in a location decided by this phase. This
-   is likely embedded in the boot image at this stage because Phase 7
-   persistent storage does not exist yet. Do not pull Phase 7 forward to solve
-   this.
-7. `audio-visual-sync` - synchronize PCM playback timing with the
+6. `boot-asset-storage` - COMPLETE. The three boot assets, visual sequence
+   data, PCM audio shape, and timing/sync data, are embedded in PythCore
+   because Phase 7 persistent storage does not exist yet.
+7. `audio-visual-sync` - COMPLETE. PCM playback timing is synchronized with the
    compositor-driven visual formation sequence.
-8. `graceful-audio-fallback` - if no audio device is available or detected,
-   the visual sequence still completes correctly. Boot never blocks or
-   degrades waiting on audio.
+8. `graceful-audio-fallback` - COMPLETE. If no audio device is available or
+   detected, the visual sequence still completes correctly. Boot never blocks
+   or degrades waiting on audio.
 
 ### Exit Condition
 
@@ -682,6 +683,12 @@ of user boot customization.
 
 ADR for audio device choice. Fallback-path test proving boot completes with the
 audio device absent in QEMU config.
+
+Satisfied by ADR 0020 and:
+
+```powershell
+python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
+```
 
 ### Architectural Test (Non-Binding)
 

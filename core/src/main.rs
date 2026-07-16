@@ -384,6 +384,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY");
+        if audio::complete_graceful_fallback(audio_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY");
+        serial::write_line("PYTHOS:CORE:PHASE_6_COMPLETE");
     }
 
     #[cfg(test)]

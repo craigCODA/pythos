@@ -884,6 +884,34 @@ AUDIO_VISUAL_SYNC_MARKERS = [
     "PYTHOS:CORE:BOOT_SYNC:AUDIO",
     "PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY",
 ]
+GRACEFUL_AUDIO_FALLBACK_MARKERS = [
+    "PYTHOS:CORE:AUDIO:FALLBACK_ARMED",
+    "PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY",
+    "PYTHOS:CORE:PHASE_6_COMPLETE",
+]
+AUDIO_DEVICE_ABSENT_MARKERS = [
+    "PYTHOS:CORE:AUDIO:DEVICE_ABSENT",
+    "PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY",
+]
+AUDIO_DRIVER_SKIPPED_MARKERS = [
+    "PYTHOS:CORE:AUDIO:DRIVER_SKIPPED",
+    "PYTHOS:CORE:AUDIO_DRIVER_READY",
+]
+AUDIO_BUFFER_SKIPPED_MARKERS = [
+    "PYTHOS:CORE:AUDIO:BUFFER_SKIPPED",
+    "PYTHOS:CORE:AUDIO_BUFFERS_READY",
+]
+PCM_PLAYBACK_SKIPPED_MARKERS = [
+    "PYTHOS:CORE:AUDIO:PCM_SKIPPED",
+    "PYTHOS:CORE:PCM_PLAYBACK_READY",
+]
+AUDIO_FALLBACK_TAKEN_MARKERS = [
+    "PYTHOS:CORE:AUDIO:FALLBACK",
+    "PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY",
+    "PYTHOS:CORE:PHASE_6_COMPLETE",
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    "PYTHOS:CORE:MILESTONE_1_COMPLETE",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -1110,6 +1138,25 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     AUDIO_VISUAL_SYNC_MARKERS,
 )
+SLICE_MARKERS["phase-6-complete"] = (
+    SLICE_MARKERS["audio-visual-sync"] + GRACEFUL_AUDIO_FALLBACK_MARKERS
+)
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    GRACEFUL_AUDIO_FALLBACK_MARKERS,
+)
+SLICE_MARKERS["graceful-audio-fallback"] = (
+    SLICE_MARKERS["phase-5-complete"]
+    + AUDIO_DEVICE_ABSENT_MARKERS
+    + AUDIO_DRIVER_SKIPPED_MARKERS
+    + AUDIO_BUFFER_SKIPPED_MARKERS
+    + PCM_PLAYBACK_SKIPPED_MARKERS
+    + AUDIO_MIXING_MARKERS
+    + BOOT_ASSET_MARKERS
+    + AUDIO_VISUAL_SYNC_MARKERS
+    + AUDIO_FALLBACK_TAKEN_MARKERS
+)
 
 
 def run(command: list[str]) -> None:
@@ -1134,6 +1181,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--slice", choices=sorted(SLICE_MARKERS), default="loader-enter")
     parser.add_argument("--media", choices=["esp", "iso"], default="esp")
+    parser.add_argument("--no-audio-device", action="store_true")
     args = parser.parse_args()
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
@@ -1151,6 +1199,7 @@ def main() -> int:
                 "--expect-outcome",
                 "success",
             ]
+            + (["--no-audio-device"] if args.no_audio_device else [])
         )
     else:
         run([sys.executable, "scripts/build-image.py"])
@@ -1163,6 +1212,7 @@ def main() -> int:
                 "--expect-outcome",
                 "success",
             ]
+            + (["--no-audio-device"] if args.no_audio_device else [])
         )
 
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")

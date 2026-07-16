@@ -258,6 +258,11 @@ pub fn mix_boot_audio(
     }
 }
 
+pub fn complete_graceful_fallback(selection: AudioDeviceSelection) -> Result<(), AudioError> {
+    serial::write_line(fallback_marker(selection));
+    Ok(())
+}
+
 fn driver_from_selection(selection: AudioDeviceSelection) -> AudioDriver {
     match selection {
         AudioDeviceSelection::Ac97(device) => AudioDriver::Ac97(Ac97Driver {
@@ -265,6 +270,13 @@ fn driver_from_selection(selection: AudioDeviceSelection) -> AudioDriver {
             sample_rate_hz: AC97_SAMPLE_RATE_HZ,
         }),
         AudioDeviceSelection::Absent => AudioDriver::Silent,
+    }
+}
+
+fn fallback_marker(selection: AudioDeviceSelection) -> &'static str {
+    match selection {
+        AudioDeviceSelection::Ac97(_) => "PYTHOS:CORE:AUDIO:FALLBACK_ARMED",
+        AudioDeviceSelection::Absent => "PYTHOS:CORE:AUDIO:FALLBACK",
     }
 }
 
@@ -623,7 +635,7 @@ fn hiss_sample(frame: usize) -> i32 {
 }
 
 fn noise_byte(frame: usize) -> i32 {
-    let mut value = HISS_SEED ^ (frame as u32).wrapping_mul(0x45D9_F3B);
+    let mut value = HISS_SEED ^ (frame as u32).wrapping_mul(0x045D_9F3B);
     value ^= value << 13;
     value ^= value >> 17;
     value ^= value << 5;
@@ -993,5 +1005,25 @@ mod tests {
     fn mixer_output_is_clamped_to_pcm_range() {
         assert_eq!(clamp_i16(i32::from(i16::MAX) + 1), i16::MAX);
         assert_eq!(clamp_i16(i32::from(i16::MIN) - 1), i16::MIN);
+    }
+
+    #[test]
+    fn fallback_marker_distinguishes_available_and_absent_audio() {
+        let device = Ac97Device {
+            bus: 0,
+            device: 5,
+            function: 0,
+            mixer_base: 0x1000,
+            bus_master_base: 0x2000,
+        };
+
+        assert_eq!(
+            fallback_marker(AudioDeviceSelection::Ac97(device)),
+            "PYTHOS:CORE:AUDIO:FALLBACK_ARMED"
+        );
+        assert_eq!(
+            fallback_marker(AudioDeviceSelection::Absent),
+            "PYTHOS:CORE:AUDIO:FALLBACK"
+        );
     }
 }

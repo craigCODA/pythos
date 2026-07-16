@@ -29,7 +29,7 @@ AI remains outside the trusted core.
 
 ## Active Milestone
 
-The active branch of work is `milestone/phase4-runtime-selection`.
+The active branch of work is `milestone/phase6-cinematic-boot`.
 
 Verified vertical slices currently include:
 
@@ -152,13 +152,35 @@ OVMF
 -> PYTHOS:CORE:APP:PYTHON_CONSOLE
 -> PYTHOS:CORE:APP:SETTINGS_PANEL
 -> PYTHOS:CORE:PHASE_5_COMPLETE
+-> PYTHOS:CORE:AUDIO:DEVICE_SELECTED
+-> PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY
+-> PYTHOS:CORE:AUDIO:DRIVER
+-> PYTHOS:CORE:AUDIO_DRIVER_READY
+-> PYTHOS:CORE:AUDIO:BUFFER
+-> PYTHOS:CORE:AUDIO_BUFFERS_READY
+-> PYTHOS:CORE:AUDIO:PCM_PLAYBACK
+-> PYTHOS:CORE:PCM_PLAYBACK_READY
+-> PYTHOS:CORE:AUDIO:MIX:HISS
+-> PYTHOS:CORE:AUDIO:MIX:SUB_BASS
+-> PYTHOS:CORE:AUDIO:MIX:TREMOLO
+-> PYTHOS:CORE:AUDIO_MIXING_READY
+-> PYTHOS:CORE:BOOT_ASSET:VISUAL
+-> PYTHOS:CORE:BOOT_ASSET:PCM
+-> PYTHOS:CORE:BOOT_ASSET:SYNC
+-> PYTHOS:CORE:BOOT_ASSETS_READY
+-> PYTHOS:CORE:BOOT_VISUAL:FRAME
+-> PYTHOS:CORE:BOOT_SYNC:AUDIO
+-> PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY
+-> PYTHOS:CORE:AUDIO:FALLBACK_ARMED
+-> PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
+-> PYTHOS:CORE:PHASE_6_COMPLETE
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, proves the active bootstrap kernel stack has an unmapped guard page through an expected page fault, performs a cooperative context-switch self-test with two alternating native contexts, runs a cooperative round-robin scheduler proof over fixed ready tasks, switches through a fixed idle context only after the ready set is empty, proves IRQ0-forced preemption between spin-only native contexts, exits a fixed native task and proves its terminated slot is no longer selectable, proves three native tasks interleave under timer-forced preemption, assigns service identities independently from task/slot identity and rejects stale identity reuse, sends and receives a fixed typed IPC message between known service identities with exact payload validation, proves a full fixed IPC queue returns an explicit error without dropping queued messages, proves request/reply correlation and explicit reply timeout behavior, grants and validates a kernel-owned capability handle, gates a shared memory region through a read-only capability and denies writes, validates capability rights before privileged IPC send, revokes one capability without affecting another handle, denies a known target/operation without a valid handle, records grant/use/denial/revocation audit events, emits `PYTHOS:CORE:PHASE_3_COMPLETE`, records the Phase 4 custom minimal interpreter decision through `PYTHOS:CORE:RUNTIME_SELECTED`, validates the ADR 0014 runtime source payload inside `INIT.PAK`, boots the ADR 0015 custom-minimal interpreter as a capability-scoped runtime task, executes the ADR 0016 `system.log` host call through a `LOG` capability, validates the ADR 0017 runtime value boundary for type, length, UTF-8, rejected pointer/native-struct shapes, and explicit host-call result representation, transitions the runtime service through a fixed manager-owned ready state, contains a failed service without panicking PythCore, restarts a failed noncritical service into a fresh generation, dispatches a fixed native event only to a ready service, emits `PYTHOS:CORE:ASYNC_EVENTS_READY`, decodes fixed keyboard and mouse input events only through explicit input capabilities, normalizes those raw driver events through a capability-gated native input-event service, proves clipped software rectangle rendering into a bounded pixel buffer, maps and parses the boot-provided `FONT.PSF` through explicit boot-info font fields, composes typed-object-backed presentation surfaces with clipping, proves cursor bounds, z-order focus selection, moving a focused window without changing object identity, fixed button activation, bounded text-field editing, registers four fixed capability-scoped first-party shell applications with typed windows, renders a fixed shell screen through the compositor path, emits `PYTHOS:CORE:PHASE_5_COMPLETE`, renders the post-firmware boot screen, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
+The loader builds temporary page tables, switches to the bootstrap stack, and jumps to `pythcore_entry` with `PythBootInfo` in `RDI`. PythCore validates the boot ABI, owns physical page classification, installs GDT/TSS/IDT structures, installs allocation-free exception diagnostics, verifies full-register exception-entry preservation through a controlled `INT3`, remaps and masks the legacy PIC interrupt controller, builds replacement kernel-owned page tables, switches `CR3` a second time, proves an address from the old broad loader identity range now faults, revalidates ACPI/SMBIOS/INIT.PAK boot metadata, configures a PIT-backed tick source, exposes a read-only monotonic tick clock, initializes a fixed native task table with the bootstrap task recorded as running, proves the active bootstrap kernel stack has an unmapped guard page through an expected page fault, performs a cooperative context-switch self-test with two alternating native contexts, runs a cooperative round-robin scheduler proof over fixed ready tasks, switches through a fixed idle context only after the ready set is empty, proves IRQ0-forced preemption between spin-only native contexts, exits a fixed native task and proves its terminated slot is no longer selectable, proves three native tasks interleave under timer-forced preemption, assigns service identities independently from task/slot identity and rejects stale identity reuse, sends and receives a fixed typed IPC message between known service identities with exact payload validation, proves a full fixed IPC queue returns an explicit error without dropping queued messages, proves request/reply correlation and explicit reply timeout behavior, grants and validates a kernel-owned capability handle, gates a shared memory region through a read-only capability and denies writes, validates capability rights before privileged IPC send, revokes one capability without affecting another handle, denies a known target/operation without a valid handle, records grant/use/denial/revocation audit events, emits `PYTHOS:CORE:PHASE_3_COMPLETE`, records the Phase 4 custom minimal interpreter decision through `PYTHOS:CORE:RUNTIME_SELECTED`, validates the ADR 0014 runtime source payload inside `INIT.PAK`, boots the ADR 0015 custom-minimal interpreter as a capability-scoped runtime task, executes the ADR 0016 `system.log` host call through a `LOG` capability, validates the ADR 0017 runtime value boundary, completes Phase 5 GUI shell proofs, chooses and drives the ADR 0020 QEMU AC97 target, mixes the Phase 6 boot audio layers, embeds the visual/audio/sync assets, synchronizes the compositor-driven wake phrase with the audio timeline, proves no-audio fallback, emits `PYTHOS:CORE:PHASE_6_COMPLETE`, emits `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and reaches deterministic QEMU termination.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, and Phase 5 are complete. Stop at the Phase 5 -> Phase 6 boundary. The next phase is Phase 6 `cinematic-boot-and-voice`; do not begin it or any audio, storage, networking, AI, ring-3, SMP, or hardware-expansion work without explicit re-invocation.
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 are complete. Stop at the Phase 6 -> Phase 7 boundary. The next phase is Phase 7 `persistent-object-storage`; do not begin it or any storage, networking, AI, ring-3, SMP, or hardware-expansion work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -271,6 +293,28 @@ PYTHOS:CORE:APP:SERVICE_MONITOR
 PYTHOS:CORE:APP:PYTHON_CONSOLE
 PYTHOS:CORE:APP:SETTINGS_PANEL
 PYTHOS:CORE:PHASE_5_COMPLETE
+PYTHOS:CORE:AUDIO:DEVICE_SELECTED
+PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY
+PYTHOS:CORE:AUDIO:DRIVER
+PYTHOS:CORE:AUDIO_DRIVER_READY
+PYTHOS:CORE:AUDIO:BUFFER
+PYTHOS:CORE:AUDIO_BUFFERS_READY
+PYTHOS:CORE:AUDIO:PCM_PLAYBACK
+PYTHOS:CORE:PCM_PLAYBACK_READY
+PYTHOS:CORE:AUDIO:MIX:HISS
+PYTHOS:CORE:AUDIO:MIX:SUB_BASS
+PYTHOS:CORE:AUDIO:MIX:TREMOLO
+PYTHOS:CORE:AUDIO_MIXING_READY
+PYTHOS:CORE:BOOT_ASSET:VISUAL
+PYTHOS:CORE:BOOT_ASSET:PCM
+PYTHOS:CORE:BOOT_ASSET:SYNC
+PYTHOS:CORE:BOOT_ASSETS_READY
+PYTHOS:CORE:BOOT_VISUAL:FRAME
+PYTHOS:CORE:BOOT_SYNC:AUDIO
+PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY
+PYTHOS:CORE:AUDIO:FALLBACK_ARMED
+PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
+PYTHOS:CORE:PHASE_6_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -292,7 +336,7 @@ tests/
 docs/
 ```
 
-Do not add embedded Python, MicroPython, services, semantic storage, networking, audio, widgets, package management, AI, SMP, ring-3 applications, or broad hardware support.
+Do not add embedded Python, MicroPython, services, semantic storage, networking, audio beyond the Phase 6 QEMU AC97 target, widgets beyond the fixed Phase 5 proof, package management, AI, SMP, ring-3 applications, or broad hardware support.
 
 ## Unsafe Rust Policy
 

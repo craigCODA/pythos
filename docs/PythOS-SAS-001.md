@@ -12,17 +12,15 @@ Pronunciation:
 pie-thoss
 ```
 
-The permanent wake sequence for a later graphical/audio milestone is:
+The permanent wake sequence for the graphical/audio milestone is:
 
 ```text
-PythOS initiated.
-
-sssssssssss
-
-We are woken.
+PythOS [HISS] We Are Woken
 ```
 
-Do not implement audio in milestone 1.
+Do not implement audio before Phase 6. Phase 6 owns only the bounded QEMU AC97
+boot-audio target; audio beyond that target remains later hardware-expansion
+work.
 
 ## Vision
 
@@ -111,4 +109,3 @@ Interrupt handlers must remain small, bounded, nonblocking, and allocation-free 
 Capability security must be enforced below Python. During early single-runtime prototypes, capability separation may be logical rather than hostile-code secure, and documentation must say so honestly.
 
 AI remains an untrusted optional planner outside the trusted core.
-
