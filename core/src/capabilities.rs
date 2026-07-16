@@ -41,6 +41,7 @@ pub struct RightsMask(u32);
 impl RightsMask {
     pub const READ: u32 = 1 << 0;
     pub const WRITE: u32 = 1 << 1;
+    pub const SEND: u32 = 1 << 2;
 
     pub const fn new(bits: u32) -> Self {
         Self(bits)

@@ -361,10 +361,13 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    is never implicitly writable. Emits `PYTHOS:CORE:SHM:READ_ONLY`,
    `PYTHOS:CORE:SHM:WRITE_DENIED`, and
    `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY`.
-7. `permission-validation` - every privileged operation, including IPC send,
-   shared-memory map, and later Phase 8 syscalls, checks a capability handle
-   before proceeding. No operation checks a task's identity or trust level as a
-   substitute for holding the actual capability.
+7. `permission-validation` - COMPLETE. Privileged IPC send checks a capability
+   handle before proceeding. A handle with `SEND` rights allows the send; a
+   handle for the same holder/resource without `SEND` rights is denied before
+   enqueue. No operation checks a task's identity as a substitute for holding
+   the actual capability. Emits `PYTHOS:CORE:PERMISSION:IPC_ALLOWED`,
+   `PYTHOS:CORE:PERMISSION:IPC_DENIED`, and
+   `PYTHOS:CORE:PERMISSION_VALIDATION_READY`.
 8. `revocation` - a capability holder can have a specific handle revoked
    without affecting the holder's other handles and without requiring the
    holder's cooperation.

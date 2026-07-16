@@ -85,6 +85,9 @@ PYTHOS:CORE:CAPABILITY_HANDLES_READY
 PYTHOS:CORE:SHM:READ_ONLY
 PYTHOS:CORE:SHM:WRITE_DENIED
 PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY
+PYTHOS:CORE:PERMISSION:IPC_ALLOWED
+PYTHOS:CORE:PERMISSION:IPC_DENIED
+PYTHOS:CORE:PERMISSION_VALIDATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -133,6 +136,7 @@ This proves:
 * PythCore sends a typed request, receives a typed reply, validates the exact reply payload, and proves missing replies return an explicit timeout.
 * PythCore grants a kernel-owned capability handle and validates holder/resource/rights through the table entry rather than trusting the handle value alone.
 * PythCore gates a fixed shared memory region through the capability table, proves a read-only mapping can read but cannot write, and preserves the region after the denied write.
+* PythCore validates capability rights before a privileged IPC send, allowing a handle with `SEND` and denying a handle without `SEND` before enqueue.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -178,6 +182,7 @@ Core:
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
 * `core/src/capabilities.rs` implements Phase 3 capability handle table proofs.
 * `core/src/ipc_channels.rs` implements the Phase 3 fixed typed IPC channel proof.
+* `core/src/permission_validation.rs` implements the Phase 3 capability validation wrapper for privileged operations.
 * `core/src/shared_memory.rs` implements the Phase 3 capability-gated shared memory proof.
 * `core/src/memory/physical.rs` owns milestone-1 page classification and fixed bitmap initialization.
 * `core/src/memory/virtual.rs` owns milestone-1.5 kernel page-table replacement and the second `CR3` switch.
@@ -236,10 +241,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, and `shared-memory-handles` slices are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, and `permission-validation` slices are implemented on the current branch.
 
 ```text
-next: Phase 3 permission-validation
+next: Phase 3 revocation
 ```
 
 The `vm-ready` proof now covers:
@@ -327,6 +332,9 @@ PYTHOS:CORE:CAPABILITY_HANDLES_READY
 PYTHOS:CORE:SHM:READ_ONLY
 PYTHOS:CORE:SHM:WRITE_DENIED
 PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY
+PYTHOS:CORE:PERMISSION:IPC_ALLOWED
+PYTHOS:CORE:PERMISSION:IPC_DENIED
+PYTHOS:CORE:PERMISSION_VALIDATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -354,6 +362,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, continue Phase 3 with `permission-validation`. Do not implement
-revocation, negative authorization, audit logging, Python, or later phase work
-while building the permission-validation slice.
+Next, continue Phase 3 with `revocation`. Do not implement negative
+authorization, audit logging, Python, or later phase work while building the
+revocation slice.

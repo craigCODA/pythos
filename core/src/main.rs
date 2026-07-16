@@ -11,6 +11,7 @@ mod framebuffer;
 mod ipc_channels;
 mod kernel_stacks;
 mod memory;
+mod permission_validation;
 mod qemu_exit;
 mod scheduler;
 mod serial;
@@ -208,6 +209,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY");
+        if permission_validation::run_permission_validation_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PERMISSION_VALIDATION_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

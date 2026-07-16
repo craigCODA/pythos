@@ -74,6 +74,7 @@ Verified vertical slices:
 * `request-reply` sends a typed request, receives and validates it at the responder, sends a typed reply, receives the exact matching reply at the requester, proves a missing reply returns explicit timeout, and emits `PYTHOS:CORE:IPC:REQUEST`, `PYTHOS:CORE:IPC:REPLY`, `PYTHOS:CORE:IPC:REPLY_TIMEOUT`, and `PYTHOS:CORE:REQUEST_REPLY_READY`.
 * `capability-handles` implements the ADR 0009 kernel-owned capability table with `{slot, generation}` handles, validates holder/resource/rights through the table entry, rejects use by the wrong holder, and emits `PYTHOS:CORE:CAPABILITY:GRANT`, `PYTHOS:CORE:CAPABILITY:USE`, and `PYTHOS:CORE:CAPABILITY_HANDLES_READY`.
 * `shared-memory-handles` gates a fixed shared memory region through the capability table, proves a read-only grant can read the region but cannot write it, preserves the original bytes after denied write, and emits `PYTHOS:CORE:SHM:READ_ONLY`, `PYTHOS:CORE:SHM:WRITE_DENIED`, and `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY`.
+* `permission-validation` wraps a privileged IPC send with capability validation, proves a `SEND` right allows the operation and a handle without `SEND` is denied before enqueue, and emits `PYTHOS:CORE:PERMISSION:IPC_ALLOWED`, `PYTHOS:CORE:PERMISSION:IPC_DENIED`, and `PYTHOS:CORE:PERMISSION_VALIDATION_READY`.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -214,6 +215,9 @@ PYTHOS:CORE:CAPABILITY_HANDLES_READY
 PYTHOS:CORE:SHM:READ_ONLY
 PYTHOS:CORE:SHM:WRITE_DENIED
 PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY
+PYTHOS:CORE:PERMISSION:IPC_ALLOWED
+PYTHOS:CORE:PERMISSION:IPC_DENIED
+PYTHOS:CORE:PERMISSION_VALIDATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -478,7 +482,16 @@ PYTHOS:CORE:SHM:WRITE_DENIED
 PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, `PYTHOS:CORE:REQUEST_REPLY_READY` after the request/reply markers, `PYTHOS:CORE:CAPABILITY_HANDLES_READY` after capability grant/use, `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` after the shared-memory markers, and `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `permission-validation` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY
+PYTHOS:CORE:PERMISSION:IPC_ALLOWED
+PYTHOS:CORE:PERMISSION:IPC_DENIED
+PYTHOS:CORE:PERMISSION_VALIDATION_READY
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, `PYTHOS:CORE:REQUEST_REPLY_READY` after the request/reply markers, `PYTHOS:CORE:CAPABILITY_HANDLES_READY` after capability grant/use, `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` after the shared-memory markers, `PYTHOS:CORE:PERMISSION_VALIDATION_READY` after permission validation, and `PYTHOS:CORE:PERMISSION_VALIDATION_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 
