@@ -5,6 +5,7 @@
 //! the three direct pixel formats from the boot ABI, honors the scanline
 //! pitch, and bounds-checks every pixel against the validated metadata.
 
+use crate::boot_assets::BootAssets;
 use crate::font;
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
@@ -29,6 +30,11 @@ const BODY: Rgb = Rgb {
     green: 230,
     blue: 240,
 };
+const HISS: Rgb = Rgb {
+    red: 130,
+    green: 245,
+    blue: 185,
+};
 
 #[derive(Clone, Copy)]
 struct Rgb {
@@ -42,12 +48,31 @@ struct Rgb {
 /// The framebuffer metadata must already have passed
 /// `PythFramebufferInfo::validate()`; this function re-derives its bounds
 /// from that metadata and refuses out-of-range writes.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn render_boot_screen(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
     let surface = Surface::new(framebuffer)?;
     surface.clear(BACKGROUND);
     surface.draw_text(48, 48, 4, "PythOS", TITLE)?;
     surface.draw_text(48, 128, 2, "PythCore owns execution.", BODY)?;
     surface.draw_text(48, 160, 2, "UEFI boot services released.", BODY)?;
+    Ok(())
+}
+
+pub fn render_cinematic_boot_frame(
+    framebuffer: &PythFramebufferInfo,
+    assets: &BootAssets,
+    visible_frame_count: usize,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    surface.clear(BACKGROUND);
+    let count = visible_frame_count.min(assets.visual_frames.len());
+    for index in 0..count {
+        let frame = assets.visual_frames[index];
+        let y = 56 + (index as u64) * 96;
+        let color = if frame.text == "[HISS]" { HISS } else { TITLE };
+        surface.draw_text(48, y, u64::from(frame.scale), frame.text, color)?;
+    }
+    surface.draw_text(48, 420, 1, assets.wake_phrase, BODY)?;
     Ok(())
 }
 

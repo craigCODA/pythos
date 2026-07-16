@@ -8,6 +8,7 @@ mod boot_assets;
 mod boot_info;
 mod boot_metadata;
 mod capabilities;
+mod cinematic_boot;
 mod compositor;
 mod context_switch;
 mod font;
@@ -378,11 +379,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
         };
         serial::write_line("PYTHOS:CORE:BOOT_ASSETS_READY");
+        if cinematic_boot::run_synced_sequence(_boot_assets, &boot_info.framebuffer).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY");
     }
 
-    if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
-        serial::write_line("PYTHOS:PANIC");
-        qemu_exit::panic();
+    #[cfg(test)]
+    {
+        if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
     }
     serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
     serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");

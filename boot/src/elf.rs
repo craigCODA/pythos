@@ -30,7 +30,7 @@ const PYTHCORE_PATH: &[u16] = &[
     0,
 ];
 
-const MAX_KERNEL_FILE_SIZE: usize = 2 * 1024 * 1024;
+const MAX_KERNEL_FILE_SIZE: usize = 4 * 1024 * 1024;
 const PAGE_SIZE: u64 = 4096;
 const EI_CLASS_64: u8 = 2;
 const EI_DATA_LITTLE_ENDIAN: u8 = 1;
