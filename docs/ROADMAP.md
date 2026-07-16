@@ -726,7 +726,12 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:STORAGE:ACCESS_DENIED`, and
    `PYTHOS:CORE:STORAGE_SERVICE_READY`. This slice does not implement sector
    I/O, journaling, commit markers, recovery, or object storage.
-3. `append-only-journal` - write path is journal-first.
+3. `append-only-journal` - COMPLETE. Storage-service-authorized write intents
+   append monotonic journal records before any write completion can be
+   considered, and the slice emits `PYTHOS:CORE:STORAGE:JOURNAL_APPEND`
+   followed by `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`. This slice does not
+   implement checksums, commit markers, recovery, sector I/O, or object
+   storage.
 4. `checksums-and-commit-markers` - every committed write is checksummed and
    marked. A torn write is detectable, not silently accepted.
 5. `crash-recovery` - replay/rollback logic that reconstructs a consistent

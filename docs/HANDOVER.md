@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `storage-service` complete; next slice is
-`append-only-journal`.
+Current boundary: Phase 7 `append-only-journal` complete; next slice is
+`checksums-and-commit-markers`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice storage-service
+python scripts\test-boot.py --slice append-only-journal
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,13 +40,13 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 storage-service complete
-Next allowed slice: append-only-journal
+Phase 7 append-only-journal complete
+Next allowed slice: checksums-and-commit-markers
 ```
 
-Do not start `checksums-and-commit-markers`, crash recovery, typed-object
-persistence, object browser work, networking, AI, ring-3, SMP, or
-hardware-expansion work before the roadmap gate for that slice.
+Do not start crash recovery, typed-object persistence, object browser work,
+networking, AI, ring-3, SMP, or hardware-expansion work before the roadmap gate
+for that slice.
 
 ## Phase 6 Summary
 
@@ -84,6 +84,7 @@ graceful-audio-fallback
 ```text
 block-device-driver
 storage-service
+append-only-journal
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -100,6 +101,12 @@ handles. It proves a valid holder can authorize bounded storage access and that
 wrong-holder or missing-rights attempts are denied before block access. It does
 not implement raw sector I/O, append-only journaling, object records, or crash
 recovery.
+
+The append-only-journal slice requires a storage-service-authorized write
+intent to append a monotonic journal record before any write completion can be
+considered. It proves read requests are not journaled as writes and a full
+journal rejects new records without overwriting old ones. It does not implement
+checksums, commit markers, crash recovery, raw sector I/O, or object records.
 
 ## Phase 6 Marker Tail
 
@@ -134,6 +141,8 @@ PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:STORAGE:ACCESS_GRANTED
 PYTHOS:CORE:STORAGE:ACCESS_DENIED
 PYTHOS:CORE:STORAGE_SERVICE_READY
+PYTHOS:CORE:STORAGE:JOURNAL_APPEND
+PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -157,13 +166,15 @@ PYTHOS:CORE:BLOCK_DEVICE_READY
 PYTHOS:CORE:STORAGE:ACCESS_GRANTED
 PYTHOS:CORE:STORAGE:ACCESS_DENIED
 PYTHOS:CORE:STORAGE_SERVICE_READY
+PYTHOS:CORE:STORAGE:JOURNAL_APPEND
+PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
 ## Important Files
 
-Phase 6 code:
+Phase 6 and Phase 7 code:
 
 ```text
 core/src/audio.rs
@@ -174,6 +185,7 @@ core/src/framebuffer.rs
 core/src/font.rs
 core/src/main.rs
 core/src/shell_objects.rs
+core/src/storage_journal.rs
 core/src/storage_service.rs
 ```
 
@@ -220,8 +232,7 @@ C:\Users\NeverAMoment\pythos\target\pythos.iso
 Do not assume any of the following exists:
 
 ```text
-persistent object storage
-append-only journal
+completed persistent object store
 checksummed commit markers
 crash recovery
 on-disk typed object format
@@ -257,14 +268,14 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-append-only-journal
+checksums-and-commit-markers
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Add or confirm a failing test/harness expectation for the append-only journal
-   marker.
-2. Implement only a journal-first write intent path over the storage service.
-3. Do not implement checksums, commit markers, recovery, or object records in
+1. Add or confirm a failing test/harness expectation for checksummed commit
+   marker output.
+2. Extend the journal path with checksums and explicit commit markers only.
+3. Do not implement crash recovery, object records, or typed relationships in
    this slice.
 4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

@@ -32,6 +32,7 @@ mod shared_memory;
 mod shell_apps;
 mod shell_objects;
 mod software_renderer;
+mod storage_journal;
 mod storage_service;
 mod system_api;
 mod tasks;
@@ -405,6 +406,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:STORAGE_SERVICE_READY");
+        if storage_journal::run_self_test(_block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY");
     }
 
     #[cfg(test)]

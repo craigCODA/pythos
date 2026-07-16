@@ -10,7 +10,7 @@ use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityError, ServiceIdentityTable};
 use crate::tasks::TaskId;
 
-const STORAGE_RESOURCE_ID: ResourceId = ResourceId::new(0x570A_0001);
+pub const STORAGE_RESOURCE_ID: ResourceId = ResourceId::new(0x570A_0001);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StorageServiceError {
@@ -67,6 +67,20 @@ pub struct StorageAccess {
     operation: StorageOperation,
     start_sector: u64,
     sector_count: u16,
+}
+
+impl StorageAccess {
+    pub const fn operation(self) -> StorageOperation {
+        self.operation
+    }
+
+    pub const fn start_sector(self) -> u64 {
+        self.start_sector
+    }
+
+    pub const fn sector_count(self) -> u16 {
+        self.sector_count
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

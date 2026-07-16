@@ -666,6 +666,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_storage_service_markers_are_observed_after_block_device(self) -> None:
         self.run_boot_slice("storage-service")
 
+    def test_append_only_journal_markers_are_observed_after_storage_service(self) -> None:
+        self.run_boot_slice("append-only-journal")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
