@@ -104,13 +104,14 @@ Verified vertical slices:
 * `audio-visual-sync` renders the compositor-backed wake phrase `PythOS [HISS] We Are Woken` against PIT-derived sync points while audio playback is active or silently skipped, emits `PYTHOS:CORE:BOOT_VISUAL:FRAME` and `PYTHOS:CORE:BOOT_SYNC:AUDIO`, and completes with `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY`.
 * `phase-6-complete` proves the graceful audio fallback boundary, emits `PYTHOS:CORE:AUDIO:FALLBACK_ARMED` when AC97 is present or `PYTHOS:CORE:AUDIO:FALLBACK` when no audio device is configured, emits `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY`, and completes Phase 6 with `PYTHOS:CORE:PHASE_6_COMPLETE`. It does not implement persistent storage, user-configurable boot themes, physical audio hardware support, networking, AI, ring-3, or SMP.
 * `block-device-driver` attaches an explicit boot ESP plus a non-boot QEMU legacy `virtio-blk` raw storage image, scans the primary PCI bus for vendor `0x1AF4` device `0x1001`, validates the legacy I/O BAR, enables I/O and bus-master command bits, reads bounded capacity and queue metadata, emits `PYTHOS:CORE:BLOCK:DEVICE_SELECTED`, and completes with `PYTHOS:CORE:BLOCK_DEVICE_READY`. It does not implement storage-service mediation, data I/O, journaling, object records, or crash recovery.
+* `storage-service` makes the selected block device opaque outside the driver module and exposes a capability-gated storage facade. A service with a valid storage capability can authorize a bounded request and emits `PYTHOS:CORE:STORAGE:ACCESS_GRANTED`; wrong-holder and missing-rights attempts are denied before block access and emit `PYTHOS:CORE:STORAGE:ACCESS_DENIED`; the slice completes with `PYTHOS:CORE:STORAGE_SERVICE_READY`. It does not implement sector I/O, journaling, commit markers, recovery, or object records.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-The active implementation is in Phase 7 `persistent-object-storage`. The `block-device-driver` slice is complete; the next allowed slice is `storage-service`. Do not begin append-only journaling, typed objects, object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
+The active implementation is in Phase 7 `persistent-object-storage`. The `storage-service` slice is complete; the next allowed slice is `append-only-journal`. Do not begin checksums, crash recovery, typed objects, object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -321,6 +322,9 @@ PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
 PYTHOS:CORE:BLOCK:DEVICE_SELECTED
 PYTHOS:CORE:BLOCK_DEVICE_READY
+PYTHOS:CORE:STORAGE:ACCESS_GRANTED
+PYTHOS:CORE:STORAGE:ACCESS_DENIED
+PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -805,6 +809,9 @@ PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
 PYTHOS:CORE:BLOCK:DEVICE_SELECTED
 PYTHOS:CORE:BLOCK_DEVICE_READY
+PYTHOS:CORE:STORAGE:ACCESS_GRANTED
+PYTHOS:CORE:STORAGE:ACCESS_DENIED
+PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -813,7 +820,7 @@ The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` befor
 
 Phase 6 further requires `PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY` after `PYTHOS:CORE:AUDIO:DEVICE_SELECTED`, `PYTHOS:CORE:AUDIO_DRIVER_READY` after `PYTHOS:CORE:AUDIO:DRIVER`, `PYTHOS:CORE:AUDIO_BUFFERS_READY` after `PYTHOS:CORE:AUDIO:BUFFER`, `PYTHOS:CORE:PCM_PLAYBACK_READY` after `PYTHOS:CORE:AUDIO:PCM_PLAYBACK`, `PYTHOS:CORE:AUDIO_MIXING_READY` after the three `PYTHOS:CORE:AUDIO:MIX:*` markers, `PYTHOS:CORE:BOOT_ASSETS_READY` after the three `PYTHOS:CORE:BOOT_ASSET:*` markers, `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY` after `PYTHOS:CORE:BOOT_SYNC:AUDIO`, `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY` after the audio fallback marker, `PYTHOS:CORE:PHASE_6_COMPLETE` after graceful fallback, and `PYTHOS:CORE:PHASE_6_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
-Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, and `PYTHOS:CORE:BLOCK_DEVICE_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, and `PYTHOS:CORE:STORAGE_SERVICE_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

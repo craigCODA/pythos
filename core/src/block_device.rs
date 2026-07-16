@@ -33,12 +33,34 @@ pub enum BlockDeviceError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BlockDeviceInfo {
-    pub bus: u8,
-    pub device: u8,
-    pub function: u8,
-    pub io_base: u16,
-    pub capacity_sectors: u64,
-    pub queue_size: u16,
+    bus: u8,
+    device: u8,
+    function: u8,
+    io_base: u16,
+    capacity_sectors: u64,
+    queue_size: u16,
+}
+
+impl BlockDeviceInfo {
+    pub const fn capacity_sectors(self) -> u64 {
+        self.capacity_sectors
+    }
+
+    pub const fn queue_size(self) -> u16 {
+        self.queue_size
+    }
+
+    #[cfg(test)]
+    pub const fn new_for_test(capacity_sectors: u64, queue_size: u16) -> Self {
+        Self {
+            bus: 0,
+            device: 6,
+            function: 0,
+            io_base: 0xC000,
+            capacity_sectors,
+            queue_size,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `block-device-driver` complete; next slice is
-`storage-service`.
+Current boundary: Phase 7 `storage-service` complete; next slice is
+`append-only-journal`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice block-device-driver
+python scripts\test-boot.py --slice storage-service
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,13 +40,13 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 block-device-driver complete
-Next allowed slice: storage-service
+Phase 7 storage-service complete
+Next allowed slice: append-only-journal
 ```
 
-Do not start `append-only-journal`, typed-object persistence, object browser
-work, networking, AI, ring-3, SMP, or hardware-expansion work before the
-roadmap gate for that slice.
+Do not start `checksums-and-commit-markers`, crash recovery, typed-object
+persistence, object browser work, networking, AI, ring-3, SMP, or
+hardware-expansion work before the roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -83,6 +83,7 @@ graceful-audio-fallback
 
 ```text
 block-device-driver
+storage-service
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -92,6 +93,13 @@ selects vendor `0x1AF4` device `0x1001`, validates the legacy I/O BAR, enables
 I/O and bus-master command bits, reads capacity and queue metadata, and emits
 the block-device markers. This slice does not implement raw sector I/O,
 storage-service mediation, journaling, object records, or crash recovery.
+
+The storage-service slice makes the selected block device opaque outside
+`block_device` and authorizes storage intents through Phase 3 capability
+handles. It proves a valid holder can authorize bounded storage access and that
+wrong-holder or missing-rights attempts are denied before block access. It does
+not implement raw sector I/O, append-only journaling, object records, or crash
+recovery.
 
 ## Phase 6 Marker Tail
 
@@ -123,6 +131,9 @@ PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
 PYTHOS:CORE:BLOCK:DEVICE_SELECTED
 PYTHOS:CORE:BLOCK_DEVICE_READY
+PYTHOS:CORE:STORAGE:ACCESS_GRANTED
+PYTHOS:CORE:STORAGE:ACCESS_DENIED
+PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -143,6 +154,9 @@ PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY
 PYTHOS:CORE:PHASE_6_COMPLETE
 PYTHOS:CORE:BLOCK:DEVICE_SELECTED
 PYTHOS:CORE:BLOCK_DEVICE_READY
+PYTHOS:CORE:STORAGE:ACCESS_GRANTED
+PYTHOS:CORE:STORAGE:ACCESS_DENIED
+PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -160,6 +174,7 @@ core/src/framebuffer.rs
 core/src/font.rs
 core/src/main.rs
 core/src/shell_objects.rs
+core/src/storage_service.rs
 ```
 
 Test and harness code:
@@ -206,7 +221,6 @@ Do not assume any of the following exists:
 
 ```text
 persistent object storage
-storage service
 append-only journal
 checksummed commit markers
 crash recovery
@@ -243,13 +257,14 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-storage-service
+append-only-journal
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Add or confirm a failing test/harness expectation for the storage-service
+1. Add or confirm a failing test/harness expectation for the append-only journal
    marker.
-2. Implement only capability-gated mediation over the selected block device.
-3. Do not implement append-only journaling or object records in this slice.
+2. Implement only a journal-first write intent path over the storage service.
+3. Do not implement checksums, commit markers, recovery, or object records in
+   this slice.
 4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

@@ -718,8 +718,14 @@ Phase 6 exit condition reproducible.
    metadata, and emits `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` followed by
    `PYTHOS:CORE:BLOCK_DEVICE_READY`. This slice does not implement the
    storage service, raw read/write operations, journaling, or object storage.
-2. `storage-service` - capability-gated service mediating all block access. No
-   other service touches the block device directly.
+2. `storage-service` - COMPLETE. Capability-gated service facade mediating all
+   block access. The selected block device is opaque outside `block_device`;
+   storage requests are authorized through Phase 3 capability handles, and
+   wrong-holder or missing-rights attempts are denied before block access.
+   Emits `PYTHOS:CORE:STORAGE:ACCESS_GRANTED`,
+   `PYTHOS:CORE:STORAGE:ACCESS_DENIED`, and
+   `PYTHOS:CORE:STORAGE_SERVICE_READY`. This slice does not implement sector
+   I/O, journaling, commit markers, recovery, or object storage.
 3. `append-only-journal` - write path is journal-first.
 4. `checksums-and-commit-markers` - every committed write is checksummed and
    marked. A torn write is detectable, not silently accepted.
