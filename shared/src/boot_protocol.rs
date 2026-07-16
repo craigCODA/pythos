@@ -1,6 +1,6 @@
 pub const PYTH_BOOT_MAGIC: u64 = 0x5059_5448_424F_4F54;
 pub const PYTH_BOOT_ABI_MAJOR: u16 = 0;
-pub const PYTH_BOOT_ABI_MINOR: u16 = 1;
+pub const PYTH_BOOT_ABI_MINOR: u16 = 2;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -25,6 +25,8 @@ pub struct PythBootInfo {
     pub bootstrap_stack_top: u64,
     pub init_bundle_phys: u64,
     pub init_bundle_len: u64,
+    pub font_phys: u64,
+    pub font_len: u64,
     pub runtime_services_ptr: u64,
     pub command_line_ptr: u64,
     pub command_line_len: u32,
@@ -63,6 +65,7 @@ pub enum BootInfoError {
     BadFramebuffer,
     BadKernelRange,
     BadStackRange,
+    BadFont,
 }
 
 impl PythBootInfo {
@@ -103,6 +106,9 @@ impl PythBootInfo {
             || self.bootstrap_stack_bottom >= self.bootstrap_stack_top
         {
             return Err(BootInfoError::BadStackRange);
+        }
+        if self.font_phys == 0 || self.font_len == 0 || !self.font_phys.is_multiple_of(4096) {
+            return Err(BootInfoError::BadFont);
         }
         Ok(())
     }
@@ -160,6 +166,8 @@ mod tests {
             bootstrap_stack_top: 0xFFFF_E000_0001_1000,
             init_bundle_phys: 0x30_0000,
             init_bundle_len: 19,
+            font_phys: 0x40_0000,
+            font_len: 2052,
             runtime_services_ptr: 0,
             command_line_ptr: 0,
             command_line_len: 0,
@@ -279,5 +287,20 @@ mod tests {
         let mut info = valid_boot_info();
         info.bootstrap_stack_top = info.bootstrap_stack_bottom;
         assert_eq!(info.validate(), Err(BootInfoError::BadStackRange));
+    }
+
+    #[test]
+    fn missing_or_unaligned_font_is_rejected() {
+        let mut info = valid_boot_info();
+        info.font_phys = 0;
+        assert_eq!(info.validate(), Err(BootInfoError::BadFont));
+
+        let mut info = valid_boot_info();
+        info.font_phys = 0x40_0001;
+        assert_eq!(info.validate(), Err(BootInfoError::BadFont));
+
+        let mut info = valid_boot_info();
+        info.font_len = 0;
+        assert_eq!(info.validate(), Err(BootInfoError::BadFont));
     }
 }

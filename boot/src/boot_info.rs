@@ -1,5 +1,6 @@
 use crate::elf::LoadedKernel;
 use crate::firmware::FirmwareTables;
+use crate::font::LoadedFont;
 use crate::initrd::LoadedInitBundle;
 use crate::memory_map::CapturedMemoryMap;
 use crate::paging::BootstrapStack;
@@ -13,6 +14,16 @@ use pythos_shared::boot_protocol::{
 
 pub(crate) struct AllocatedBootInfo {
     ptr: *mut PythBootInfo,
+}
+
+pub(crate) struct BootInfoInputs<'a> {
+    pub(crate) framebuffer: PythFramebufferInfo,
+    pub(crate) kernel: &'a LoadedKernel,
+    pub(crate) init_bundle: &'a LoadedInitBundle,
+    pub(crate) font: &'a LoadedFont,
+    pub(crate) memory_map: &'a CapturedMemoryMap,
+    pub(crate) stack: &'a BootstrapStack,
+    pub(crate) firmware_tables: FirmwareTables,
 }
 
 impl AllocatedBootInfo {
@@ -41,26 +52,19 @@ impl AllocatedBootInfo {
         Ok(Self { ptr: buffer.cast() })
     }
 
-    pub(crate) fn populate(
-        &self,
-        framebuffer: PythFramebufferInfo,
-        kernel: &LoadedKernel,
-        init_bundle: &LoadedInitBundle,
-        memory_map: &CapturedMemoryMap,
-        stack: &BootstrapStack,
-        firmware_tables: FirmwareTables,
-    ) -> Result<*const PythBootInfo, ()> {
+    pub(crate) fn populate(&self, inputs: BootInfoInputs<'_>) -> Result<*const PythBootInfo, ()> {
         if self.ptr.is_null()
-            || !kernel.is_well_formed()
-            || !init_bundle.is_loaded()
-            || !memory_map.is_captured()
-            || stack.physical_start == 0
-            || stack.virt_bottom >= stack.virt_top
+            || !inputs.kernel.is_well_formed()
+            || !inputs.init_bundle.is_loaded()
+            || !inputs.font.is_loaded()
+            || !inputs.memory_map.is_captured()
+            || inputs.stack.physical_start == 0
+            || inputs.stack.virt_bottom >= inputs.stack.virt_top
         {
             return Err(());
         }
-        let descriptor_size = u32::try_from(memory_map.descriptor_size).map_err(|_| ())?;
-        let memory_map_len = u64::try_from(memory_map.len).map_err(|_| ())?;
+        let descriptor_size = u32::try_from(inputs.memory_map.descriptor_size).map_err(|_| ())?;
+        let memory_map_len = u64::try_from(inputs.memory_map.len).map_err(|_| ())?;
 
         let boot_info = PythBootInfo {
             magic: PYTH_BOOT_MAGIC,
@@ -68,21 +72,23 @@ impl AllocatedBootInfo {
             abi_minor: PYTH_BOOT_ABI_MINOR,
             struct_size: mem::size_of::<PythBootInfo>() as u32,
             flags: 0,
-            memory_map_ptr: memory_map.ptr as u64,
+            memory_map_ptr: inputs.memory_map.ptr as u64,
             memory_map_len,
             memory_descriptor_size: descriptor_size,
-            memory_descriptor_version: memory_map.descriptor_version,
-            framebuffer,
-            acpi_rsdp: firmware_tables.acpi_rsdp,
-            smbios_entry: firmware_tables.smbios_entry,
-            kernel_phys_start: kernel.physical_start,
-            kernel_phys_end: kernel.physical_end,
-            kernel_virt_start: kernel.virtual_start,
-            kernel_virt_end: kernel.virtual_end,
-            bootstrap_stack_bottom: stack.virt_bottom,
-            bootstrap_stack_top: stack.virt_top,
-            init_bundle_phys: init_bundle.physical_start,
-            init_bundle_len: init_bundle.len,
+            memory_descriptor_version: inputs.memory_map.descriptor_version,
+            framebuffer: inputs.framebuffer,
+            acpi_rsdp: inputs.firmware_tables.acpi_rsdp,
+            smbios_entry: inputs.firmware_tables.smbios_entry,
+            kernel_phys_start: inputs.kernel.physical_start,
+            kernel_phys_end: inputs.kernel.physical_end,
+            kernel_virt_start: inputs.kernel.virtual_start,
+            kernel_virt_end: inputs.kernel.virtual_end,
+            bootstrap_stack_bottom: inputs.stack.virt_bottom,
+            bootstrap_stack_top: inputs.stack.virt_top,
+            init_bundle_phys: inputs.init_bundle.physical_start,
+            init_bundle_len: inputs.init_bundle.len,
+            font_phys: inputs.font.physical_start,
+            font_len: inputs.font.len,
             runtime_services_ptr: 0,
             command_line_ptr: 0,
             command_line_len: 0,

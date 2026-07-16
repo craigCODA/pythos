@@ -569,6 +569,17 @@ class BootCoreHandoffTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stdout)
 
+    def test_font_system_marker_is_observed_after_software_renderer(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "scripts/test-boot.py", "--slice", "font-system"],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout)
+
     def test_milestone_1_complete_marker_is_observed_after_framebuffer_ready(self) -> None:
         result = subprocess.run(
             [sys.executable, "scripts/test-boot.py", "--slice", "milestone-1"],

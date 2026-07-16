@@ -5,6 +5,7 @@ mod boot_info;
 mod elf;
 mod exit_boot_services;
 mod firmware;
+mod font;
 mod graphics;
 mod handoff;
 mod initrd;
@@ -45,6 +46,11 @@ pub extern "efiapi" fn efi_main(
         Ok(_) => fail(),
         Err(()) => fail(),
     };
+    let loaded_font = match font::load_font(system_table, image_handle) {
+        Ok(loaded_font) if loaded_font.is_loaded() => loaded_font,
+        Ok(_) => fail(),
+        Err(()) => fail(),
+    };
     let firmware_tables = match firmware::discover(system_table) {
         Ok(tables) => tables,
         Err(()) => fail(),
@@ -67,14 +73,15 @@ pub extern "efiapi" fn efi_main(
         Ok(_) => fail(),
         Err(()) => fail(),
     };
-    let boot_info = match allocated_boot_info.populate(
+    let boot_info = match allocated_boot_info.populate(boot_info::BootInfoInputs {
         framebuffer,
-        &loaded_kernel,
-        &init_bundle,
-        &memory_map,
-        &stack,
+        kernel: &loaded_kernel,
+        init_bundle: &init_bundle,
+        font: &loaded_font,
+        memory_map: &memory_map,
+        stack: &stack,
         firmware_tables,
-    ) {
+    }) {
         Ok(boot_info) => boot_info,
         Err(()) => fail(),
     };
@@ -87,14 +94,15 @@ pub extern "efiapi" fn efi_main(
                 fail();
             }
             if allocated_boot_info
-                .populate(
+                .populate(boot_info::BootInfoInputs {
                     framebuffer,
-                    &loaded_kernel,
-                    &init_bundle,
-                    &memory_map,
-                    &stack,
+                    kernel: &loaded_kernel,
+                    init_bundle: &init_bundle,
+                    font: &loaded_font,
+                    memory_map: &memory_map,
+                    stack: &stack,
                     firmware_tables,
-                )
+                })
                 .is_err()
             {
                 fail();

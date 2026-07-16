@@ -8,6 +8,7 @@ mod boot_metadata;
 mod capabilities;
 mod context_switch;
 mod font;
+mod font_system;
 mod framebuffer;
 mod input_drivers;
 mod input_events;
@@ -301,6 +302,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SOFTWARE_RENDERER_READY");
+        if font_system::run_self_test(boot_info).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:FONT_SYSTEM_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

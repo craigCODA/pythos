@@ -22,6 +22,9 @@ RUNTIME_SOURCE = (
     b"        system.log(\"PythOS [HISS] We Are Woken\")\n"
     b"        self.ready()\n"
 )
+PSF1_HEADER_LEN = 4
+PSF1_GLYPH_COUNT = 256
+PSF1_GLYPH_HEIGHT = 8
 
 SECTOR_SIZE = 512
 ISO_SECTOR_SIZE = 2048
@@ -71,6 +74,16 @@ def build_runtime_payload(source: bytes = RUNTIME_SOURCE) -> bytes:
     return bytes(header) + source
 
 
+def build_font_psf() -> bytes:
+    font = bytearray(PSF1_HEADER_LEN + PSF1_GLYPH_COUNT * PSF1_GLYPH_HEIGHT)
+    font[0:4] = bytes([0x36, 0x04, 0x00, PSF1_GLYPH_HEIGHT])
+    a_offset = PSF1_HEADER_LEN + ord("A") * PSF1_GLYPH_HEIGHT
+    font[a_offset : a_offset + PSF1_GLYPH_HEIGHT] = bytes(
+        [0x18, 0x24, 0x42, 0x7E, 0x42, 0x42, 0x00, 0x00]
+    )
+    return bytes(font)
+
+
 def directory_entry(name: str, attr: int, cluster: int, size: int) -> bytes:
     entry = bytearray(32)
     entry[0:11] = short_name(name)
@@ -116,7 +129,7 @@ def pythos_boot_files(loader: Path, kernel: Path) -> dict[str, bytes]:
         "PYTHOS/PYTHCORE.ELF": kernel.read_bytes(),
         "PYTHOS/BOOT.CFG": b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
         "PYTHOS/INIT.PAK": build_init_pak(build_runtime_payload()),
-        "PYTHOS/FONT.PSF": b"",
+        "PYTHOS/FONT.PSF": build_font_psf(),
     }
 
 

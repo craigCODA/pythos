@@ -305,7 +305,7 @@ pub fn build_plan<'a>(
     })
 }
 
-fn required_reserved_ranges(boot_info: &PythBootInfo) -> Result<[PageRange; 3], MemoryError> {
+fn required_reserved_ranges(boot_info: &PythBootInfo) -> Result<[PageRange; 4], MemoryError> {
     Ok([
         PageRange::new(boot_info.kernel_phys_start, boot_info.kernel_phys_end)?,
         PageRange::new(
@@ -313,6 +313,13 @@ fn required_reserved_ranges(boot_info: &PythBootInfo) -> Result<[PageRange; 3], 
             boot_info
                 .init_bundle_phys
                 .checked_add(boot_info.init_bundle_len)
+                .ok_or(MemoryError::RangeOverflow)?,
+        )?,
+        PageRange::new(
+            boot_info.font_phys,
+            boot_info
+                .font_phys
+                .checked_add(boot_info.font_len)
                 .ok_or(MemoryError::RangeOverflow)?,
         )?,
         PageRange::new(

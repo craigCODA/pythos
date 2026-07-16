@@ -129,6 +129,11 @@ impl KernelAddressSpace {
             boot_info.init_bundle_len,
             PTE_NO_EXECUTE,
         )?;
+        tables.map_translated_range(
+            align_down(boot_info.font_phys),
+            boot_info.font_len,
+            PTE_NO_EXECUTE,
+        )?;
         map_firmware_tables(&mut tables, boot_info)?;
         tables.map_translated_range(
             boot_info.bootstrap_stack_bottom,
@@ -187,6 +192,7 @@ impl KernelAddressSpace {
         translate_active(symbol_addr(&raw const __pythcore_text_start))?;
         translate_active(boot_info as *const PythBootInfo as u64)?;
         translate_active(boot_info.memory_map_ptr)?;
+        translate_active(boot_info.font_phys)?;
         translate_active(boot_info.bootstrap_stack_top - 8)?;
         translate_active(boot_info.framebuffer.mapped_virtual_base)?;
 

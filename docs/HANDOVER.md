@@ -51,8 +51,8 @@ file and update the handover before continuing.
 ## Current Stop Point
 
 PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver`,
-`input-event-service`, and `software-renderer` slices are complete;
-`font-system` is the next active slice.
+`input-event-service`, `software-renderer`, and `font-system` slices are
+complete; `compositor` / `surfaces` / `clipping` is the next active slice.
 
 Completed:
 
@@ -74,19 +74,22 @@ Phase 4    async-events
 Phase 5    keyboard-driver / mouse-driver
 Phase 5    input-event-service
 Phase 5    software-renderer
+Phase 5    font-system
 ```
 
 Next slice:
 
 ```text
-Phase 5: font-system
+Phase 5: compositor / surfaces / clipping
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
 alignment:
 
 ```text
-GUI
+pointer interaction
+widgets
+shell applications
 audio
 storage
 networking
@@ -129,9 +132,9 @@ origin tracking the same branch. Verify the latest commit with `git log`
 instead of trusting this text.
 
 Phase 4 is complete. Phase 5 has completed input drivers, input event
-normalization, and the software renderer. The next allowed work is Phase 5
-`font-system`. Do not start Phase 6, audio, storage, networking, AI, ring-3,
-or SMP work.
+normalization, the software renderer, and the font system. The next allowed
+work is Phase 5 `compositor` / `surfaces` / `clipping`. Do not start Phase 6,
+audio, storage, networking, AI, ring-3, or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
 proof. Any slice must be enforced by scripts/test-boot.py or an equivalent
@@ -246,6 +249,8 @@ PYTHOS:CORE:INPUT:EVENT
 PYTHOS:CORE:INPUT_EVENT_SERVICE_READY
 PYTHOS:CORE:RENDER:RECT
 PYTHOS:CORE:SOFTWARE_RENDERER_READY
+PYTHOS:CORE:FONT:PSF_LOADED
+PYTHOS:CORE:FONT_SYSTEM_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -275,7 +280,7 @@ cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice software-renderer
+python scripts\test-boot.py --slice font-system
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
@@ -492,6 +497,11 @@ Verified Phase 5 so far:
   events for a capability-holding subscriber.
 * The software renderer fills clipped rectangles into a bounded native pixel
   buffer and emits `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
+* ADR 0019 appends explicit `font_phys` and `font_len` boot-info fields and
+  increments the boot ABI minor version to 2.
+* The loader loads a deterministic PSF1 `/PYTHOS/FONT.PSF`, PythCore reserves
+  and maps the font range, and the font-system proof validates PSF metadata
+  before emitting `PYTHOS:CORE:FONT_SYSTEM_READY`.
 
 ## What Does Not Exist Yet
 
@@ -506,7 +516,6 @@ Do not imply these are implemented:
 * Broad service restart policy beyond the fixed noncritical proof.
 * General async runtime or coroutine scheduler.
 * GUI shell.
-* Font loading from `FONT.PSF`.
 * Compositor, surfaces, clipping, focus, movable windows, widgets, or shell
   applications.
 * Audio driver or cinematic boot sequence.
@@ -536,16 +545,17 @@ validated INIT.PAK runtime payload
 
 It is not a general Python runtime yet.
 
-## Active Slice: Phase 5 font-system
+## Active Slice: Phase 5 compositor / surfaces / clipping
 
-Phase 4 is complete. The next allowed roadmap work is Phase 5 `font-system`.
+Phase 4 is complete. The next allowed roadmap work is Phase 5 `compositor`,
+`surfaces`, and `clipping`.
 
 Roadmap intent:
 
 ```text
-Load the boot image's `/PYTHOS/FONT.PSF` asset, pass it through boot info, map
-it under PythCore-owned page tables, and parse enough PSF metadata to replace
-the embedded diagnostic font path later in Phase 5.
+Create the first typed drawable shell objects, bind them to presentation
+surfaces, composite independent regions into a bounded framebuffer-sized
+surface, and prove clipping prevents one surface from corrupting another.
 ```
 
 Recommended first scope for the next agent:
@@ -555,13 +565,13 @@ Recommended first scope for the next agent:
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice font-system
+   python scripts\test-boot.py --slice compositor
    ```
 
 3. The first run should fail because the new completion marker is missing.
 4. Keep the marker order after `PYTHOS:CORE:ASYNC_EVENTS_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
-5. Implement ADR 0019's font boot-info extension and keep the ABI bump explicit.
+5. Preserve ADR 0018's object-id and presentation-binding split.
 6. Preserve the completed Phase 4 runtime proof path.
 
 Do not let Phase 5 entry become:
@@ -625,6 +635,7 @@ boot/src/firmware.rs
 boot/src/graphics.rs
 boot/src/elf.rs
 boot/src/initrd.rs
+boot/src/font.rs
 boot/src/memory_map.rs
 boot/src/boot_info.rs
 boot/src/exit_boot_services.rs
@@ -644,6 +655,7 @@ Core entry and boot metadata:
 core/src/main.rs
 core/src/boot_metadata.rs
 core/src/framebuffer.rs
+core/src/font_system.rs
 core/src/input_drivers.rs
 core/src/input_events.rs
 core/src/software_renderer.rs
@@ -901,11 +913,12 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker for the Phase 5 font-system slice
+   missing marker for the Phase 5 compositor slice
    ```
 
-5. Implement only the `FONT.PSF` load/pass/map/parse proof required by ADR
-   0019. Do not build the compositor or shell applications early.
+5. Implement only typed shell objects, presentation bindings, surface
+   composition, and clipping. Do not build pointer interaction, widgets, or
+   shell applications early.
 
 6. Keep the marker order:
 
@@ -921,6 +934,7 @@ Suggested disciplined flow:
    PYTHOS:CORE:INPUT_DRIVERS_READY
    PYTHOS:CORE:INPUT_EVENT_SERVICE_READY
    PYTHOS:CORE:SOFTWARE_RENDERER_READY
+   PYTHOS:CORE:FONT_SYSTEM_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -965,6 +979,7 @@ Python async event delivery        complete
 Phase 5 input drivers              complete
 Phase 5 input event service        complete
 Phase 5 software renderer          complete
+Phase 5 font system                complete
 GUI shell                          in progress
 Audio/cinematic boot               not started
 Persistent object storage          not started
@@ -975,4 +990,4 @@ The base is no longer only a loader. PythCore boots after UEFI, owns its own
 execution substrate, schedules native tasks, enforces local kernel-mode
 capabilities, runs the intentionally narrow Python-native runtime path, and has
 entered Phase 5 graphical-shell groundwork. The next work is the Phase 5
-`font-system` slice.
+`compositor` / `surfaces` / `clipping` slice.

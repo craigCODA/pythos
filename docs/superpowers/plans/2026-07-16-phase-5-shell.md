@@ -52,10 +52,10 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `shared/src/boot_protocol.rs`, `boot/src/font.rs`, `boot/src/main.rs`, `boot/src/boot_info.rs`, `core/src/font_system.rs`, VM mapping files, build scripts, marker tests, docs.
 
-- [ ] Add `font-system` marker tests and verify they fail.
-- [ ] Load `/PYTHOS/FONT.PSF`, pass it via boot info, map it after `VM_READY`, and parse PSF metadata.
-- [ ] Emit `PYTHOS:CORE:FONT:PSF_LOADED` and `PYTHOS:CORE:FONT_SYSTEM_READY`.
-- [ ] Verify and commit.
+- [x] Add `font-system` marker tests and verify they fail.
+- [x] Load `/PYTHOS/FONT.PSF`, pass it via boot info, map it after `VM_READY`, and parse PSF metadata.
+- [x] Emit `PYTHOS:CORE:FONT:PSF_LOADED` and `PYTHOS:CORE:FONT_SYSTEM_READY`.
+- [x] Verify and commit.
 
 ### Task 5: Compositor, Surfaces, Clipping
 

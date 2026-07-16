@@ -23,6 +23,9 @@ RUNTIME_SOURCE = (
     b"        system.log(\"PythOS [HISS] We Are Woken\")\n"
     b"        self.ready()\n"
 )
+PSF1_HEADER_LEN = 4
+PSF1_GLYPH_COUNT = 256
+PSF1_GLYPH_HEIGHT = 8
 
 
 def build_init_pak(payload: bytes = b"") -> bytes:
@@ -54,6 +57,19 @@ def build_runtime_payload(source: bytes = RUNTIME_SOURCE) -> bytes:
 INIT_PAK = build_init_pak(build_runtime_payload())
 
 
+def build_font_psf() -> bytes:
+    font = bytearray(PSF1_HEADER_LEN + PSF1_GLYPH_COUNT * PSF1_GLYPH_HEIGHT)
+    font[0:4] = bytes([0x36, 0x04, 0x00, PSF1_GLYPH_HEIGHT])
+    a_offset = PSF1_HEADER_LEN + ord("A") * PSF1_GLYPH_HEIGHT
+    font[a_offset : a_offset + PSF1_GLYPH_HEIGHT] = bytes(
+        [0x18, 0x24, 0x42, 0x7E, 0x42, 0x42, 0x00, 0x00]
+    )
+    return bytes(font)
+
+
+FONT_PSF = build_font_psf()
+
+
 def write_binary_if_changed(path: Path, content: bytes) -> None:
     if path.exists() and path.read_bytes() == content:
         return
@@ -82,7 +98,7 @@ def main() -> int:
     shutil.copy2(kernel, pythos_dir / "PYTHCORE.ELF")
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(pythos_dir / "INIT.PAK", INIT_PAK)
-    write_binary_if_changed(pythos_dir / "FONT.PSF", b"")
+    write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 
     print(f"ESP_READY {ESP}")
     return 0

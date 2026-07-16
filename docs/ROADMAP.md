@@ -563,9 +563,11 @@ capability-scoped.
    fill clipped rectangles into a bounded native pixel buffer and emit
    `PYTHOS:CORE:RENDER:RECT` followed by
    `PYTHOS:CORE:SOFTWARE_RENDERER_READY`.
-4. `font-system` - replaces the embedded 8x8 diagnostic font with `FONT.PSF`
-   loading. The ISO already carries a `FONT.PSF` slot from Phase 1; this is
-   where it stops being an empty placeholder.
+4. `font-system` - COMPLETE. Replaces the empty `FONT.PSF` placeholder with a
+   deterministic PSF1 asset, passes it through explicit ADR 0019 boot-info
+   fields, reserves and maps the font bytes, validates PSF metadata, and emits
+   `PYTHOS:CORE:FONT:PSF_LOADED` followed by
+   `PYTHOS:CORE:FONT_SYSTEM_READY`.
 5. `compositor`, `surfaces`, `clipping` - windowing primitives:
    independently drawn regions composited without one surface corrupting
    another's framebuffer region.
