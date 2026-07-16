@@ -475,9 +475,12 @@ migration, not a rediscovered one.
    `PYTHOS:CORE:INTERPRETER_BOOTED`. It does not execute `system.log`,
    transition service readiness, define the `system.*` API, or implement
    coroutine/event semantics.
-4. `system-api-surface` - expose a deliberately narrow `system.*` API. Every
-   function on this surface is a capability check, not a syscall shortcut.
-   Document the full surface in an ADR before implementing more than a stub.
+4. `system-api-surface` - COMPLETE. Exposes the ADR 0016 `system.log(message)`
+   host call as the first and only current `system.*` function. The call checks
+   a `LOG` capability for the runtime service identity before emitting
+   `PYTHOS:CORE:SYSTEM:LOG`, rejects empty or oversized messages, and emits
+   `PYTHOS:CORE:SYSTEM_API_READY` after the proof. `self.ready()` and service
+   lifecycle transitions remain later slices.
 5. `value-validation` - every value crossing the native/Python boundary in
    either direction is validated for type, bounds, and ownership. No raw
    pointer or unchecked native struct is ever exposed directly to Python.

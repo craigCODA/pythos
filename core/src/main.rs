@@ -20,6 +20,7 @@ mod scheduler;
 mod serial;
 mod service_identity;
 mod shared_memory;
+mod system_api;
 mod tasks;
 
 #[cfg(not(test))]
@@ -242,11 +243,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
         };
         serial::write_line("PYTHOS:CORE:INIT_PAK_LOADED");
-        if interpreter::boot(runtime_payload.source).is_err() {
+        let runtime_instance = match interpreter::boot(runtime_payload.source) {
+            Ok(instance) => instance,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:INTERPRETER_BOOTED");
+        if system_api::run_log_surface(&runtime_instance).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
-        serial::write_line("PYTHOS:CORE:INTERPRETER_BOOTED");
+        serial::write_line("PYTHOS:CORE:SYSTEM_API_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

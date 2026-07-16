@@ -102,6 +102,8 @@ PYTHOS:CORE:PHASE_3_COMPLETE
 PYTHOS:CORE:RUNTIME_SELECTED
 PYTHOS:CORE:INIT_PAK_LOADED
 PYTHOS:CORE:INTERPRETER_BOOTED
+PYTHOS:CORE:SYSTEM:LOG
+PYTHOS:CORE:SYSTEM_API_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -156,7 +158,8 @@ This proves:
 * PythCore records audit entries for grant, use, denial, and revocation with service identity, resource, operation, and outcome.
 * PythCore records the Phase 4 runtime-selection decision from ADR 0013, selects the custom minimal interpreter as the first runtime path, and emits `PYTHOS:CORE:RUNTIME_SELECTED`.
 * PythCore validates the ADR 0014 runtime source payload inside `INIT.PAK`, confirms the source is bounded, checksummed, and UTF-8, and emits `PYTHOS:CORE:INIT_PAK_LOADED`.
-* PythCore boots the ADR 0015 custom-minimal interpreter by recognizing the exact `HelloService` source shape, synthesizing a fixed internal operation plan, assigning a runtime task id and service identity, requiring an explicit boot capability, and emitting `PYTHOS:CORE:INTERPRETER_BOOTED`. It does not execute `system.log`, transition service readiness, or define the `system.*` API yet.
+* PythCore boots the ADR 0015 custom-minimal interpreter by recognizing the exact `HelloService` source shape, synthesizing a fixed internal operation plan, assigning a runtime task id and service identity, requiring an explicit boot capability, and emitting `PYTHOS:CORE:INTERPRETER_BOOTED`.
+* PythCore exposes the ADR 0016 `system.log(message)` host call as the first `system.*` API, grants and validates a `LOG` capability for the runtime service identity, emits `PYTHOS:CORE:SYSTEM:LOG`, then emits `PYTHOS:CORE:SYSTEM_API_READY`. It does not implement general native/Python value conversion or service readiness yet.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -204,11 +207,13 @@ Core:
 * `docs/decisions/0013-python-runtime-selection.md` selects the custom minimal interpreter for Phase 4.
 * `docs/decisions/0014-init-pak-runtime-payload.md` records the inner runtime payload ABI.
 * `docs/decisions/0015-custom-minimal-interpreter-bootstrap.md` records the exact-shape interpreter bootstrap boundary.
+* `docs/decisions/0016-system-api-surface.md` records the initial `system.*` API surface.
 * `docs/research/runtime-selection/` contains the RustPython, MicroPython, and custom minimal interpreter evidence files.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
 * `core/src/interpreter.rs` implements the custom-minimal interpreter bootstrap proof.
 * `core/src/runtime_loader.rs` validates the Phase 4 runtime payload without executing it.
+* `core/src/system_api.rs` implements the first capability-checked `system.log` host call.
 * `core/src/capabilities.rs` implements Phase 3 capability handle table proofs.
 * `core/src/ipc_channels.rs` implements the Phase 3 fixed typed IPC channel proof.
 * `core/src/permission_validation.rs` implements the Phase 3 capability validation wrapper for privileged operations.
@@ -256,7 +261,7 @@ python scripts/test-boot.py --slice exit-boot-services-ok
 
 ## Known Risks and Gaps
 
-* `INIT.PAK` and its inner custom-minimal runtime source payload are validated and parsed into a fixed internal plan, but `system.*` calls and service lifecycle transitions are not executed yet.
+* `INIT.PAK` and its inner custom-minimal runtime source payload are validated and parsed into a fixed internal plan. `system.log` executes through a capability check, but service lifecycle transitions and general native/Python value conversion are not implemented yet.
 * The embedded 8x8 diagnostic font is a stand-in; `FONT.PSF` loading arrives with a later slice.
 * Loader page-table pages are no longer active after `PYTHOS:CORE:VM_READY`, but they are not reclaimed yet.
 * The physical allocator is initialized but only proves ownership state and bitmap backing; no higher-level kernel heap exists yet.
@@ -270,10 +275,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, `negative-authorization-tests`, and `audit-logging` are implemented. Phase 4 `runtime-selection`, `init-pak-loading`, and `interpreter-boot` are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, `negative-authorization-tests`, and `audit-logging` are implemented. Phase 4 `runtime-selection`, `init-pak-loading`, `interpreter-boot`, and `system-api-surface` are implemented on the current branch.
 
 ```text
-next: Phase 4 system-api-surface
+next: Phase 4 value-validation
 ```
 
 The `vm-ready` proof now covers:
@@ -378,6 +383,8 @@ PYTHOS:CORE:PHASE_3_COMPLETE
 PYTHOS:CORE:RUNTIME_SELECTED
 PYTHOS:CORE:INIT_PAK_LOADED
 PYTHOS:CORE:INTERPRETER_BOOTED
+PYTHOS:CORE:SYSTEM:LOG
+PYTHOS:CORE:SYSTEM_API_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -405,6 +412,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Stop at the Phase 4 `interpreter-boot` slice boundary. Do not begin
-`system-api-surface` or any broader Python runtime work without explicit
+Stop at the Phase 4 `system-api-surface` slice boundary. Do not begin
+`value-validation` or any broader Python runtime work without explicit
 re-invocation.
