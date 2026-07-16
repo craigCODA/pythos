@@ -717,6 +717,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_memory_quota_markers_are_observed_after_process_termination(self) -> None:
         self.run_boot_slice("memory-quotas")
 
+    def test_cpu_quota_markers_are_observed_after_memory_quotas(self) -> None:
+        self.run_boot_slice("cpu-quotas")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

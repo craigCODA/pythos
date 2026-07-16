@@ -773,6 +773,24 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:MEMORY_QUOTAS_READY");
+        let cpu_quota_proof = match resource_quotas::run_cpu_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if cpu_quota_proof.tick_recorded {
+            serial::write_line("PYTHOS:CORE:QUOTA:CPU_TICK");
+        }
+        if cpu_quota_proof.throttle_denied {
+            serial::write_line("PYTHOS:CORE:QUOTA:CPU_THROTTLED");
+        }
+        if !cpu_quota_proof.tick_recorded || !cpu_quota_proof.throttle_denied {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:CPU_QUOTAS_READY");
     }
 
     #[cfg(test)]
