@@ -492,9 +492,10 @@ migration, not a rediscovered one.
    to ready under a fixed service manager, rejects unknown-service and
    duplicate-ready transitions, emits `PYTHOS:CORE:SERVICE:READY`, and
    completes with `PYTHOS:CORE:SERVICE_MANAGER_READY`.
-7. `exception-containment` - an unhandled Python exception in one service does
-   not crash PythCore or other services. Contained, diagnosed, reported in the
-   spirit of Phase 1.5 diagnostics: structured, not silent.
+7. `exception-containment` - COMPLETE. A managed service can be marked failed
+   by an unhandled runtime exception without panicking PythCore or changing an
+   unrelated ready service. Emits `PYTHOS:CORE:SERVICE:EXCEPTION` and
+   `PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED`.
 8. `service-restart` - a failed noncritical service can be restarted by the
    service manager without a full system reboot.
 9. `async-events` - asynchronous event delivery from native or kernel events

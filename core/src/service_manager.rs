@@ -5,19 +5,22 @@
 use crate::interpreter::{RuntimeInstance, RuntimeOperation};
 #[cfg(not(test))]
 use crate::serial;
-use crate::service_identity::ServiceId;
+use crate::service_identity::{ServiceId, ServiceIdentityTable};
+use crate::tasks::TaskId;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ServiceLifecycleError {
     MissingReadyOperation,
     UnknownService,
     InvalidTransition,
+    ContainmentFailed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ManagedServiceState {
     Starting,
     Ready,
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +60,19 @@ impl ServiceManager {
         Ok(self.service.state)
     }
 
+    pub fn contain_exception(
+        &mut self,
+        identity: ServiceId,
+    ) -> Result<ManagedServiceState, ServiceLifecycleError> {
+        if self.service.identity != identity {
+            return Err(ServiceLifecycleError::UnknownService);
+        }
+        self.service.state = ManagedServiceState::Failed;
+        #[cfg(not(test))]
+        serial::write_line("PYTHOS:CORE:SERVICE:EXCEPTION");
+        Ok(self.service.state)
+    }
+
     pub const fn state(&self) -> ManagedServiceState {
         self.service.state
     }
@@ -76,11 +92,32 @@ pub fn run_self_test(instance: &RuntimeInstance<'_>) -> Result<(), ServiceLifecy
     Err(ServiceLifecycleError::MissingReadyOperation)
 }
 
+pub fn run_exception_containment_self_test() -> Result<(), ServiceLifecycleError> {
+    let mut identities = ServiceIdentityTable::new();
+    let primary = identities
+        .register_task(TaskId::new(70))
+        .map_err(|_| ServiceLifecycleError::ContainmentFailed)?;
+    let failing = identities
+        .register_task(TaskId::new(71))
+        .map_err(|_| ServiceLifecycleError::ContainmentFailed)?;
+    let mut primary_manager = ServiceManager::new(primary);
+    let mut failing_manager = ServiceManager::new(failing);
+
+    primary_manager.mark_ready(primary)?;
+    failing_manager.contain_exception(failing)?;
+    if failing_manager.state() != ManagedServiceState::Failed {
+        return Err(ServiceLifecycleError::ContainmentFailed);
+    }
+    if primary_manager.state() != ManagedServiceState::Ready {
+        return Err(ServiceLifecycleError::ContainmentFailed);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::interpreter::{RUNTIME_TASK_ID, RuntimeProgram};
-    use crate::service_identity::ServiceIdentityTable;
     use crate::value_validation::UntrustedRuntimeValue;
 
     fn service_id() -> ServiceId {
@@ -130,5 +167,29 @@ mod tests {
             manager.mark_ready(service_id),
             Err(ServiceLifecycleError::InvalidTransition)
         );
+    }
+
+    #[test]
+    fn unhandled_exception_marks_only_the_failing_service_failed() {
+        let mut identities = ServiceIdentityTable::new();
+        let healthy = identities
+            .register_task(crate::tasks::TaskId::new(70))
+            .unwrap();
+        let failing = identities
+            .register_task(crate::tasks::TaskId::new(71))
+            .unwrap();
+        let mut healthy_manager = ServiceManager::new(healthy);
+        let mut failing_manager = ServiceManager::new(failing);
+
+        assert_eq!(
+            healthy_manager.mark_ready(healthy),
+            Ok(ManagedServiceState::Ready)
+        );
+        assert_eq!(
+            failing_manager.contain_exception(failing),
+            Ok(ManagedServiceState::Failed)
+        );
+        assert_eq!(healthy_manager.state(), ManagedServiceState::Ready);
+        assert_eq!(failing_manager.state(), ManagedServiceState::Failed);
     }
 }
