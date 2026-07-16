@@ -26,6 +26,7 @@ const IO_BAR_MASK: u32 = !0x3;
 pub enum AudioError {
     InvalidBar,
     CommandRejected,
+    PortRangeOverflow,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -44,6 +45,18 @@ pub struct Ac97Device {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioDriver {
+    Ac97(Ac97Driver),
+    Silent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ac97Driver {
+    device: Ac97Device,
+    sample_rate_hz: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PciFunction {
     bus: u8,
     device: u8,
@@ -55,6 +68,17 @@ struct PciFunction {
     bar1: u32,
 }
 
+const AC97_SAMPLE_RATE_HZ: u32 = 48_000;
+const AC97_MIXER_RESET: u16 = 0x00;
+const AC97_MIXER_MASTER_VOLUME: u16 = 0x02;
+const AC97_MIXER_PCM_OUT_VOLUME: u16 = 0x18;
+const AC97_MIXER_EXT_AUDIO_ID: u16 = 0x28;
+const AC97_MIXER_EXT_AUDIO_CTRL: u16 = 0x2A;
+const AC97_MIXER_PCM_FRONT_DAC_RATE: u16 = 0x2C;
+const AC97_EXT_AUDIO_VARIABLE_RATE: u16 = 1 << 0;
+const AC97_BUS_GLOBAL_CONTROL: u16 = 0x2C;
+const AC97_GLOBAL_CONTROL_COLD_RESET: u32 = 1 << 1;
+
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
     match scan_primary_bus()? {
         AudioDeviceSelection::Ac97(device) => {
@@ -65,6 +89,30 @@ pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
             serial::write_line("PYTHOS:CORE:AUDIO:DEVICE_ABSENT");
             Ok(AudioDeviceSelection::Absent)
         }
+    }
+}
+
+pub fn initialize_driver(selection: AudioDeviceSelection) -> Result<AudioDriver, AudioError> {
+    let driver = driver_from_selection(selection);
+    match driver {
+        AudioDriver::Ac97(ac97) => {
+            configure_ac97(ac97.device)?;
+            serial::write_line("PYTHOS:CORE:AUDIO:DRIVER");
+        }
+        AudioDriver::Silent => {
+            serial::write_line("PYTHOS:CORE:AUDIO:DRIVER_SKIPPED");
+        }
+    }
+    Ok(driver)
+}
+
+fn driver_from_selection(selection: AudioDeviceSelection) -> AudioDriver {
+    match selection {
+        AudioDeviceSelection::Ac97(device) => AudioDriver::Ac97(Ac97Driver {
+            device,
+            sample_rate_hz: AC97_SAMPLE_RATE_HZ,
+        }),
+        AudioDeviceSelection::Absent => AudioDriver::Silent,
     }
 }
 
@@ -177,6 +225,52 @@ fn config_address(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 #[cfg(not(test))]
+fn configure_ac97(device: Ac97Device) -> Result<(), AudioError> {
+    let global_control = ac97_bus_port(device, AC97_BUS_GLOBAL_CONTROL)?;
+    let current = inl(global_control);
+    outl(global_control, current | AC97_GLOBAL_CONTROL_COLD_RESET);
+    io_delay();
+
+    outw(ac97_mixer_port(device, AC97_MIXER_RESET)?, 0);
+    io_delay();
+    outw(ac97_mixer_port(device, AC97_MIXER_MASTER_VOLUME)?, 0);
+    outw(ac97_mixer_port(device, AC97_MIXER_PCM_OUT_VOLUME)?, 0);
+
+    let ext_audio_id = inw(ac97_mixer_port(device, AC97_MIXER_EXT_AUDIO_ID)?);
+    if ext_audio_id & AC97_EXT_AUDIO_VARIABLE_RATE != 0 {
+        let ext_audio_ctrl = inw(ac97_mixer_port(device, AC97_MIXER_EXT_AUDIO_CTRL)?);
+        outw(
+            ac97_mixer_port(device, AC97_MIXER_EXT_AUDIO_CTRL)?,
+            ext_audio_ctrl | AC97_EXT_AUDIO_VARIABLE_RATE,
+        );
+        outw(
+            ac97_mixer_port(device, AC97_MIXER_PCM_FRONT_DAC_RATE)?,
+            AC97_SAMPLE_RATE_HZ as u16,
+        );
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+fn configure_ac97(_device: Ac97Device) -> Result<(), AudioError> {
+    Ok(())
+}
+
+fn ac97_mixer_port(device: Ac97Device, offset: u16) -> Result<u16, AudioError> {
+    device
+        .mixer_base
+        .checked_add(offset)
+        .ok_or(AudioError::PortRangeOverflow)
+}
+
+fn ac97_bus_port(device: Ac97Device, offset: u16) -> Result<u16, AudioError> {
+    device
+        .bus_master_base
+        .checked_add(offset)
+        .ok_or(AudioError::PortRangeOverflow)
+}
+
+#[cfg(not(test))]
 fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     outl(
         PCI_CONFIG_ADDRESS,
@@ -205,10 +299,10 @@ fn write_config_u32(_bus: u8, _device: u8, _function: u8, _offset: u8, _value: u
 #[cfg(not(test))]
 fn outl(port: u16, value: u32) {
     // SAFETY:
-    // 1. Invariant: `port` is one of the PCI configuration I/O ports used by
-    //    the Phase 6 AC97 primary-bus scan.
-    // 2. Established by: private callers pass only `PCI_CONFIG_ADDRESS` or
-    //    `PCI_CONFIG_DATA`.
+    // 1. Invariant: `port` is either a PCI configuration I/O port or a
+    //    validated AC97 bus-master register.
+    // 2. Established by: private callers pass PCI config constants or derive
+    //    the port from the selected AC97 I/O BAR plus a fixed register offset.
     // 3. Lifetime: the I/O transaction completes before this helper returns.
     // 4. Pointer ownership: no memory pointers are used.
     // 5. Alignment: not applicable to port I/O.
@@ -229,10 +323,10 @@ fn outl(port: u16, value: u32) {
 fn inl(port: u16) -> u32 {
     let value: u32;
     // SAFETY:
-    // 1. Invariant: `port` is the PCI configuration data port after an address
-    //    was selected through `PCI_CONFIG_ADDRESS`.
-    // 2. Established by: private callers read only `PCI_CONFIG_DATA` after
-    //    writing a bounded primary-bus config address.
+    // 1. Invariant: `port` is either the PCI configuration data port after an
+    //    address selection or a validated AC97 bus-master register.
+    // 2. Established by: private callers pass PCI config data after a bounded
+    //    config-address write or derive the port from the selected AC97 I/O BAR.
     // 3. Lifetime: the I/O transaction completes before this helper returns.
     // 4. Pointer ownership: no memory pointers are used.
     // 5. Alignment: not applicable to port I/O.
@@ -249,6 +343,70 @@ fn inl(port: u16) -> u32 {
     }
     value
 }
+
+#[cfg(not(test))]
+fn outw(port: u16, value: u16) {
+    // SAFETY:
+    // 1. Invariant: `port` names a validated AC97 mixer I/O register.
+    // 2. Established by: callers derive it from the selected AC97 I/O BAR plus
+    //    a fixed Phase 6 mixer-register offset.
+    // 3. Lifetime: the I/O transaction completes before this helper returns.
+    // 4. Pointer ownership: no memory pointers are used.
+    // 5. Alignment: not applicable to port I/O.
+    // 6. Mapped length: not applicable; port I/O is CPU-mediated.
+    // 7. Concurrency: Phase 6 boot audio setup is single-core.
+    // 8. Violation: writing the wrong port could reconfigure unrelated hardware.
+    unsafe {
+        asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[cfg(test)]
+fn outw(_port: u16, _value: u16) {}
+
+#[cfg(not(test))]
+fn inw(port: u16) -> u16 {
+    let value: u16;
+    // SAFETY:
+    // 1. Invariant: `port` names a validated AC97 mixer I/O register.
+    // 2. Established by: callers derive it from the selected AC97 I/O BAR plus
+    //    a fixed Phase 6 mixer-register offset.
+    // 3. Lifetime: the I/O transaction completes before this helper returns.
+    // 4. Pointer ownership: no memory pointers are used.
+    // 5. Alignment: not applicable to port I/O.
+    // 6. Mapped length: not applicable; port I/O is CPU-mediated.
+    // 7. Concurrency: Phase 6 boot audio setup is single-core.
+    // 8. Violation: reading the wrong port could observe unrelated hardware.
+    unsafe {
+        asm!(
+            "in ax, dx",
+            out("ax") value,
+            in("dx") port,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+    value
+}
+
+#[cfg(test)]
+fn inw(_port: u16) -> u16 {
+    0
+}
+
+#[cfg(not(test))]
+fn io_delay() {
+    for _ in 0..10_000 {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(test)]
+fn io_delay() {}
 
 #[cfg(test)]
 mod tests {
@@ -314,5 +472,32 @@ mod tests {
         };
 
         assert_eq!(classify_ac97(function), Ok(None));
+    }
+
+    #[test]
+    fn selected_ac97_device_becomes_fixed_rate_driver() {
+        let device = Ac97Device {
+            bus: 0,
+            device: 5,
+            function: 0,
+            mixer_base: 0x1000,
+            bus_master_base: 0x2000,
+        };
+
+        assert_eq!(
+            driver_from_selection(AudioDeviceSelection::Ac97(device)),
+            AudioDriver::Ac97(Ac97Driver {
+                device,
+                sample_rate_hz: AC97_SAMPLE_RATE_HZ,
+            })
+        );
+    }
+
+    #[test]
+    fn absent_device_becomes_silent_driver() {
+        assert_eq!(
+            driver_from_selection(AudioDeviceSelection::Absent),
+            AudioDriver::Silent
+        );
     }
 }

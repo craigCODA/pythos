@@ -332,11 +332,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PHASE_5_COMPLETE");
-        if audio::select_device().is_err() {
+        let audio_device = match audio::select_device() {
+            Ok(device) => device,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY");
+        if audio::initialize_driver(audio_device).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
-        serial::write_line("PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY");
+        serial::write_line("PYTHOS:CORE:AUDIO_DRIVER_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
