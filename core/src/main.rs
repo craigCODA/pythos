@@ -2,6 +2,7 @@
 #![cfg_attr(not(test), no_std)]
 
 mod architecture;
+mod audit;
 mod boot_info;
 mod boot_metadata;
 mod capabilities;
@@ -224,6 +225,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY");
+        if audit::run_audit_logging_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:AUDIT_LOGGING_READY");
+        serial::write_line("PYTHOS:CORE:PHASE_3_COMPLETE");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

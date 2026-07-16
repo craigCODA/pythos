@@ -93,6 +93,12 @@ PYTHOS:CORE:CAPABILITY:STALE_DENIED
 PYTHOS:CORE:REVOCATION_READY
 PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED
 PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY
+PYTHOS:CORE:AUDIT:GRANT
+PYTHOS:CORE:AUDIT:USE
+PYTHOS:CORE:AUDIT:DENIAL
+PYTHOS:CORE:AUDIT:REVOCATION
+PYTHOS:CORE:AUDIT_LOGGING_READY
+PYTHOS:CORE:PHASE_3_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -144,6 +150,7 @@ This proves:
 * PythCore validates capability rights before a privileged IPC send, allowing a handle with `SEND` and denying a handle without `SEND` before enqueue.
 * PythCore revokes a specific capability handle, denies the stale generation, and preserves an unrelated handle for the same holder.
 * PythCore denies a task that knows the target resource and operation but has no active matching capability.
+* PythCore records audit entries for grant, use, denial, and revocation with service identity, resource, operation, and outcome.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -185,6 +192,7 @@ Shared ABI:
 Core:
 
 * `core/linker.ld` links PythCore into the intended higher-half image region.
+* `core/src/audit.rs` implements the Phase 3 fixed audit event stream.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
 * `core/src/capabilities.rs` implements Phase 3 capability handle table proofs.
@@ -248,10 +256,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, and `negative-authorization-tests` slices are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, `negative-authorization-tests`, and `audit-logging` are implemented on the current branch.
 
 ```text
-next: Phase 3 audit-logging
+next: Phase boundary checkpoint before Phase 4 runtime-selection
 ```
 
 The `vm-ready` proof now covers:
@@ -347,6 +355,12 @@ PYTHOS:CORE:CAPABILITY:STALE_DENIED
 PYTHOS:CORE:REVOCATION_READY
 PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED
 PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY
+PYTHOS:CORE:AUDIT:GRANT
+PYTHOS:CORE:AUDIT:USE
+PYTHOS:CORE:AUDIT:DENIAL
+PYTHOS:CORE:AUDIT:REVOCATION
+PYTHOS:CORE:AUDIT_LOGGING_READY
+PYTHOS:CORE:PHASE_3_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -374,5 +388,5 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, continue Phase 3 with `audit-logging`. Do not implement Python or later
-phase work while building the audit-logging slice.
+Stop at the Phase 3 boundary. Do not begin Phase 4 `runtime-selection` or any
+Python runtime work without explicit re-invocation.

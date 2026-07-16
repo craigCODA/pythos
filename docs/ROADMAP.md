@@ -305,7 +305,7 @@ suite under `tests/`.
 
 None yet.
 
-## Phase 3: IPC and Capabilities - IN PROGRESS
+## Phase 3: IPC and Capabilities - COMPLETE
 
 ### Purpose
 
@@ -380,11 +380,14 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    load-bearing proof for the entire phase. Emits
    `PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED` and
    `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY`.
-10. `audit-logging` - every capability check, grant, use, denial, and
-    revocation is logged with service identity, resource, operation, and
-    outcome. This is infrastructure-level audit logging, a kernel event stream,
-    not the user-facing provenance or Causal Lens concept from the vision docs.
-    Do not conflate the two or start building Causal Lens schema here.
+10. `audit-logging` - COMPLETE. Every capability check, grant, use, denial,
+    and revocation exercised by the test suite is logged with service identity,
+    resource, operation, and outcome. This is infrastructure-level audit
+    logging, a kernel event stream, not the user-facing provenance or Causal
+    Lens concept from the vision docs. Emits `PYTHOS:CORE:AUDIT:GRANT`,
+    `PYTHOS:CORE:AUDIT:USE`, `PYTHOS:CORE:AUDIT:DENIAL`,
+    `PYTHOS:CORE:AUDIT:REVOCATION`, `PYTHOS:CORE:AUDIT_LOGGING_READY`, and
+    `PYTHOS:CORE:PHASE_3_COMPLETE`.
 
 ### Exit Condition
 
