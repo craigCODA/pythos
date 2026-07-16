@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `user-stacks` complete. Halt at the
-`user-stacks` -> `service-local-python-runtimes` boundary.
+Current boundary: Phase 8 `service-local-python-runtimes` complete. Halt at
+the `service-local-python-runtimes` -> `guarded-shared-memory` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -20,6 +20,7 @@ python scripts\test-boot.py --slice ring-3-execution
 python scripts\test-boot.py --slice separate-address-spaces
 python scripts\test-boot.py --slice syscall-entry
 python scripts\test-boot.py --slice user-stacks
+python scripts\test-boot.py --slice service-local-python-runtimes
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -51,7 +52,8 @@ Phase 8 ring-3-execution complete
 Phase 8 separate-address-spaces complete
 Phase 8 syscall-entry complete
 Phase 8 user-stacks complete
-Next allowed slice: service-local-python-runtimes
+Phase 8 service-local-python-runtimes complete
+Next allowed slice: guarded-shared-memory
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -59,9 +61,9 @@ workspace-session object kind. ADR 0024 records the object-browser inspection
 boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
 0026 records the Phase 8 ring-3 execution proof. ADR 0027 records the Phase 8
 separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
-0029 records the Phase 8 guarded user-stack layout. Do not start guarded shared
-memory, networking, AI, SMP, or hardware-expansion work before their roadmap
-gates.
+0029 records the Phase 8 guarded user-stack layout. ADR 0030 records the Phase
+8 service-local runtime-instance proof. Do not start process termination,
+networking, AI, SMP, or hardware-expansion work before their roadmap gates.
 
 ## Phase 6 Summary
 
@@ -117,6 +119,7 @@ ring-3-execution
 separate-address-spaces
 syscall-entry
 user-stacks
+service-local-python-runtimes
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -234,6 +237,15 @@ implement dynamic user processes, user pointer copy-in/copy-out,
 service-local runtimes, guarded shared memory, process termination, quotas,
 crash containment, or hostile-code capability enforcement.
 
+The service-local-python-runtimes slice records ADR 0030 and implements the
+first service-local runtime-instance proof. PythCore boots two runtime
+instances from the validated Phase 4 source through a shared service-identity
+table, assigns distinct service identities, task ids, user CR3 roots, and local
+runtime state slots, rejects cross-service state mutation, and emits
+`PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY`. It does not implement guarded
+shared memory, user pointer copy-in/copy-out, process termination, quotas,
+crash containment, or hostile-code capability enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -317,6 +329,10 @@ PYTHOS:CORE:USER_STACK:GUARD_PAGE
 PYTHOS:CORE:USER_MODE:ENTER
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:USER_STACKS_READY
+PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE
+PYTHOS:CORE:RUNTIME:ADDRESS_SPACE
+PYTHOS:CORE:RUNTIME:STATE_ISOLATED
+PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -390,6 +406,10 @@ PYTHOS:CORE:USER_STACK:GUARD_PAGE
 PYTHOS:CORE:USER_MODE:ENTER
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:USER_STACKS_READY
+PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE
+PYTHOS:CORE:RUNTIME:ADDRESS_SPACE
+PYTHOS:CORE:RUNTIME:STATE_ISOLATED
+PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -413,6 +433,7 @@ core/src/object_browser.rs
 core/src/persistent_objects.rs
 core/src/object_relationships.rs
 core/src/revision_history.rs
+core/src/service_runtimes.rs
 core/src/shell_objects.rs
 core/src/storage_journal.rs
 core/src/storage_service.rs
@@ -454,6 +475,7 @@ docs/decisions/0026-phase-8-ring3-execution.md
 docs/decisions/0027-phase-8-separate-address-spaces.md
 docs/decisions/0028-phase-8-syscall-abi.md
 docs/decisions/0029-phase-8-user-stacks.md
+docs/decisions/0030-phase-8-service-local-runtimes.md
 ```
 
 Boot artifacts:
@@ -485,7 +507,7 @@ networking
 AI inside the trusted core
 dynamic user process stacks
 user pointer copy-in/copy-out
-ring-3 service isolation
+full hostile-code service isolation
 hostile-code containment
 SMP
 package management
@@ -493,10 +515,11 @@ Open Surface
 Patch
 ```
 
-Ring-3 execution, the distinct user CR3, the syscall ABI, and the guarded
-user-stack pool exist only for the fixed proof path. Capability separation for
-services is still not a hostile-code boundary. Do not claim hostile-code
-isolation until the Phase 8 adversarial boundary tests land.
+Ring-3 execution, the distinct user CR3, the syscall ABI, the guarded
+user-stack pool, and service-local runtime roots exist only for bounded proof
+paths. Capability separation for services is still not a hostile-code boundary.
+Do not claim hostile-code isolation until the Phase 8 adversarial boundary
+tests land.
 
 ## Next Slice
 
@@ -514,17 +537,16 @@ docs/ROADMAP.md
 Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-service-local-python-runtimes
+guarded-shared-memory
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof that each service-local Python runtime runs in
-   its own address space and does not share interpreter state with other
-   services by default.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin guarded
-   shared memory, quotas, networking, AI, SMP, or hardware expansion before
-   their slice gates.
+1. Add a failing automated proof that Phase 3 shared-memory capabilities still
+   mediate access under ring-3 and separate-address-space constraints.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin process
+   termination, quotas, networking, AI, SMP, or hardware expansion before their
+   slice gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary

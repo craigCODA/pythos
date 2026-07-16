@@ -32,6 +32,7 @@ mod scheduler;
 mod serial;
 mod service_identity;
 mod service_manager;
+mod service_runtimes;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
@@ -138,9 +139,35 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                     qemu_exit::panic();
                 }
             };
+        let service_runtime_address_space_a =
+            match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
+                Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+        let service_runtime_address_space_b =
+            match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
+                Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
         if user_address_space
             .validate_isolated_from(&address_space)
             .is_err()
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        if service_runtime_address_space_a
+            .validate_isolated_from(&address_space)
+            .is_err()
+            || service_runtime_address_space_b
+                .validate_isolated_from(&address_space)
+                .is_err()
         {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
@@ -612,6 +639,34 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:USER_STACKS_READY");
+        let service_runtime_proof = match service_runtimes::run_self_test(
+            runtime_payload.source,
+            service_runtime_address_space_a.root_table_phys(),
+            service_runtime_address_space_b.root_table_phys(),
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if service_runtime_proof.local_instances {
+            serial::write_line("PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE");
+        }
+        if service_runtime_proof.address_spaces_isolated {
+            serial::write_line("PYTHOS:CORE:RUNTIME:ADDRESS_SPACE");
+        }
+        if service_runtime_proof.state_isolated {
+            serial::write_line("PYTHOS:CORE:RUNTIME:STATE_ISOLATED");
+        }
+        if !service_runtime_proof.local_instances
+            || !service_runtime_proof.address_spaces_isolated
+            || !service_runtime_proof.state_isolated
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY");
     }
 
     #[cfg(test)]

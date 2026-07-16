@@ -903,9 +903,17 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    processes, user pointer copy-in/copy-out, service-local runtimes, guarded
    shared memory, process termination, quotas, crash containment, or
    hostile-code capability enforcement.
-5. `service-local-python-runtimes` - each Python service interpreter instance
-   runs in its own address space, not sharing interpreter state with other
-   services by default.
+5. `service-local-python-runtimes` - COMPLETE. ADR 0030 records the
+   service-local runtime-instance proof. PythCore boots two runtime instances
+   from the validated Phase 4 source through a shared service-identity table,
+   gives them distinct service identities, task ids, user CR3 roots, and local
+   runtime state slots, rejects cross-service state mutation, and emits
+   `PYTHOS:CORE:RUNTIME:LOCAL_INSTANCE`,
+   `PYTHOS:CORE:RUNTIME:ADDRESS_SPACE`,
+   `PYTHOS:CORE:RUNTIME:STATE_ISOLATED`, and
+   `PYTHOS:CORE:SERVICE_LOCAL_RUNTIMES_READY`. This slice does not implement
+   guarded shared memory, user pointer copy-in/copy-out, process termination,
+   quotas, crash containment, or hostile-code capability enforcement.
 6. `guarded-shared-memory` - Phase 3 shared-memory capability reverified under
    ring-3 plus separate-address-space constraints.
 7. `process-termination` - a user-mode task or process can be forcibly
@@ -953,6 +961,11 @@ claim hostile-code containment.
 ADR 0029 records the `user-stacks` guarded stack layout. It defines fixed
 guarded stack slots for Phase 8 proofs, but intentionally does not define
 dynamic process stacks or stack reclamation.
+
+ADR 0030 records the `service-local-python-runtimes` proof. It gives
+service-local runtime instances separate service identities, address-space
+roots, and local state slots, but intentionally does not define guarded shared
+memory or hostile-code containment.
 
 ### Architectural Test (Non-Binding)
 

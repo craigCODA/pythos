@@ -10,6 +10,8 @@ use crate::tasks::TaskId;
 use crate::value_validation::UntrustedRuntimeValue;
 
 pub const RUNTIME_TASK_ID: TaskId = TaskId::new(40);
+pub const SERVICE_LOCAL_RUNTIME_TASK_A: TaskId = TaskId::new(80);
+pub const SERVICE_LOCAL_RUNTIME_TASK_B: TaskId = TaskId::new(81);
 const RUNTIME_BOOT_RESOURCE: ResourceId = ResourceId::new(0x5059_5448_5255_4E54);
 const HELLO_SERVICE_SOURCE: &str = "class HelloService(Service):\n    async def start(self):\n        system.log(\"PythOS [HISS] We Are Woken\")\n        self.ready()\n";
 
@@ -42,8 +44,16 @@ pub struct RuntimeInstance<'a> {
 
 pub fn boot(source: &str) -> Result<RuntimeInstance<'_>, InterpreterError> {
     let mut identities = ServiceIdentityTable::new();
+    boot_service_local(source, RUNTIME_TASK_ID, &mut identities)
+}
+
+pub fn boot_service_local<'a>(
+    source: &'a str,
+    task_id: TaskId,
+    identities: &mut ServiceIdentityTable,
+) -> Result<RuntimeInstance<'a>, InterpreterError> {
     let service_id = identities
-        .register_task(RUNTIME_TASK_ID)
+        .register_task(task_id)
         .map_err(map_identity_error)?;
     let mut capabilities = CapabilityTable::new();
     let handle = capabilities
@@ -53,11 +63,12 @@ pub fn boot(source: &str) -> Result<RuntimeInstance<'_>, InterpreterError> {
             RightsMask::new(RightsMask::READ),
         )
         .map_err(map_capability_error)?;
-    boot_authorized(source, service_id, &capabilities, handle)
+    boot_authorized(source, task_id, service_id, &capabilities, handle)
 }
 
 fn boot_authorized<'a>(
     source: &'a str,
+    task_id: TaskId,
     service_id: ServiceId,
     capabilities: &CapabilityTable,
     handle: CapabilityHandle,
@@ -72,7 +83,7 @@ fn boot_authorized<'a>(
         .map_err(map_capability_error)?;
     let program = parse(source)?;
     Ok(RuntimeInstance {
-        task_id: RUNTIME_TASK_ID,
+        task_id,
         service_id,
         program,
     })
@@ -149,11 +160,35 @@ mod tests {
         assert_eq!(
             boot_authorized(
                 HELLO_SERVICE_SOURCE,
+                RUNTIME_TASK_ID,
                 runtime_service,
                 &capabilities,
                 wrong_handle
             ),
             Err(InterpreterError::BootCapability)
         );
+    }
+
+    #[test]
+    fn service_local_runtime_boots_get_distinct_identity_and_task() {
+        let mut identities = ServiceIdentityTable::new();
+
+        let first = boot_service_local(
+            HELLO_SERVICE_SOURCE,
+            SERVICE_LOCAL_RUNTIME_TASK_A,
+            &mut identities,
+        )
+        .unwrap();
+        let second = boot_service_local(
+            HELLO_SERVICE_SOURCE,
+            SERVICE_LOCAL_RUNTIME_TASK_B,
+            &mut identities,
+        )
+        .unwrap();
+
+        assert_eq!(first.task_id, SERVICE_LOCAL_RUNTIME_TASK_A);
+        assert_eq!(second.task_id, SERVICE_LOCAL_RUNTIME_TASK_B);
+        assert_ne!(first.service_id, second.service_id);
+        assert_eq!(first.program, second.program);
     }
 }

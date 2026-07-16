@@ -267,6 +267,10 @@ impl UserAddressSpace {
         Ok(())
     }
 
+    pub const fn root_table_phys(&self) -> u64 {
+        self.root_table_phys
+    }
+
     pub unsafe fn activate(&self) {
         // SAFETY:
         // 1. Invariant: `root_table_phys` is a 4 KiB-aligned PML4 physical
