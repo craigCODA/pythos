@@ -79,10 +79,10 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `core/src/widgets.rs`, marker tests, docs.
 
-- [ ] Add `widgets` marker tests and verify they fail.
-- [ ] Implement fixed button activation and text-field input editing over typed widget objects.
-- [ ] Emit `PYTHOS:CORE:WIDGET:BUTTON`, `PYTHOS:CORE:WIDGET:TEXT_FIELD`, and `PYTHOS:CORE:WIDGETS_READY`.
-- [ ] Verify and commit.
+- [x] Add `widgets` marker tests and verify they fail.
+- [x] Implement fixed button activation and text-field input editing over typed widget objects.
+- [x] Emit `PYTHOS:CORE:WIDGET:BUTTON`, `PYTHOS:CORE:WIDGET:TEXT_FIELD`, and `PYTHOS:CORE:WIDGETS_READY`.
+- [x] Verify and commit.
 
 ### Task 8: First Applications And Phase Boundary
 

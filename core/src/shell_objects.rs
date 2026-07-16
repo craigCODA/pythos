@@ -24,6 +24,8 @@ impl ObjectId {
 pub enum ObjectKind {
     ServiceMonitorWindow,
     PythonConsoleWindow,
+    ButtonWidget,
+    TextFieldWidget,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

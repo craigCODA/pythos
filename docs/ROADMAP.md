@@ -579,8 +579,10 @@ capability-scoped.
    identity. Emits `PYTHOS:CORE:POINTER_CURSOR_READY`,
    `PYTHOS:CORE:WINDOW_FOCUS_READY`, and
    `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
-7. `buttons-and-text-fields` - minimal native widget set, enough for the next
-   slice.
+7. `buttons-and-text-fields` - COMPLETE. The minimal native widget set now
+   proves fixed button activation and bounded text-field editing over typed
+   widget objects. Emits `PYTHOS:CORE:WIDGET:BUTTON`,
+   `PYTHOS:CORE:WIDGET:TEXT_FIELD`, and `PYTHOS:CORE:WIDGETS_READY`.
 8. `application-launcher`, `service-monitor`, `python-console`,
    `settings-panel` - first real applications, each a capability-scoped Python
    service using Phase 4 service infrastructure.

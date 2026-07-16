@@ -53,8 +53,9 @@ file and update the handover before continuing.
 PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver`,
 `input-event-service`, `software-renderer`, `font-system`, and `compositor` /
 `surfaces` / `clipping`, and `pointer-cursor` / `window-focus` /
-`movable-windows` slices are complete; `buttons-and-text-fields` is the next
-active slice.
+`movable-windows`, and `buttons-and-text-fields` slices are complete;
+`application-launcher` / `service-monitor` / `python-console` /
+`settings-panel` is the next active slice.
 
 Completed:
 
@@ -79,19 +80,19 @@ Phase 5    software-renderer
 Phase 5    font-system
 Phase 5    compositor / surfaces / clipping
 Phase 5    pointer-cursor / window-focus / movable-windows
+Phase 5    buttons-and-text-fields
 ```
 
 Next slice:
 
 ```text
-Phase 5: buttons-and-text-fields
+Phase 5: application-launcher / service-monitor / python-console / settings-panel
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
 alignment:
 
 ```text
-shell applications
 audio
 storage
 networking
@@ -135,9 +136,11 @@ instead of trusting this text.
 
 Phase 4 is complete. Phase 5 has completed input drivers, input event
 normalization, the software renderer, the font system, the compositor /
-surfaces / clipping proof, and pointer/focus/movable-window interaction. The
-next allowed work is Phase 5 `buttons-and-text-fields`. Do not start Phase 6,
-audio, storage, networking, AI, ring-3, or SMP work.
+surfaces / clipping proof, pointer/focus/movable-window interaction, and the
+minimal native widget set. The next allowed work is Phase 5
+`application-launcher` / `service-monitor` / `python-console` /
+`settings-panel`. Do not start Phase 6, audio, storage, networking, AI,
+ring-3, or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
 proof. Any slice must be enforced by scripts/test-boot.py or an equivalent
@@ -260,6 +263,9 @@ PYTHOS:CORE:COMPOSITOR_READY
 PYTHOS:CORE:POINTER_CURSOR_READY
 PYTHOS:CORE:WINDOW_FOCUS_READY
 PYTHOS:CORE:MOVABLE_WINDOWS_READY
+PYTHOS:CORE:WIDGET:BUTTON
+PYTHOS:CORE:WIDGET:TEXT_FIELD
+PYTHOS:CORE:WIDGETS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -287,7 +293,7 @@ cargo fmt --check
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 python -m unittest tests.test_boot_marker_contract
-python scripts\test-boot.py --slice window-interaction
+python scripts\test-boot.py --slice widgets
 git diff --check
 ```
 
@@ -513,6 +519,8 @@ Verified Phase 5 so far:
 * Window interaction tracks bounded cursor state, selects the topmost focused
   window by z-order, moves the focused window, and preserves typed object
   identity while emitting `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
+* The minimal widget set proves fixed button activation and bounded text-field
+  editing over typed widget objects before emitting `PYTHOS:CORE:WIDGETS_READY`.
 
 ## What Does Not Exist Yet
 
@@ -527,7 +535,7 @@ Do not imply these are implemented:
 * Broad service restart policy beyond the fixed noncritical proof.
 * General async runtime or coroutine scheduler.
 * Full GUI shell.
-* Widgets or shell applications.
+* Shell applications.
 * Audio driver or cinematic boot sequence.
 * Persistent object storage.
 * Networking.
@@ -555,16 +563,18 @@ validated INIT.PAK runtime payload
 
 It is not a general Python runtime yet.
 
-## Active Slice: Phase 5 buttons-and-text-fields
+## Active Slice: Phase 5 first applications and phase boundary
 
 Phase 4 is complete. The next allowed roadmap work is Phase 5
-`buttons-and-text-fields`.
+`application-launcher`, `service-monitor`, `python-console`, and
+`settings-panel`.
 
 Roadmap intent:
 
 ```text
-Add the minimal native widget set needed by the next shell-application slice:
-fixed button activation and text-field input editing over typed widget objects.
+Register the first fixed first-party applications as capability-scoped
+services with typed windows, render the shell screen through the compositor
+path, emit the app markers, and complete Phase 5.
 ```
 
 Recommended first scope for the next agent:
@@ -574,11 +584,11 @@ Recommended first scope for the next agent:
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice widgets
+   python scripts\test-boot.py --slice phase-5-complete
    ```
 
 3. The first run should fail because the new completion marker is missing.
-4. Keep the marker order after `PYTHOS:CORE:MOVABLE_WINDOWS_READY` and before
+4. Keep the marker order after `PYTHOS:CORE:WIDGETS_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
 5. Preserve ADR 0018's object-id and presentation-binding split.
 6. Preserve the completed Phase 4 runtime proof path.
@@ -668,6 +678,7 @@ core/src/font_system.rs
 core/src/shell_objects.rs
 core/src/compositor.rs
 core/src/window_interaction.rs
+core/src/widgets.rs
 core/src/input_drivers.rs
 core/src/input_events.rs
 core/src/software_renderer.rs
@@ -925,11 +936,11 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker for the Phase 5 widgets slice
+   missing marker for the Phase 5 first-application slice
    ```
 
-5. Implement only fixed button activation and text-field input editing over
-   typed widget objects. Do not build shell applications early.
+5. Implement only the four fixed first-party application registrations and the
+   shell-screen compositor proof. Do not begin Phase 6 audio work.
 
 6. Keep the marker order:
 
@@ -948,6 +959,7 @@ Suggested disciplined flow:
    PYTHOS:CORE:FONT_SYSTEM_READY
    PYTHOS:CORE:COMPOSITOR_READY
    PYTHOS:CORE:MOVABLE_WINDOWS_READY
+   PYTHOS:CORE:WIDGETS_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -995,6 +1007,7 @@ Phase 5 software renderer          complete
 Phase 5 font system                complete
 Phase 5 compositor                 complete
 Phase 5 window interaction         complete
+Phase 5 widgets                    complete
 GUI shell                          in progress
 Audio/cinematic boot               not started
 Persistent object storage          not started
@@ -1005,4 +1018,4 @@ The base is no longer only a loader. PythCore boots after UEFI, owns its own
 execution substrate, schedules native tasks, enforces local kernel-mode
 capabilities, runs the intentionally narrow Python-native runtime path, and has
 entered Phase 5 graphical-shell groundwork. The next work is the Phase 5
-`buttons-and-text-fields` slice.
+first-application and phase-boundary slice.
