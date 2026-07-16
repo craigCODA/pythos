@@ -164,6 +164,8 @@ def main() -> int:
     parser.add_argument("--ovmf-code")
     parser.add_argument("--screendump", type=Path)
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
+    parser.add_argument("--no-audio-device", action="store_true")
+    parser.add_argument("--audio-wav", type=Path)
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -195,6 +197,26 @@ def main() -> int:
         "-device",
         "isa-debug-exit,iobase=0x501,iosize=0x04",
     ]
+    if args.audio_wav and args.no_audio_device:
+        raise SystemExit("--audio-wav requires an audio device")
+    if not args.no_audio_device:
+        if args.audio_wav:
+            args.audio_wav.parent.mkdir(parents=True, exist_ok=True)
+            if args.audio_wav.exists():
+                args.audio_wav.unlink()
+            command += [
+                "-audiodev",
+                f"wav,id=pythos_audio,path={args.audio_wav}",
+            ]
+        else:
+            command += [
+                "-audiodev",
+                "none,id=pythos_audio",
+            ]
+        command += [
+            "-device",
+            "AC97,audiodev=pythos_audio",
+        ]
     if args.iso:
         command += [
             "-drive",
