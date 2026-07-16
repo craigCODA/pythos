@@ -40,8 +40,8 @@ Expected state at the time this handover was written:
 ```text
 branch   milestone/phase4-runtime-selection
 tracking origin/milestone/phase4-runtime-selection
-HEAD     602a593 core: validate runtime boundary values
-parent   50e189e docs: refresh phase 4 handover
+HEAD     a71ac3d test: extend qemu acceptance timeout
+parent   cd4b887 core: deliver runtime service events
 status   clean before this handover edit
 ```
 
@@ -50,7 +50,8 @@ file and update the handover before continuing.
 
 ## Current Stop Point
 
-PythOS is stopped at the Phase 4 `value-validation` slice boundary.
+PythOS is stopped at the Phase 4 completion boundary. Phase 5 is the next
+roadmap phase and has not started.
 
 Completed:
 
@@ -65,22 +66,22 @@ Phase 4    init-pak-loading
 Phase 4    interpreter-boot
 Phase 4    system-api-surface
 Phase 4    value-validation
+Phase 4    service-manager
+Phase 4    exception-containment
+Phase 4    service-restart
+Phase 4    async-events
 ```
 
 Next slice:
 
 ```text
-Phase 4: service-manager
+Phase 5: keyboard-driver / mouse-driver
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
 alignment:
 
 ```text
-service-manager
-exception-containment
-service-restart
-async-events
 GUI
 audio
 storage
@@ -98,10 +99,10 @@ init-pak-loading         complete
 interpreter-boot         complete
 system-api-surface       complete
 value-validation         complete
-service-manager          next
-exception-containment    not started
-service-restart          not started
-async-events             not started
+service-manager          complete
+exception-containment    complete
+service-restart          complete
+async-events             complete
 ```
 
 ## New Agent Instruction Block
@@ -122,10 +123,10 @@ Use the live git tree as the source of truth. First run:
 The expected current branch is milestone/phase4-runtime-selection, with
 origin tracking the same branch. The expected latest committed slice is:
 
-  602a593 core: validate runtime boundary values
+  cd4b887 core: deliver runtime service events
 
-The latest completed Phase 4 slice is value-validation. The next allowed
-slice is service-manager. Do not start exception-containment, GUI, audio, storage,
+Phase 4 is complete. The next allowed work is Phase 5
+keyboard-driver/mouse-driver. Do not start GUI shell, audio, storage,
 networking, AI, ring-3, or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
@@ -226,6 +227,14 @@ PYTHOS:CORE:INTERPRETER_BOOTED
 PYTHOS:CORE:SYSTEM:LOG
 PYTHOS:CORE:SYSTEM_API_READY
 PYTHOS:CORE:VALUE_VALIDATION_READY
+PYTHOS:CORE:SERVICE:READY
+PYTHOS:CORE:SERVICE_MANAGER_READY
+PYTHOS:CORE:SERVICE:EXCEPTION
+PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED
+PYTHOS:CORE:SERVICE:RESTART
+PYTHOS:CORE:SERVICE_RESTART_READY
+PYTHOS:CORE:SERVICE:EVENT
+PYTHOS:CORE:ASYNC_EVENTS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -255,7 +264,7 @@ cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice value-validation
+python scripts\test-boot.py --slice async-events
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
@@ -278,22 +287,65 @@ Important notes:
 Current recent history:
 
 ```text
+a71ac3d test: extend qemu acceptance timeout
+cd4b887 core: deliver runtime service events
+3677c04 core: restart failed runtime services
+eb33aba core: contain runtime service exceptions
+96782a7 core: add phase 4 service manager
+782725e core: update runtime proof log message
+68a04c7 docs: refresh value validation handover
 602a593 core: validate runtime boundary values
 50e189e docs: refresh phase 4 handover
 df0b24f core: add capability checked system api surface
 bf54362 core: stabilize preemption marker ordering
 700038c core: boot custom minimal interpreter
-5e2bd76 core: validate init pak runtime payload
-e39b230 core: record runtime selection gate
-c625fac docs: select phase 4 python runtime
-8a24799 docs: record phase 4 runtime evidence
-47adab6 test: require runtime selection marker
-f5aa27f docs: plan phase 4 runtime selection
-5d450a9 docs: record phase 4 runtime sequencing
-59f542a docs: update active phase branch
 ```
 
 Recent commits especially important to the current boundary:
+
+```text
+a71ac3d test: extend qemu acceptance timeout
+```
+
+This kept the acceptance harness aligned with the completed Phase 4 boot path.
+The direct QEMU boots were already deterministic, but the full 48-boot handoff
+suite could exceed the old 10-second runner timeout under load after the final
+runtime-service markers were added. The runner now exposes a named
+`DEFAULT_TIMEOUT_SECONDS` contract with a unit guard.
+
+```text
+cd4b887 core: deliver runtime service events
+```
+
+This completed the Phase 4 `async-events` slice and therefore the Phase 4
+runtime sequence. It proves a fixed native event dispatches only to a ready
+managed service, rejects delivery to a failed service, emits
+`PYTHOS:CORE:SERVICE:EVENT`, and completes with
+`PYTHOS:CORE:ASYNC_EVENTS_READY`.
+
+```text
+3677c04 core: restart failed runtime services
+```
+
+This completed the Phase 4 `service-restart` slice. It restarts a failed
+noncritical service into a fresh starting generation and returns it to ready
+without reboot.
+
+```text
+eb33aba core: contain runtime service exceptions
+```
+
+This completed the Phase 4 `exception-containment` slice. It records an
+unhandled runtime exception as a failed state on only the failing service while
+preserving an unrelated ready service.
+
+```text
+96782a7 core: add phase 4 service manager
+```
+
+This completed the Phase 4 `service-manager` slice. It consumes the exact
+runtime plan's `self.ready()` operation and transitions the runtime service
+from starting to ready under a fixed manager.
 
 ```text
 602a593 core: validate runtime boundary values
@@ -411,6 +463,11 @@ Verified Phase 4 so far:
 * Host calls have explicit returned/rejected value-level result states.
 * The successful runtime path emits `PYTHOS:CORE:SYSTEM:LOG`.
 * The successful value proof emits `PYTHOS:CORE:VALUE_VALIDATION_READY`.
+* `self.ready()` transitions the runtime service to ready under a fixed manager.
+* A failed runtime service is contained without panicking PythCore.
+* A failed noncritical service can restart into a fresh generation.
+* A fixed native event dispatches only to a ready managed service.
+* The successful Phase 4 path emits `PYTHOS:CORE:ASYNC_EVENTS_READY`.
 
 ## What Does Not Exist Yet
 
@@ -420,11 +477,10 @@ Do not imply these are implemented:
 * General parser or bytecode execution.
 * General Python object model or broad native/Python value conversion beyond
   the current `system.log` string boundary.
-* `self.ready()` lifecycle transition.
-* Python service manager.
-* Python exception containment.
-* Restarting Python services.
-* Async event delivery into Python.
+* General service discovery or dependency resolution.
+* Dynamic service spawning from arbitrary Python source.
+* Broad service restart policy beyond the fixed noncritical proof.
+* General async runtime or coroutine scheduler.
 * GUI shell.
 * Keyboard or mouse driver.
 * Audio driver or cinematic boot sequence.
@@ -446,20 +502,24 @@ validated INIT.PAK runtime payload
 -> capability-scoped runtime identity
 -> first host call: system.log(message)
 -> validated bounded UTF-8 runtime string value
+-> fixed service manager ready transition
+-> contained failed service
+-> fixed failed-service restart
+-> fixed native event delivery to ready service
 ```
 
 It is not a general Python runtime yet.
 
-## Active Slice: service-manager
+## Active Slice: Phase 5 entry
 
-The next allowed slice is `service-manager`.
+Phase 4 is complete. The next allowed roadmap work is Phase 5
+`keyboard-driver` / `mouse-driver`.
 
 Roadmap intent:
 
 ```text
-A Python-level service manager capable of starting and stopping Python
-services, itself running with only the capabilities needed to manage service
-lifecycle, not arbitrary system access.
+Native drivers, capability-gated input event sources, and the start of the real
+graphical shell phase.
 ```
 
 Recommended first scope for the next agent:
@@ -469,28 +529,25 @@ Recommended first scope for the next agent:
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice service-manager
+   python scripts\test-boot.py --slice keyboard-driver
    ```
 
 3. The first run should fail because the new completion marker is missing.
-4. Keep the marker order after `PYTHOS:CORE:VALUE_VALIDATION_READY` and before
+4. Keep the marker order after `PYTHOS:CORE:ASYNC_EVENTS_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
-5. Add an ADR if the service lifecycle state machine or manager authority
-   becomes a durable runtime contract.
-6. Implement only the smallest service lifecycle proof needed to advance from
-   the existing exact `HelloService` operation plan toward `self.ready()`.
-7. Preserve the existing `system.log` and value-validation proofs.
+5. Add ADRs before introducing durable input-device ABI or capability contracts.
+6. Preserve the completed Phase 4 runtime proof path.
 
-Do not let `service-manager` become:
+Do not let Phase 5 entry become:
 
 ```text
 general Python interpreter
-exception-containment
-service restart policy
-async runtime
 GUI
 IPC transport redesign
 syscall ABI
+audio
+storage
+networking
 ```
 
 ## Accepted ADRs To Read Before Touching Related Areas
@@ -515,7 +572,7 @@ docs/decisions/0016-system-api-surface.md
 docs/decisions/0017-runtime-value-validation.md
 ```
 
-Most relevant for `service-manager`:
+Most relevant for Phase 5 entry:
 
 ```text
 0012  kernel-mode runtime sequencing and Phase 8 migration cost
@@ -600,6 +657,7 @@ core/src/runtime_loader.rs
 core/src/interpreter.rs
 core/src/system_api.rs
 core/src/value_validation.rs
+core/src/service_manager.rs
 shared/src/runtime_payload.rs
 docs/research/runtime-selection/
 ```
@@ -720,11 +778,10 @@ Current accepted limitations:
 
 * The custom minimal interpreter is deliberately tiny and exact-shape.
 * It recognizes the current `HelloService` source shape; it is not full Python.
-* `system.log` exists; `self.ready()` lifecycle behavior does not.
-* General native/Python value validation is the next slice, not complete yet.
-* No service manager exists.
-* No Python exception containment exists.
-* No async event delivery exists.
+* Phase 4 service lifecycle behavior is a fixed proof, not a general service
+  registry.
+* Async event delivery is a fixed native event proof, not a general coroutine
+  runtime.
 * No kernel heap exists beyond fixed/static structures and existing allocator
   proofs.
 * Loader page-table frames are inactive after `VM_READY` but not reclaimed.
@@ -777,7 +834,7 @@ This mattered after Phase 3 and will matter again after Phase 4. Within a phase,
 sequential slice execution is allowed when the user explicitly says to continue.
 Across a phase boundary, stop and report.
 
-## If The Next Agent Continues With service-manager
+## If The Next Agent Continues With Phase 5
 
 Suggested disciplined flow:
 
@@ -809,11 +866,11 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker: PYTHOS:CORE:SERVICE_MANAGER_READY
+   missing marker for the chosen Phase 5 driver slice
    ```
 
-5. Implement only enough lifecycle machinery to prove the current exact
-   `HelloService` can transition through the first manager-owned ready state.
+5. Implement only the first input-driver marker proof required by the Phase 5
+   roadmap. Do not build the shell early.
 
 6. Keep the marker order:
 
@@ -823,6 +880,9 @@ Suggested disciplined flow:
    PYTHOS:CORE:SYSTEM_API_READY
    PYTHOS:CORE:VALUE_VALIDATION_READY
    PYTHOS:CORE:SERVICE_MANAGER_READY
+   PYTHOS:CORE:SERVICE_EXCEPTION_CONTAINED
+   PYTHOS:CORE:SERVICE_RESTART_READY
+   PYTHOS:CORE:ASYNC_EVENTS_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -860,9 +920,11 @@ INIT.PAK runtime payload loading   complete
 Custom minimal interpreter boot    complete
 First capability-checked system.*  complete
 Runtime value validation           complete
-Python service manager             next, not started
-Python exception containment       not started
-GUI shell                          not started
+Python service manager             complete
+Python exception containment       complete
+Python service restart             complete
+Python async event delivery        complete
+GUI shell                          next phase, not started
 Audio/cinematic boot               not started
 Persistent object storage          not started
 Ring-3 isolation                   not started
