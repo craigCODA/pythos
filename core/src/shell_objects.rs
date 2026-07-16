@@ -22,8 +22,10 @@ impl ObjectId {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ObjectKind {
+    ApplicationLauncherWindow,
     ServiceMonitorWindow,
     PythonConsoleWindow,
+    SettingsPanelWindow,
     ButtonWidget,
     TextFieldWidget,
 }

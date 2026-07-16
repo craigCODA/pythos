@@ -50,12 +50,11 @@ file and update the handover before continuing.
 
 ## Current Stop Point
 
-PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver`,
-`input-event-service`, `software-renderer`, `font-system`, and `compositor` /
-`surfaces` / `clipping`, and `pointer-cursor` / `window-focus` /
-`movable-windows`, and `buttons-and-text-fields` slices are complete;
+PythOS is at the Phase 5 -> Phase 6 boundary. Phase 5 is complete through
 `application-launcher` / `service-monitor` / `python-console` /
-`settings-panel` is the next active slice.
+`settings-panel` and `PYTHOS:CORE:PHASE_5_COMPLETE`. The next phase is Phase 6
+`cinematic-boot-and-voice`, but do not begin it without explicit
+re-invocation.
 
 Completed:
 
@@ -81,12 +80,13 @@ Phase 5    font-system
 Phase 5    compositor / surfaces / clipping
 Phase 5    pointer-cursor / window-focus / movable-windows
 Phase 5    buttons-and-text-fields
+Phase 5    application-launcher / service-monitor / python-console / settings-panel
 ```
 
-Next slice:
+Next phase:
 
 ```text
-Phase 5: application-launcher / service-monitor / python-console / settings-panel
+Phase 6: cinematic-boot-and-voice
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
@@ -136,11 +136,11 @@ instead of trusting this text.
 
 Phase 4 is complete. Phase 5 has completed input drivers, input event
 normalization, the software renderer, the font system, the compositor /
-surfaces / clipping proof, pointer/focus/movable-window interaction, and the
-minimal native widget set. The next allowed work is Phase 5
-`application-launcher` / `service-monitor` / `python-console` /
-`settings-panel`. Do not start Phase 6, audio, storage, networking, AI,
-ring-3, or SMP work.
+surfaces / clipping proof, pointer/focus/movable-window interaction, the
+minimal native widget set, and the four fixed first-party app proofs. Phase 5
+is complete. Stop at the Phase 5 -> Phase 6 boundary. Do not start Phase 6,
+audio, storage, networking, AI, ring-3, or SMP work without explicit
+re-invocation.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
 proof. Any slice must be enforced by scripts/test-boot.py or an equivalent
@@ -266,6 +266,11 @@ PYTHOS:CORE:MOVABLE_WINDOWS_READY
 PYTHOS:CORE:WIDGET:BUTTON
 PYTHOS:CORE:WIDGET:TEXT_FIELD
 PYTHOS:CORE:WIDGETS_READY
+PYTHOS:CORE:APP:LAUNCHER
+PYTHOS:CORE:APP:SERVICE_MONITOR
+PYTHOS:CORE:APP:PYTHON_CONSOLE
+PYTHOS:CORE:APP:SETTINGS_PANEL
+PYTHOS:CORE:PHASE_5_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -284,16 +289,21 @@ QEMU_OUTCOME success
 BOOT_TEST_OK
 ```
 
-## Last Targeted Verification Set
+## Last Full Verification Set
 
-These commands passed immediately before the compositor implementation commit:
+These commands passed immediately before the Phase 5 completion commit:
 
 ```powershell
 cargo fmt --check
+cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
-python -m unittest tests.test_boot_marker_contract
-python scripts\test-boot.py --slice widgets
+cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
+python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
+python scripts\test-boot.py --slice phase-5-complete
+python scripts\test-boot.py --slice milestone-1
+python scripts\test-boot.py --slice milestone-1 --media iso
+python -m unittest tests.boot_core_handoff
 git diff --check
 ```
 
@@ -521,6 +531,11 @@ Verified Phase 5 so far:
   identity while emitting `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
 * The minimal widget set proves fixed button activation and bounded text-field
   editing over typed widget objects before emitting `PYTHOS:CORE:WIDGETS_READY`.
+* Four fixed first-party shell applications are registered as
+  capability-scoped services with typed windows: application launcher, service
+  monitor, Python console, and settings panel.
+* A fixed shell screen is rendered through the compositor path before
+  `PYTHOS:CORE:PHASE_5_COMPLETE`.
 
 ## What Does Not Exist Yet
 
@@ -534,8 +549,8 @@ Do not imply these are implemented:
 * Dynamic service spawning from arbitrary Python source.
 * Broad service restart policy beyond the fixed noncritical proof.
 * General async runtime or coroutine scheduler.
-* Full GUI shell.
-* Shell applications.
+* General GUI shell beyond the fixed Phase 5 proof.
+* Dynamic user-launched shell applications.
 * Audio driver or cinematic boot sequence.
 * Persistent object storage.
 * Networking.
@@ -563,35 +578,33 @@ validated INIT.PAK runtime payload
 
 It is not a general Python runtime yet.
 
-## Active Slice: Phase 5 first applications and phase boundary
+## Current Boundary: Phase 5 complete
 
-Phase 4 is complete. The next allowed roadmap work is Phase 5
-`application-launcher`, `service-monitor`, `python-console`, and
-`settings-panel`.
+Phase 5 is complete. The next roadmap work is Phase 6 `cinematic-boot-and-voice`
+only after explicit re-invocation.
 
 Roadmap intent:
 
 ```text
-Register the first fixed first-party applications as capability-scoped
-services with typed windows, render the shell screen through the compositor
-path, emit the app markers, and complete Phase 5.
+Replace the current diagnostic boot screen path with the Phase 6 cinematic boot
+and voice sequence, starting with audio device selection and ADR work. Do not
+begin that phase from this handover unless the user explicitly asks for Phase 6.
 ```
 
 Recommended first scope for the next agent:
 
 1. Start with a failing marker test in `scripts/test-boot.py` and
    `tests/boot_core_handoff.py`.
-2. Add a new slice such as:
+2. Add the first Phase 6 slice from `docs/ROADMAP.md`, not a Phase 5 slice.
+   The likely first command will be shaped like:
 
    ```powershell
-   python scripts\test-boot.py --slice phase-5-complete
+   python scripts\test-boot.py --slice audio-device-selection
    ```
 
-3. The first run should fail because the new completion marker is missing.
-4. Keep the marker order after `PYTHOS:CORE:WIDGETS_READY` and before
-   `PYTHOS:CORE:FRAMEBUFFER_READY`.
-5. Preserve ADR 0018's object-id and presentation-binding split.
-6. Preserve the completed Phase 4 runtime proof path.
+3. The first run should fail because the new Phase 6 marker is missing.
+4. Preserve every Phase 5 marker through `PYTHOS:CORE:PHASE_5_COMPLETE`.
+5. Do not begin storage, networking, AI, ring-3, SMP, or Phase 7 work.
 
 Do not let Phase 5 entry become:
 
@@ -679,6 +692,7 @@ core/src/shell_objects.rs
 core/src/compositor.rs
 core/src/window_interaction.rs
 core/src/widgets.rs
+core/src/shell_apps.rs
 core/src/input_drivers.rs
 core/src/input_events.rs
 core/src/software_renderer.rs
@@ -902,7 +916,7 @@ This mattered after Phase 3 and will matter again after Phase 4. Within a phase,
 sequential slice execution is allowed when the user explicitly says to continue.
 Across a phase boundary, stop and report.
 
-## If The Next Agent Continues With Phase 5
+## If The Next Agent Starts Phase 6
 
 Suggested disciplined flow:
 
@@ -936,11 +950,10 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker for the Phase 5 first-application slice
+   missing marker for the first Phase 6 slice
    ```
 
-5. Implement only the four fixed first-party application registrations and the
-   shell-screen compositor proof. Do not begin Phase 6 audio work.
+5. Implement only the first Phase 6 slice named in `docs/ROADMAP.md`.
 
 6. Keep the marker order:
 
@@ -960,6 +973,7 @@ Suggested disciplined flow:
    PYTHOS:CORE:COMPOSITOR_READY
    PYTHOS:CORE:MOVABLE_WINDOWS_READY
    PYTHOS:CORE:WIDGETS_READY
+   PYTHOS:CORE:PHASE_5_COMPLETE
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -1008,7 +1022,8 @@ Phase 5 font system                complete
 Phase 5 compositor                 complete
 Phase 5 window interaction         complete
 Phase 5 widgets                    complete
-GUI shell                          in progress
+Phase 5 first applications         complete
+Phase 5 complete marker            complete
 Audio/cinematic boot               not started
 Persistent object storage          not started
 Ring-3 isolation                   not started
@@ -1017,5 +1032,5 @@ Ring-3 isolation                   not started
 The base is no longer only a loader. PythCore boots after UEFI, owns its own
 execution substrate, schedules native tasks, enforces local kernel-mode
 capabilities, runs the intentionally narrow Python-native runtime path, and has
-entered Phase 5 graphical-shell groundwork. The next work is the Phase 5
-first-application and phase-boundary slice.
+closed Phase 5 graphical-shell groundwork with fixed app/window/widget proofs.
+The next work is Phase 6 after explicit re-invocation.

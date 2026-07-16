@@ -534,7 +534,7 @@ Exception-containment test suite.
 
 None new at this phase. The typed-object question applies starting Phase 7.
 
-## Phase 5: Real Graphical Shell - IN PROGRESS
+## Phase 5: Real Graphical Shell - COMPLETE
 
 ### Purpose
 
@@ -584,8 +584,10 @@ capability-scoped.
    widget objects. Emits `PYTHOS:CORE:WIDGET:BUTTON`,
    `PYTHOS:CORE:WIDGET:TEXT_FIELD`, and `PYTHOS:CORE:WIDGETS_READY`.
 8. `application-launcher`, `service-monitor`, `python-console`,
-   `settings-panel` - first real applications, each a capability-scoped Python
-   service using Phase 4 service infrastructure.
+   `settings-panel` - COMPLETE. The first fixed first-party applications are
+   registered as capability-scoped services with typed windows, a fixed shell
+   screen is rendered through the compositor path, and
+   `PYTHOS:CORE:PHASE_5_COMPLETE` closes the phase boundary.
 
 ### Design Requirement
 

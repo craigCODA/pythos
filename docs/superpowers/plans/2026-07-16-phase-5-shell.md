@@ -88,8 +88,8 @@ No audio, storage, networking, AI, ring-3, SMP, Open Surface, Patch, or broad Py
 
 **Files:** `core/src/shell_apps.rs`, `core/src/framebuffer.rs`, `core/src/main.rs`, marker tests, docs.
 
-- [ ] Add `phase-5-complete` marker tests and verify they fail.
-- [ ] Register application launcher, service monitor, Python console, and settings panel as fixed capability-scoped services with typed windows.
-- [ ] Render the shell screen through the compositor path.
-- [ ] Emit `PYTHOS:CORE:APP:LAUNCHER`, `PYTHOS:CORE:APP:SERVICE_MONITOR`, `PYTHOS:CORE:APP:PYTHON_CONSOLE`, `PYTHOS:CORE:APP:SETTINGS_PANEL`, and `PYTHOS:CORE:PHASE_5_COMPLETE`.
-- [ ] Run full ESP/ISO verification, update handover docs, commit, push, and stop at the Phase 5 -> Phase 6 boundary.
+- [x] Add `phase-5-complete` marker tests and verify they fail.
+- [x] Register application launcher, service monitor, Python console, and settings panel as fixed capability-scoped services with typed windows.
+- [x] Render the shell screen through the compositor path.
+- [x] Emit `PYTHOS:CORE:APP:LAUNCHER`, `PYTHOS:CORE:APP:SERVICE_MONITOR`, `PYTHOS:CORE:APP:PYTHON_CONSOLE`, `PYTHOS:CORE:APP:SETTINGS_PANEL`, and `PYTHOS:CORE:PHASE_5_COMPLETE`.
+- [x] Run full ESP/ISO verification, update handover docs, commit, push, and stop at the Phase 5 -> Phase 6 boundary.
