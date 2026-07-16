@@ -14,6 +14,7 @@ mod kernel_stacks;
 mod memory;
 mod permission_validation;
 mod qemu_exit;
+mod runtime_loader;
 mod scheduler;
 mod serial;
 mod service_identity;
@@ -232,6 +233,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:AUDIT_LOGGING_READY");
         serial::write_line("PYTHOS:CORE:PHASE_3_COMPLETE");
         serial::write_line("PYTHOS:CORE:RUNTIME_SELECTED");
+        if runtime_loader::validate_init_payload(boot_info).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:INIT_PAK_LOADED");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

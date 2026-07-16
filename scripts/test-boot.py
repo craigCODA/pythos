@@ -783,6 +783,9 @@ AUDIT_LOGGING_MARKERS = [
 RUNTIME_SELECTION_MARKERS = [
     "PYTHOS:CORE:RUNTIME_SELECTED",
 ]
+INIT_PAK_LOADING_MARKERS = [
+    "PYTHOS:CORE:INIT_PAK_LOADED",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -843,6 +846,14 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     RUNTIME_SELECTION_MARKERS,
+)
+SLICE_MARKERS["init-pak-loading"] = (
+    SLICE_MARKERS["runtime-selection"] + INIT_PAK_LOADING_MARKERS
+)
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    INIT_PAK_LOADING_MARKERS,
 )
 
 

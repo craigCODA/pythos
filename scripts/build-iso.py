@@ -14,6 +14,14 @@ PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
 DEFAULT_OUTPUT = ROOT / "target" / "pythos.iso"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
+RUNTIME_PAYLOAD_MAGIC = b"PYTHOS_MINRT_V00"
+RUNTIME_PAYLOAD_HEADER_LEN = 32
+RUNTIME_SOURCE = (
+    b"class HelloService(Service):\n"
+    b"    async def start(self):\n"
+    b"        system.log(\"hello from Python\")\n"
+    b"        self.ready()\n"
+)
 
 SECTOR_SIZE = 512
 ISO_SECTOR_SIZE = 2048
@@ -49,6 +57,18 @@ def build_init_pak(payload: bytes = b"") -> bytes:
     header[34:42] = len(payload).to_bytes(8, "little")
     header[42:46] = checksum.to_bytes(4, "little")
     return bytes(header) + payload
+
+
+def build_runtime_payload(source: bytes = RUNTIME_SOURCE) -> bytes:
+    checksum = sum(source) & 0xFFFFFFFF
+    header = bytearray(RUNTIME_PAYLOAD_HEADER_LEN)
+    header[: len(RUNTIME_PAYLOAD_MAGIC)] = RUNTIME_PAYLOAD_MAGIC
+    header[16:18] = (0).to_bytes(2, "little")
+    header[18:20] = (0).to_bytes(2, "little")
+    header[20:24] = RUNTIME_PAYLOAD_HEADER_LEN.to_bytes(4, "little")
+    header[24:28] = len(source).to_bytes(4, "little")
+    header[28:32] = checksum.to_bytes(4, "little")
+    return bytes(header) + source
 
 
 def directory_entry(name: str, attr: int, cluster: int, size: int) -> bytes:
@@ -95,7 +115,7 @@ def pythos_boot_files(loader: Path, kernel: Path) -> dict[str, bytes]:
         "EFI/BOOT/BOOTX64.EFI": loader.read_bytes(),
         "PYTHOS/PYTHCORE.ELF": kernel.read_bytes(),
         "PYTHOS/BOOT.CFG": b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
-        "PYTHOS/INIT.PAK": build_init_pak(),
+        "PYTHOS/INIT.PAK": build_init_pak(build_runtime_payload()),
         "PYTHOS/FONT.PSF": b"",
     }
 

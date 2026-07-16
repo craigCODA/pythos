@@ -461,9 +461,12 @@ migration, not a rediscovered one.
    boundary and lowest Phase 8 migration risk. This emits
    `PYTHOS:CORE:RUNTIME_SELECTED` as a decision gate only; no interpreter has
    booted yet.
-2. `init-pak-loading` - load the chosen runtime's bytecode or source payload
-   from the now-validated `INIT.PAK`. Phase 1.5 validated the header; this
-   slice validates and loads the payload.
+2. `init-pak-loading` - COMPLETE. Loads the chosen custom-minimal runtime
+   source payload from the now-validated `INIT.PAK`. Phase 1.5 validated the
+   outer header; this slice validates the ADR 0014 inner payload magic,
+   version, header length, exact source length, checksum, and UTF-8 boundary.
+   Emits `PYTHOS:CORE:INIT_PAK_LOADED`. It does not parse, interpret, execute,
+   import, or grant authority to the payload.
 3. `interpreter-boot` - start the interpreter under PythCore, running in a task
    from Phase 2 task infrastructure, subject to Phase 3 capability gating from
    the moment it starts. No ambient authority during bootstrap.
