@@ -99,6 +99,7 @@ PYTHOS:CORE:AUDIT:DENIAL
 PYTHOS:CORE:AUDIT:REVOCATION
 PYTHOS:CORE:AUDIT_LOGGING_READY
 PYTHOS:CORE:PHASE_3_COMPLETE
+PYTHOS:CORE:RUNTIME_SELECTED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -151,6 +152,7 @@ This proves:
 * PythCore revokes a specific capability handle, denies the stale generation, and preserves an unrelated handle for the same holder.
 * PythCore denies a task that knows the target resource and operation but has no active matching capability.
 * PythCore records audit entries for grant, use, denial, and revocation with service identity, resource, operation, and outcome.
+* PythCore records the Phase 4 runtime-selection decision from ADR 0013, selects the custom minimal interpreter as the first runtime path, and emits `PYTHOS:CORE:RUNTIME_SELECTED`. This is a decision gate only; no interpreter has booted and no `INIT.PAK` payload has executed yet.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -193,6 +195,9 @@ Core:
 
 * `core/linker.ld` links PythCore into the intended higher-half image region.
 * `core/src/audit.rs` implements the Phase 3 fixed audit event stream.
+* `docs/decisions/0012-phase-4-kernel-mode-runtime-sequencing.md` records the trusted kernel-mode prototype through Phase 7 and Phase 8 migration decision.
+* `docs/decisions/0013-python-runtime-selection.md` selects the custom minimal interpreter for Phase 4.
+* `docs/research/runtime-selection/` contains the RustPython, MicroPython, and custom minimal interpreter evidence files.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
 * `core/src/capabilities.rs` implements Phase 3 capability handle table proofs.
@@ -256,10 +261,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, `negative-authorization-tests`, and `audit-logging` are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, `capability-handles`, `shared-memory-handles`, `permission-validation`, `revocation`, `negative-authorization-tests`, and `audit-logging` are implemented. Phase 4 `runtime-selection` is implemented on the current branch.
 
 ```text
-next: Phase boundary checkpoint before Phase 4 runtime-selection
+next: Phase 4 init-pak-loading
 ```
 
 The `vm-ready` proof now covers:
@@ -361,6 +366,7 @@ PYTHOS:CORE:AUDIT:DENIAL
 PYTHOS:CORE:AUDIT:REVOCATION
 PYTHOS:CORE:AUDIT_LOGGING_READY
 PYTHOS:CORE:PHASE_3_COMPLETE
+PYTHOS:CORE:RUNTIME_SELECTED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -388,5 +394,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Stop at the Phase 3 boundary. Do not begin Phase 4 `runtime-selection` or any
-Python runtime work without explicit re-invocation.
+Stop at the Phase 4 `runtime-selection` slice boundary. Do not begin
+`init-pak-loading` or any broader Python runtime work without explicit
+re-invocation.

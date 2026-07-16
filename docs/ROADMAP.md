@@ -425,7 +425,7 @@ proof, passes. This is a design reflection, not a task. Do not add agent-shaped
 code to answer it. Record the answer as a note in `docs/vision/patch.md` if
 useful, not in `core/`.
 
-## Phase 4: Python Runtime - NOT STARTED
+## Phase 4: Python Runtime - IN PROGRESS
 
 ### Purpose
 
@@ -453,12 +453,14 @@ migration, not a rediscovered one.
 
 ### Locked Slice Sequence
 
-1. `runtime-selection` - evaluate and choose the first embedded runtime, for
-   example RustPython, MicroPython, or a custom minimal interpreter. Decision
-   criteria to actually benchmark, not assume: memory footprint at idle,
-   startup latency, `no_std` or bare-metal compatibility, C-FFI or native-call
-   surface, and maintenance activity. This is a bigger decision than a single
-   roadmap bullet; treat it as its own spec/plan pair under `docs/superpowers/`.
+1. `runtime-selection` - COMPLETE. Evaluated RustPython, MicroPython, and a
+   custom minimal interpreter with candidate evidence under
+   `docs/research/runtime-selection/`. ADR 0012 records the kernel-mode
+   prototype sequencing decision. ADR 0013 selects a custom minimal interpreter
+   as the first embedded runtime because it gives the narrowest host-controlled
+   boundary and lowest Phase 8 migration risk. This emits
+   `PYTHOS:CORE:RUNTIME_SELECTED` as a decision gate only; no interpreter has
+   booted yet.
 2. `init-pak-loading` - load the chosen runtime's bytecode or source payload
    from the now-validated `INIT.PAK`. Phase 1.5 validated the header; this
    slice validates and loads the payload.

@@ -78,6 +78,7 @@ Verified vertical slices:
 * `revocation` revokes one capability handle, invalidates its stale generation, preserves another handle for the same holder, and emits `PYTHOS:CORE:CAPABILITY:REVOKE`, `PYTHOS:CORE:CAPABILITY:STALE_DENIED`, and `PYTHOS:CORE:REVOCATION_READY`.
 * `negative-authorization-tests` proves a task without a valid capability is denied even when it knows the resource and requested operation, and emits `PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED` and `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY`.
 * `audit-logging` records grant, use, denial, and revocation events with service identity, resource, operation, and outcome, emits `PYTHOS:CORE:AUDIT:GRANT`, `PYTHOS:CORE:AUDIT:USE`, `PYTHOS:CORE:AUDIT:DENIAL`, `PYTHOS:CORE:AUDIT:REVOCATION`, `PYTHOS:CORE:AUDIT_LOGGING_READY`, and completes Phase 3 with `PYTHOS:CORE:PHASE_3_COMPLETE`.
+* `runtime-selection` records ADR 0013's custom minimal interpreter decision as the first Phase 4 runtime gate and emits `PYTHOS:CORE:RUNTIME_SELECTED`. It does not boot an interpreter or execute `INIT.PAK` payload contents.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
@@ -232,6 +233,7 @@ PYTHOS:CORE:AUDIT:DENIAL
 PYTHOS:CORE:AUDIT:REVOCATION
 PYTHOS:CORE:AUDIT_LOGGING_READY
 PYTHOS:CORE:PHASE_3_COMPLETE
+PYTHOS:CORE:RUNTIME_SELECTED
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -534,7 +536,14 @@ PYTHOS:CORE:AUDIT_LOGGING_READY
 PYTHOS:CORE:PHASE_3_COMPLETE
 ```
 
-The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, `PYTHOS:CORE:REQUEST_REPLY_READY` after the request/reply markers, `PYTHOS:CORE:CAPABILITY_HANDLES_READY` after capability grant/use, `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` after the shared-memory markers, `PYTHOS:CORE:PERMISSION_VALIDATION_READY` after permission validation, `PYTHOS:CORE:REVOCATION_READY` after revocation, `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY` after the known-target denial proof, `PYTHOS:CORE:PHASE_3_COMPLETE` after audit logging, and `PYTHOS:CORE:PHASE_3_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+The `runtime-selection` slice asserts the full sequence through:
+
+```text
+PYTHOS:CORE:PHASE_3_COMPLETE
+PYTHOS:CORE:RUNTIME_SELECTED
+```
+
+The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` before `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED`, `PYTHOS:CORE:EXCEPTION_ENTRY_HARDENED` before `PYTHOS:CORE:INTERRUPTS_READY`, `PYTHOS:CORE:INTERRUPTS_READY` before `PYTHOS:CORE:VM_READY`, `PYTHOS:CORE:IDENTITY_MAP_REMOVED` after the first expected page fault, `PYTHOS:CORE:BOOTINFO_COMPLETE` after identity-map removal, `PYTHOS:CORE:TIMER_READY` after bootinfo completion, `PYTHOS:CORE:CLOCK_READY` after timer readiness, `PYTHOS:CORE:TASKS_READY` after clock readiness, `PYTHOS:CORE:KERNEL_STACKS_READY` after the second expected page fault, `PYTHOS:CORE:CONTEXT_SWITCH_READY` after the alternating context markers, `PYTHOS:CORE:SCHEDULER_READY` after the round-robin scheduler markers, `PYTHOS:CORE:IDLE_TASK_READY` after the idle task marker, `PYTHOS:CORE:PREEMPT_READY` after the alternating preemption markers, `PYTHOS:CORE:TASK_TERMINATION_READY` after the task-termination marker, `PYTHOS:CORE:SCHEDULER_TESTS_READY` after the three-task scheduler-test markers, `PYTHOS:CORE:SERVICE_IDENTITY_READY` after scheduler tests, `PYTHOS:CORE:IPC_CHANNELS_READY` after the IPC send/receive markers, `PYTHOS:CORE:BOUNDED_QUEUES_READY` after the queue-full marker, `PYTHOS:CORE:REQUEST_REPLY_READY` after the request/reply markers, `PYTHOS:CORE:CAPABILITY_HANDLES_READY` after capability grant/use, `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY` after the shared-memory markers, `PYTHOS:CORE:PERMISSION_VALIDATION_READY` after permission validation, `PYTHOS:CORE:REVOCATION_READY` after revocation, `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY` after the known-target denial proof, `PYTHOS:CORE:PHASE_3_COMPLETE` after audit logging, `PYTHOS:CORE:RUNTIME_SELECTED` after `PYTHOS:CORE:PHASE_3_COMPLETE`, and `PYTHOS:CORE:RUNTIME_SELECTED` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

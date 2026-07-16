@@ -231,6 +231,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:AUDIT_LOGGING_READY");
         serial::write_line("PYTHOS:CORE:PHASE_3_COMPLETE");
+        serial::write_line("PYTHOS:CORE:RUNTIME_SELECTED");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {
