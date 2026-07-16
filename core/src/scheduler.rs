@@ -352,7 +352,7 @@ pub fn run_task_termination_self_test() -> Result<(), SchedulerError> {
 #[cfg(not(test))]
 pub fn run_preemption_self_test() -> Result<(), SchedulerError> {
     PREEMPT_STEP.store(0, Ordering::SeqCst);
-    PREEMPT_ACTIVE.store(true, Ordering::SeqCst);
+    PREEMPT_ACTIVE.store(false, Ordering::SeqCst);
 
     // SAFETY:
     // 1. Invariant: preemption proof frames and stacks are static, mapped,
@@ -566,14 +566,17 @@ extern "C" fn idle_task_entry() -> ! {
 
 #[cfg(not(test))]
 extern "C" fn preempt_task_a_entry() -> ! {
-    if PREEMPT_STEP.compare_exchange(0, 1, Ordering::SeqCst, Ordering::SeqCst) != Ok(0) {
+    if PREEMPT_STEP.load(Ordering::SeqCst) != 0 {
         halt_bad_schedule();
     }
     serial::write_line("PYTHOS:CORE:PREEMPT:TASK_A");
+    PREEMPT_STEP.store(1, Ordering::SeqCst);
+    PREEMPT_ACTIVE.store(true, Ordering::SeqCst);
 
     loop {
-        if PREEMPT_STEP.compare_exchange(4, 5, Ordering::SeqCst, Ordering::SeqCst) == Ok(4) {
+        if PREEMPT_STEP.load(Ordering::SeqCst) == 4 {
             serial::write_line("PYTHOS:CORE:PREEMPT:TASK_A");
+            PREEMPT_STEP.store(5, Ordering::SeqCst);
         }
         hint::spin_loop();
     }
@@ -581,14 +584,16 @@ extern "C" fn preempt_task_a_entry() -> ! {
 
 #[cfg(not(test))]
 extern "C" fn preempt_task_b_entry() -> ! {
-    if PREEMPT_STEP.compare_exchange(2, 3, Ordering::SeqCst, Ordering::SeqCst) != Ok(2) {
+    if PREEMPT_STEP.load(Ordering::SeqCst) != 2 {
         halt_bad_schedule();
     }
     serial::write_line("PYTHOS:CORE:PREEMPT:TASK_B");
+    PREEMPT_STEP.store(3, Ordering::SeqCst);
 
     loop {
-        if PREEMPT_STEP.compare_exchange(6, 7, Ordering::SeqCst, Ordering::SeqCst) == Ok(6) {
+        if PREEMPT_STEP.load(Ordering::SeqCst) == 6 {
             serial::write_line("PYTHOS:CORE:PREEMPT:TASK_B");
+            PREEMPT_STEP.store(7, Ordering::SeqCst);
         }
         hint::spin_loop();
     }
