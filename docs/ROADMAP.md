@@ -758,9 +758,14 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`. This slice does not implement
    relationships, revision history, workspace objects, object browser work, or
    sector persistence.
-7. `object-relationships` - typed, queryable relationships between objects,
-   for example blocks, created-by, and depends-on, stored alongside the objects
-   themselves.
+7. `object-relationships` - COMPLETE. Typed, queryable relationships between
+   known typed objects are recorded for `blocks`, `created-by`, and
+   `depends-on`, and relationship lookup rejects unknown endpoints and duplicate
+   edges. Emits `PYTHOS:CORE:OBJECT:RELATIONSHIP`,
+   `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY`, and
+   `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY`. This slice does not implement
+   revision history, workspace objects, object browser work, or sector
+   persistence.
 8. `revision-history` - objects retain prior versions on write, not just
    current state, with enough metadata, timestamp and writer service identity
    from Phase 3, to reconstruct what changed and who changed it.

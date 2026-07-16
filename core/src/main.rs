@@ -21,6 +21,7 @@ mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
 mod memory;
+mod object_relationships;
 mod permission_validation;
 mod qemu_exit;
 mod runtime_loader;
@@ -427,6 +428,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY");
+        if object_relationships::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY");
     }
 
     #[cfg(test)]
