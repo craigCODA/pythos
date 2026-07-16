@@ -487,9 +487,11 @@ migration, not a rediscovered one.
    `system.log` call, rejects unsupported non-string, raw-pointer-shaped, and
    unchecked-native-struct-shaped inputs, models explicit host-call
    success/error results, and emits `PYTHOS:CORE:VALUE_VALIDATION_READY`.
-6. `service-manager` - a Python-level service manager capable of starting and
-   stopping Python services, itself running with only the capabilities needed
-   to manage service lifecycle, not arbitrary system access.
+6. `service-manager` - COMPLETE. The current exact runtime plan's
+   `self.ready()` operation now transitions the runtime service from starting
+   to ready under a fixed service manager, rejects unknown-service and
+   duplicate-ready transitions, emits `PYTHOS:CORE:SERVICE:READY`, and
+   completes with `PYTHOS:CORE:SERVICE_MANAGER_READY`.
 7. `exception-containment` - an unhandled Python exception in one service does
    not crash PythCore or other services. Contained, diagnosed, reported in the
    spirit of Phase 1.5 diagnostics: structured, not silent.
