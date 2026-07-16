@@ -50,8 +50,8 @@ file and update the handover before continuing.
 
 ## Current Stop Point
 
-PythOS is stopped at the Phase 4 completion boundary. Phase 5 is the next
-roadmap phase and has not started.
+PythOS is inside Phase 5. The `keyboard-driver` / `mouse-driver` slice is
+complete; `input-event-service` is the next active slice.
 
 Completed:
 
@@ -70,12 +70,13 @@ Phase 4    service-manager
 Phase 4    exception-containment
 Phase 4    service-restart
 Phase 4    async-events
+Phase 5    keyboard-driver / mouse-driver
 ```
 
 Next slice:
 
 ```text
-Phase 5: keyboard-driver / mouse-driver
+Phase 5: input-event-service
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
@@ -235,6 +236,9 @@ PYTHOS:CORE:SERVICE:RESTART
 PYTHOS:CORE:SERVICE_RESTART_READY
 PYTHOS:CORE:SERVICE:EVENT
 PYTHOS:CORE:ASYNC_EVENTS_READY
+PYTHOS:CORE:INPUT:KEYBOARD
+PYTHOS:CORE:INPUT:MOUSE
+PYTHOS:CORE:INPUT_DRIVERS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -264,7 +268,7 @@ cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice async-events
+python scripts\test-boot.py --slice keyboard-driver
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit

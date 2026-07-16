@@ -550,8 +550,10 @@ capability-scoped.
 
 ### Locked Slice Sequence
 
-1. `keyboard-driver`, `mouse-driver` - native drivers, capability-gated input
-   event sources.
+1. `keyboard-driver`, `mouse-driver` - COMPLETE. Native drivers decode fixed
+   raw keyboard and mouse events only through explicit input capabilities.
+   Emits `PYTHOS:CORE:INPUT:KEYBOARD`, `PYTHOS:CORE:INPUT:MOUSE`, and
+   `PYTHOS:CORE:INPUT_DRIVERS_READY`.
 2. `input-event-service` - a Python or native service, decided and recorded via
    ADR, that normalizes raw driver events into a typed event stream other
    services can subscribe to through IPC, not direct driver access.

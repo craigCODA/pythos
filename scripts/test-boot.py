@@ -812,6 +812,11 @@ ASYNC_EVENT_MARKERS = [
     "PYTHOS:CORE:SERVICE:EVENT",
     "PYTHOS:CORE:ASYNC_EVENTS_READY",
 ]
+INPUT_DRIVER_MARKERS = [
+    "PYTHOS:CORE:INPUT:KEYBOARD",
+    "PYTHOS:CORE:INPUT:MOUSE",
+    "PYTHOS:CORE:INPUT_DRIVERS_READY",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -934,6 +939,13 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     ASYNC_EVENT_MARKERS,
+)
+SLICE_MARKERS["keyboard-driver"] = SLICE_MARKERS["async-events"] + INPUT_DRIVER_MARKERS
+SLICE_MARKERS["mouse-driver"] = SLICE_MARKERS["keyboard-driver"]
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    INPUT_DRIVER_MARKERS,
 )
 
 

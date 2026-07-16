@@ -9,6 +9,7 @@ mod capabilities;
 mod context_switch;
 mod font;
 mod framebuffer;
+mod input_drivers;
 mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
@@ -283,6 +284,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:ASYNC_EVENTS_READY");
+        if input_drivers::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:INPUT_DRIVERS_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

@@ -43,6 +43,7 @@ impl RightsMask {
     pub const WRITE: u32 = 1 << 1;
     pub const SEND: u32 = 1 << 2;
     pub const LOG: u32 = 1 << 3;
+    pub const INPUT: u32 = 1 << 4;
 
     pub const fn new(bits: u32) -> Self {
         Self(bits)
