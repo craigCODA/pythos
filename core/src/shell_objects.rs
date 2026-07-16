@@ -31,6 +31,7 @@ pub enum ObjectKind {
     ServiceMonitorWindow,
     PythonConsoleWindow,
     SettingsPanelWindow,
+    WorkspaceSession,
     ButtonWidget,
     TextFieldWidget,
 }

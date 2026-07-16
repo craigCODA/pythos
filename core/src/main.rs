@@ -42,6 +42,7 @@ mod typed_object_format;
 mod value_validation;
 mod widgets;
 mod window_interaction;
+mod workspace_objects;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -439,6 +440,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:REVISION_HISTORY_READY");
+        if workspace_objects::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:WORKSPACE_OBJECTS_READY");
     }
 
     #[cfg(test)]

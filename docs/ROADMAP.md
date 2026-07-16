@@ -773,9 +773,13 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE`, and
    `PYTHOS:CORE:REVISION_HISTORY_READY`. This slice does not implement
    workspace objects, object browser work, or sector persistence.
-9. `workspace-objects` - first concrete typed-object kind representing a saved
-   shell layout or session. This ties back to Phase 5 window objects finally
-   getting persisted.
+9. `workspace-objects` - COMPLETE. ADR 0023 defines the first concrete
+   persistent object kind, `WorkspaceSession`, and schema version 1 stores the
+   Phase 5 shell window layout in bounded ADR 0022 fields. Emits
+   `PYTHOS:CORE:WORKSPACE:SESSION_OBJECT`,
+   `PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT`, and
+   `PYTHOS:CORE:WORKSPACE_OBJECTS_READY`. This slice does not implement object
+   browser work, reboot persistence, or sector persistence.
 10. `object-browser` - a Phase 5 application exposing the object store for
     inspection: list, view relationships, and view revision history. This is
     the first user-facing consumer of this data, deliberately minimal.
