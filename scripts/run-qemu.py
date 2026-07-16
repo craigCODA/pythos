@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ESP = ROOT / "image" / "esp"
 DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
+DEFAULT_TIMEOUT_SECONDS = 20.0
 SUCCESS_MARKER = "PYTHOS:CORE:MILESTONE_1_COMPLETE"
 DEBUG_EXIT_CODES = {
     "success": 0x10,
@@ -158,7 +159,7 @@ def main() -> int:
     parser.add_argument("--esp", type=Path, default=DEFAULT_ESP)
     parser.add_argument("--iso", type=Path)
     parser.add_argument("--serial-log", type=Path, default=DEFAULT_LOG)
-    parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--qemu")
     parser.add_argument("--ovmf-code")
     parser.add_argument("--screendump", type=Path)

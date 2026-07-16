@@ -62,6 +62,11 @@ class QemuExitTest(unittest.TestCase):
             run_qemu.SCRIPT_EXIT_CODES["marker-order-violation"],
         )
 
+    def test_default_timeout_covers_full_phase4_boot_path(self) -> None:
+        run_qemu = load_run_qemu_module()
+
+        self.assertGreaterEqual(run_qemu.DEFAULT_TIMEOUT_SECONDS, 20.0)
+
 
 if __name__ == "__main__":
     unittest.main()
