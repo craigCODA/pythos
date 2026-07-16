@@ -425,7 +425,7 @@ proof, passes. This is a design reflection, not a task. Do not add agent-shaped
 code to answer it. Record the answer as a note in `docs/vision/patch.md` if
 useful, not in `core/`.
 
-## Phase 4: Python Runtime - IN PROGRESS
+## Phase 4: Python Runtime - COMPLETE
 
 ### Purpose
 
@@ -500,9 +500,9 @@ migration, not a rediscovered one.
    restart into a fresh starting generation and return to ready without reboot.
    Emits `PYTHOS:CORE:SERVICE:RESTART` and
    `PYTHOS:CORE:SERVICE_RESTART_READY`.
-9. `async-events` - asynchronous event delivery from native or kernel events
-   into Python service handlers, for example IPC message arrival triggering an
-   `async def` handler.
+9. `async-events` - COMPLETE. A fixed native event dispatches only to a ready
+   managed service and is rejected for a failed service. Emits
+   `PYTHOS:CORE:SERVICE:EVENT` and `PYTHOS:CORE:ASYNC_EVENTS_READY`.
 
 ### Exit Condition
 

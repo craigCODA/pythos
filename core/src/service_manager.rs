@@ -15,6 +15,12 @@ pub enum ServiceLifecycleError {
     InvalidTransition,
     ContainmentFailed,
     RestartFailed,
+    EventDeliveryFailed,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServiceEvent {
+    NativeTick,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -104,6 +110,22 @@ impl ServiceManager {
     pub const fn generation(&self) -> u32 {
         self.service.generation
     }
+
+    pub fn dispatch_event(
+        &self,
+        identity: ServiceId,
+        event: ServiceEvent,
+    ) -> Result<ServiceEvent, ServiceLifecycleError> {
+        if self.service.identity != identity {
+            return Err(ServiceLifecycleError::UnknownService);
+        }
+        if self.service.state != ManagedServiceState::Ready {
+            return Err(ServiceLifecycleError::InvalidTransition);
+        }
+        #[cfg(not(test))]
+        serial::write_line("PYTHOS:CORE:SERVICE:EVENT");
+        Ok(event)
+    }
 }
 
 pub fn run_self_test(instance: &RuntimeInstance<'_>) -> Result<(), ServiceLifecycleError> {
@@ -160,6 +182,32 @@ pub fn run_service_restart_self_test() -> Result<(), ServiceLifecycleError> {
     manager.mark_ready(service)?;
     if manager.state() != ManagedServiceState::Ready {
         return Err(ServiceLifecycleError::RestartFailed);
+    }
+    Ok(())
+}
+
+pub fn run_async_events_self_test() -> Result<(), ServiceLifecycleError> {
+    let mut identities = ServiceIdentityTable::new();
+    let ready_service = identities
+        .register_task(TaskId::new(73))
+        .map_err(|_| ServiceLifecycleError::EventDeliveryFailed)?;
+    let failed_service = identities
+        .register_task(TaskId::new(74))
+        .map_err(|_| ServiceLifecycleError::EventDeliveryFailed)?;
+    let mut ready_manager = ServiceManager::new(ready_service);
+    let mut failed_manager = ServiceManager::new(failed_service);
+
+    ready_manager.mark_ready(ready_service)?;
+    failed_manager.contain_exception(failed_service)?;
+    if failed_manager.dispatch_event(failed_service, ServiceEvent::NativeTick)
+        != Err(ServiceLifecycleError::InvalidTransition)
+    {
+        return Err(ServiceLifecycleError::EventDeliveryFailed);
+    }
+    if ready_manager.dispatch_event(ready_service, ServiceEvent::NativeTick)
+        != Ok(ServiceEvent::NativeTick)
+    {
+        return Err(ServiceLifecycleError::EventDeliveryFailed);
     }
     Ok(())
 }
@@ -261,5 +309,35 @@ mod tests {
         );
         assert_eq!(manager.generation(), 1);
         assert_eq!(manager.mark_ready(service), Ok(ManagedServiceState::Ready));
+    }
+
+    #[test]
+    fn async_events_dispatch_only_to_ready_services() {
+        let mut identities = ServiceIdentityTable::new();
+        let ready_service = identities
+            .register_task(crate::tasks::TaskId::new(73))
+            .unwrap();
+        let failed_service = identities
+            .register_task(crate::tasks::TaskId::new(74))
+            .unwrap();
+        let mut ready_manager = ServiceManager::new(ready_service);
+        let mut failed_manager = ServiceManager::new(failed_service);
+
+        assert_eq!(
+            ready_manager.mark_ready(ready_service),
+            Ok(ManagedServiceState::Ready)
+        );
+        assert_eq!(
+            failed_manager.contain_exception(failed_service),
+            Ok(ManagedServiceState::Failed)
+        );
+        assert_eq!(
+            failed_manager.dispatch_event(failed_service, ServiceEvent::NativeTick),
+            Err(ServiceLifecycleError::InvalidTransition)
+        );
+        assert_eq!(
+            ready_manager.dispatch_event(ready_service, ServiceEvent::NativeTick),
+            Ok(ServiceEvent::NativeTick)
+        );
     }
 }
