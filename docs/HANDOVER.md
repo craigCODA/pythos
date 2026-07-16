@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `append-only-journal` complete; next slice is
-`checksums-and-commit-markers`.
+Current boundary: Phase 7 `checksums-and-commit-markers` complete; next slice
+is `crash-recovery`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice append-only-journal
+python scripts\test-boot.py --slice checksums-and-commit-markers
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,13 +40,12 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 append-only-journal complete
-Next allowed slice: checksums-and-commit-markers
+Phase 7 checksums-and-commit-markers complete
+Next allowed slice: crash-recovery
 ```
 
-Do not start crash recovery, typed-object persistence, object browser work,
-networking, AI, ring-3, SMP, or hardware-expansion work before the roadmap gate
-for that slice.
+Do not start typed-object persistence, object browser work, networking, AI,
+ring-3, SMP, or hardware-expansion work before the roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -85,6 +84,7 @@ graceful-audio-fallback
 block-device-driver
 storage-service
 append-only-journal
+checksums-and-commit-markers
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -107,6 +107,12 @@ intent to append a monotonic journal record before any write completion can be
 considered. It proves read requests are not journaled as writes and a full
 journal rejects new records without overwriting old ones. It does not implement
 checksums, commit markers, crash recovery, raw sector I/O, or object records.
+
+The checksums-and-commit-markers slice adds a stable checksum over committed
+journal record fields plus an explicit commit marker. It proves missing commit
+markers and checksum mismatches are detected as invalid records instead of
+silently accepted. It does not implement crash recovery, raw sector I/O, or
+object records.
 
 ## Phase 6 Marker Tail
 
@@ -143,6 +149,9 @@ PYTHOS:CORE:STORAGE:ACCESS_DENIED
 PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:STORAGE:JOURNAL_APPEND
 PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
+PYTHOS:CORE:STORAGE:CHECKSUM_VALID
+PYTHOS:CORE:STORAGE:COMMIT_MARKER
+PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -168,6 +177,9 @@ PYTHOS:CORE:STORAGE:ACCESS_DENIED
 PYTHOS:CORE:STORAGE_SERVICE_READY
 PYTHOS:CORE:STORAGE:JOURNAL_APPEND
 PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
+PYTHOS:CORE:STORAGE:CHECKSUM_VALID
+PYTHOS:CORE:STORAGE:COMMIT_MARKER
+PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -233,7 +245,6 @@ Do not assume any of the following exists:
 
 ```text
 completed persistent object store
-checksummed commit markers
 crash recovery
 on-disk typed object format
 filesystem
@@ -268,14 +279,14 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-checksums-and-commit-markers
+crash-recovery
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Add or confirm a failing test/harness expectation for checksummed commit
-   marker output.
-2. Extend the journal path with checksums and explicit commit markers only.
-3. Do not implement crash recovery, object records, or typed relationships in
-   this slice.
+1. Add or confirm a failing test/harness expectation for replay or rollback to
+   the last committed record after an invalid/torn journal tail.
+2. Implement only journal replay/rollback over the committed-record model.
+3. Do not implement typed objects, object relationships, or user-facing object
+   browser work in this slice.
 4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

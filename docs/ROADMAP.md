@@ -732,8 +732,13 @@ Phase 6 exit condition reproducible.
    followed by `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`. This slice does not
    implement checksums, commit markers, recovery, sector I/O, or object
    storage.
-4. `checksums-and-commit-markers` - every committed write is checksummed and
-   marked. A torn write is detectable, not silently accepted.
+4. `checksums-and-commit-markers` - COMPLETE. Every committed journal record
+   carries a stable checksum over its record fields plus an explicit commit
+   marker. Missing commit markers and checksum mismatches are detected instead
+   of silently accepted. Emits `PYTHOS:CORE:STORAGE:CHECKSUM_VALID`,
+   `PYTHOS:CORE:STORAGE:COMMIT_MARKER`, and
+   `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`. This slice does not implement
+   crash recovery, sector I/O, or object storage.
 5. `crash-recovery` - replay/rollback logic that reconstructs a consistent
    state from the journal after an unclean shutdown. This is the actual
    recovery work that was correctly deferred earlier in the project's history.

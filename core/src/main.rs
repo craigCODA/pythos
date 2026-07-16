@@ -411,6 +411,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY");
+        if storage_journal::run_commit_marker_self_test(_block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY");
     }
 
     #[cfg(test)]
