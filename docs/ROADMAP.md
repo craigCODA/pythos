@@ -348,10 +348,13 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    timeout result instead of hanging. Emits `PYTHOS:CORE:IPC:REQUEST`,
    `PYTHOS:CORE:IPC:REPLY`, `PYTHOS:CORE:IPC:REPLY_TIMEOUT`, and
    `PYTHOS:CORE:REQUEST_REPLY_READY`.
-5. `capability-handles` - the core primitive: an unforgeable token naming a
-   resource and allowed operations that a task either holds or does not.
-   Capabilities are not ambient. A task with no handle cannot even name the
-   resource, let alone act on it.
+5. `capability-handles` - COMPLETE. The core primitive: an unforgeable handle
+   naming a kernel-owned table slot and generation. Authority remains in the
+   kernel table entry: holder, resource, rights, generation, and state.
+   Capabilities are not ambient. A task with no handle cannot validate an
+   operation by knowing the resource id. Emits `PYTHOS:CORE:CAPABILITY:GRANT`,
+   `PYTHOS:CORE:CAPABILITY:USE`, and
+   `PYTHOS:CORE:CAPABILITY_HANDLES_READY`.
 6. `shared-memory-handles` - capability-gated shared memory region between two
    services, mapped read-only or read-write per grant, never implicitly
    writable.

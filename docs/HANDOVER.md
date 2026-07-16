@@ -79,6 +79,9 @@ PYTHOS:CORE:IPC:REQUEST
 PYTHOS:CORE:IPC:REPLY
 PYTHOS:CORE:IPC:REPLY_TIMEOUT
 PYTHOS:CORE:REQUEST_REPLY_READY
+PYTHOS:CORE:CAPABILITY:GRANT
+PYTHOS:CORE:CAPABILITY:USE
+PYTHOS:CORE:CAPABILITY_HANDLES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -125,6 +128,7 @@ This proves:
 * PythCore creates a trusted kernel-internal IPC channel between two known service identities, sends a typed bounded message, receives it through the peer endpoint, and validates exact type, length, checksum, and payload bytes.
 * PythCore fills the fixed IPC queue, proves a further send returns `QueueFull` instead of silently dropping data, then drains the original queued messages unchanged.
 * PythCore sends a typed request, receives a typed reply, validates the exact reply payload, and proves missing replies return an explicit timeout.
+* PythCore grants a kernel-owned capability handle and validates holder/resource/rights through the table entry rather than trusting the handle value alone.
 * PythCore renders the post-firmware boot screen through the loader-mapped device-region framebuffer (embedded 8x8 font, RGB/BGR/bitmask encoding, bounds-checked writes) and emits `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * PythCore emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone-1 markers are emitted in order.
 * The QEMU harness observes the terminal success marker, sends QMP `quit`, prints `QEMU_OUTCOME success`, and returns success without relying on timeout termination. A live screendump can be captured with `python scripts/run-qemu.py --screendump target/boot-screen.png`.
@@ -168,6 +172,7 @@ Core:
 * `core/linker.ld` links PythCore into the intended higher-half image region.
 * `core/src/main.rs` defines the current placeholder `pythcore_entry`.
 * `core/src/boot_metadata.rs` revalidates firmware and init-bundle metadata after `VM_READY`.
+* `core/src/capabilities.rs` implements Phase 3 capability handle table proofs.
 * `core/src/ipc_channels.rs` implements the Phase 3 fixed typed IPC channel proof.
 * `core/src/memory/physical.rs` owns milestone-1 page classification and fixed bitmap initialization.
 * `core/src/memory/virtual.rs` owns milestone-1.5 kernel page-table replacement and the second `CR3` switch.
@@ -226,10 +231,10 @@ boot media byte-stable and the repository clean/tracked: generated ESP payloads
 must be written in binary mode, the ISO and ESP paths must validate the same
 `INIT.PAK` bytes, and the branch must remain pushed to its remote.
 
-The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, and `request-reply` slices are implemented on the current branch.
+The `exceptions-diagnostic`, `vm-ready`, `identity-map-removed`, `bootinfo-complete`, and `qemu-exit` slices are implemented. Milestone 1.5 is complete. The Phase 2 `exception-entry-hardening`, `interrupt-controller`, `timer`, `monotonic-clock`, `task-structures`, `kernel-stacks`, `context-switch`, `scheduler`, `idle-task`, `preemption`, `task-termination`, and `scheduler-tests` slices are implemented. Phase 2 is complete. The Phase 3 `service-identity`, `ipc-channels`, `bounded-queues`, `request-reply`, and `capability-handles` slices are implemented on the current branch.
 
 ```text
-next: Phase 3 capability-handles
+next: Phase 3 shared-memory-handles
 ```
 
 The `vm-ready` proof now covers:
@@ -311,6 +316,9 @@ PYTHOS:CORE:IPC:REQUEST
 PYTHOS:CORE:IPC:REPLY
 PYTHOS:CORE:IPC:REPLY_TIMEOUT
 PYTHOS:CORE:REQUEST_REPLY_READY
+PYTHOS:CORE:CAPABILITY:GRANT
+PYTHOS:CORE:CAPABILITY:USE
+PYTHOS:CORE:CAPABILITY_HANDLES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -338,6 +346,6 @@ impl KernelAddressSpace {
 }
 ```
 
-Next, continue Phase 3 with `capability-handles`. Do not implement shared
-memory, permission validation, Python, or later phase work while building the
-capability-handles slice.
+Next, continue Phase 3 with `shared-memory-handles`. Do not implement
+permission validation, Python, or later phase work while building the
+shared-memory-handles slice.
