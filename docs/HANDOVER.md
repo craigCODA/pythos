@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `syscall-entry` complete. Halt at the
-`syscall-entry` -> `user-stacks` boundary.
+Current boundary: Phase 8 `user-stacks` complete. Halt at the
+`user-stacks` -> `service-local-python-runtimes` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -19,6 +19,7 @@ python scripts\test-boot.py --slice save-and-restore-across-reboot
 python scripts\test-boot.py --slice ring-3-execution
 python scripts\test-boot.py --slice separate-address-spaces
 python scripts\test-boot.py --slice syscall-entry
+python scripts\test-boot.py --slice user-stacks
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -49,16 +50,18 @@ Phase 7 complete
 Phase 8 ring-3-execution complete
 Phase 8 separate-address-spaces complete
 Phase 8 syscall-entry complete
-Next allowed slice: user-stacks
+Phase 8 user-stacks complete
+Next allowed slice: service-local-python-runtimes
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
 workspace-session object kind. ADR 0024 records the object-browser inspection
 boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
 0026 records the Phase 8 ring-3 execution proof. ADR 0027 records the Phase 8
-separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. Do not
-start service-local runtimes, networking, AI, SMP, or hardware-expansion work
-before their roadmap gates.
+separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
+0029 records the Phase 8 guarded user-stack layout. Do not start guarded shared
+memory, networking, AI, SMP, or hardware-expansion work before their roadmap
+gates.
 
 ## Phase 6 Summary
 
@@ -113,6 +116,7 @@ save-and-restore-across-reboot
 ring-3-execution
 separate-address-spaces
 syscall-entry
+user-stacks
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -220,6 +224,16 @@ user pointer copy-in/copy-out, service-local runtimes, guarded shared memory,
 process termination, quotas, crash containment, or hostile-code capability
 enforcement.
 
+The user-stacks slice records ADR 0029 and implements a fixed guarded
+user-stack pool. PythCore reserves page-aligned stack slots with a
+supervisor-only guard page below each usable non-executable user stack page,
+maps only the usable pages into the distinct user CR3 root, validates both the
+stack and guard permissions under that root, reruns the CPL3 proof on the
+guarded stack pool, and emits `PYTHOS:CORE:USER_STACKS_READY`. It does not
+implement dynamic user processes, user pointer copy-in/copy-out,
+service-local runtimes, guarded shared memory, process termination, quotas,
+crash containment, or hostile-code capability enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -298,6 +312,11 @@ PYTHOS:CORE:SYSCALL:SYSTEM_LOG
 PYTHOS:CORE:SYSCALL:RETURN
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:SYSCALL_ENTRY_READY
+PYTHOS:CORE:USER_STACK:ALLOCATED
+PYTHOS:CORE:USER_STACK:GUARD_PAGE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:USER_STACKS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -366,6 +385,11 @@ PYTHOS:CORE:SYSCALL:SYSTEM_LOG
 PYTHOS:CORE:SYSCALL:RETURN
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:SYSCALL_ENTRY_READY
+PYTHOS:CORE:USER_STACK:ALLOCATED
+PYTHOS:CORE:USER_STACK:GUARD_PAGE
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:USER_STACKS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -395,6 +419,7 @@ core/src/storage_service.rs
 core/src/syscall.rs
 core/src/typed_object_format.rs
 core/src/user_mode.rs
+core/src/user_stacks.rs
 core/src/workspace_objects.rs
 ```
 
@@ -428,6 +453,7 @@ docs/decisions/0025-phase-7-object-store-checkpoint-recovery.md
 docs/decisions/0026-phase-8-ring3-execution.md
 docs/decisions/0027-phase-8-separate-address-spaces.md
 docs/decisions/0028-phase-8-syscall-abi.md
+docs/decisions/0029-phase-8-user-stacks.md
 ```
 
 Boot artifacts:
@@ -457,7 +483,7 @@ user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
 AI inside the trusted core
-general user process stacks
+dynamic user process stacks
 user pointer copy-in/copy-out
 ring-3 service isolation
 hostile-code containment
@@ -467,10 +493,10 @@ Open Surface
 Patch
 ```
 
-Ring-3 execution, the distinct user CR3, and the syscall ABI exist only for the
-fixed proof path. Capability separation for services is still not a
-hostile-code boundary. Do not claim hostile-code isolation until the Phase 8
-adversarial boundary tests land.
+Ring-3 execution, the distinct user CR3, the syscall ABI, and the guarded
+user-stack pool exist only for the fixed proof path. Capability separation for
+services is still not a hostile-code boundary. Do not claim hostile-code
+isolation until the Phase 8 adversarial boundary tests land.
 
 ## Next Slice
 
@@ -488,16 +514,17 @@ docs/ROADMAP.md
 Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-user-stacks
+service-local-python-runtimes
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof for guarded per-task user-mode stacks before
-   changing the ring-3 entry path.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin user
-   runtimes, quotas, networking, AI, SMP, or hardware expansion before their
-   slice gates.
+1. Add a failing automated proof that each service-local Python runtime runs in
+   its own address space and does not share interpreter state with other
+   services by default.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin guarded
+   shared memory, quotas, networking, AI, SMP, or hardware expansion before
+   their slice gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary

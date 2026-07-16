@@ -43,6 +43,7 @@ mod system_api;
 mod tasks;
 mod typed_object_format;
 mod user_mode;
+mod user_stacks;
 mod value_validation;
 mod widgets;
 mod window_interaction;
@@ -557,6 +558,60 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SYSCALL_ENTRY_READY");
+        if user_stacks::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:USER_STACK:ALLOCATED");
+        // SAFETY:
+        // 1. Invariant: the user root maps usable user stack pages with user
+        //    access and keeps each guard page supervisor-only.
+        // 2. Established by: the static user-stack pool layout and validated
+        //    immediately after this CR3 switch while the user root's own table
+        //    frames are mapped.
+        // 3. Lifetime: the root and stack pool remain retained for this proof.
+        // 4. Pointer ownership: the CPU borrows the user page-table hierarchy
+        //    and uses the selected user stack while running CPL3 code.
+        // 5. Alignment: the root and stack pages are 4 KiB aligned.
+        // 6. Mapped length: the hierarchy maps the active kernel path, fixed
+        //    user proof page, and guarded user stack pages.
+        // 7. Concurrency: single-core Phase 8 proof with one active user stack.
+        // 8. Violation: bad stack mappings fault through the diagnostic path.
+        unsafe {
+            user_address_space.activate();
+        }
+        let stack_protection_result = user_address_space.validate_user_stack_protections();
+        if stack_protection_result.is_ok() {
+            serial::write_line("PYTHOS:CORE:USER_STACK:GUARD_PAGE");
+        }
+        let guarded_stack_result = if stack_protection_result.is_ok() {
+            user_mode::run_self_test()
+        } else {
+            Err(user_mode::UserModeError::DidNotReturn)
+        };
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    for the remaining boot path after the user-stack proof.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later kernel work under the
+        //    user proof root.
+        unsafe {
+            address_space.activate();
+        }
+        if stack_protection_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        if guarded_stack_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:USER_STACKS_READY");
     }
 
     #[cfg(test)]

@@ -4,7 +4,7 @@
 //! CPL3 code, take a user-originated trap, and resume kernel execution.
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
-use crate::architecture::x86_64::gdt;
+use crate::{architecture::x86_64::gdt, user_stacks};
 #[cfg(not(test))]
 use crate::{architecture::x86_64::tss, serial};
 #[cfg(not(test))]
@@ -31,22 +31,8 @@ pub enum UserModeError {
 #[repr(align(4096))]
 struct UserCodePage([u8; USER_PAGE_SIZE]);
 
-#[repr(align(4096))]
-struct UserDataPage(UnsafeCell<[u8; USER_PAGE_SIZE]>);
-
 #[repr(align(16))]
 struct KernelTrapStack(UnsafeCell<[u8; KERNEL_TRAP_STACK_SIZE]>);
-
-// SAFETY:
-// 1. Invariant: the user stack page is private to the single ring-3 proof.
-// 2. Established by: Phase 8 has no concurrent user tasks yet.
-// 3. Lifetime: the page is static for all of PythCore.
-// 4. Pointer ownership: this module owns the backing storage.
-// 5. Alignment: the wrapper gives page alignment.
-// 6. Mapped length: exactly `USER_PAGE_SIZE` bytes.
-// 7. Concurrency: single-core boot with one user proof at a time.
-// 8. Violation: concurrent mutation would corrupt the proof stack.
-unsafe impl Sync for UserDataPage {}
 
 // SAFETY:
 // 1. Invariant: the trap stack is used only as TSS.RSP0 for the one-shot
@@ -62,7 +48,6 @@ unsafe impl Sync for UserDataPage {}
 unsafe impl Sync for KernelTrapStack {}
 
 static USER_CODE_PAGE: UserCodePage = UserCodePage(user_code_bytes());
-static USER_STACK_PAGE: UserDataPage = UserDataPage(UnsafeCell::new([0; USER_PAGE_SIZE]));
 static KERNEL_TRAP_STACK: KernelTrapStack =
     KernelTrapStack(UnsafeCell::new([0; KERNEL_TRAP_STACK_SIZE]));
 
@@ -203,15 +188,11 @@ pub fn user_code_region() -> (u64, u64) {
 }
 
 pub fn user_stack_region() -> (u64, u64) {
-    (user_stack_start(), USER_PAGE_SIZE as u64)
+    user_stacks::proof_stack_region()
 }
 
 pub fn user_code_start() -> u64 {
     USER_CODE_PAGE.0.as_ptr() as u64
-}
-
-fn user_stack_start() -> u64 {
-    USER_STACK_PAGE.0.get().cast::<u8>() as u64
 }
 
 fn user_syscall_entry() -> u64 {
@@ -220,7 +201,7 @@ fn user_syscall_entry() -> u64 {
 
 #[cfg(not(test))]
 fn user_stack_top() -> u64 {
-    user_stack_start() + USER_PAGE_SIZE as u64 - 16
+    user_stacks::proof_stack_top()
 }
 
 #[cfg(not(test))]

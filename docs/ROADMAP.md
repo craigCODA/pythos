@@ -892,8 +892,17 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    process stacks, user pointer copy-in/copy-out, service-local runtimes,
    guarded shared memory, process termination, quotas, crash containment, or
    hostile-code capability enforcement.
-4. `user-stacks` - guarded per-task user-mode stacks, separate from Phase 2
-   kernel stacks.
+4. `user-stacks` - COMPLETE. ADR 0029 records the guarded user-stack layout.
+   PythCore reserves fixed page-aligned user stack slots with supervisor-only
+   guard pages below usable non-executable user stack pages, maps only the
+   usable pages into the distinct user CR3 root, validates both the usable and
+   guard-page permissions, migrates the CPL3 proof onto that stack pool, and
+   emits `PYTHOS:CORE:USER_STACK:ALLOCATED`,
+   `PYTHOS:CORE:USER_STACK:GUARD_PAGE`, and
+   `PYTHOS:CORE:USER_STACKS_READY`. This slice does not implement dynamic user
+   processes, user pointer copy-in/copy-out, service-local runtimes, guarded
+   shared memory, process termination, quotas, crash containment, or
+   hostile-code capability enforcement.
 5. `service-local-python-runtimes` - each Python service interpreter instance
    runs in its own address space, not sharing interpreter state with other
    services by default.
@@ -940,6 +949,10 @@ model or syscall ABI.
 ADR 0028 records the `syscall-entry` ABI. It defines the first syscall number
 and register contract, but intentionally accepts no user pointers and does not
 claim hostile-code containment.
+
+ADR 0029 records the `user-stacks` guarded stack layout. It defines fixed
+guarded stack slots for Phase 8 proofs, but intentionally does not define
+dynamic process stacks or stack reclamation.
 
 ### Architectural Test (Non-Binding)
 

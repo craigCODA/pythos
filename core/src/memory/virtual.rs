@@ -2,7 +2,7 @@
 
 use crate::architecture::x86_64::exceptions;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
-use crate::user_mode;
+use crate::{user_mode, user_stacks};
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
@@ -68,6 +68,7 @@ pub enum VmError {
     BadBootInfo,
     NotIsolated,
     UserAccessViolation,
+    UserStackGuardViolation,
 }
 
 impl From<MemoryError> for VmError {
@@ -250,6 +251,18 @@ impl UserAddressSpace {
             symbol_addr(&raw const __pythcore_data_start),
         )? {
             return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
+    pub fn validate_user_stack_protections(&self) -> Result<(), VmError> {
+        for region in user_stacks::regions() {
+            if !user_can_access_from_root(self.root_table_phys, region.stack_start)? {
+                return Err(VmError::UserAccessViolation);
+            }
+            if user_can_access_from_root(self.root_table_phys, region.guard_start)? {
+                return Err(VmError::UserStackGuardViolation);
+            }
         }
         Ok(())
     }
@@ -478,8 +491,13 @@ fn map_kernel_segments(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError>
 fn map_user_mode_proof_pages(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError> {
     let (code_start, code_len) = user_mode::user_code_region();
     tables.map_user_translated_range(code_start, code_len, 0)?;
-    let (stack_start, stack_len) = user_mode::user_stack_region();
-    tables.map_user_translated_range(stack_start, stack_len, PTE_WRITE | PTE_NO_EXECUTE)?;
+    for region in user_stacks::regions() {
+        tables.map_user_translated_range(
+            region.stack_start,
+            region.stack_len,
+            PTE_WRITE | PTE_NO_EXECUTE,
+        )?;
+    }
     Ok(())
 }
 
