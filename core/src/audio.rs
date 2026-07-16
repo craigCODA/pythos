@@ -73,6 +73,18 @@ pub struct Ac97Buffers {
     pub sample_count: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PcmPlayback {
+    Ac97(Ac97Playback),
+    Silent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ac97Playback {
+    pub bdl_phys: u32,
+    pub sample_count: u16,
+}
+
 #[repr(C, align(4096))]
 struct PcmBuffer {
     samples: [i16; PCM_SAMPLE_COUNT],
@@ -117,6 +129,15 @@ const AC97_PCM_FRAME_COUNT: usize = 1024;
 const AC97_PCM_CHANNELS: usize = 2;
 const PCM_SAMPLE_COUNT: usize = AC97_PCM_FRAME_COUNT * AC97_PCM_CHANNELS;
 const AC97_BDL_IOC: u32 = 1 << 31;
+const AC97_PCM_OUT_BDBAR: u16 = 0x10;
+const AC97_PCM_OUT_LVI: u16 = 0x15;
+const AC97_PCM_OUT_STATUS: u16 = 0x16;
+const AC97_PCM_OUT_CONTROL: u16 = 0x1B;
+const AC97_PCM_STATUS_CLEAR: u16 = 0x1C;
+const AC97_PCM_CONTROL_RESET: u8 = 1 << 1;
+const AC97_PCM_CONTROL_RUN: u8 = 1 << 0;
+const FIXED_PCM_AMPLITUDE: i32 = 12_000;
+const FIXED_PCM_PERIOD_FRAMES: usize = 109;
 const EMPTY_DESCRIPTOR: Ac97BufferDescriptor = Ac97BufferDescriptor {
     buffer_phys: 0,
     control_length: 0,
@@ -167,6 +188,28 @@ pub fn initialize_buffers(driver: AudioDriver) -> Result<AudioBuffers, AudioErro
             serial::write_line("PYTHOS:CORE:AUDIO:BUFFER_SKIPPED");
             Ok(AudioBuffers::Silent)
         }
+    }
+}
+
+pub fn play_fixed_pcm(
+    driver: AudioDriver,
+    buffers: AudioBuffers,
+) -> Result<PcmPlayback, AudioError> {
+    match (driver, buffers) {
+        (AudioDriver::Ac97(ac97), AudioBuffers::Ac97(buffers)) => {
+            fill_fixed_pcm_buffer();
+            start_ac97_pcm(ac97, buffers)?;
+            serial::write_line("PYTHOS:CORE:AUDIO:PCM_PLAYBACK");
+            Ok(PcmPlayback::Ac97(Ac97Playback {
+                bdl_phys: buffers.bdl_phys,
+                sample_count: buffers.sample_count,
+            }))
+        }
+        (AudioDriver::Silent, AudioBuffers::Silent) => {
+            serial::write_line("PYTHOS:CORE:AUDIO:PCM_SKIPPED");
+            Ok(PcmPlayback::Silent)
+        }
+        _ => Err(AudioError::InvalidBar),
     }
 }
 
@@ -429,6 +472,108 @@ fn descriptor_control_length(sample_count: u16) -> u32 {
 }
 
 #[cfg(not(test))]
+fn fill_fixed_pcm_buffer() {
+    // SAFETY:
+    // 1. Invariant: `PCM_BUFFER` is the single static Phase 6 PCM buffer.
+    // 2. Established by: audio playback initialization runs once, after buffer
+    //    setup and before any AC97 run bit is set.
+    // 3. Lifetime: the buffer is static for the whole boot.
+    // 4. Pointer ownership: PythCore owns all writes before handing to DMA.
+    // 5. Alignment: `PCM_BUFFER` is page aligned and `i16` aligned.
+    // 6. Mapped length: exactly `PCM_SAMPLE_COUNT` samples.
+    // 7. Concurrency: single-core boot; AC97 is not running yet.
+    // 8. Violation: concurrent writes during DMA would tear playback samples.
+    let samples = unsafe { (&raw mut PCM_BUFFER.samples).cast::<i16>() };
+    for frame in 0..AC97_PCM_FRAME_COUNT {
+        let sample = fixed_pcm_sample(frame);
+        let left = frame * AC97_PCM_CHANNELS;
+        let right = left + 1;
+        // SAFETY:
+        // 1. Invariant: `left` and `right` stay within the interleaved buffer.
+        // 2. Established by: frame bound is `AC97_PCM_FRAME_COUNT`.
+        // 3. Lifetime: the PCM buffer remains static for all playback.
+        // 4. Pointer ownership: PythCore initializes samples before DMA starts.
+        // 5. Alignment: the pointer is aligned for `i16`.
+        // 6. Mapped length: `PCM_SAMPLE_COUNT` samples.
+        // 7. Concurrency: AC97 run bit has not been set.
+        // 8. Violation: out-of-range writes would corrupt kernel data.
+        unsafe {
+            samples.add(left).write_volatile(sample);
+            samples.add(right).write_volatile(sample);
+        }
+    }
+}
+
+#[cfg(test)]
+fn fill_fixed_pcm_buffer() {}
+
+fn fixed_pcm_sample(frame: usize) -> i16 {
+    let phase = (frame % FIXED_PCM_PERIOD_FRAMES) as i32;
+    let half_period = (FIXED_PCM_PERIOD_FRAMES / 2) as i32;
+    let value = if phase < half_period {
+        -FIXED_PCM_AMPLITUDE + (phase * FIXED_PCM_AMPLITUDE * 2 / half_period)
+    } else {
+        let falling = phase - half_period;
+        FIXED_PCM_AMPLITUDE
+            - (falling * FIXED_PCM_AMPLITUDE * 2 / ((FIXED_PCM_PERIOD_FRAMES as i32) - half_period))
+    };
+    value as i16
+}
+
+#[cfg(not(test))]
+fn start_ac97_pcm(driver: Ac97Driver, buffers: Ac97Buffers) -> Result<(), AudioError> {
+    outb(
+        ac97_bus_port(driver.device, AC97_PCM_OUT_CONTROL)?,
+        AC97_PCM_CONTROL_RESET,
+    );
+    io_delay();
+    outw(
+        ac97_bus_port(driver.device, AC97_PCM_OUT_STATUS)?,
+        AC97_PCM_STATUS_CLEAR,
+    );
+    outl(
+        ac97_bus_port(driver.device, AC97_PCM_OUT_BDBAR)?,
+        buffers.bdl_phys,
+    );
+    outb(ac97_bus_port(driver.device, AC97_PCM_OUT_LVI)?, 0);
+    outb(
+        ac97_bus_port(driver.device, AC97_PCM_OUT_CONTROL)?,
+        AC97_PCM_CONTROL_RUN,
+    );
+    Ok(())
+}
+
+#[cfg(test)]
+fn start_ac97_pcm(_driver: Ac97Driver, _buffers: Ac97Buffers) -> Result<(), AudioError> {
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn outb(port: u16, value: u8) {
+    // SAFETY:
+    // 1. Invariant: `port` names a validated AC97 bus-master byte register.
+    // 2. Established by: callers derive it from the selected AC97 bus-master
+    //    I/O BAR plus a fixed Phase 6 PCM-out register offset.
+    // 3. Lifetime: the I/O transaction completes before this helper returns.
+    // 4. Pointer ownership: no memory pointers are used.
+    // 5. Alignment: not applicable to port I/O.
+    // 6. Mapped length: not applicable; port I/O is CPU-mediated.
+    // 7. Concurrency: Phase 6 starts PCM playback from one CPU.
+    // 8. Violation: writing the wrong port could reconfigure unrelated hardware.
+    unsafe {
+        asm!(
+            "out dx, al",
+            in("dx") port,
+            in("al") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
+}
+
+#[cfg(test)]
+fn outb(_port: u16, _value: u8) {}
+
+#[cfg(not(test))]
 fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     outl(
         PCI_CONFIG_ADDRESS,
@@ -670,6 +815,16 @@ mod tests {
         assert_eq!(
             descriptor_control_length(PCM_SAMPLE_COUNT as u16),
             AC97_BDL_IOC | 2048
+        );
+    }
+
+    #[test]
+    fn fixed_pcm_asset_is_deterministic_triangle_wave() {
+        assert_eq!(fixed_pcm_sample(0), -12_000);
+        assert_eq!(fixed_pcm_sample(FIXED_PCM_PERIOD_FRAMES / 2), 12_000);
+        assert_eq!(
+            fixed_pcm_sample(FIXED_PCM_PERIOD_FRAMES),
+            fixed_pcm_sample(0)
         );
     }
 }
