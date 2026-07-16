@@ -355,9 +355,12 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    operation by knowing the resource id. Emits `PYTHOS:CORE:CAPABILITY:GRANT`,
    `PYTHOS:CORE:CAPABILITY:USE`, and
    `PYTHOS:CORE:CAPABILITY_HANDLES_READY`.
-6. `shared-memory-handles` - capability-gated shared memory region between two
-   services, mapped read-only or read-write per grant, never implicitly
-   writable.
+6. `shared-memory-handles` - COMPLETE. A capability-gated shared memory region
+   between services. A read-only grant allows reading the region, rejects
+   writes with `MissingRights`, and leaves the region unchanged. Shared memory
+   is never implicitly writable. Emits `PYTHOS:CORE:SHM:READ_ONLY`,
+   `PYTHOS:CORE:SHM:WRITE_DENIED`, and
+   `PYTHOS:CORE:SHARED_MEMORY_HANDLES_READY`.
 7. `permission-validation` - every privileged operation, including IPC send,
    shared-memory map, and later Phase 8 syscalls, checks a capability handle
    before proceeding. No operation checks a task's identity or trust level as a
