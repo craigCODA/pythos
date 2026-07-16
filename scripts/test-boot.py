@@ -737,6 +737,26 @@ SLICE_MARKERS = {
 }
 
 
+def insert_before(markers: list[str], before: str, additions: list[str]) -> list[str]:
+    index = markers.index(before)
+    return markers[:index] + additions + markers[index:]
+
+
+REQUEST_REPLY_MARKERS = [
+    "PYTHOS:CORE:IPC:REQUEST",
+    "PYTHOS:CORE:IPC:REPLY",
+    "PYTHOS:CORE:IPC:REPLY_TIMEOUT",
+    "PYTHOS:CORE:REQUEST_REPLY_READY",
+]
+
+SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    REQUEST_REPLY_MARKERS,
+)
+
+
 def run(command: list[str]) -> None:
     print("+ " + " ".join(command))
     subprocess.run(command, cwd=ROOT, check=True)
