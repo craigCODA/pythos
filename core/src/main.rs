@@ -219,6 +219,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:REVOCATION_READY");
+        if capabilities::run_negative_authorization_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

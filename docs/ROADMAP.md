@@ -374,10 +374,12 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    fail validation. Emits `PYTHOS:CORE:CAPABILITY:REVOKE`,
    `PYTHOS:CORE:CAPABILITY:STALE_DENIED`, and
    `PYTHOS:CORE:REVOCATION_READY`.
-9. `negative-authorization-tests` - required, not optional: automated tests
-   proving a task is denied access when it has no capability, even when it
-   knows the exact target resource and operation name. This is the load-bearing
-   proof for the entire phase.
+9. `negative-authorization-tests` - COMPLETE. Required, not optional:
+   automated tests prove a task is denied access when it has no capability,
+   even when it knows the exact target resource and operation name. This is the
+   load-bearing proof for the entire phase. Emits
+   `PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED` and
+   `PYTHOS:CORE:NEGATIVE_AUTHORIZATION_READY`.
 10. `audit-logging` - every capability check, grant, use, denial, and
     revocation is logged with service identity, resource, operation, and
     outcome. This is infrastructure-level audit logging, a kernel event stream,

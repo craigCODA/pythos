@@ -204,6 +204,31 @@ pub fn run_revocation_self_test() -> Result<(), CapabilityError> {
     Ok(())
 }
 
+pub fn run_negative_authorization_self_test() -> Result<(), CapabilityError> {
+    let mut identities = ServiceIdentityTable::new();
+    let intruder = identities
+        .register_task(TaskId::new(33))
+        .map_err(|_| CapabilityError::InvalidHandle)?;
+    let table = CapabilityTable::new();
+    let forged = CapabilityHandle {
+        slot: 0,
+        generation: 1,
+    };
+
+    if table.validate(
+        intruder,
+        forged,
+        PROOF_RESOURCE_ID,
+        RightsMask::new(RightsMask::READ),
+    ) != Err(CapabilityError::InvalidHandle)
+    {
+        return Err(CapabilityError::InvalidHandle);
+    }
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:CAPABILITY:KNOWN_TARGET_DENIED");
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +305,27 @@ mod tests {
                 RightsMask::new(RightsMask::READ)
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn knowing_resource_and_operation_without_handle_is_denied() {
+        let mut identities = ServiceIdentityTable::new();
+        let intruder = identities.register_task(TaskId::new(33)).unwrap();
+        let table = CapabilityTable::new();
+        let forged = CapabilityHandle {
+            slot: 0,
+            generation: 1,
+        };
+
+        assert_eq!(
+            table.validate(
+                intruder,
+                forged,
+                PROOF_RESOURCE_ID,
+                RightsMask::new(RightsMask::READ)
+            ),
+            Err(CapabilityError::InvalidHandle)
         );
     }
 }
