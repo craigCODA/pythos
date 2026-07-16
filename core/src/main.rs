@@ -24,6 +24,7 @@ mod memory;
 mod object_relationships;
 mod permission_validation;
 mod qemu_exit;
+mod revision_history;
 mod runtime_loader;
 mod scheduler;
 mod serial;
@@ -433,6 +434,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY");
+        if revision_history::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:REVISION_HISTORY_READY");
     }
 
     #[cfg(test)]

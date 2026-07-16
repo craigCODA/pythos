@@ -681,6 +681,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_object_relationship_markers_are_observed_after_typed_format(self) -> None:
         self.run_boot_slice("object-relationships")
 
+    def test_revision_history_markers_are_observed_after_relationships(self) -> None:
+        self.run_boot_slice("revision-history")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

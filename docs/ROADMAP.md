@@ -766,9 +766,13 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY`. This slice does not implement
    revision history, workspace objects, object browser work, or sector
    persistence.
-8. `revision-history` - objects retain prior versions on write, not just
-   current state, with enough metadata, timestamp and writer service identity
-   from Phase 3, to reconstruct what changed and who changed it.
+8. `revision-history` - COMPLETE. Object updates retain prior versions instead
+   of overwriting the only copy, and each retained revision carries a monotonic
+   timestamp plus writer service identity from Phase 3. Emits
+   `PYTHOS:CORE:OBJECT:REVISION_RETAINED`,
+   `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE`, and
+   `PYTHOS:CORE:REVISION_HISTORY_READY`. This slice does not implement
+   workspace objects, object browser work, or sector persistence.
 9. `workspace-objects` - first concrete typed-object kind representing a saved
    shell layout or session. This ties back to Phase 5 window objects finally
    getting persisted.

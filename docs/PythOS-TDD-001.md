@@ -110,13 +110,14 @@ Verified vertical slices:
 * `crash-recovery` replays only the valid committed journal prefix and rolls back an invalid tail caused by a missing commit marker or checksum mismatch. It proves an interrupted write recovers to the last committed sequence, emits `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK`, and completes with `PYTHOS:CORE:CRASH_RECOVERY_READY`. It does not implement object records, typed-object formatting, or object browser work.
 * `typed-object-format` implements ADR 0022's fixed on-disk typed object record: magic, format version, record length, stable `ObjectId`, `ObjectKind` code, object schema version, and bounded versioned field slots. It emits `PYTHOS:CORE:OBJECT:STABLE_ID`, `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS`, and completes with `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`. It does not implement relationships, revision history, workspace objects, object browser work, or sector persistence.
 * `object-relationships` records typed, queryable relationships between known typed objects, including `blocks`, `created-by`, and `depends-on`, while rejecting relationships with unknown endpoints or duplicate edges. It emits `PYTHOS:CORE:OBJECT:RELATIONSHIP`, `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY`, and completes with `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY`. It does not implement revision history, workspace objects, object browser work, or sector persistence.
+* `revision-history` retains prior typed-object versions on update, with monotonic timestamp metadata and writer service identity from Phase 3. It emits `PYTHOS:CORE:OBJECT:REVISION_RETAINED`, `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE`, and completes with `PYTHOS:CORE:REVISION_HISTORY_READY`. It does not implement workspace objects, object browser work, or sector persistence.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-The active implementation is in Phase 7 `persistent-object-storage`. The `object-relationships` slice is complete and ADR 0022 records the on-disk format. The next allowed slice is `revision-history`. Do not begin workspace objects, object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
+The active implementation is in Phase 7 `persistent-object-storage`. The `revision-history` slice is complete and ADR 0022 records the on-disk format. The next allowed slice is `workspace-objects`. Do not begin object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -344,6 +345,9 @@ PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY
 PYTHOS:CORE:OBJECT:RELATIONSHIP
 PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY
 PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY
+PYTHOS:CORE:OBJECT:REVISION_RETAINED
+PYTHOS:CORE:OBJECT:REVISION_PROVENANCE
+PYTHOS:CORE:REVISION_HISTORY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -845,6 +849,9 @@ PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY
 PYTHOS:CORE:OBJECT:RELATIONSHIP
 PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY
 PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY
+PYTHOS:CORE:OBJECT:REVISION_RETAINED
+PYTHOS:CORE:OBJECT:REVISION_PROVENANCE
+PYTHOS:CORE:REVISION_HISTORY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -853,7 +860,7 @@ The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` befor
 
 Phase 6 further requires `PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY` after `PYTHOS:CORE:AUDIO:DEVICE_SELECTED`, `PYTHOS:CORE:AUDIO_DRIVER_READY` after `PYTHOS:CORE:AUDIO:DRIVER`, `PYTHOS:CORE:AUDIO_BUFFERS_READY` after `PYTHOS:CORE:AUDIO:BUFFER`, `PYTHOS:CORE:PCM_PLAYBACK_READY` after `PYTHOS:CORE:AUDIO:PCM_PLAYBACK`, `PYTHOS:CORE:AUDIO_MIXING_READY` after the three `PYTHOS:CORE:AUDIO:MIX:*` markers, `PYTHOS:CORE:BOOT_ASSETS_READY` after the three `PYTHOS:CORE:BOOT_ASSET:*` markers, `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY` after `PYTHOS:CORE:BOOT_SYNC:AUDIO`, `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY` after the audio fallback marker, `PYTHOS:CORE:PHASE_6_COMPLETE` after graceful fallback, and `PYTHOS:CORE:PHASE_6_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
-Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` after `PYTHOS:CORE:STORAGE_SERVICE_READY`, `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY` after the journal append marker, `PYTHOS:CORE:STORAGE:CHECKSUM_VALID` after `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER` after the checksum marker, `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` after the commit marker, `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY` after `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK` after the recovery replay marker, `PYTHOS:CORE:CRASH_RECOVERY_READY` after the recovery rollback marker, `PYTHOS:CORE:OBJECT:STABLE_ID` after `PYTHOS:CORE:CRASH_RECOVERY_READY`, `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS` after the stable-id marker, `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY` after the versioned-fields marker, `PYTHOS:CORE:OBJECT:RELATIONSHIP` after `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`, `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY` after the relationship marker, `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` after the relationship-query marker, and `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` after `PYTHOS:CORE:STORAGE_SERVICE_READY`, `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY` after the journal append marker, `PYTHOS:CORE:STORAGE:CHECKSUM_VALID` after `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER` after the checksum marker, `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` after the commit marker, `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY` after `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK` after the recovery replay marker, `PYTHOS:CORE:CRASH_RECOVERY_READY` after the recovery rollback marker, `PYTHOS:CORE:OBJECT:STABLE_ID` after `PYTHOS:CORE:CRASH_RECOVERY_READY`, `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS` after the stable-id marker, `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY` after the versioned-fields marker, `PYTHOS:CORE:OBJECT:RELATIONSHIP` after `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`, `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY` after the relationship marker, `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` after the relationship-query marker, `PYTHOS:CORE:OBJECT:REVISION_RETAINED` after `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY`, `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE` after the retained marker, `PYTHOS:CORE:REVISION_HISTORY_READY` after the provenance marker, and `PYTHOS:CORE:REVISION_HISTORY_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 
