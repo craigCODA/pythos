@@ -4,6 +4,7 @@
 mod architecture;
 mod audio;
 mod audit;
+mod boot_assets;
 mod boot_info;
 mod boot_metadata;
 mod capabilities;
@@ -369,6 +370,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:AUDIO_MIXING_READY");
+        let _boot_assets = match boot_assets::load_assets() {
+            Ok(assets) => assets,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:BOOT_ASSETS_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

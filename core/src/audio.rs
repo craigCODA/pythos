@@ -71,6 +71,7 @@ pub struct Ac97Buffers {
     pub pcm_phys: u32,
     pub bdl_phys: u32,
     pub sample_count: u16,
+    pub descriptor_count: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -131,6 +132,7 @@ const AC97_EXT_AUDIO_VARIABLE_RATE: u16 = 1 << 0;
 const AC97_BUS_GLOBAL_CONTROL: u16 = 0x2C;
 const AC97_GLOBAL_CONTROL_COLD_RESET: u32 = 1 << 1;
 const AC97_BDL_ENTRY_COUNT: usize = 32;
+const AC97_ACTIVE_BDL_ENTRIES: u8 = AC97_BDL_ENTRY_COUNT as u8;
 const AC97_PCM_FRAME_COUNT: usize = 1024;
 const AC97_PCM_CHANNELS: usize = 2;
 const PCM_SAMPLE_COUNT: usize = AC97_PCM_FRAME_COUNT * AC97_PCM_CHANNELS;
@@ -145,6 +147,11 @@ const AC97_PCM_CONTROL_RUN: u8 = 1 << 0;
 const FIXED_PCM_AMPLITUDE: i32 = 12_000;
 const FIXED_PCM_PERIOD_FRAMES: usize = 109;
 const MIX_SOURCE_COUNT: u8 = 3;
+pub const BOOT_AUDIO_SAMPLE_RATE_HZ: u32 = AC97_SAMPLE_RATE_HZ;
+pub const BOOT_AUDIO_CHANNELS: u8 = AC97_PCM_CHANNELS as u8;
+pub const BOOT_AUDIO_FRAME_COUNT: u16 =
+    (AC97_PCM_FRAME_COUNT * AC97_ACTIVE_BDL_ENTRIES as usize) as u16;
+pub const BOOT_AUDIO_SOURCE_COUNT: u8 = MIX_SOURCE_COUNT;
 const HISS_SEED: u32 = 0x5059_5448;
 const SUB_BASS_PERIOD_FRAMES: usize = 873;
 const TREMOLO_PERIOD_FRAMES: usize = 480;
@@ -236,7 +243,7 @@ pub fn mix_boot_audio(
             emit_mix_markers();
             Ok(AudioMix {
                 source_count: MIX_SOURCE_COUNT,
-                frame_count: AC97_PCM_FRAME_COUNT as u16,
+                frame_count: BOOT_AUDIO_FRAME_COUNT,
             })
         }
         (AudioDriver::Silent, AudioBuffers::Silent, PcmPlayback::Silent) => {
@@ -244,7 +251,7 @@ pub fn mix_boot_audio(
             emit_mix_markers();
             Ok(AudioMix {
                 source_count: MIX_SOURCE_COUNT,
-                frame_count: AC97_PCM_FRAME_COUNT as u16,
+                frame_count: BOOT_AUDIO_FRAME_COUNT,
             })
         }
         _ => Err(AudioError::InvalidBar),
@@ -469,23 +476,26 @@ fn prepare_ac97_buffers(_driver: Ac97Driver) -> Result<Ac97Buffers, AudioError> 
         buffer_phys: pcm_phys,
         control_length: descriptor_control_length(PCM_SAMPLE_COUNT as u16),
     };
-    // SAFETY:
-    // 1. Invariant: `bdl_ptr` points at the first entry of the page-aligned BDL.
-    // 2. Established by: the raw pointer was created from the static BDL above.
-    // 3. Lifetime: the BDL remains static for the whole boot.
-    // 4. Pointer ownership: PythCore owns and initializes the descriptor.
-    // 5. Alignment: the BDL is page aligned and descriptor aligned.
-    // 6. Mapped length: at least one full descriptor exists.
-    // 7. Concurrency: single-core Phase 6 initialization.
-    // 8. Violation: a bad descriptor would point AC97 DMA at invalid memory.
-    unsafe {
-        bdl_ptr.write_volatile(descriptor);
+    for index in 0..usize::from(AC97_ACTIVE_BDL_ENTRIES) {
+        // SAFETY:
+        // 1. Invariant: `index` stays within the active BDL entries.
+        // 2. Established by: `AC97_ACTIVE_BDL_ENTRIES` equals the BDL length.
+        // 3. Lifetime: the BDL remains static for the whole boot.
+        // 4. Pointer ownership: PythCore owns and initializes the descriptors.
+        // 5. Alignment: the BDL is page aligned and descriptor aligned.
+        // 6. Mapped length: `AC97_ACTIVE_BDL_ENTRIES` descriptors are present.
+        // 7. Concurrency: single-core Phase 6 initialization.
+        // 8. Violation: a bad descriptor would point AC97 DMA at invalid memory.
+        unsafe {
+            bdl_ptr.add(index).write_volatile(descriptor);
+        }
     }
 
     Ok(Ac97Buffers {
         pcm_phys,
         bdl_phys,
         sample_count: PCM_SAMPLE_COUNT as u16,
+        descriptor_count: AC97_ACTIVE_BDL_ENTRIES,
     })
 }
 
@@ -495,6 +505,7 @@ fn prepare_ac97_buffers(_driver: Ac97Driver) -> Result<Ac97Buffers, AudioError> 
         pcm_phys: 0x1000,
         bdl_phys: 0x2000,
         sample_count: PCM_SAMPLE_COUNT as u16,
+        descriptor_count: AC97_ACTIVE_BDL_ENTRIES,
     })
 }
 
@@ -660,7 +671,10 @@ fn start_ac97_pcm(driver: Ac97Driver, buffers: Ac97Buffers) -> Result<(), AudioE
         ac97_bus_port(driver.device, AC97_PCM_OUT_BDBAR)?,
         buffers.bdl_phys,
     );
-    outb(ac97_bus_port(driver.device, AC97_PCM_OUT_LVI)?, 0);
+    outb(
+        ac97_bus_port(driver.device, AC97_PCM_OUT_LVI)?,
+        buffers.descriptor_count - 1,
+    );
     outb(
         ac97_bus_port(driver.device, AC97_PCM_OUT_CONTROL)?,
         AC97_PCM_CONTROL_RUN,
@@ -945,6 +959,7 @@ mod tests {
     fn pcm_buffer_is_page_contained_for_first_dma_slice() {
         assert_eq!(PCM_SAMPLE_COUNT, 2048);
         assert_eq!(PCM_SAMPLE_COUNT * core::mem::size_of::<i16>(), 4096);
+        assert_eq!(BOOT_AUDIO_FRAME_COUNT, 32_768);
     }
 
     #[test]
