@@ -1,6 +1,8 @@
 //! Phase 6 AC97 audio device selection.
 #![cfg_attr(test, allow(dead_code))]
 
+#[cfg(not(test))]
+use crate::memory;
 use crate::serial;
 #[cfg(not(test))]
 use core::arch::asm;
@@ -27,6 +29,8 @@ pub enum AudioError {
     InvalidBar,
     CommandRejected,
     PortRangeOverflow,
+    DmaAddressUnmapped,
+    DmaAddressTooHigh,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -57,6 +61,36 @@ pub struct Ac97Driver {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum AudioBuffers {
+    Ac97(Ac97Buffers),
+    Silent,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Ac97Buffers {
+    pub pcm_phys: u32,
+    pub bdl_phys: u32,
+    pub sample_count: u16,
+}
+
+#[repr(C, align(4096))]
+struct PcmBuffer {
+    samples: [i16; PCM_SAMPLE_COUNT],
+}
+
+#[repr(C, align(4096))]
+struct BufferDescriptorList {
+    entries: [Ac97BufferDescriptor; AC97_BDL_ENTRY_COUNT],
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Ac97BufferDescriptor {
+    buffer_phys: u32,
+    control_length: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct PciFunction {
     bus: u8,
     device: u8,
@@ -78,6 +112,22 @@ const AC97_MIXER_PCM_FRONT_DAC_RATE: u16 = 0x2C;
 const AC97_EXT_AUDIO_VARIABLE_RATE: u16 = 1 << 0;
 const AC97_BUS_GLOBAL_CONTROL: u16 = 0x2C;
 const AC97_GLOBAL_CONTROL_COLD_RESET: u32 = 1 << 1;
+const AC97_BDL_ENTRY_COUNT: usize = 32;
+const AC97_PCM_FRAME_COUNT: usize = 1024;
+const AC97_PCM_CHANNELS: usize = 2;
+const PCM_SAMPLE_COUNT: usize = AC97_PCM_FRAME_COUNT * AC97_PCM_CHANNELS;
+const AC97_BDL_IOC: u32 = 1 << 31;
+const EMPTY_DESCRIPTOR: Ac97BufferDescriptor = Ac97BufferDescriptor {
+    buffer_phys: 0,
+    control_length: 0,
+};
+
+static mut PCM_BUFFER: PcmBuffer = PcmBuffer {
+    samples: [0; PCM_SAMPLE_COUNT],
+};
+static mut BDL: BufferDescriptorList = BufferDescriptorList {
+    entries: [EMPTY_DESCRIPTOR; AC97_BDL_ENTRY_COUNT],
+};
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
     match scan_primary_bus()? {
@@ -104,6 +154,20 @@ pub fn initialize_driver(selection: AudioDeviceSelection) -> Result<AudioDriver,
         }
     }
     Ok(driver)
+}
+
+pub fn initialize_buffers(driver: AudioDriver) -> Result<AudioBuffers, AudioError> {
+    match driver {
+        AudioDriver::Ac97(ac97) => {
+            let buffers = prepare_ac97_buffers(ac97)?;
+            serial::write_line("PYTHOS:CORE:AUDIO:BUFFER");
+            Ok(AudioBuffers::Ac97(buffers))
+        }
+        AudioDriver::Silent => {
+            serial::write_line("PYTHOS:CORE:AUDIO:BUFFER_SKIPPED");
+            Ok(AudioBuffers::Silent)
+        }
+    }
 }
 
 fn driver_from_selection(selection: AudioDeviceSelection) -> AudioDriver {
@@ -268,6 +332,100 @@ fn ac97_bus_port(device: Ac97Device, offset: u16) -> Result<u16, AudioError> {
         .bus_master_base
         .checked_add(offset)
         .ok_or(AudioError::PortRangeOverflow)
+}
+
+#[cfg(not(test))]
+fn prepare_ac97_buffers(_driver: Ac97Driver) -> Result<Ac97Buffers, AudioError> {
+    // SAFETY:
+    // 1. Invariant: these statics are the only Phase 6 AC97 DMA buffers.
+    // 2. Established by: the audio initialization path is single-threaded and
+    //    runs once before any later boot sequence can access the buffers.
+    // 3. Lifetime: the buffers are static and remain mapped for the whole boot.
+    // 4. Pointer ownership: PythCore owns the static buffers exclusively.
+    // 5. Alignment: both statics use `repr(align(4096))`.
+    // 6. Mapped length: `PCM_SAMPLE_COUNT * 2` bytes for PCM and one BDL page.
+    // 7. Concurrency: single-core Phase 6 boot sequence; no interrupt writer.
+    // 8. Violation: concurrent mutation would corrupt DMA descriptors.
+    let (pcm_ptr, bdl_ptr) = unsafe {
+        (
+            (&raw mut PCM_BUFFER.samples).cast::<i16>(),
+            (&raw mut BDL.entries).cast::<Ac97BufferDescriptor>(),
+        )
+    };
+
+    for index in 0..PCM_SAMPLE_COUNT {
+        // SAFETY:
+        // 1. Invariant: `index` stays within the static PCM buffer.
+        // 2. Established by: the loop upper bound is `PCM_SAMPLE_COUNT`.
+        // 3. Lifetime: the static buffer lives for the whole boot.
+        // 4. Pointer ownership: PythCore exclusively owns the buffer.
+        // 5. Alignment: `pcm_ptr` is aligned for `i16`.
+        // 6. Mapped length: exactly `PCM_SAMPLE_COUNT` samples are available.
+        // 7. Concurrency: single-core Phase 6 initialization.
+        // 8. Violation: out-of-range writes would corrupt adjacent kernel data.
+        unsafe {
+            pcm_ptr.add(index).write_volatile(0);
+        }
+    }
+    for index in 0..AC97_BDL_ENTRY_COUNT {
+        // SAFETY:
+        // 1. Invariant: `index` stays within the static descriptor list.
+        // 2. Established by: the loop upper bound is `AC97_BDL_ENTRY_COUNT`.
+        // 3. Lifetime: the descriptor list is static for the whole boot.
+        // 4. Pointer ownership: PythCore exclusively owns the descriptor list.
+        // 5. Alignment: `bdl_ptr` is aligned for AC97 descriptors.
+        // 6. Mapped length: exactly `AC97_BDL_ENTRY_COUNT` entries exist.
+        // 7. Concurrency: single-core Phase 6 initialization.
+        // 8. Violation: out-of-range writes would corrupt adjacent kernel data.
+        unsafe {
+            bdl_ptr.add(index).write_volatile(EMPTY_DESCRIPTOR);
+        }
+    }
+
+    let pcm_phys = dma_u32(pcm_ptr as u64)?;
+    let bdl_phys = dma_u32(bdl_ptr as u64)?;
+    let descriptor = Ac97BufferDescriptor {
+        buffer_phys: pcm_phys,
+        control_length: descriptor_control_length(PCM_SAMPLE_COUNT as u16),
+    };
+    // SAFETY:
+    // 1. Invariant: `bdl_ptr` points at the first entry of the page-aligned BDL.
+    // 2. Established by: the raw pointer was created from the static BDL above.
+    // 3. Lifetime: the BDL remains static for the whole boot.
+    // 4. Pointer ownership: PythCore owns and initializes the descriptor.
+    // 5. Alignment: the BDL is page aligned and descriptor aligned.
+    // 6. Mapped length: at least one full descriptor exists.
+    // 7. Concurrency: single-core Phase 6 initialization.
+    // 8. Violation: a bad descriptor would point AC97 DMA at invalid memory.
+    unsafe {
+        bdl_ptr.write_volatile(descriptor);
+    }
+
+    Ok(Ac97Buffers {
+        pcm_phys,
+        bdl_phys,
+        sample_count: PCM_SAMPLE_COUNT as u16,
+    })
+}
+
+#[cfg(test)]
+fn prepare_ac97_buffers(_driver: Ac97Driver) -> Result<Ac97Buffers, AudioError> {
+    Ok(Ac97Buffers {
+        pcm_phys: 0x1000,
+        bdl_phys: 0x2000,
+        sample_count: PCM_SAMPLE_COUNT as u16,
+    })
+}
+
+#[cfg(not(test))]
+fn dma_u32(virt: u64) -> Result<u32, AudioError> {
+    let phys = memory::r#virtual::translate_active_address(virt)
+        .map_err(|_| AudioError::DmaAddressUnmapped)?;
+    u32::try_from(phys).map_err(|_| AudioError::DmaAddressTooHigh)
+}
+
+fn descriptor_control_length(sample_count: u16) -> u32 {
+    u32::from(sample_count) | AC97_BDL_IOC
 }
 
 #[cfg(not(test))]
@@ -498,6 +656,20 @@ mod tests {
         assert_eq!(
             driver_from_selection(AudioDeviceSelection::Absent),
             AudioDriver::Silent
+        );
+    }
+
+    #[test]
+    fn pcm_buffer_is_page_contained_for_first_dma_slice() {
+        assert_eq!(PCM_SAMPLE_COUNT, 2048);
+        assert_eq!(PCM_SAMPLE_COUNT * core::mem::size_of::<i16>(), 4096);
+    }
+
+    #[test]
+    fn buffer_descriptor_marks_interrupt_on_completion() {
+        assert_eq!(
+            descriptor_control_length(PCM_SAMPLE_COUNT as u16),
+            AC97_BDL_IOC | 2048
         );
     }
 }

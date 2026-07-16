@@ -103,6 +103,10 @@ pub fn active_mapping_present(virt: u64) -> bool {
     translate_active(virt).is_ok()
 }
 
+pub fn translate_active_address(virt: u64) -> Result<u64, VmError> {
+    translate_active(virt)
+}
+
 pub struct KernelAddressSpace {
     root_table_phys: u64,
 }
