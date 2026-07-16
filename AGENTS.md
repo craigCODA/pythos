@@ -29,7 +29,7 @@ AI remains outside the trusted core.
 
 ## Active Milestone
 
-The active branch of work is `milestone/scheduler-tests`.
+The active branch of work is `milestone/phase3-complete`.
 
 Verified vertical slices currently include:
 
