@@ -11,6 +11,10 @@ const INVALID_SERVICE_ID: u64 = 0;
 pub struct ServiceId(u64);
 
 impl ServiceId {
+    pub const fn invalid() -> Self {
+        Self(INVALID_SERVICE_ID)
+    }
+
     pub const fn raw(self) -> u64 {
         self.0
     }

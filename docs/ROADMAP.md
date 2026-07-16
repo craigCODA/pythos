@@ -935,14 +935,22 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:PROCESS_TERMINATION_READY`. This slice does not implement
    memory quotas, CPU quotas, crash containment, or hostile-code capability
    enforcement.
-8. `memory-quotas`, `cpu-quotas` - per-service resource limits enforced by the
-   kernel, not self-reported.
-9. `crash-containment` - a user-mode fault, bad pointer, or illegal instruction
+8. `memory-quotas` - COMPLETE. ADR 0033 records the Phase 8 kernel-owned
+   memory quota proof. PythCore registers a service identity, grants an
+   in-quota page charge, denies an over-quota page charge, verifies the denied
+   charge does not mutate recorded usage, and emits
+   `PYTHOS:CORE:QUOTA:MEMORY_GRANTED`,
+   `PYTHOS:CORE:QUOTA:MEMORY_DENIED`, and
+   `PYTHOS:CORE:MEMORY_QUOTAS_READY`. This slice does not implement CPU
+   quotas, crash containment, or hostile-code capability enforcement.
+9. `cpu-quotas` - per-service CPU resource limits enforced by the kernel, not
+   self-reported.
+10. `crash-containment` - a user-mode fault, bad pointer, or illegal instruction
    terminates only the faulting service, diagnosed through the Phase 1.5
    exception path, never the kernel.
-10. `capability-enforcement-at-boundary` - every Phase 3 capability check is
-    now enforced at the syscall gate itself, not just in cooperating service
-    code. This is the actual hostile-code boundary this phase exists to build.
+11. `capability-enforcement-at-boundary` - every Phase 3 capability check is
+   now enforced at the syscall gate itself, not just in cooperating service
+   code. This is the actual hostile-code boundary this phase exists to build.
 
 ### Exit Condition
 
@@ -992,6 +1000,11 @@ ADR 0032 records the `process-termination` proof. It removes a fixed user
 process from scheduling and reclaims its recorded address-space table frames,
 but intentionally does not define quotas, crash containment, or full syscall
 boundary enforcement.
+
+ADR 0033 records the `memory-quotas` proof. It enforces a kernel-owned memory
+page budget keyed by service identity and denies over-quota charges without
+mutating usage, but intentionally does not define CPU budgets, crash
+containment, or full syscall boundary enforcement.
 
 ### Architectural Test (Non-Binding)
 

@@ -27,6 +27,7 @@ mod permission_validation;
 mod persistent_objects;
 mod process;
 mod qemu_exit;
+mod resource_quotas;
 mod revision_history;
 mod runtime_loader;
 mod scheduler;
@@ -754,6 +755,24 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PROCESS_TERMINATION_READY");
+        let memory_quota_proof = match resource_quotas::run_memory_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if memory_quota_proof.allocation_granted {
+            serial::write_line("PYTHOS:CORE:QUOTA:MEMORY_GRANTED");
+        }
+        if memory_quota_proof.allocation_denied {
+            serial::write_line("PYTHOS:CORE:QUOTA:MEMORY_DENIED");
+        }
+        if !memory_quota_proof.allocation_granted || !memory_quota_proof.allocation_denied {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:MEMORY_QUOTAS_READY");
     }
 
     #[cfg(test)]

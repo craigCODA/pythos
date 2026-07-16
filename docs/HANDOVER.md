@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `process-termination` complete. Halt at the
-`process-termination` -> `memory-quotas` / `cpu-quotas` boundary.
+Current boundary: Phase 8 `memory-quotas` complete. Halt at the
+`memory-quotas` -> `cpu-quotas` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -23,6 +23,7 @@ python scripts\test-boot.py --slice user-stacks
 python scripts\test-boot.py --slice service-local-python-runtimes
 python scripts\test-boot.py --slice guarded-shared-memory
 python scripts\test-boot.py --slice process-termination
+python scripts\test-boot.py --slice memory-quotas
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -57,7 +58,8 @@ Phase 8 user-stacks complete
 Phase 8 service-local-python-runtimes complete
 Phase 8 guarded-shared-memory complete
 Phase 8 process-termination complete
-Next allowed slice: memory-quotas and cpu-quotas
+Phase 8 memory-quotas complete
+Next allowed slice: cpu-quotas
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -68,8 +70,8 @@ separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
 0029 records the Phase 8 guarded user-stack layout. ADR 0030 records the Phase
 8 service-local runtime-instance proof. ADR 0031 records the Phase 8 guarded
 shared-memory proof. ADR 0032 records the Phase 8 process-termination proof.
-Do not start networking, AI, SMP, or hardware-expansion work before their
-roadmap gates.
+ADR 0033 records the Phase 8 memory-quota proof. Do not start networking, AI,
+SMP, or hardware-expansion work before their roadmap gates.
 
 ## Phase 6 Summary
 
@@ -128,6 +130,7 @@ user-stacks
 service-local-python-runtimes
 guarded-shared-memory
 process-termination
+memory-quotas
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -272,6 +275,13 @@ reclaimed frame count, and emits
 `PYTHOS:CORE:PROCESS_TERMINATION_READY`. It does not implement memory quotas,
 CPU quotas, crash containment, or hostile-code capability enforcement.
 
+The memory-quotas slice records ADR 0033 and proves kernel-owned memory
+accounting keyed by service identity. PythCore grants an in-quota page charge,
+denies an over-quota page charge, verifies the denied charge does not mutate
+recorded usage, and emits `PYTHOS:CORE:MEMORY_QUOTAS_READY`. It does not
+implement CPU quotas, crash containment, or hostile-code capability
+enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -366,6 +376,9 @@ PYTHOS:CORE:PROCESS:TERMINATED
 PYTHOS:CORE:PROCESS:UNSCHEDULABLE
 PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED
 PYTHOS:CORE:PROCESS_TERMINATION_READY
+PYTHOS:CORE:QUOTA:MEMORY_GRANTED
+PYTHOS:CORE:QUOTA:MEMORY_DENIED
+PYTHOS:CORE:MEMORY_QUOTAS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -450,6 +463,9 @@ PYTHOS:CORE:PROCESS:TERMINATED
 PYTHOS:CORE:PROCESS:UNSCHEDULABLE
 PYTHOS:CORE:PROCESS:ADDRESS_SPACE_RECLAIMED
 PYTHOS:CORE:PROCESS_TERMINATION_READY
+PYTHOS:CORE:QUOTA:MEMORY_GRANTED
+PYTHOS:CORE:QUOTA:MEMORY_DENIED
+PYTHOS:CORE:MEMORY_QUOTAS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -518,6 +534,7 @@ docs/decisions/0029-phase-8-user-stacks.md
 docs/decisions/0030-phase-8-service-local-runtimes.md
 docs/decisions/0031-phase-8-guarded-shared-memory.md
 docs/decisions/0032-phase-8-process-termination.md
+docs/decisions/0033-phase-8-memory-quotas.md
 ```
 
 Boot artifacts:
@@ -577,14 +594,13 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the next Phase 8 slices from the roadmap:
+Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-memory-quotas
 cpu-quotas
 ```
 
-Expected TDD posture for the next Phase 8 slices:
+Expected TDD posture for the next Phase 8 slice:
 
 1. Add a failing automated proof that a user-mode task or process can be
    forcibly terminated by the kernel without cooperation and without losing
