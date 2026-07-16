@@ -881,9 +881,17 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    syscall entry, user process stacks, service-local runtimes, guarded shared
    memory, process termination, quotas, crash containment, or hostile-code
    capability enforcement.
-3. `syscall-entry` - a defined syscall gate, for example `syscall`/`sysret`,
-   replacing direct kernel-mode function calls for the Phase 3 IPC/capability
-   primitives and Phase 4 `system.*` surface.
+3. `syscall-entry` - COMPLETE. ADR 0028 defines the first syscall ABI.
+   PythCore configures the x86-64 `syscall`/`sysret` MSRs, enters the syscall
+   gate from the fixed CPL3 proof running under the distinct user CR3 root,
+   switches from the user stack to a fixed kernel syscall stack, dispatches
+   syscall number `0x5059_0001`, proves a capability-gated Phase 3 IPC send,
+   invokes the Phase 4 `system.log` surface with `PythOS [HISS] We Are Woken`,
+   returns through `sysretq`, and completes with
+   `PYTHOS:CORE:SYSCALL_ENTRY_READY`. This slice does not implement user
+   process stacks, user pointer copy-in/copy-out, service-local runtimes,
+   guarded shared memory, process termination, quotas, crash containment, or
+   hostile-code capability enforcement.
 4. `user-stacks` - guarded per-task user-mode stacks, separate from Phase 2
    kernel stacks.
 5. `service-local-python-runtimes` - each Python service interpreter instance
@@ -928,6 +936,10 @@ syscall ABI ADR and does not claim hostile-code containment.
 ADR 0027 records the `separate-address-spaces` proof. It creates a distinct
 user CR3 root for the fixed proof path only and is intentionally not a process
 model or syscall ABI.
+
+ADR 0028 records the `syscall-entry` ABI. It defines the first syscall number
+and register contract, but intentionally accepts no user pointers and does not
+claim hostile-code containment.
 
 ### Architectural Test (Non-Binding)
 

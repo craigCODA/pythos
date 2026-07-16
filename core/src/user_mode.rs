@@ -16,8 +16,12 @@ use core::{
 
 const USER_PAGE_SIZE: usize = 4096;
 const KERNEL_TRAP_STACK_SIZE: usize = 16 * 4096;
+const USER_CODE_BREAKPOINT_OFFSET: usize = 0;
+const USER_CODE_SYSCALL_OFFSET: usize = 16;
 const USER_CODE_BREAKPOINT: u8 = 0xCC;
 const USER_CODE_HALT: u8 = 0xF4;
+const USER_CODE_SYSCALL_PREFIX: u8 = 0x0F;
+const USER_CODE_SYSCALL_OPCODE: u8 = 0x05;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserModeError {
@@ -69,8 +73,19 @@ static KERNEL_RECOVERY_RSP: AtomicU64 = AtomicU64::new(0);
 
 const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     let mut bytes = [0; USER_PAGE_SIZE];
-    bytes[0] = USER_CODE_BREAKPOINT;
-    bytes[1] = USER_CODE_HALT;
+    bytes[USER_CODE_BREAKPOINT_OFFSET] = USER_CODE_BREAKPOINT;
+    bytes[USER_CODE_BREAKPOINT_OFFSET + 1] = USER_CODE_HALT;
+
+    let syscall_number = crate::syscall::SYSCALL_SYSTEM_LOG_PROOF as u32;
+    bytes[USER_CODE_SYSCALL_OFFSET] = 0xB8;
+    bytes[USER_CODE_SYSCALL_OFFSET + 1] = syscall_number as u8;
+    bytes[USER_CODE_SYSCALL_OFFSET + 2] = (syscall_number >> 8) as u8;
+    bytes[USER_CODE_SYSCALL_OFFSET + 3] = (syscall_number >> 16) as u8;
+    bytes[USER_CODE_SYSCALL_OFFSET + 4] = (syscall_number >> 24) as u8;
+    bytes[USER_CODE_SYSCALL_OFFSET + 5] = USER_CODE_SYSCALL_PREFIX;
+    bytes[USER_CODE_SYSCALL_OFFSET + 6] = USER_CODE_SYSCALL_OPCODE;
+    bytes[USER_CODE_SYSCALL_OFFSET + 7] = USER_CODE_BREAKPOINT;
+    bytes[USER_CODE_SYSCALL_OFFSET + 8] = USER_CODE_HALT;
     bytes
 }
 
@@ -129,6 +144,16 @@ pub extern "C" fn prepare_ring3_return_abi(recovery_rip: u64, kernel_rsp: u64) {
 
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), UserModeError> {
+    run_user_entry(user_code_start())
+}
+
+#[cfg(not(test))]
+pub fn run_syscall_test() -> Result<(), UserModeError> {
+    run_user_entry(user_syscall_entry())
+}
+
+#[cfg(not(test))]
+fn run_user_entry(entry: u64) -> Result<(), UserModeError> {
     tss::set_ring0_stack(kernel_trap_stack_top());
     serial::write_line("PYTHOS:CORE:USER_MODE:ENTER");
     // SAFETY:
@@ -146,7 +171,7 @@ pub fn run_self_test() -> Result<(), UserModeError> {
     //    kernel trap stack are mapped.
     // 7. Concurrency: single-core boot, one ring-3 proof in flight.
     // 8. Violation: bad descriptors or mappings fault through diagnostics.
-    let returned = unsafe { ring3_enter_abi(user_code_start(), user_stack_top()) };
+    let returned = unsafe { ring3_enter_abi(entry, user_stack_top()) };
     if returned == 1 && USER_RETURNED.load(Ordering::SeqCst) {
         Ok(())
     } else {
@@ -187,6 +212,10 @@ pub fn user_code_start() -> u64 {
 
 fn user_stack_start() -> u64 {
     USER_STACK_PAGE.0.get().cast::<u8>() as u64
+}
+
+fn user_syscall_entry() -> u64 {
+    user_code_start() + USER_CODE_SYSCALL_OFFSET as u64
 }
 
 #[cfg(not(test))]
@@ -237,6 +266,23 @@ mod tests {
     fn user_code_page_starts_with_breakpoint_then_halt() {
         assert_eq!(USER_CODE_PAGE.0[0], USER_CODE_BREAKPOINT);
         assert_eq!(USER_CODE_PAGE.0[1], USER_CODE_HALT);
+    }
+
+    #[test]
+    fn user_code_page_contains_syscall_probe_entry() {
+        assert_eq!(USER_CODE_PAGE.0[USER_CODE_SYSCALL_OFFSET], 0xB8);
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_SYSCALL_OFFSET + 5],
+            USER_CODE_SYSCALL_PREFIX
+        );
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_SYSCALL_OFFSET + 6],
+            USER_CODE_SYSCALL_OPCODE
+        );
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_SYSCALL_OFFSET + 7],
+            USER_CODE_BREAKPOINT
+        );
     }
 
     #[test]

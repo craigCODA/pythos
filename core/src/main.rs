@@ -38,6 +38,7 @@ mod shell_objects;
 mod software_renderer;
 mod storage_journal;
 mod storage_service;
+mod syscall;
 mod system_api;
 mod tasks;
 mod typed_object_format;
@@ -520,6 +521,42 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:ADDRESS_SPACE:RESTORED");
         serial::write_line("PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY");
+        // SAFETY:
+        // 1. Invariant: the user proof root maps the fixed user syscall code
+        //    and stack as user-accessible while keeping PythCore text/data
+        //    supervisor-only for the syscall handler.
+        // 2. Established by: `UserAddressSpace::build` and the completed
+        //    separate-address-spaces validation above.
+        // 3. Lifetime: both roots remain retained for the whole Phase 8 proof.
+        // 4. Pointer ownership: the CPU borrows the user page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the hierarchy maps the active stack, syscall
+        //    handler path, and fixed user proof pages.
+        // 7. Concurrency: single-core Phase 8 proof with interrupts disabled.
+        // 8. Violation: missing mappings fault through the diagnostic path.
+        unsafe {
+            user_address_space.activate();
+        }
+        let syscall_result = syscall::run_self_test();
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root used by
+        //    the remaining boot path after the syscall proof completes.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later kernel work under the
+        //    syscall proof root.
+        unsafe {
+            address_space.activate();
+        }
+        if syscall_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:SYSCALL_ENTRY_READY");
     }
 
     #[cfg(test)]

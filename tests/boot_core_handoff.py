@@ -699,6 +699,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_separate_address_space_markers_are_observed_after_ring3(self) -> None:
         self.run_boot_slice("separate-address-spaces")
 
+    def test_syscall_entry_markers_are_observed_after_separate_address_spaces(self) -> None:
+        self.run_boot_slice("syscall-entry")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
