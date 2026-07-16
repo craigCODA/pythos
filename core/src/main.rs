@@ -9,6 +9,7 @@ mod capabilities;
 mod context_switch;
 mod font;
 mod framebuffer;
+mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
 mod memory;
@@ -233,11 +234,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:AUDIT_LOGGING_READY");
         serial::write_line("PYTHOS:CORE:PHASE_3_COMPLETE");
         serial::write_line("PYTHOS:CORE:RUNTIME_SELECTED");
-        if runtime_loader::validate_init_payload(boot_info).is_err() {
+        let runtime_payload = match runtime_loader::load_init_payload(boot_info) {
+            Ok(payload) => payload,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        serial::write_line("PYTHOS:CORE:INIT_PAK_LOADED");
+        if interpreter::boot(runtime_payload.source).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
-        serial::write_line("PYTHOS:CORE:INIT_PAK_LOADED");
+        serial::write_line("PYTHOS:CORE:INTERPRETER_BOOTED");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

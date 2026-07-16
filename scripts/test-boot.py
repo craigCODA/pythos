@@ -786,6 +786,9 @@ RUNTIME_SELECTION_MARKERS = [
 INIT_PAK_LOADING_MARKERS = [
     "PYTHOS:CORE:INIT_PAK_LOADED",
 ]
+INTERPRETER_BOOT_MARKERS = [
+    "PYTHOS:CORE:INTERPRETER_BOOTED",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -854,6 +857,14 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     INIT_PAK_LOADING_MARKERS,
+)
+SLICE_MARKERS["interpreter-boot"] = (
+    SLICE_MARKERS["init-pak-loading"] + INTERPRETER_BOOT_MARKERS
+)
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    INTERPRETER_BOOT_MARKERS,
 )
 
 

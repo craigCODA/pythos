@@ -10,9 +10,11 @@ pub enum RuntimeLoadError {
     BadRuntimePayload,
 }
 
-pub fn validate_init_payload(boot_info: &PythBootInfo) -> Result<(), RuntimeLoadError> {
+pub fn load_init_payload(
+    boot_info: &PythBootInfo,
+) -> Result<runtime_payload::RuntimePayload<'_>, RuntimeLoadError> {
     let bytes = init_bundle_bytes(boot_info)?;
-    validate_init_payload_bytes(bytes).map(|_| ())
+    validate_init_payload_bytes(bytes)
 }
 
 pub fn validate_init_payload_bytes(

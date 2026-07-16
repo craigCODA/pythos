@@ -467,9 +467,14 @@ migration, not a rediscovered one.
    version, header length, exact source length, checksum, and UTF-8 boundary.
    Emits `PYTHOS:CORE:INIT_PAK_LOADED`. It does not parse, interpret, execute,
    import, or grant authority to the payload.
-3. `interpreter-boot` - start the interpreter under PythCore, running in a task
-   from Phase 2 task infrastructure, subject to Phase 3 capability gating from
-   the moment it starts. No ambient authority during bootstrap.
+3. `interpreter-boot` - COMPLETE. Starts the custom minimal interpreter under
+   PythCore by recognizing the exact `HelloService` source from `INIT.PAK`,
+   synthesizing the fixed internal operation plan, assigning the runtime to a
+   native task id and kernel service identity, and requiring an explicit boot
+   capability before the runtime instance is created. Emits
+   `PYTHOS:CORE:INTERPRETER_BOOTED`. It does not execute `system.log`,
+   transition service readiness, define the `system.*` API, or implement
+   coroutine/event semantics.
 4. `system-api-surface` - expose a deliberately narrow `system.*` API. Every
    function on this surface is a capability check, not a syscall shortcut.
    Document the full surface in an ADR before implementing more than a stub.
