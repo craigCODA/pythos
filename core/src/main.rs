@@ -128,6 +128,21 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                     qemu_exit::panic();
                 }
             };
+        let user_address_space =
+            match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
+                Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+        if user_address_space
+            .validate_isolated_from(&address_space)
+            .is_err()
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
         // SAFETY:
         // 1. Invariant: `address_space` maps the currently executing PythCore
         //    code, active bootstrap stack, boot metadata, framebuffer, COM1 code
@@ -464,6 +479,47 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:RING3_EXECUTION_READY");
+        serial::write_line("PYTHOS:CORE:ADDRESS_SPACE:CREATED");
+        serial::write_line("PYTHOS:CORE:ADDRESS_SPACE:ISOLATED");
+        // SAFETY:
+        // 1. Invariant: `user_address_space` is a distinct PML4 root whose
+        //    supervisor mappings cover the current kernel execution path and
+        //    whose user mappings cover only the fixed proof code/stack pages.
+        // 2. Established by: `UserAddressSpace::build` and
+        //    `validate_isolated_from` before the first PythCore CR3 switch.
+        // 3. Lifetime: both kernel and user roots are retained for this proof.
+        // 4. Pointer ownership: the CPU borrows the user page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the hierarchy maps the active stack, kernel path,
+        //    and user proof pages.
+        // 7. Concurrency: single-core Phase 8 proof with interrupts disabled.
+        // 8. Violation: missing mappings fault through the diagnostic path.
+        unsafe {
+            user_address_space.activate();
+        }
+        serial::write_line("PYTHOS:CORE:ADDRESS_SPACE:SWITCHED");
+        let isolated_user_result = user_mode::run_self_test();
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root that was
+        //    active before the isolated user proof.
+        // 2. Established by: the earlier successful `activate` and
+        //    `validate_active` calls.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore would leave later kernel work under
+        //    the isolated proof root.
+        unsafe {
+            address_space.activate();
+        }
+        if isolated_user_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:ADDRESS_SPACE:RESTORED");
+        serial::write_line("PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY");
     }
 
     #[cfg(test)]

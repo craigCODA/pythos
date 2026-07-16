@@ -871,8 +871,16 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:RING3_EXECUTION_READY`. This slice does not implement separate
    address spaces, syscall entry, user process stacks, service-local runtimes,
    or hostile-code containment.
-2. `separate-address-spaces` - per-task or per-service page-table isolation, a
-   real extension of Phase 1.5 single kernel address space work.
+2. `separate-address-spaces` - COMPLETE. ADR 0027 records the first distinct
+   user CR3 root. PythCore builds the root before the first PythCore-owned CR3
+   switch, validates it is distinct from the kernel root, validates only the
+   fixed proof code/stack are user-accessible while kernel text/data remain
+   supervisor-only, switches to that root, reruns the CPL3 breakpoint proof,
+   restores the kernel root, and emits
+   `PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY`. This slice does not implement
+   syscall entry, user process stacks, service-local runtimes, guarded shared
+   memory, process termination, quotas, crash containment, or hostile-code
+   capability enforcement.
 3. `syscall-entry` - a defined syscall gate, for example `syscall`/`sysret`,
    replacing direct kernel-mode function calls for the Phase 3 IPC/capability
    primitives and Phase 4 `system.*` surface.
@@ -916,6 +924,10 @@ negative-authorization suite.
 
 ADR 0026 records the `ring-3-execution` proof. It is intentionally not the
 syscall ABI ADR and does not claim hostile-code containment.
+
+ADR 0027 records the `separate-address-spaces` proof. It creates a distinct
+user CR3 root for the fixed proof path only and is intentionally not a process
+model or syscall ABI.
 
 ### Architectural Test (Non-Binding)
 

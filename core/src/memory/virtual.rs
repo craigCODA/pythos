@@ -66,6 +66,8 @@ pub enum VmError {
     OutOfTableFrames,
     BadActiveCr3,
     BadBootInfo,
+    NotIsolated,
+    UserAccessViolation,
 }
 
 impl From<MemoryError> for VmError {
@@ -142,14 +144,7 @@ impl KernelAddressSpace {
             PTE_NO_EXECUTE,
         )?;
         map_firmware_tables(&mut tables, boot_info)?;
-        tables.map_translated_range(
-            boot_info.bootstrap_stack_bottom,
-            boot_info
-                .bootstrap_stack_top
-                .checked_sub(boot_info.bootstrap_stack_bottom)
-                .ok_or(VmError::RangeOverflow)?,
-            PTE_WRITE | PTE_NO_EXECUTE,
-        )?;
+        map_bootstrap_stack(&mut tables, boot_info)?;
         tables.map_physical_range(
             boot_info.framebuffer.mapped_virtual_base,
             boot_info.framebuffer.physical_base,
@@ -209,6 +204,78 @@ impl KernelAddressSpace {
             return Err(VmError::UnmappedSource);
         }
         Ok(())
+    }
+}
+
+pub struct UserAddressSpace {
+    root_table_phys: u64,
+}
+
+impl UserAddressSpace {
+    pub fn build(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+    ) -> Result<Self, VmError> {
+        let mut tables = PageTableBuilder::new(allocator)?;
+        map_kernel_segments(&mut tables)?;
+        map_user_mode_proof_pages(&mut tables)?;
+        map_bootstrap_stack(&mut tables, boot_info)?;
+        tables.map_allocated_table_frames()?;
+
+        Ok(Self {
+            root_table_phys: tables.root_table_phys,
+        })
+    }
+
+    pub fn validate_isolated_from(&self, kernel: &KernelAddressSpace) -> Result<(), VmError> {
+        if self.root_table_phys == kernel.root_table_phys {
+            return Err(VmError::NotIsolated);
+        }
+        let (user_code, _) = user_mode::user_code_region();
+        let (user_stack, _) = user_mode::user_stack_region();
+        if !user_can_access_from_root(self.root_table_phys, user_code)? {
+            return Err(VmError::UserAccessViolation);
+        }
+        if !user_can_access_from_root(self.root_table_phys, user_stack)? {
+            return Err(VmError::UserAccessViolation);
+        }
+        if user_can_access_from_root(
+            self.root_table_phys,
+            symbol_addr(&raw const __pythcore_text_start),
+        )? {
+            return Err(VmError::UserAccessViolation);
+        }
+        if user_can_access_from_root(
+            self.root_table_phys,
+            symbol_addr(&raw const __pythcore_data_start),
+        )? {
+            return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
+    pub unsafe fn activate(&self) {
+        // SAFETY:
+        // 1. Invariant: `root_table_phys` is a 4 KiB-aligned PML4 physical
+        //    address whose mappings include supervisor kernel code/data,
+        //    the active kernel stack, descriptor-table storage, COM1 code
+        //    paths, and user-accessible proof code/stack pages.
+        // 2. Established by: `UserAddressSpace::build` and
+        //    `validate_isolated_from`.
+        // 3. Lifetime: the page tables are PythCore-owned and not reclaimed.
+        // 4. Pointer ownership: the CPU borrows the page-table hierarchy.
+        // 5. Alignment: the root came from the physical page allocator.
+        // 6. Mapped length: one complete page-table hierarchy rooted at CR3.
+        // 7. Concurrency: single-core Phase 8 proof with interrupts disabled.
+        // 8. Violation: an incomplete mapping faults during or after `mov cr3`.
+        unsafe {
+            asm!(
+                "cli",
+                "mov cr3, {root}",
+                root = in(reg) self.root_table_phys,
+                options(nostack, preserves_flags)
+            );
+        }
     }
 }
 
@@ -416,6 +483,20 @@ fn map_user_mode_proof_pages(tables: &mut PageTableBuilder<'_>) -> Result<(), Vm
     Ok(())
 }
 
+fn map_bootstrap_stack(
+    tables: &mut PageTableBuilder<'_>,
+    boot_info: &PythBootInfo,
+) -> Result<(), VmError> {
+    tables.map_translated_range(
+        boot_info.bootstrap_stack_bottom,
+        boot_info
+            .bootstrap_stack_top
+            .checked_sub(boot_info.bootstrap_stack_bottom)
+            .ok_or(VmError::RangeOverflow)?,
+        PTE_WRITE | PTE_NO_EXECUTE,
+    )
+}
+
 fn map_firmware_tables(
     tables: &mut PageTableBuilder<'_>,
     boot_info: &PythBootInfo,
@@ -532,6 +613,33 @@ fn translate_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmError> 
         return Err(VmError::UnmappedSource);
     }
     Ok((pte & ADDR_MASK) + (virt & OFFSET_4K_MASK))
+}
+
+fn user_can_access_from_root(root_table_phys: u64, virt: u64) -> Result<bool, VmError> {
+    let pml4e = read_entry(root_table_phys, table_index(virt, 39));
+    if !present_user(pml4e) {
+        return Ok(false);
+    }
+    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    if !present_user(pdpte) {
+        return Ok(false);
+    }
+    if pdpte & PTE_HUGE != 0 {
+        return Ok(true);
+    }
+    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    if !present_user(pde) {
+        return Ok(false);
+    }
+    if pde & PTE_HUGE != 0 {
+        return Ok(true);
+    }
+    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
+    Ok(present_user(pte))
+}
+
+fn present_user(entry: u64) -> bool {
+    entry & PTE_PRESENT != 0 && entry & PTE_USER != 0
 }
 
 fn read_cr3() -> u64 {

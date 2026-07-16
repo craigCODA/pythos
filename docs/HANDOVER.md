@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `ring-3-execution` complete. Halt at the
-`ring-3-execution` -> `separate-address-spaces` boundary.
+Current boundary: Phase 8 `separate-address-spaces` complete. Halt at the
+`separate-address-spaces` -> `syscall-entry` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -17,6 +17,7 @@ git log --oneline -8
 python scripts\test-boot.py --slice object-browser
 python scripts\test-boot.py --slice save-and-restore-across-reboot
 python scripts\test-boot.py --slice ring-3-execution
+python scripts\test-boot.py --slice separate-address-spaces
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -45,15 +46,16 @@ Phase 5 complete
 Phase 6 complete
 Phase 7 complete
 Phase 8 ring-3-execution complete
-Next allowed slice: separate-address-spaces
+Phase 8 separate-address-spaces complete
+Next allowed slice: syscall-entry
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
 workspace-session object kind. ADR 0024 records the object-browser inspection
 boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. ADR
-0026 records the Phase 8 ring-3 execution proof. Do not start
-`syscall-entry`, user stacks, service-local runtimes, networking, AI, SMP, or
-hardware-expansion work before their roadmap gates.
+0026 records the Phase 8 ring-3 execution proof. ADR 0027 records the Phase 8
+separate address-space proof. Do not start user stacks, service-local runtimes,
+networking, AI, SMP, or hardware-expansion work before their roadmap gates.
 
 ## Phase 6 Summary
 
@@ -106,6 +108,7 @@ save-and-restore-across-reboot
 
 ```text
 ring-3-execution
+separate-address-spaces
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -191,6 +194,17 @@ emits `PYTHOS:CORE:RING3_EXECUTION_READY`. It does not implement separate
 address spaces, syscall entry, user process stacks, service-local runtimes, or
 hostile-code containment.
 
+The separate-address-spaces slice records ADR 0027 and implements the first
+distinct user CR3 proof. PythCore builds a second PML4 root before the first
+kernel CR3 switch, validates it is distinct from the kernel root, validates the
+fixed proof code and stack are user-accessible while kernel text and data remain
+supervisor-only, switches to that root, reruns the CPL3 breakpoint proof,
+restores the kernel root, and emits
+`PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY`. It does not implement syscall
+entry, user process stacks, service-local runtimes, guarded shared memory,
+process termination, quotas, crash containment, or hostile-code capability
+enforcement.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -253,6 +267,13 @@ PYTHOS:CORE:PHASE_7_COMPLETE
 PYTHOS:CORE:USER_MODE:ENTER
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:RING3_EXECUTION_READY
+PYTHOS:CORE:ADDRESS_SPACE:CREATED
+PYTHOS:CORE:ADDRESS_SPACE:ISOLATED
+PYTHOS:CORE:ADDRESS_SPACE:SWITCHED
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:ADDRESS_SPACE:RESTORED
+PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -305,6 +326,13 @@ PYTHOS:CORE:PHASE_7_COMPLETE
 PYTHOS:CORE:USER_MODE:ENTER
 PYTHOS:CORE:USER_MODE:RETURN
 PYTHOS:CORE:RING3_EXECUTION_READY
+PYTHOS:CORE:ADDRESS_SPACE:CREATED
+PYTHOS:CORE:ADDRESS_SPACE:ISOLATED
+PYTHOS:CORE:ADDRESS_SPACE:SWITCHED
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:ADDRESS_SPACE:RESTORED
+PYTHOS:CORE:SEPARATE_ADDRESS_SPACES_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -364,6 +392,7 @@ docs/decisions/0023-workspace-session-object-kind.md
 docs/decisions/0024-object-browser-inspection-app.md
 docs/decisions/0025-phase-7-object-store-checkpoint-recovery.md
 docs/decisions/0026-phase-8-ring3-execution.md
+docs/decisions/0027-phase-8-separate-address-spaces.md
 ```
 
 Boot artifacts:
@@ -393,7 +422,6 @@ user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
 AI inside the trusted core
-separate address spaces
 syscall ABI
 ring-3 service isolation
 hostile-code containment
@@ -403,10 +431,9 @@ Open Surface
 Patch
 ```
 
-Ring-3 execution exists only as a fixed proof page in the current address
-space. Capability separation for services is still not a hostile-code boundary.
-Do not claim hostile-code isolation until the Phase 8 adversarial boundary
-tests land.
+Ring-3 execution and a distinct user CR3 exist only for the fixed proof path.
+Capability separation for services is still not a hostile-code boundary. Do not
+claim hostile-code isolation until the Phase 8 adversarial boundary tests land.
 
 ## Next Slice
 
@@ -424,16 +451,16 @@ docs/ROADMAP.md
 Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-separate-address-spaces
+syscall-entry
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof for per-task or per-service address-space
-   isolation before changing the page-table path.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin syscall
-   ABI, user stacks, quotas, networking, AI, SMP, or hardware expansion before
-   their slice gates.
+1. Add a failing automated proof for a defined syscall gate before wiring Phase
+   3 or Phase 4 calls through it.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin user
+   stacks, service-local runtimes, quotas, networking, AI, SMP, or hardware
+   expansion before their slice gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary
