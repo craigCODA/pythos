@@ -11,7 +11,6 @@ const INVALID_SERVICE_ID: u64 = 0;
 pub struct ServiceId(u64);
 
 impl ServiceId {
-    #[cfg(test)]
     pub const fn raw(self) -> u64 {
         self.0
     }

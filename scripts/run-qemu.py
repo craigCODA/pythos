@@ -176,6 +176,7 @@ def main() -> int:
     parser.add_argument("--no-audio-device", action="store_true")
     parser.add_argument("--audio-wav", type=Path)
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
+    parser.add_argument("--kill-after-marker")
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -244,7 +245,7 @@ def main() -> int:
     ensure_storage_image(args.storage_image)
     command += [
         "-drive",
-        f"if=none,id=pythos_store,format=raw,file={args.storage_image}",
+        f"if=none,id=pythos_store,format=raw,cache=writethrough,file={args.storage_image}",
         "-device",
         "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
     ]
@@ -263,6 +264,10 @@ def main() -> int:
             if process.poll() is not None:
                 break
             serial = read_serial_log(args.serial_log)
+            if args.kill_after_marker and args.kill_after_marker in serial:
+                process.kill()
+                process.wait(timeout=2)
+                break
             if not requested_quit:
                 terminal_outcome = None
                 if any(marker in serial for marker in PANIC_MARKERS):

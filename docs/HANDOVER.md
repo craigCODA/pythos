@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `object-browser` complete; next slice is
-`save-and-restore-across-reboot`.
+Current boundary: Phase 7 `persistent-object-storage` complete. Halt at the
+Phase 7 -> Phase 8 boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -15,6 +15,8 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 git status --short --branch
 git log --oneline -8
 python scripts\test-boot.py --slice object-browser
+python scripts\test-boot.py --slice save-and-restore-across-reboot
+python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,14 +42,16 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 object-browser complete
-Next allowed slice: save-and-restore-across-reboot
+Phase 7 complete
+Next allowed phase: Phase 8 real-hardware-isolation
+Next allowed slice after explicit re-invocation: ring-3-execution
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
 workspace-session object kind. ADR 0024 records the object-browser inspection
-boundary. Do not start Phase 8, networking, AI, ring-3, SMP, or
-hardware-expansion work before the roadmap gate for that slice.
+boundary. ADR 0025 records the Phase 7 checkpoint/recovery sector contract. Do
+not start Phase 8, networking, AI, ring-3, SMP, or hardware-expansion work
+without explicit re-invocation at the roadmap gate.
 
 ## Phase 6 Summary
 
@@ -93,6 +97,7 @@ object-relationships
 revision-history
 workspace-objects
 object-browser
+save-and-restore-across-reboot
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -160,6 +165,15 @@ creates a typed object-browser window, lists stored typed objects, inspects a
 typed relationship target, and inspects retained revision counts. It does not
 implement reboot persistence or sector persistence.
 
+The save-and-restore-across-reboot slice records ADR 0025 and implements the
+Phase 7 end-to-end persistence proof. PythCore writes the typed workspace
+snapshot through virtio-blk sector I/O into a committed checkpoint sector,
+restores the same object, relationship, revision count, and writer identity on
+the next boot, and clears a deliberately torn tail sector after the harness
+kills QEMU during the commit window. It does not implement a filesystem,
+dynamic object database, Causal Lens UI, Patch, networking, or multi-user
+access control.
+
 ## Phase 7 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -216,6 +230,9 @@ PYTHOS:CORE:WORKSPACE_OBJECTS_READY
 PYTHOS:CORE:OBJECT_BROWSER:LIST
 PYTHOS:CORE:OBJECT_BROWSER:DETAIL
 PYTHOS:CORE:OBJECT_BROWSER_READY
+PYTHOS:CORE:OBJECT_STORE:PERSISTED
+PYTHOS:CORE:OBJECT_STORE:RESTORED
+PYTHOS:CORE:PHASE_7_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -262,6 +279,9 @@ PYTHOS:CORE:WORKSPACE_OBJECTS_READY
 PYTHOS:CORE:OBJECT_BROWSER:LIST
 PYTHOS:CORE:OBJECT_BROWSER:DETAIL
 PYTHOS:CORE:OBJECT_BROWSER_READY
+PYTHOS:CORE:OBJECT_STORE:PERSISTED
+PYTHOS:CORE:OBJECT_STORE:RESTORED
+PYTHOS:CORE:PHASE_7_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -279,6 +299,7 @@ core/src/framebuffer.rs
 core/src/font.rs
 core/src/main.rs
 core/src/object_browser.rs
+core/src/persistent_objects.rs
 core/src/object_relationships.rs
 core/src/revision_history.rs
 core/src/shell_objects.rs
@@ -294,9 +315,11 @@ Test and harness code:
 .github/workflows/qemu-acceptance.yml
 scripts/run-qemu.py
 scripts/test-boot.py
+scripts/test-persistent-storage.py
 tests/boot_core_handoff.py
 tests/test_boot_marker_contract.py
 tests/test_ci_workflow.py
+tests/test_persistent_object_storage.py
 tests/test_qemu_exit.py
 ```
 
@@ -312,6 +335,7 @@ docs/decisions/0021-loader-kernel-file-bound.md
 docs/decisions/0022-on-disk-typed-object-format.md
 docs/decisions/0023-workspace-session-object-kind.md
 docs/decisions/0024-object-browser-inspection-app.md
+docs/decisions/0025-phase-7-object-store-checkpoint-recovery.md
 ```
 
 Boot artifacts:
@@ -334,9 +358,9 @@ C:\Users\NeverAMoment\pythos\target\pythos.iso
 Do not assume any of the following exists:
 
 ```text
-completed persistent object store
 filesystem
-raw sector persistence
+general-purpose file allocation
+dynamic object database
 user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
@@ -353,9 +377,9 @@ kernel-mode services. Do not claim hostile-code isolation until Phase 8 lands.
 
 ## Next Phase
 
-Phase 7 is `persistent-object-storage`.
+Phase 8 is `real-hardware-isolation`.
 
-Before continuing Phase 7, re-read:
+Before continuing Phase 8, re-read:
 
 ```text
 AGENTS.md
@@ -364,21 +388,21 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the next Phase 7 slice from the roadmap:
+Then begin only the first Phase 8 slice from the roadmap:
 
 ```text
-save-and-restore-across-reboot
+ring-3-execution
 ```
 
-Expected TDD posture for the next Phase 7 slice:
+Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated harness expectation that creates typed objects,
-   relationships, and revision history, reboots QEMU, and re-queries identical
-   state.
-2. Add a deliberately interrupted mid-commit scenario that recovers to the
-   last consistent committed state, not corruption.
-3. Preserve ADR 0022's on-disk format; any format change after ADR 0022 is a
-   migration, not a silent rewrite.
-4. Do not begin Phase 8, networking, AI, ring-3, SMP, or hardware expansion in
-   this slice.
+1. Add a failing automated proof for user-mode execution before changing the
+   CPU privilege path.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin syscall
+   ABI, separate address spaces, quotas, networking, AI, SMP, or hardware
+   expansion before their slice gates.
+3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
+   an ADR explicitly records a migration.
+4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary
+   tests land.
 5. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

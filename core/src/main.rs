@@ -24,6 +24,7 @@ mod memory;
 mod object_browser;
 mod object_relationships;
 mod permission_validation;
+mod persistent_objects;
 mod qemu_exit;
 mod revision_history;
 mod runtime_loader;
@@ -451,6 +452,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:OBJECT_BROWSER_READY");
+        if let Err(error) = persistent_objects::run_self_test(_block_device) {
+            persistent_objects::write_error(error);
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PHASE_7_COMPLETE");
     }
 
     #[cfg(test)]

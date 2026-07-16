@@ -696,7 +696,7 @@ python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 
 None. This phase has no vision-doc dependency.
 
-## Phase 7: Persistent Object Storage - IN PROGRESS
+## Phase 7: Persistent Object Storage - COMPLETE
 
 ### Purpose
 
@@ -788,9 +788,17 @@ Phase 6 exit condition reproducible.
     `PYTHOS:CORE:OBJECT_BROWSER:DETAIL`, and
     `PYTHOS:CORE:OBJECT_BROWSER_READY`. This slice does not implement reboot
     persistence or sector persistence.
-11. `save-and-restore-across-reboot` - end-to-end proof: create objects,
-    reboot, confirm identical state including relationships and revision
-    history is recoverable.
+11. `save-and-restore-across-reboot` - COMPLETE. ADR 0025 defines the fixed
+    checkpoint/recovery sectors used for the Phase 7 end-to-end proof. PythCore
+    writes the typed workspace snapshot through virtio-blk sector I/O, reboots
+    against the same raw storage image, restores the same object, relationship,
+    and revision metadata, and proves a deliberately killed mid-commit boot
+    recovers by ignoring and clearing the torn tail. Emits
+    `PYTHOS:CORE:OBJECT_STORE:PERSISTED`,
+    `PYTHOS:CORE:OBJECT_STORE:RESTORED`, and
+    `PYTHOS:CORE:PHASE_7_COMPLETE`. This slice does not implement a
+    filesystem, dynamic object database, Causal Lens UI, Patch, networking, or
+    multi-user access control.
 
 ### Exit Condition
 
@@ -812,6 +820,12 @@ ADR for on-disk typed-object format. This is a durable format, so treat format
 changes after this ADR as migrations, not silent rewrites. Crash-recovery test
 suite including at least one deliberately interrupted write scenario.
 
+Satisfied by ADR 0022, ADR 0025, and:
+
+```powershell
+python scripts\test-persistent-storage.py
+```
+
 ### Architectural Test (Non-Binding)
 
 When typed objects are built, ask whether they carry enough provenance for the
@@ -821,6 +835,14 @@ Answer by checking whether `revision-history`, `object-relationships`, and the
 writer-identity metadata are sufficient to answer a "why does this exist and
 what does it block" query in principle, without building the query API or the
 Causal Lens UI itself.
+
+Answer: yes, in principle. Revision history preserves prior object versions
+with timestamps and writer service identity, relationships preserve typed
+causal edges such as `blocks` and `depends-on`, and the object browser can
+inspect the stored object graph. That is enough provenance substrate to explain
+why an object exists and what it blocks later, as described in
+`docs/vision/patch.md`; this phase intentionally does not build the query API,
+Causal Lens UI, or Patch.
 
 ## Phase 8: Real Hardware Isolation - NOT STARTED
 
