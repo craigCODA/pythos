@@ -10,10 +10,14 @@ const MAX_MESSAGE_SIZE: usize = 16;
 const CHANNEL_QUEUE_DEPTH: usize = 2;
 const IPC_MESSAGE_TYPE_BOOT_PROOF: u16 = 1;
 const IPC_MESSAGE_TYPE_QUEUE_PROOF: u16 = 2;
+const IPC_MESSAGE_TYPE_REQUEST_PROOF: u16 = 3;
+const IPC_MESSAGE_TYPE_REPLY_PROOF: u16 = 4;
 const IPC_PROOF_PAYLOAD: [u8; 8] = [0x50, 0x59, 0x54, 0x48, 0x49, 0x50, 0x43, 0x31];
 const QUEUE_PROOF_A: [u8; 4] = [0x51, 0x41, 0x30, 0x31];
 const QUEUE_PROOF_B: [u8; 4] = [0x51, 0x42, 0x30, 0x32];
 const QUEUE_PROOF_C: [u8; 4] = [0x51, 0x43, 0x30, 0x33];
+const REQUEST_PROOF_PAYLOAD: [u8; 4] = [0x52, 0x45, 0x51, 0x31];
+const REPLY_PROOF_PAYLOAD: [u8; 4] = [0x52, 0x45, 0x50, 0x31];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum IpcError {
@@ -21,6 +25,7 @@ pub enum IpcError {
     MessageTooLarge,
     QueueFull,
     QueueEmpty,
+    ReplyTimeout,
     PayloadCorrupt,
 }
 
@@ -112,6 +117,21 @@ impl IpcChannel {
         Ok(queued.message)
     }
 
+    pub fn receive_reply_or_timeout(
+        &mut self,
+        receiver: ServiceId,
+        timeout_ticks: u64,
+    ) -> Result<IpcMessage, IpcError> {
+        for _ in 0..timeout_ticks {
+            match self.receive(receiver) {
+                Ok(message) => return Ok(message),
+                Err(IpcError::QueueEmpty) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Err(IpcError::ReplyTimeout)
+    }
+
     fn has_endpoint_pair(&self, from: ServiceId, to: ServiceId) -> bool {
         (from == self.owner && to == self.peer) || (from == self.peer && to == self.owner)
     }
@@ -177,6 +197,38 @@ pub fn run_bounded_queue_self_test() -> Result<(), IpcError> {
     if channel.receive(receiver) != Err(IpcError::QueueEmpty) {
         return Err(IpcError::PayloadCorrupt);
     }
+    Ok(())
+}
+
+pub fn run_request_reply_self_test() -> Result<(), IpcError> {
+    let mut identities = ServiceIdentityTable::new();
+    let requester = identities
+        .register_task(TaskId::new(24))
+        .map_err(|_| IpcError::InvalidEndpoint)?;
+    let responder = identities
+        .register_task(TaskId::new(25))
+        .map_err(|_| IpcError::InvalidEndpoint)?;
+    let mut channel = IpcChannel::new(requester, responder);
+    let request = IpcMessage::new(IPC_MESSAGE_TYPE_REQUEST_PROOF, &REQUEST_PROOF_PAYLOAD)?;
+    let reply = IpcMessage::new(IPC_MESSAGE_TYPE_REPLY_PROOF, &REPLY_PROOF_PAYLOAD)?;
+
+    channel.send(requester, responder, request)?;
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:IPC:REQUEST");
+    if channel.receive(responder)? != request {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    channel.send(responder, requester, reply)?;
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:IPC:REPLY");
+    if channel.receive_reply_or_timeout(requester, 1)? != reply {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    if channel.receive_reply_or_timeout(requester, 1) != Err(IpcError::ReplyTimeout) {
+        return Err(IpcError::PayloadCorrupt);
+    }
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:IPC:REPLY_TIMEOUT");
     Ok(())
 }
 
@@ -246,5 +298,25 @@ mod tests {
         assert_eq!(channel.receive(receiver), Ok(first));
         assert_eq!(channel.receive(receiver), Ok(second));
         assert_eq!(channel.receive(receiver), Err(IpcError::QueueEmpty));
+    }
+
+    #[test]
+    fn request_reply_round_trips_and_missing_reply_times_out() {
+        let mut identities = ServiceIdentityTable::new();
+        let requester = identities.register_task(TaskId::new(24)).unwrap();
+        let responder = identities.register_task(TaskId::new(25)).unwrap();
+        let mut channel = IpcChannel::new(requester, responder);
+        let request =
+            IpcMessage::new(IPC_MESSAGE_TYPE_REQUEST_PROOF, &REQUEST_PROOF_PAYLOAD).unwrap();
+        let reply = IpcMessage::new(IPC_MESSAGE_TYPE_REPLY_PROOF, &REPLY_PROOF_PAYLOAD).unwrap();
+
+        assert_eq!(channel.send(requester, responder, request), Ok(()));
+        assert_eq!(channel.receive(responder), Ok(request));
+        assert_eq!(channel.send(responder, requester, reply), Ok(()));
+        assert_eq!(channel.receive_reply_or_timeout(requester, 1), Ok(reply));
+        assert_eq!(
+            channel.receive_reply_or_timeout(requester, 1),
+            Err(IpcError::ReplyTimeout)
+        );
     }
 }

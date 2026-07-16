@@ -342,8 +342,12 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    fixed queue is full and preserves already queued messages without silent
    drop. Emits `PYTHOS:CORE:IPC:QUEUE_FULL` and
    `PYTHOS:CORE:BOUNDED_QUEUES_READY`.
-4. `request-reply` - a synchronous request/reply pattern built on top of the
-   channel primitive, with defined timeout behavior.
+4. `request-reply` - COMPLETE. A synchronous request/reply pattern built on top
+   of the fixed IPC channel: requester sends, responder replies, requester
+   receives the exact matching reply, and missing replies return an explicit
+   timeout result instead of hanging. Emits `PYTHOS:CORE:IPC:REQUEST`,
+   `PYTHOS:CORE:IPC:REPLY`, `PYTHOS:CORE:IPC:REPLY_TIMEOUT`, and
+   `PYTHOS:CORE:REQUEST_REPLY_READY`.
 5. `capability-handles` - the core primitive: an unforgeable token naming a
    resource and allowed operations that a task either holds or does not.
    Capabilities are not ambient. A task with no handle cannot even name the
