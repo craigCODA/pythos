@@ -18,10 +18,14 @@ const USER_PAGE_SIZE: usize = 4096;
 const KERNEL_TRAP_STACK_SIZE: usize = 16 * 4096;
 const USER_CODE_BREAKPOINT_OFFSET: usize = 0;
 const USER_CODE_SYSCALL_OFFSET: usize = 16;
+const USER_CODE_FAULT_OFFSET: usize = 32;
 const USER_CODE_BREAKPOINT: u8 = 0xCC;
 const USER_CODE_HALT: u8 = 0xF4;
 const USER_CODE_SYSCALL_PREFIX: u8 = 0x0F;
 const USER_CODE_SYSCALL_OPCODE: u8 = 0x05;
+const USER_CODE_UD2_PREFIX: u8 = 0x0F;
+const USER_CODE_UD2_OPCODE: u8 = 0x0B;
+const USER_INVALID_OPCODE_VECTOR: u64 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserModeError {
@@ -52,6 +56,7 @@ static KERNEL_TRAP_STACK: KernelTrapStack =
     KernelTrapStack(UnsafeCell::new([0; KERNEL_TRAP_STACK_SIZE]));
 
 static EXPECTED_USER_BREAKPOINT: AtomicBool = AtomicBool::new(false);
+static EXPECTED_USER_FAULT_VECTOR: AtomicU64 = AtomicU64::new(0);
 static USER_RETURNED: AtomicBool = AtomicBool::new(false);
 static KERNEL_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
 static KERNEL_RECOVERY_RSP: AtomicU64 = AtomicU64::new(0);
@@ -71,6 +76,10 @@ const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     bytes[USER_CODE_SYSCALL_OFFSET + 6] = USER_CODE_SYSCALL_OPCODE;
     bytes[USER_CODE_SYSCALL_OFFSET + 7] = USER_CODE_BREAKPOINT;
     bytes[USER_CODE_SYSCALL_OFFSET + 8] = USER_CODE_HALT;
+
+    bytes[USER_CODE_FAULT_OFFSET] = USER_CODE_UD2_PREFIX;
+    bytes[USER_CODE_FAULT_OFFSET + 1] = USER_CODE_UD2_OPCODE;
+    bytes[USER_CODE_FAULT_OFFSET + 2] = USER_CODE_HALT;
     bytes
 }
 
@@ -124,21 +133,44 @@ pub extern "C" fn prepare_ring3_return_abi(recovery_rip: u64, kernel_rsp: u64) {
     USER_RETURNED.store(false, Ordering::SeqCst);
     KERNEL_RECOVERY_RIP.store(recovery_rip, Ordering::SeqCst);
     KERNEL_RECOVERY_RSP.store(kernel_rsp, Ordering::SeqCst);
-    EXPECTED_USER_BREAKPOINT.store(true, Ordering::SeqCst);
 }
 
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), UserModeError> {
-    run_user_entry(user_code_start())
+    run_user_entry(user_code_start(), ExpectedUserTrap::Breakpoint)
 }
 
 #[cfg(not(test))]
 pub fn run_syscall_test() -> Result<(), UserModeError> {
-    run_user_entry(user_syscall_entry())
+    run_user_entry(user_syscall_entry(), ExpectedUserTrap::Breakpoint)
 }
 
 #[cfg(not(test))]
-fn run_user_entry(entry: u64) -> Result<(), UserModeError> {
+pub fn run_illegal_instruction_fault_test() -> Result<(), UserModeError> {
+    run_user_entry(
+        user_fault_entry(),
+        ExpectedUserTrap::Fault(USER_INVALID_OPCODE_VECTOR),
+    )
+}
+
+#[cfg(not(test))]
+enum ExpectedUserTrap {
+    Breakpoint,
+    Fault(u64),
+}
+
+#[cfg(not(test))]
+fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeError> {
+    match trap {
+        ExpectedUserTrap::Breakpoint => {
+            EXPECTED_USER_BREAKPOINT.store(true, Ordering::SeqCst);
+            EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
+        }
+        ExpectedUserTrap::Fault(vector) => {
+            EXPECTED_USER_BREAKPOINT.store(false, Ordering::SeqCst);
+            EXPECTED_USER_FAULT_VECTOR.store(vector, Ordering::SeqCst);
+        }
+    }
     tss::set_ring0_stack(kernel_trap_stack_top());
     serial::write_line("PYTHOS:CORE:USER_MODE:ENTER");
     // SAFETY:
@@ -161,6 +193,26 @@ fn run_user_entry(entry: u64) -> Result<(), UserModeError> {
         Ok(())
     } else {
         Err(UserModeError::DidNotReturn)
+    }
+}
+
+pub fn handle_user_fault(vector: u64, cs: u64, ss: u64) -> bool {
+    let expected_vector = EXPECTED_USER_FAULT_VECTOR.load(Ordering::SeqCst);
+    if expected_vector == 0 || expected_vector != vector || !is_user_frame(cs, ss) {
+        return false;
+    }
+    EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
+    USER_RETURNED.store(true, Ordering::SeqCst);
+    #[cfg(not(test))]
+    {
+        serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
+        let recovery_rip = KERNEL_RECOVERY_RIP.load(Ordering::SeqCst);
+        let recovery_rsp = KERNEL_RECOVERY_RSP.load(Ordering::SeqCst);
+        jump_to_kernel_recovery(recovery_rip, recovery_rsp);
+    }
+    #[cfg(test)]
+    {
+        true
     }
 }
 
@@ -197,6 +249,10 @@ pub fn user_code_start() -> u64 {
 
 fn user_syscall_entry() -> u64 {
     user_code_start() + USER_CODE_SYSCALL_OFFSET as u64
+}
+
+fn user_fault_entry() -> u64 {
+    user_code_start() + USER_CODE_FAULT_OFFSET as u64
 }
 
 #[cfg(not(test))]
@@ -263,6 +319,18 @@ mod tests {
         assert_eq!(
             USER_CODE_PAGE.0[USER_CODE_SYSCALL_OFFSET + 7],
             USER_CODE_BREAKPOINT
+        );
+    }
+
+    #[test]
+    fn user_code_page_contains_illegal_instruction_probe_entry() {
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_FAULT_OFFSET],
+            USER_CODE_UD2_PREFIX
+        );
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_FAULT_OFFSET + 1],
+            USER_CODE_UD2_OPCODE
         );
     }
 

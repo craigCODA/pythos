@@ -791,6 +791,65 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CPU_QUOTAS_READY");
+        // SAFETY:
+        // 1. Invariant: the user root maps the fixed user fault probe with
+        //    user access while keeping kernel text/data supervisor-only.
+        // 2. Established by: `UserAddressSpace::build` and the completed
+        //    separate-address-spaces validation earlier in Phase 8.
+        // 3. Lifetime: both the user and kernel roots are retained for the
+        //    whole boot path.
+        // 4. Pointer ownership: the CPU borrows the user page-table hierarchy
+        //    during the one-shot fault probe.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the hierarchy maps the active kernel path, trap
+        //    stack, and fixed user proof pages.
+        // 7. Concurrency: single-core Phase 8 proof with one user fault probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            user_address_space.activate();
+        }
+        let crash_fault_result = user_mode::run_illegal_instruction_fault_test();
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    for the remaining boot path after the user fault probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later kernel work under the
+        //    user fault proof root.
+        unsafe {
+            address_space.activate();
+        }
+        if crash_fault_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        let crash_containment_proof = match process::run_crash_containment_self_test(
+            process::UserFault::IllegalInstruction,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if crash_containment_proof.faulting_service_terminated {
+            serial::write_line("PYTHOS:CORE:CRASH:SERVICE_TERMINATED");
+        }
+        if crash_containment_proof.peer_service_alive {
+            serial::write_line("PYTHOS:CORE:CRASH:PEER_ALIVE");
+        }
+        if !crash_containment_proof.user_fault_diagnosed
+            || !crash_containment_proof.faulting_service_terminated
+            || !crash_containment_proof.peer_service_alive
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:CRASH_CONTAINMENT_READY");
     }
 
     #[cfg(test)]

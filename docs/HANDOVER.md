@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `cpu-quotas` complete. Halt at the
-`cpu-quotas` -> `crash-containment` boundary.
+Current boundary: Phase 8 `crash-containment` complete. Halt at the
+`crash-containment` -> `capability-enforcement-at-boundary` boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -25,6 +25,7 @@ python scripts\test-boot.py --slice guarded-shared-memory
 python scripts\test-boot.py --slice process-termination
 python scripts\test-boot.py --slice memory-quotas
 python scripts\test-boot.py --slice cpu-quotas
+python scripts\test-boot.py --slice crash-containment
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -61,7 +62,8 @@ Phase 8 guarded-shared-memory complete
 Phase 8 process-termination complete
 Phase 8 memory-quotas complete
 Phase 8 cpu-quotas complete
-Next allowed slice: crash-containment
+Phase 8 crash-containment complete
+Next allowed slice: capability-enforcement-at-boundary
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -73,8 +75,9 @@ separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
 8 service-local runtime-instance proof. ADR 0031 records the Phase 8 guarded
 shared-memory proof. ADR 0032 records the Phase 8 process-termination proof.
 ADR 0033 records the Phase 8 memory-quota proof. ADR 0034 records the Phase 8
-CPU-quota proof. Do not start networking, AI, SMP, or hardware-expansion work
-before their roadmap gates.
+CPU-quota proof. ADR 0035 records the Phase 8 crash-containment proof. Do not
+start networking, AI, SMP, or hardware-expansion work before their roadmap
+gates.
 
 ## Phase 6 Summary
 
@@ -135,6 +138,7 @@ guarded-shared-memory
 process-termination
 memory-quotas
 cpu-quotas
+crash-containment
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -292,6 +296,13 @@ over-quota tick charge, verifies the denied charge does not mutate recorded
 usage, and emits `PYTHOS:CORE:CPU_QUOTAS_READY`. It does not implement crash
 containment or hostile-code capability enforcement.
 
+The crash-containment slice records ADR 0035 and proves a fixed user-mode crash
+is contained as a service failure. PythCore runs a CPL3 illegal-instruction
+probe, diagnoses it through the exception path as a user fault, terminates only
+the faulting service process, preserves a peer service process, and emits
+`PYTHOS:CORE:CRASH_CONTAINMENT_READY`. It does not implement capability
+forgery resistance at the syscall boundary.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -392,6 +403,10 @@ PYTHOS:CORE:MEMORY_QUOTAS_READY
 PYTHOS:CORE:QUOTA:CPU_TICK
 PYTHOS:CORE:QUOTA:CPU_THROTTLED
 PYTHOS:CORE:CPU_QUOTAS_READY
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:CRASH:SERVICE_TERMINATED
+PYTHOS:CORE:CRASH:PEER_ALIVE
+PYTHOS:CORE:CRASH_CONTAINMENT_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -482,6 +497,10 @@ PYTHOS:CORE:MEMORY_QUOTAS_READY
 PYTHOS:CORE:QUOTA:CPU_TICK
 PYTHOS:CORE:QUOTA:CPU_THROTTLED
 PYTHOS:CORE:CPU_QUOTAS_READY
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:CRASH:SERVICE_TERMINATED
+PYTHOS:CORE:CRASH:PEER_ALIVE
+PYTHOS:CORE:CRASH_CONTAINMENT_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -552,6 +571,7 @@ docs/decisions/0031-phase-8-guarded-shared-memory.md
 docs/decisions/0032-phase-8-process-termination.md
 docs/decisions/0033-phase-8-memory-quotas.md
 docs/decisions/0034-phase-8-cpu-quotas.md
+docs/decisions/0035-phase-8-crash-containment.md
 ```
 
 Boot artifacts:
@@ -584,7 +604,7 @@ AI inside the trusted core
 dynamic user process stacks
 user pointer copy-in/copy-out
 full hostile-code service isolation
-hostile-code containment
+full hostile-code capability enforcement
 SMP
 package management
 Open Surface
@@ -593,10 +613,10 @@ Patch
 
 Ring-3 execution, the distinct user CR3, the syscall ABI, the guarded
 user-stack pool, service-local runtime roots, guarded shared-memory proof,
-process-termination proof, and quota proofs exist only for bounded proof paths.
-Capability separation for services is still not a hostile-code boundary. Do
-not claim hostile-code isolation until the Phase 8 adversarial boundary tests
-land.
+process-termination proof, quota proofs, and crash-containment proof exist only
+for bounded proof paths. Capability separation for services is still not the
+full hostile-code boundary. Do not claim hostile-code isolation until the Phase
+8 adversarial boundary tests land.
 
 ## Next Slice
 
@@ -614,17 +634,15 @@ docs/ROADMAP.md
 Then begin only the next Phase 8 slice from the roadmap:
 
 ```text
-crash-containment
+capability-enforcement-at-boundary
 ```
 
 Expected TDD posture for the next Phase 8 slice:
 
-1. Add a failing automated proof that a user-mode fault, bad pointer, or
-   illegal instruction terminates only the faulting service through the Phase
-   1.5 exception path.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin capability
-   boundary enforcement, networking, AI, SMP, or hardware expansion before
-   their slice gates.
+1. Add a failing automated proof that a hostile user-mode service cannot forge
+   or bypass a Phase 3 capability check at the syscall gate.
+2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin networking,
+   AI, SMP, or hardware expansion before their roadmap gates.
 3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
    an ADR explicitly records a migration.
 4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary

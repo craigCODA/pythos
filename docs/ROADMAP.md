@@ -950,9 +950,15 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:QUOTA:CPU_THROTTLED`, and
    `PYTHOS:CORE:CPU_QUOTAS_READY`. This slice does not implement crash
    containment or hostile-code capability enforcement.
-10. `crash-containment` - a user-mode fault, bad pointer, or illegal instruction
-   terminates only the faulting service, diagnosed through the Phase 1.5
-   exception path, never the kernel.
+10. `crash-containment` - COMPLETE. ADR 0035 records the Phase 8 crash
+   containment proof. PythCore runs a fixed CPL3 illegal-instruction probe,
+   diagnoses it through the Phase 1.5 exception path as a user fault, terminates
+   only the faulting service process, preserves a peer service process, and
+   emits `PYTHOS:CORE:CRASH:USER_FAULT`,
+   `PYTHOS:CORE:CRASH:SERVICE_TERMINATED`,
+   `PYTHOS:CORE:CRASH:PEER_ALIVE`, and
+   `PYTHOS:CORE:CRASH_CONTAINMENT_READY`. This slice does not implement full
+   hostile-code capability enforcement.
 11. `capability-enforcement-at-boundary` - every Phase 3 capability check is
    now enforced at the syscall gate itself, not just in cooperating service
    code. This is the actual hostile-code boundary this phase exists to build.
@@ -1015,6 +1021,11 @@ ADR 0034 records the `cpu-quotas` proof. It enforces a kernel-owned CPU tick
 budget keyed by service identity and denies over-quota tick charges without
 mutating usage, but intentionally does not define crash containment or full
 syscall boundary enforcement.
+
+ADR 0035 records the `crash-containment` proof. It contains a fixed CPL3
+illegal-instruction fault as a service crash, terminates only the faulting
+service process, and keeps a peer service process runnable, but intentionally
+does not define full syscall boundary enforcement.
 
 ### Architectural Test (Non-Binding)
 

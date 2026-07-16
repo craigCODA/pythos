@@ -16,6 +16,7 @@ pub enum ProcessError {
     AlreadyTerminated,
     ProcessStillSchedulable,
     ReclaimMismatch,
+    KernelFaultNotContained,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,6 +24,20 @@ pub struct ProcessTerminationProof {
     pub terminated: bool,
     pub unschedulable: bool,
     pub address_space_reclaimed: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(not(test), allow(dead_code))]
+pub enum UserFault {
+    IllegalInstruction,
+    KernelModePageFault,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CrashContainmentProof {
+    pub user_fault_diagnosed: bool,
+    pub faulting_service_terminated: bool,
+    pub peer_service_alive: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -190,6 +205,34 @@ pub fn run_termination_self_test(
     })
 }
 
+pub fn run_crash_containment_self_test(
+    fault: UserFault,
+) -> Result<CrashContainmentProof, ProcessError> {
+    if fault != UserFault::IllegalInstruction {
+        return Err(ProcessError::KernelFaultNotContained);
+    }
+
+    let faulting_address_space = ProcessAddressSpace::new(0x400000, 5)?;
+    let peer_address_space = ProcessAddressSpace::new(0x500000, 5)?;
+    let mut table = ProcessTable::new();
+    let faulting_task = TaskId::new(90);
+    let peer_task = TaskId::new(91);
+
+    table.spawn(faulting_task, faulting_address_space)?;
+    table.spawn(peer_task, peer_address_space)?;
+    table.terminate(faulting_task)?;
+
+    if table.next_runnable()? != peer_task {
+        return Err(ProcessError::ProcessStillSchedulable);
+    }
+
+    Ok(CrashContainmentProof {
+        user_fault_diagnosed: true,
+        faulting_service_terminated: true,
+        peer_service_alive: true,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +265,22 @@ mod tests {
         table.terminate(PROCESS_TERMINATION_TASK).unwrap();
 
         assert_eq!(table.next_runnable(), Err(ProcessError::UnknownProcess));
+    }
+
+    #[test]
+    fn crash_containment_terminates_only_faulting_service() {
+        let proof = run_crash_containment_self_test(UserFault::IllegalInstruction).unwrap();
+
+        assert!(proof.user_fault_diagnosed);
+        assert!(proof.faulting_service_terminated);
+        assert!(proof.peer_service_alive);
+    }
+
+    #[test]
+    fn crash_containment_rejects_kernel_fault_as_contained() {
+        assert_eq!(
+            run_crash_containment_self_test(UserFault::KernelModePageFault),
+            Err(ProcessError::KernelFaultNotContained)
+        );
     }
 }

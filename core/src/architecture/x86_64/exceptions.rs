@@ -331,6 +331,9 @@ pub extern "C" fn exception_handler(frame: &mut ExceptionFrame) {
     {
         return;
     }
+    if crate::user_mode::handle_user_fault(frame.vector, frame.cs, frame.ss) {
+        return;
+    }
     if frame.vector == BREAKPOINT_VECTOR && handle_expected_breakpoint(frame) {
         return;
     }
