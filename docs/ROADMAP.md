@@ -554,9 +554,11 @@ capability-scoped.
    raw keyboard and mouse events only through explicit input capabilities.
    Emits `PYTHOS:CORE:INPUT:KEYBOARD`, `PYTHOS:CORE:INPUT:MOUSE`, and
    `PYTHOS:CORE:INPUT_DRIVERS_READY`.
-2. `input-event-service` - a Python or native service, decided and recorded via
-   ADR, that normalizes raw driver events into a typed event stream other
-   services can subscribe to through IPC, not direct driver access.
+2. `input-event-service` - COMPLETE. ADR 0018 records the native Phase 5
+   service decision. The native service normalizes raw driver events into a
+   typed event stream only for a capability-holding subscriber, emits
+   `PYTHOS:CORE:INPUT:EVENT`, and completes with
+   `PYTHOS:CORE:INPUT_EVENT_SERVICE_READY`.
 3. `software-renderer` - framebuffer-target 2D drawing primitives.
 4. `font-system` - replaces the embedded 8x8 diagnostic font with `FONT.PSF`
    loading. The ISO already carries a `FONT.PSF` slot from Phase 1; this is

@@ -817,6 +817,10 @@ INPUT_DRIVER_MARKERS = [
     "PYTHOS:CORE:INPUT:MOUSE",
     "PYTHOS:CORE:INPUT_DRIVERS_READY",
 ]
+INPUT_EVENT_SERVICE_MARKERS = [
+    "PYTHOS:CORE:INPUT:EVENT",
+    "PYTHOS:CORE:INPUT_EVENT_SERVICE_READY",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -946,6 +950,14 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     INPUT_DRIVER_MARKERS,
+)
+SLICE_MARKERS["input-event-service"] = (
+    SLICE_MARKERS["keyboard-driver"] + INPUT_EVENT_SERVICE_MARKERS
+)
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    INPUT_EVENT_SERVICE_MARKERS,
 )
 
 
