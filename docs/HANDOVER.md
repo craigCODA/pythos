@@ -40,8 +40,8 @@ Expected state at the time this handover was written:
 ```text
 branch   milestone/phase4-runtime-selection
 tracking origin/milestone/phase4-runtime-selection
-HEAD     df0b24f core: add capability checked system api surface
-parent   bf54362 core: stabilize preemption marker ordering
+HEAD     602a593 core: validate runtime boundary values
+parent   50e189e docs: refresh phase 4 handover
 status   clean before this handover edit
 ```
 
@@ -50,7 +50,7 @@ file and update the handover before continuing.
 
 ## Current Stop Point
 
-PythOS is stopped at the Phase 4 `system-api-surface` slice boundary.
+PythOS is stopped at the Phase 4 `value-validation` slice boundary.
 
 Completed:
 
@@ -64,12 +64,13 @@ Phase 4    runtime-selection
 Phase 4    init-pak-loading
 Phase 4    interpreter-boot
 Phase 4    system-api-surface
+Phase 4    value-validation
 ```
 
 Next slice:
 
 ```text
-Phase 4: value-validation
+Phase 4: service-manager
 ```
 
 Do not begin any of the following without explicit re-invocation and roadmap
@@ -96,8 +97,8 @@ runtime-selection        complete
 init-pak-loading         complete
 interpreter-boot         complete
 system-api-surface       complete
-value-validation         next
-service-manager          not started
+value-validation         complete
+service-manager          next
 exception-containment    not started
 service-restart          not started
 async-events             not started
@@ -121,10 +122,10 @@ Use the live git tree as the source of truth. First run:
 The expected current branch is milestone/phase4-runtime-selection, with
 origin tracking the same branch. The expected latest committed slice is:
 
-  df0b24f core: add capability checked system api surface
+  602a593 core: validate runtime boundary values
 
-The latest completed Phase 4 slice is system-api-surface. The next allowed
-slice is value-validation. Do not start service-manager, GUI, audio, storage,
+The latest completed Phase 4 slice is value-validation. The next allowed
+slice is service-manager. Do not start exception-containment, GUI, audio, storage,
 networking, AI, ring-3, or SMP work.
 
 Serial output is the boot oracle. A compile is not proof. A screenshot is not
@@ -224,6 +225,7 @@ PYTHOS:CORE:INIT_PAK_LOADED
 PYTHOS:CORE:INTERPRETER_BOOTED
 PYTHOS:CORE:SYSTEM:LOG
 PYTHOS:CORE:SYSTEM_API_READY
+PYTHOS:CORE:VALUE_VALIDATION_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -253,7 +255,7 @@ cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings
 cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
-python scripts\test-boot.py --slice system-api-surface
+python scripts\test-boot.py --slice value-validation
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
 python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit
@@ -276,6 +278,8 @@ Important notes:
 Current recent history:
 
 ```text
+602a593 core: validate runtime boundary values
+50e189e docs: refresh phase 4 handover
 df0b24f core: add capability checked system api surface
 bf54362 core: stabilize preemption marker ordering
 700038c core: boot custom minimal interpreter
@@ -289,7 +293,18 @@ f5aa27f docs: plan phase 4 runtime selection
 59f542a docs: update active phase branch
 ```
 
-Two latest commits are especially important:
+Recent commits especially important to the current boundary:
+
+```text
+602a593 core: validate runtime boundary values
+```
+
+This completed the Phase 4 `value-validation` slice. It changed runtime
+operations to carry untrusted boundary values, added a small native validation
+layer for the current `system.log` argument, rejects unsupported types,
+oversized/empty/non-UTF-8 strings, raw-pointer-shaped values, and unchecked
+native-struct-shaped values, models explicit host-call returned/rejected
+results, and emits `PYTHOS:CORE:VALUE_VALIDATION_READY`.
 
 ```text
 bf54362 core: stabilize preemption marker ordering
@@ -384,14 +399,18 @@ Verified Phase 4 so far:
 * ADR 0014 defines the runtime payload inside `INIT.PAK`.
 * ADR 0015 defines the exact-shape custom-minimal interpreter bootstrap.
 * ADR 0016 defines the initial `system.*` API surface.
+* ADR 0017 defines the current runtime value-validation boundary.
 * `INIT.PAK` validates the inner runtime source payload.
 * The custom-minimal interpreter recognizes the exact `HelloService` source
   shape and creates a fixed internal operation plan.
 * The runtime receives a native task id, service identity, and explicit boot
   capability.
 * `system.log(message)` requires a `LOG` capability.
-* `system.log(message)` rejects empty and oversized messages.
+* `system.log(message)` validates a bounded nonempty UTF-8 string value.
+* Raw pointer and unchecked native-struct shaped boundary values are rejected.
+* Host calls have explicit returned/rejected value-level result states.
 * The successful runtime path emits `PYTHOS:CORE:SYSTEM:LOG`.
+* The successful value proof emits `PYTHOS:CORE:VALUE_VALIDATION_READY`.
 
 ## What Does Not Exist Yet
 
@@ -399,7 +418,8 @@ Do not imply these are implemented:
 
 * General Python language compatibility.
 * General parser or bytecode execution.
-* General native/Python value conversion layer.
+* General Python object model or broad native/Python value conversion beyond
+  the current `system.log` string boundary.
 * `self.ready()` lifecycle transition.
 * Python service manager.
 * Python exception containment.
@@ -425,73 +445,53 @@ validated INIT.PAK runtime payload
 -> fixed internal operation plan
 -> capability-scoped runtime identity
 -> first host call: system.log(message)
+-> validated bounded UTF-8 runtime string value
 ```
 
 It is not a general Python runtime yet.
 
-## Active Slice: value-validation
+## Active Slice: service-manager
 
-The next allowed slice is `value-validation`.
+The next allowed slice is `service-manager`.
 
 Roadmap intent:
 
 ```text
-Every value crossing the native/Python boundary in either direction is
-validated: type, bounds, ownership. No raw pointer or unchecked native struct is
-ever exposed directly to Python.
+A Python-level service manager capable of starting and stopping Python
+services, itself running with only the capabilities needed to manage service
+lifecycle, not arbitrary system access.
 ```
 
-Recommended scope for the next agent:
+Recommended first scope for the next agent:
 
 1. Start with a failing marker test in `scripts/test-boot.py` and
    `tests/boot_core_handoff.py`.
 2. Add a new slice such as:
 
    ```powershell
-   python scripts\test-boot.py --slice value-validation
+   python scripts\test-boot.py --slice service-manager
    ```
 
 3. The first run should fail because the new completion marker is missing.
-4. Keep the marker order after `PYTHOS:CORE:SYSTEM_API_READY` and before
+4. Keep the marker order after `PYTHOS:CORE:VALUE_VALIDATION_READY` and before
    `PYTHOS:CORE:FRAMEBUFFER_READY`.
-5. Add an ADR only if the value boundary becomes ABI-relevant beyond ADR 0016.
-   It probably will, because value representation across the runtime boundary
-   becomes a durable contract.
-6. Implement a small explicit value layer rather than expanding the interpreter
-   into a broad parser.
-7. Validate at least:
+5. Add an ADR if the service lifecycle state machine or manager authority
+   becomes a durable runtime contract.
+6. Implement only the smallest service lifecycle proof needed to advance from
+   the existing exact `HelloService` operation plan toward `self.ready()`.
+7. Preserve the existing `system.log` and value-validation proofs.
 
-   ```text
-   string type
-   string length
-   string encoding
-   no raw pointer exposure
-   no unchecked native struct exposure
-   result/error representation for host calls
-   ```
-
-8. Preserve the existing `system.log` proof.
-9. Emit a new marker only after successful validation proof, likely:
-
-   ```text
-   PYTHOS:CORE:VALUE_VALIDATION_READY
-   ```
-
-10. Run the full verification set before committing.
-
-Do not let `value-validation` become:
+Do not let `service-manager` become:
 
 ```text
-service-manager
 general Python interpreter
+exception-containment
+service restart policy
 async runtime
-IPC transport for Python
+GUI
+IPC transport redesign
 syscall ABI
-Phase 8 copy-in/copy-out
 ```
-
-Phase 8 will require harsher validation across the syscall boundary, but this
-slice should define the trusted-kernel-mode prototype's value discipline now.
 
 ## Accepted ADRs To Read Before Touching Related Areas
 
@@ -512,9 +512,10 @@ docs/decisions/0013-python-runtime-selection.md
 docs/decisions/0014-init-pak-runtime-payload.md
 docs/decisions/0015-custom-minimal-interpreter-bootstrap.md
 docs/decisions/0016-system-api-surface.md
+docs/decisions/0017-runtime-value-validation.md
 ```
 
-Most relevant for `value-validation`:
+Most relevant for `service-manager`:
 
 ```text
 0012  kernel-mode runtime sequencing and Phase 8 migration cost
@@ -522,6 +523,7 @@ Most relevant for `value-validation`:
 0014  runtime payload ABI
 0015  exact-shape interpreter bootstrap
 0016  initial system.* API surface
+0017  runtime value-validation boundary
 ```
 
 ## Important Files By Area
@@ -597,6 +599,7 @@ Phase 4 runtime:
 core/src/runtime_loader.rs
 core/src/interpreter.rs
 core/src/system_api.rs
+core/src/value_validation.rs
 shared/src/runtime_payload.rs
 docs/research/runtime-selection/
 ```
@@ -657,8 +660,8 @@ python -m unittest tests.boot_core_handoff
 git diff --check
 ```
 
-For `value-validation`, replace `<active-slice>` with the actual slice name
-added to `scripts/test-boot.py`.
+For the next slice, replace `<active-slice>` with the actual slice name added
+to `scripts/test-boot.py`.
 
 ## Deterministic QEMU Exit Contract
 
@@ -774,7 +777,7 @@ This mattered after Phase 3 and will matter again after Phase 4. Within a phase,
 sequential slice execution is allowed when the user explicitly says to continue.
 Across a phase boundary, stop and report.
 
-## If The Next Agent Continues With value-validation
+## If The Next Agent Continues With service-manager
 
 Suggested disciplined flow:
 
@@ -793,6 +796,7 @@ Suggested disciplined flow:
    docs/decisions/0014-init-pak-runtime-payload.md
    docs/decisions/0015-custom-minimal-interpreter-bootstrap.md
    docs/decisions/0016-system-api-surface.md
+   docs/decisions/0017-runtime-value-validation.md
    ```
 
 3. Add the failing test first:
@@ -805,11 +809,11 @@ Suggested disciplined flow:
 4. Expected initial failure:
 
    ```text
-   missing marker: PYTHOS:CORE:VALUE_VALIDATION_READY
+   missing marker: PYTHOS:CORE:SERVICE_MANAGER_READY
    ```
 
-5. Implement only enough value-boundary machinery to prove validated crossing
-   for the current runtime plan and `system.log`.
+5. Implement only enough lifecycle machinery to prove the current exact
+   `HelloService` can transition through the first manager-owned ready state.
 
 6. Keep the marker order:
 
@@ -818,6 +822,7 @@ Suggested disciplined flow:
    PYTHOS:CORE:SYSTEM:LOG
    PYTHOS:CORE:SYSTEM_API_READY
    PYTHOS:CORE:VALUE_VALIDATION_READY
+   PYTHOS:CORE:SERVICE_MANAGER_READY
    PYTHOS:CORE:FRAMEBUFFER_READY
    ```
 
@@ -854,8 +859,8 @@ Runtime selection                  complete
 INIT.PAK runtime payload loading   complete
 Custom minimal interpreter boot    complete
 First capability-checked system.*  complete
-General value validation           next
-Python service manager             not started
+Runtime value validation           complete
+Python service manager             next, not started
 Python exception containment       not started
 GUI shell                          not started
 Audio/cinematic boot               not started
