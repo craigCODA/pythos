@@ -7,6 +7,7 @@ use crate::capabilities::{
 };
 use crate::service_identity::{ServiceId, ServiceIdentityError, ServiceIdentityTable};
 use crate::tasks::TaskId;
+use crate::value_validation::UntrustedRuntimeValue;
 
 pub const RUNTIME_TASK_ID: TaskId = TaskId::new(40);
 const RUNTIME_BOOT_RESOURCE: ResourceId = ResourceId::new(0x5059_5448_5255_4E54);
@@ -21,7 +22,7 @@ pub enum InterpreterError {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeOperation<'a> {
-    SystemLog(&'a str),
+    SystemLog(UntrustedRuntimeValue<'a>),
     Ready,
 }
 
@@ -85,7 +86,7 @@ fn parse(source: &str) -> Result<RuntimeProgram<'_>, InterpreterError> {
         service_name: "HelloService",
         entrypoint: "start",
         operations: [
-            RuntimeOperation::SystemLog("hello from Python"),
+            RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(b"hello from Python")),
             RuntimeOperation::Ready,
         ],
     })
@@ -113,7 +114,9 @@ mod tests {
         assert_eq!(
             instance.program.operations,
             [
-                RuntimeOperation::SystemLog("hello from Python"),
+                RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
+                    b"hello from Python"
+                )),
                 RuntimeOperation::Ready,
             ]
         );

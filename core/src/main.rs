@@ -22,6 +22,7 @@ mod service_identity;
 mod shared_memory;
 mod system_api;
 mod tasks;
+mod value_validation;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -256,6 +257,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:SYSTEM_API_READY");
+        if value_validation::run_self_test(&runtime_instance).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:VALUE_VALIDATION_READY");
     }
 
     if framebuffer::render_boot_screen(&boot_info.framebuffer).is_err() {

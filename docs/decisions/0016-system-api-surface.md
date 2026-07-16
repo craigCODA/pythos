@@ -58,3 +58,6 @@ identity plus explicit capability, rather than ambient access. The value surface
 is still intentionally tiny. Later Phase 4 slices must extend this ADR or add a
 new ADR before adding new `system.*` functions or generalizing argument/value
 handling.
+
+ADR 0017 defines the follow-up value-validation contract for the current
+`system.log` argument without adding new `system.*` functions.

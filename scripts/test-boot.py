@@ -793,6 +793,9 @@ SYSTEM_API_MARKERS = [
     "PYTHOS:CORE:SYSTEM:LOG",
     "PYTHOS:CORE:SYSTEM_API_READY",
 ]
+VALUE_VALIDATION_MARKERS = [
+    "PYTHOS:CORE:VALUE_VALIDATION_READY",
+]
 
 SLICE_MARKERS["request-reply"] = SLICE_MARKERS["bounded-queues"] + REQUEST_REPLY_MARKERS
 SLICE_MARKERS["milestone-1"] = insert_before(
@@ -877,6 +880,14 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     SYSTEM_API_MARKERS,
+)
+SLICE_MARKERS["value-validation"] = (
+    SLICE_MARKERS["system-api-surface"] + VALUE_VALIDATION_MARKERS
+)
+SLICE_MARKERS["milestone-1"] = insert_before(
+    SLICE_MARKERS["milestone-1"],
+    "PYTHOS:CORE:FRAMEBUFFER_READY",
+    VALUE_VALIDATION_MARKERS,
 )
 
 

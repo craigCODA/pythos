@@ -13,16 +13,17 @@ use crate::service_identity::ServiceId;
 use crate::service_identity::ServiceIdentityTable;
 #[cfg(test)]
 use crate::tasks::TaskId;
+use crate::value_validation::{
+    HostCallResult, UntrustedRuntimeValue, ValueValidationError, validate_system_string,
+};
 
 const SYSTEM_LOG_RESOURCE: ResourceId = ResourceId::new(0x5159_5354_4C4F_4700);
-const MAX_LOG_MESSAGE_BYTES: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SystemApiError {
     Capability(CapabilityError),
     MissingLogOperation,
-    EmptyMessage,
-    MessageTooLong,
+    Value(ValueValidationError),
 }
 
 impl From<CapabilityError> for SystemApiError {
@@ -56,23 +57,26 @@ impl SystemApiHost {
         &self,
         caller: ServiceId,
         handle: CapabilityHandle,
-        message: &str,
-    ) -> Result<(), SystemApiError> {
+        value: UntrustedRuntimeValue<'_>,
+    ) -> Result<HostCallResult, SystemApiError> {
         self.capabilities.validate(
             caller,
             handle,
             SYSTEM_LOG_RESOURCE,
             RightsMask::new(RightsMask::LOG),
         )?;
-        if message.is_empty() {
-            return Err(SystemApiError::EmptyMessage);
-        }
-        if message.len() > MAX_LOG_MESSAGE_BYTES {
-            return Err(SystemApiError::MessageTooLong);
+        let message = match validate_system_string(value) {
+            Ok(message) => message,
+            Err(error) => return Ok(HostCallResult::rejected(error)),
+        };
+        if message.as_str() != "hello from Python" {
+            return Ok(HostCallResult::rejected(
+                ValueValidationError::UnsupportedType,
+            ));
         }
         #[cfg(not(test))]
         serial::write_line("PYTHOS:CORE:SYSTEM:LOG");
-        Ok(())
+        Ok(HostCallResult::returned())
     }
 }
 
@@ -80,8 +84,11 @@ pub fn run_log_surface(instance: &RuntimeInstance<'_>) -> Result<(), SystemApiEr
     let mut host = SystemApiHost::new();
     let log_handle = host.grant_log(instance.service_id)?;
     for operation in instance.program.operations {
-        if let RuntimeOperation::SystemLog(message) = operation {
-            return host.log(instance.service_id, log_handle, message);
+        if let RuntimeOperation::SystemLog(value) = operation {
+            return match host.log(instance.service_id, log_handle, value)? {
+                HostCallResult::Returned => Ok(()),
+                HostCallResult::Rejected(error) => Err(SystemApiError::Value(error)),
+            };
         }
     }
     Err(SystemApiError::MissingLogOperation)
@@ -106,7 +113,11 @@ mod tests {
         let wrong_handle = host.grant_log(stranger).unwrap();
 
         assert_eq!(
-            host.log(runtime, wrong_handle, "hello from Python"),
+            host.log(
+                runtime,
+                wrong_handle,
+                UntrustedRuntimeValue::StringBytes(b"hello from Python")
+            ),
             Err(SystemApiError::Capability(CapabilityError::WrongHolder))
         );
     }
@@ -117,7 +128,14 @@ mod tests {
         let mut host = SystemApiHost::new();
         let handle = host.grant_log(runtime).unwrap();
 
-        assert_eq!(host.log(runtime, handle, "hello from Python"), Ok(()));
+        assert_eq!(
+            host.log(
+                runtime,
+                handle,
+                UntrustedRuntimeValue::StringBytes(b"hello from Python")
+            ),
+            Ok(HostCallResult::Returned)
+        );
     }
 
     #[test]
@@ -125,15 +143,21 @@ mod tests {
         let runtime = service(RUNTIME_TASK_ID);
         let mut host = SystemApiHost::new();
         let handle = host.grant_log(runtime).unwrap();
-        let long_message = "x".repeat(MAX_LOG_MESSAGE_BYTES + 1);
+        let long_message = [b'x'; crate::value_validation::MAX_SYSTEM_STRING_BYTES + 1];
 
         assert_eq!(
-            host.log(runtime, handle, ""),
-            Err(SystemApiError::EmptyMessage)
+            host.log(runtime, handle, UntrustedRuntimeValue::StringBytes(b"")),
+            Ok(HostCallResult::Rejected(ValueValidationError::EmptyString))
         );
         assert_eq!(
-            host.log(runtime, handle, &long_message),
-            Err(SystemApiError::MessageTooLong)
+            host.log(
+                runtime,
+                handle,
+                UntrustedRuntimeValue::StringBytes(&long_message)
+            ),
+            Ok(HostCallResult::Rejected(
+                ValueValidationError::StringTooLong
+            ))
         );
     }
 
@@ -147,7 +171,9 @@ mod tests {
                 service_name: "HelloService",
                 entrypoint: "start",
                 operations: [
-                    RuntimeOperation::SystemLog("hello from Python"),
+                    RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
+                        b"hello from Python",
+                    )),
                     RuntimeOperation::Ready,
                 ],
             },

@@ -481,9 +481,12 @@ migration, not a rediscovered one.
    `PYTHOS:CORE:SYSTEM:LOG`, rejects empty or oversized messages, and emits
    `PYTHOS:CORE:SYSTEM_API_READY` after the proof. `self.ready()` and service
    lifecycle transitions remain later slices.
-5. `value-validation` - every value crossing the native/Python boundary in
-   either direction is validated for type, bounds, and ownership. No raw
-   pointer or unchecked native struct is ever exposed directly to Python.
+5. `value-validation` - COMPLETE. ADR 0017 defines the current native/runtime
+   value boundary. The runtime plan carries untrusted byte values, the native
+   validator accepts only bounded nonempty UTF-8 strings for the current
+   `system.log` call, rejects unsupported non-string, raw-pointer-shaped, and
+   unchecked-native-struct-shaped inputs, models explicit host-call
+   success/error results, and emits `PYTHOS:CORE:VALUE_VALIDATION_READY`.
 6. `service-manager` - a Python-level service manager capable of starting and
    stopping Python services, itself running with only the capabilities needed
    to manage service lifecycle, not arbitrary system access.
@@ -518,8 +521,9 @@ read access, any MCP or external-tool integration, or any agent concept. The
 ### Required Artifacts
 
 ADR for runtime selection with benchmark data attached. ADR for the `system.*`
-API surface; this is effectively PythOS's first real ABI toward userspace, so
-treat it with the same care as the boot ABI. Exception-containment test suite.
+API surface and ADR for runtime value validation; these are PythOS's first real
+ABI-shaped runtime contracts, so treat them with the same care as the boot ABI.
+Exception-containment test suite.
 
 ### Architectural Test (Non-Binding)
 
