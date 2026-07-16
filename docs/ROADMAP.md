@@ -504,7 +504,7 @@ migration, not a rediscovered one.
 ```python
 class HelloService(Service):
     async def start(self):
-        system.log("hello from Python")
+        system.log("PythOS [HISS] We Are Woken")
         self.ready()
 ```
 

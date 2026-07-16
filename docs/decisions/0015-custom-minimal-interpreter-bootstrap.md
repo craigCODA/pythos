@@ -22,7 +22,7 @@ proof source:
 ```python
 class HelloService(Service):
     async def start(self):
-        system.log("hello from Python")
+        system.log("PythOS [HISS] We Are Woken")
         self.ready()
 ```
 
@@ -31,7 +31,7 @@ Booting the interpreter means:
 * decoding the already validated runtime source from `INIT.PAK`
 * rejecting any source outside the exact accepted shape
 * synthesizing a fixed internal operation plan:
-  * `system.log("hello from Python")`
+  * `system.log("PythOS [HISS] We Are Woken")`
   * `self.ready()`
 * assigning the runtime to a fixed native task id
 * assigning a kernel service identity to that task

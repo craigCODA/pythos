@@ -42,7 +42,7 @@ The first accepted language target is the Phase 4 proof shape:
 ```python
 class HelloService(Service):
     async def start(self):
-        system.log("hello from Python")
+        system.log("PythOS [HISS] We Are Woken")
         self.ready()
 ```
 
@@ -106,7 +106,7 @@ CUSTOM_MINIMAL_SMOKE success
 The prototype demonstrated a host-controlled boundary for:
 
 ```text
-system.log("hello from Python")
+system.log("PythOS [HISS] We Are Woken")
 self.ready()
 ```
 

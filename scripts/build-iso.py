@@ -19,7 +19,7 @@ RUNTIME_PAYLOAD_HEADER_LEN = 32
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
     b"    async def start(self):\n"
-    b"        system.log(\"hello from Python\")\n"
+    b"        system.log(\"PythOS [HISS] We Are Woken\")\n"
     b"        self.ready()\n"
 )
 

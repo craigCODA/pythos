@@ -10,7 +10,7 @@ Accepted
 
 Phase 4 requires a deliberately narrow `system.*` API. Every function on this
 surface must validate a capability before doing privileged work. The
-`interpreter-boot` slice already parses `system.log("hello from Python")` into
+`interpreter-boot` slice already parses `system.log("PythOS [HISS] We Are Woken")` into
 an internal operation, but it deliberately did not execute the host call.
 
 This ADR records the complete `system.*` surface for the current slice before

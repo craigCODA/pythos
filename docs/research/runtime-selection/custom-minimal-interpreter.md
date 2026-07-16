@@ -14,7 +14,7 @@ The prototype recognizes only this exact Phase 4 proof shape:
 ```python
 class HelloService(Service):
     async def start(self):
-        system.log("hello from Python")
+        system.log("PythOS [HISS] We Are Woken")
         self.ready()
 ```
 
@@ -28,7 +28,7 @@ Result:
 
 ```text
 CUSTOM_MINIMAL_SMOKE start
-system.log: hello from Python
+system.log: PythOS [HISS] We Are Woken
 service.ready: HelloService
 CUSTOM_MINIMAL_SMOKE success
 ```
@@ -51,7 +51,7 @@ not execute through the host Python runtime as Python code; the prototype checks
 the exact text shape and emits only two internal operations:
 
 ```text
-system.log("hello from Python")
+system.log("PythOS [HISS] We Are Woken")
 self.ready()
 ```
 

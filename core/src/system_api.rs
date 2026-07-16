@@ -69,7 +69,7 @@ impl SystemApiHost {
             Ok(message) => message,
             Err(error) => return Ok(HostCallResult::rejected(error)),
         };
-        if message.as_str() != "hello from Python" {
+        if message.as_str() != "PythOS [HISS] We Are Woken" {
             return Ok(HostCallResult::rejected(
                 ValueValidationError::UnsupportedType,
             ));
@@ -116,7 +116,7 @@ mod tests {
             host.log(
                 runtime,
                 wrong_handle,
-                UntrustedRuntimeValue::StringBytes(b"hello from Python")
+                UntrustedRuntimeValue::StringBytes(b"PythOS [HISS] We Are Woken")
             ),
             Err(SystemApiError::Capability(CapabilityError::WrongHolder))
         );
@@ -132,7 +132,7 @@ mod tests {
             host.log(
                 runtime,
                 handle,
-                UntrustedRuntimeValue::StringBytes(b"hello from Python")
+                UntrustedRuntimeValue::StringBytes(b"PythOS [HISS] We Are Woken")
             ),
             Ok(HostCallResult::Returned)
         );
@@ -172,7 +172,7 @@ mod tests {
                 entrypoint: "start",
                 operations: [
                     RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
-                        b"hello from Python",
+                        b"PythOS [HISS] We Are Woken",
                     )),
                     RuntimeOperation::Ready,
                 ],

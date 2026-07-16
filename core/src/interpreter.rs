@@ -11,7 +11,7 @@ use crate::value_validation::UntrustedRuntimeValue;
 
 pub const RUNTIME_TASK_ID: TaskId = TaskId::new(40);
 const RUNTIME_BOOT_RESOURCE: ResourceId = ResourceId::new(0x5059_5448_5255_4E54);
-const HELLO_SERVICE_SOURCE: &str = "class HelloService(Service):\n    async def start(self):\n        system.log(\"hello from Python\")\n        self.ready()\n";
+const HELLO_SERVICE_SOURCE: &str = "class HelloService(Service):\n    async def start(self):\n        system.log(\"PythOS [HISS] We Are Woken\")\n        self.ready()\n";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InterpreterError {
@@ -86,7 +86,9 @@ fn parse(source: &str) -> Result<RuntimeProgram<'_>, InterpreterError> {
         service_name: "HelloService",
         entrypoint: "start",
         operations: [
-            RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(b"hello from Python")),
+            RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
+                b"PythOS [HISS] We Are Woken",
+            )),
             RuntimeOperation::Ready,
         ],
     })
@@ -115,7 +117,7 @@ mod tests {
             instance.program.operations,
             [
                 RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
-                    b"hello from Python"
+                    b"PythOS [HISS] We Are Woken"
                 )),
                 RuntimeOperation::Ready,
             ]

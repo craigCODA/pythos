@@ -83,7 +83,7 @@ pub fn run_self_test(instance: &RuntimeInstance<'_>) -> Result<(), ValueValidati
         if let RuntimeOperation::SystemLog(value) = operation {
             saw_log_argument = true;
             let message = validate_system_string(value)?;
-            if message.as_str() != "hello from Python" {
+            if message.as_str() != "PythOS [HISS] We Are Woken" {
                 return Err(ValueValidationError::UnsupportedType);
             }
         }
@@ -204,7 +204,7 @@ mod tests {
                 entrypoint: "start",
                 operations: [
                     RuntimeOperation::SystemLog(UntrustedRuntimeValue::StringBytes(
-                        b"hello from Python",
+                        b"PythOS [HISS] We Are Woken",
                     )),
                     RuntimeOperation::Ready,
                 ],
