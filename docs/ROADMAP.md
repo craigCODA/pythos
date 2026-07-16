@@ -739,10 +739,14 @@ Phase 6 exit condition reproducible.
    `PYTHOS:CORE:STORAGE:COMMIT_MARKER`, and
    `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`. This slice does not implement
    crash recovery, sector I/O, or object storage.
-5. `crash-recovery` - replay/rollback logic that reconstructs a consistent
-   state from the journal after an unclean shutdown. This is the actual
-   recovery work that was correctly deferred earlier in the project's history.
-   It belongs here, not before persistent state exists to recover.
+5. `crash-recovery` - COMPLETE. Replay/rollback logic reconstructs a
+   consistent state from the committed journal prefix after an unclean
+   shutdown. Missing commit markers and checksum mismatches terminate replay
+   and roll back the invalid tail, including a simulated interrupted-write
+   record. Emits `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY`,
+   `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK`, and
+   `PYTHOS:CORE:CRASH_RECOVERY_READY`. This slice does not implement typed
+   objects, sector I/O, or object browser work.
 6. `typed-object-format` - on-disk representation for typed objects with a
    stable id, kind, and versioned fields. This is the concrete implementation
    of the typed-object concept referenced throughout the vision docs. Build it

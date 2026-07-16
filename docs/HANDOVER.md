@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 7 `checksums-and-commit-markers` complete; next slice
-is `crash-recovery`.
+Current boundary: Phase 7 `crash-recovery` complete; next slice is
+`typed-object-format`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -14,7 +14,7 @@ Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
 ```powershell
 git status --short --branch
 git log --oneline -8
-python scripts\test-boot.py --slice checksums-and-commit-markers
+python scripts\test-boot.py --slice crash-recovery
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
 python scripts\test-boot.py --slice milestone-1 --media iso
@@ -40,12 +40,13 @@ Phase 3 complete
 Phase 4 complete
 Phase 5 complete
 Phase 6 complete
-Phase 7 checksums-and-commit-markers complete
-Next allowed slice: crash-recovery
+Phase 7 crash-recovery complete
+Next allowed slice: typed-object-format
 ```
 
-Do not start typed-object persistence, object browser work, networking, AI,
-ring-3, SMP, or hardware-expansion work before the roadmap gate for that slice.
+Record the on-disk typed-object format ADR before or with the next slice. Do
+not start object browser work, networking, AI, ring-3, SMP, or
+hardware-expansion work before the roadmap gate for that slice.
 
 ## Phase 6 Summary
 
@@ -85,6 +86,7 @@ block-device-driver
 storage-service
 append-only-journal
 checksums-and-commit-markers
+crash-recovery
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -113,6 +115,12 @@ journal record fields plus an explicit commit marker. It proves missing commit
 markers and checksum mismatches are detected as invalid records instead of
 silently accepted. It does not implement crash recovery, raw sector I/O, or
 object records.
+
+The crash-recovery slice replays only the committed journal prefix and rolls
+back the first invalid tail plus everything after it. It proves an interrupted
+write without a commit marker recovers to the last committed sequence and that
+checksum mismatch tails are also rolled back. It does not implement typed
+objects, raw sector I/O, or object browser work.
 
 ## Phase 6 Marker Tail
 
@@ -152,6 +160,9 @@ PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:STORAGE:CHECKSUM_VALID
 PYTHOS:CORE:STORAGE:COMMIT_MARKER
 PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
+PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
+PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
+PYTHOS:CORE:CRASH_RECOVERY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -180,6 +191,9 @@ PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:STORAGE:CHECKSUM_VALID
 PYTHOS:CORE:STORAGE:COMMIT_MARKER
 PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
+PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
+PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
+PYTHOS:CORE:CRASH_RECOVERY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -245,7 +259,6 @@ Do not assume any of the following exists:
 
 ```text
 completed persistent object store
-crash recovery
 on-disk typed object format
 filesystem
 storage recovery
@@ -279,14 +292,15 @@ docs/ROADMAP.md
 Then begin only the next Phase 7 slice from the roadmap:
 
 ```text
-crash-recovery
+typed-object-format
 ```
 
 Expected TDD posture for the next Phase 7 slice:
 
-1. Add or confirm a failing test/harness expectation for replay or rollback to
-   the last committed record after an invalid/torn journal tail.
-2. Implement only journal replay/rollback over the committed-record model.
-3. Do not implement typed objects, object relationships, or user-facing object
-   browser work in this slice.
-4. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.
+1. Read ADR 0018 before designing the on-disk format.
+2. Record the on-disk typed-object format ADR before or with the code.
+3. Add or confirm a failing test/harness expectation for stable id, kind, and
+   versioned fields.
+4. Do not implement relationships, revision history, workspace objects, or
+   object browser work in this slice.
+5. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.

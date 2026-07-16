@@ -107,13 +107,14 @@ Verified vertical slices:
 * `storage-service` makes the selected block device opaque outside the driver module and exposes a capability-gated storage facade. A service with a valid storage capability can authorize a bounded request and emits `PYTHOS:CORE:STORAGE:ACCESS_GRANTED`; wrong-holder and missing-rights attempts are denied before block access and emit `PYTHOS:CORE:STORAGE:ACCESS_DENIED`; the slice completes with `PYTHOS:CORE:STORAGE_SERVICE_READY`. It does not implement sector I/O, journaling, commit markers, recovery, or object records.
 * `append-only-journal` requires a storage-service-authorized write intent to append a monotonic journal record before any write completion can be considered. It emits `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` and completes with `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`. It does not implement checksums, commit markers, crash recovery, sector I/O, or object records.
 * `checksums-and-commit-markers` adds a stable checksum over committed journal record fields plus an explicit commit marker. Missing commit markers and checksum mismatches are detected as invalid records, then the slice emits `PYTHOS:CORE:STORAGE:CHECKSUM_VALID`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER`, and `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`. It does not implement crash recovery, sector I/O, or object records.
+* `crash-recovery` replays only the valid committed journal prefix and rolls back an invalid tail caused by a missing commit marker or checksum mismatch. It proves an interrupted write recovers to the last committed sequence, emits `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK`, and completes with `PYTHOS:CORE:CRASH_RECOVERY_READY`. It does not implement object records, typed-object formatting, or object browser work.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-The active implementation is in Phase 7 `persistent-object-storage`. The `checksums-and-commit-markers` slice is complete; the next allowed slice is `crash-recovery`. Do not begin typed objects, object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
+The active implementation is in Phase 7 `persistent-object-storage`. The `crash-recovery` slice is complete; the next allowed slice is `typed-object-format`. The on-disk typed-object format ADR must be recorded before or with that slice. Do not begin object browser work, networking, AI, ring-3, SMP, or hostile-code isolation before their roadmap gates.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -332,6 +333,9 @@ PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:STORAGE:CHECKSUM_VALID
 PYTHOS:CORE:STORAGE:COMMIT_MARKER
 PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
+PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
+PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
+PYTHOS:CORE:CRASH_RECOVERY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -824,6 +828,9 @@ PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY
 PYTHOS:CORE:STORAGE:CHECKSUM_VALID
 PYTHOS:CORE:STORAGE:COMMIT_MARKER
 PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY
+PYTHOS:CORE:STORAGE:RECOVERY_REPLAY
+PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK
+PYTHOS:CORE:CRASH_RECOVERY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -832,7 +839,7 @@ The `milestone-1` slice requires `PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY` befor
 
 Phase 6 further requires `PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY` after `PYTHOS:CORE:AUDIO:DEVICE_SELECTED`, `PYTHOS:CORE:AUDIO_DRIVER_READY` after `PYTHOS:CORE:AUDIO:DRIVER`, `PYTHOS:CORE:AUDIO_BUFFERS_READY` after `PYTHOS:CORE:AUDIO:BUFFER`, `PYTHOS:CORE:PCM_PLAYBACK_READY` after `PYTHOS:CORE:AUDIO:PCM_PLAYBACK`, `PYTHOS:CORE:AUDIO_MIXING_READY` after the three `PYTHOS:CORE:AUDIO:MIX:*` markers, `PYTHOS:CORE:BOOT_ASSETS_READY` after the three `PYTHOS:CORE:BOOT_ASSET:*` markers, `PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY` after `PYTHOS:CORE:BOOT_SYNC:AUDIO`, `PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY` after the audio fallback marker, `PYTHOS:CORE:PHASE_6_COMPLETE` after graceful fallback, and `PYTHOS:CORE:PHASE_6_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
-Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` after `PYTHOS:CORE:STORAGE_SERVICE_READY`, `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY` after the journal append marker, `PYTHOS:CORE:STORAGE:CHECKSUM_VALID` after `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER` after the checksum marker, `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` after the commit marker, and `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+Phase 7 currently requires `PYTHOS:CORE:BLOCK:DEVICE_SELECTED` after `PYTHOS:CORE:PHASE_6_COMPLETE`, `PYTHOS:CORE:BLOCK_DEVICE_READY` after the selected-device marker, `PYTHOS:CORE:STORAGE:ACCESS_GRANTED` after `PYTHOS:CORE:BLOCK_DEVICE_READY`, `PYTHOS:CORE:STORAGE:ACCESS_DENIED` after the granted marker, `PYTHOS:CORE:STORAGE_SERVICE_READY` after the denied marker, `PYTHOS:CORE:STORAGE:JOURNAL_APPEND` after `PYTHOS:CORE:STORAGE_SERVICE_READY`, `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY` after the journal append marker, `PYTHOS:CORE:STORAGE:CHECKSUM_VALID` after `PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY`, `PYTHOS:CORE:STORAGE:COMMIT_MARKER` after the checksum marker, `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY` after the commit marker, `PYTHOS:CORE:STORAGE:RECOVERY_REPLAY` after `PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_READY`, `PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK` after the recovery replay marker, `PYTHOS:CORE:CRASH_RECOVERY_READY` after the recovery rollback marker, and `PYTHOS:CORE:CRASH_RECOVERY_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

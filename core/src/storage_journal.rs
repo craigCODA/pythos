@@ -61,6 +61,27 @@ pub struct JournalRecord {
     commit_marker: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryReport {
+    replayed_records: usize,
+    rolled_back_records: usize,
+    last_sequence: u64,
+}
+
+impl RecoveryReport {
+    pub const fn replayed_records(self) -> usize {
+        self.replayed_records
+    }
+
+    pub const fn rolled_back_records(self) -> usize {
+        self.rolled_back_records
+    }
+
+    pub const fn last_sequence(self) -> u64 {
+        self.last_sequence
+    }
+}
+
 impl JournalRecord {
     pub const fn sequence(self) -> u64 {
         self.sequence
@@ -166,6 +187,28 @@ pub fn validate_committed(record: JournalRecord) -> Result<(), JournalError> {
         return Err(JournalError::ChecksumMismatch);
     }
     Ok(())
+}
+
+pub fn recover_committed_prefix(journal: AppendOnlyJournal) -> RecoveryReport {
+    let mut replayed_records = 0;
+    let mut last_sequence = 0;
+    while replayed_records < journal.len {
+        let record = journal.records[replayed_records];
+        if validate_committed(record).is_err() {
+            return RecoveryReport {
+                replayed_records,
+                rolled_back_records: journal.len - replayed_records,
+                last_sequence,
+            };
+        }
+        replayed_records += 1;
+        last_sequence = record.sequence;
+    }
+    RecoveryReport {
+        replayed_records,
+        rolled_back_records: 0,
+        last_sequence,
+    }
 }
 
 fn checksum_for(record: JournalRecord) -> u32 {
@@ -274,6 +317,74 @@ pub fn run_commit_marker_self_test(device: BlockDeviceInfo) -> Result<(), Journa
     serial::write_line("PYTHOS:CORE:STORAGE:CHECKSUM_VALID");
     #[cfg(not(test))]
     serial::write_line("PYTHOS:CORE:STORAGE:COMMIT_MARKER");
+    Ok(())
+}
+
+pub fn run_crash_recovery_self_test(device: BlockDeviceInfo) -> Result<(), JournalError> {
+    let service = StorageService::new(device);
+    let mut identities = ServiceIdentityTable::new();
+    let writer = identities.register_task(TaskId::new(74))?;
+    let mut table = CapabilityTable::new();
+    let handle = table.grant(
+        writer,
+        STORAGE_RESOURCE_ID,
+        RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+    )?;
+    let mut journal = AppendOnlyJournal::new();
+    journal_first_write(
+        &mut journal,
+        service,
+        &table,
+        writer,
+        handle,
+        StorageRequest::write(3, 1),
+    )?;
+    journal.commit_last()?;
+    journal_first_write(
+        &mut journal,
+        service,
+        &table,
+        writer,
+        handle,
+        StorageRequest::write(4, 1),
+    )?;
+    let report = recover_committed_prefix(journal);
+    if report.replayed_records() != 1
+        || report.rolled_back_records() != 1
+        || report.last_sequence() != 1
+    {
+        return Err(JournalError::MissingCommitMarker);
+    }
+
+    let mut corrupted_journal = AppendOnlyJournal::new();
+    journal_first_write(
+        &mut corrupted_journal,
+        service,
+        &table,
+        writer,
+        handle,
+        StorageRequest::write(5, 1),
+    )?;
+    corrupted_journal.commit_last()?;
+    journal_first_write(
+        &mut corrupted_journal,
+        service,
+        &table,
+        writer,
+        handle,
+        StorageRequest::write(6, 1),
+    )?;
+    corrupted_journal.commit_last()?;
+    corrupted_journal.records[1].checksum = corrupted_journal.records[1].checksum.wrapping_add(1);
+    let corrupted_report = recover_committed_prefix(corrupted_journal);
+    if corrupted_report.replayed_records() != 1 || corrupted_report.rolled_back_records() != 1 {
+        return Err(JournalError::ChecksumMismatch);
+    }
+
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:STORAGE:RECOVERY_REPLAY");
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:STORAGE:RECOVERY_ROLLBACK");
     Ok(())
 }
 
@@ -474,6 +585,95 @@ mod tests {
         assert_eq!(
             validate_committed(corrupted),
             Err(JournalError::ChecksumMismatch)
+        );
+    }
+
+    #[test]
+    fn recovery_replays_all_committed_records() {
+        let (service, table, writer, handle) = authorized_writer();
+        let mut journal = AppendOnlyJournal::new();
+        for sector in 0..3 {
+            journal_first_write(
+                &mut journal,
+                service,
+                &table,
+                writer,
+                handle,
+                StorageRequest::write(sector, 1),
+            )
+            .unwrap();
+            journal.commit_last().unwrap();
+        }
+
+        assert_eq!(
+            recover_committed_prefix(journal),
+            RecoveryReport {
+                replayed_records: 3,
+                rolled_back_records: 0,
+                last_sequence: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn recovery_rolls_back_uncommitted_tail_after_interrupted_write() {
+        let (service, table, writer, handle) = authorized_writer();
+        let mut journal = AppendOnlyJournal::new();
+        journal_first_write(
+            &mut journal,
+            service,
+            &table,
+            writer,
+            handle,
+            StorageRequest::write(0, 1),
+        )
+        .unwrap();
+        journal.commit_last().unwrap();
+        journal_first_write(
+            &mut journal,
+            service,
+            &table,
+            writer,
+            handle,
+            StorageRequest::write(1, 1),
+        )
+        .unwrap();
+
+        assert_eq!(
+            recover_committed_prefix(journal),
+            RecoveryReport {
+                replayed_records: 1,
+                rolled_back_records: 1,
+                last_sequence: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn recovery_rolls_back_from_first_checksum_mismatch() {
+        let (service, table, writer, handle) = authorized_writer();
+        let mut journal = AppendOnlyJournal::new();
+        for sector in 0..3 {
+            journal_first_write(
+                &mut journal,
+                service,
+                &table,
+                writer,
+                handle,
+                StorageRequest::write(sector, 1),
+            )
+            .unwrap();
+            journal.commit_last().unwrap();
+        }
+        journal.records[1].checksum = journal.records[1].checksum.wrapping_add(1);
+
+        assert_eq!(
+            recover_committed_prefix(journal),
+            RecoveryReport {
+                replayed_records: 1,
+                rolled_back_records: 2,
+                last_sequence: 1,
+            }
         );
     }
 }
