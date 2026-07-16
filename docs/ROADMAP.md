@@ -344,13 +344,13 @@ and revocation decisions are recorded in ADR 0009 and ADR 0010.
    `PYTHOS:CORE:BOUNDED_QUEUES_READY`.
 4. `request-reply` - a synchronous request/reply pattern built on top of the
    channel primitive, with defined timeout behavior.
-5. `shared-memory-handles` - capability-gated shared memory region between two
-   services, mapped read-only or read-write per grant, never implicitly
-   writable.
-6. `capability-handles` - the core primitive: an unforgeable token naming a
+5. `capability-handles` - the core primitive: an unforgeable token naming a
    resource and allowed operations that a task either holds or does not.
    Capabilities are not ambient. A task with no handle cannot even name the
    resource, let alone act on it.
+6. `shared-memory-handles` - capability-gated shared memory region between two
+   services, mapped read-only or read-write per grant, never implicitly
+   writable.
 7. `permission-validation` - every privileged operation, including IPC send,
    shared-memory map, and later Phase 8 syscalls, checks a capability handle
    before proceeding. No operation checks a task's identity or trust level as a
