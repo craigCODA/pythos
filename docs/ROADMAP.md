@@ -1057,7 +1057,13 @@ can build on that mechanism later, but it still needs a later user/API surface,
 copy-in/copy-out policy, storage/object authorization policy, and audit UX
 before any AI can invoke privileged operations.
 
-## Later Phases
+## Later Phases (Superseded)
+
+The current Phase 11 onward roadmap is maintained in
+[`docs/ROADMAP-LATER-PHASES.md`](ROADMAP-LATER-PHASES.md). That document is
+canonical after verified Phase 9 and Phase 10 completion. The older detailed
+planning sketch below is retained only as historical context and must not be
+used to start new work.
 
 This extends `docs/ROADMAP.md`'s deliberately coarse "Later Phases" section
 now that Phase 8 is complete. It uses the same format as Phases 1.5-8:
