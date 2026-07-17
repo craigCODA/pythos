@@ -732,6 +732,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_general_syscall_abi_markers_are_observed_after_dynamic_elf_loading(self) -> None:
         self.run_boot_slice("general-syscall-abi")
 
+    def test_copy_in_copy_out_markers_are_observed_after_general_syscall_abi(self) -> None:
+        self.run_boot_slice("copy-in-copy-out-policy")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

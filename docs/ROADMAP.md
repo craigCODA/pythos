@@ -1125,12 +1125,13 @@ enforcement at the boundary, all hardware-backed).
    dispatch through a fixed syscall registry, denies unsupported syscall
    numbers without running privileged bridges, and emits
    `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`.
-3. **`copy-in-copy-out-policy`** — a formal, tested policy for validating
-   every user-supplied pointer and length crossing the syscall boundary:
-   bounds-checked against the calling process's actual mapped address
-   space, never trusted as-is, never dereferenced before validation.
-   This was explicitly named as missing in the Phase 8 writeup — closing
-   it is this phase's core security work.
+3. **`copy-in-copy-out-policy`** — COMPLETE. ADR 0039 defines the
+   copy-in/copy-out validation policy for every user-supplied pointer and
+   length crossing the syscall boundary: checked range arithmetic, single
+   mapped-region containment, read/write access direction, no raw pointer
+   dereference before validation, and distinct denial proofs for
+   out-of-range, length-overflow, and cross-mapping buffers. Emits
+   `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`.
 4. **`dynamic-capability-grants`** — a newly created process starts with
    zero capabilities by default; its initial grant set is determined by
    whatever created it (parent process, service manager), not hardcoded.
@@ -1166,9 +1167,9 @@ multi-process scheduling changes beyond what Phase 2 already provides.
 ### Required artifacts
 
 ADR 0037 for the inner `INIT.PAK` bundle format is complete. ADR 0038 for the
-syscall number space and versioning policy is complete. The next slice is
-`copy-in-copy-out-policy`; do not treat the versioned syscall table as user
-pointer validation.
+syscall number space and versioning policy is complete. ADR 0039 for the
+copy-in/copy-out pointer policy is complete. The next slice is
+`dynamic-capability-grants`; do not treat the copy policy as a grant model.
 
 ---
 

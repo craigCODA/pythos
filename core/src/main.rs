@@ -45,6 +45,7 @@ mod syscall;
 mod system_api;
 mod tasks;
 mod typed_object_format;
+mod user_copy;
 mod user_elf;
 mod user_mode;
 mod user_stacks;
@@ -1014,6 +1015,34 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY");
+        let user_copy_proof = match user_copy::run_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if user_copy_proof.valid_range {
+            serial::write_line("PYTHOS:CORE:COPY:VALIDATED");
+        }
+        if user_copy_proof.out_of_range_denied {
+            serial::write_line("PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED");
+        }
+        if user_copy_proof.length_overflow_denied {
+            serial::write_line("PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED");
+        }
+        if user_copy_proof.cross_mapping_denied {
+            serial::write_line("PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED");
+        }
+        if !user_copy_proof.valid_range
+            || !user_copy_proof.out_of_range_denied
+            || !user_copy_proof.length_overflow_denied
+            || !user_copy_proof.cross_mapping_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:COPY_IN_COPY_OUT_READY");
     }
 
     #[cfg(test)]

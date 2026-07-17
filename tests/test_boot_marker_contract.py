@@ -11,6 +11,7 @@ CAPABILITY_BOUNDARY_READY = "PYTHOS:CORE:CAPABILITY_BOUNDARY_READY"
 FRAMEBUFFER_READY = "PYTHOS:CORE:FRAMEBUFFER_READY"
 DYNAMIC_ELF_READY = "PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY"
 GENERAL_SYSCALL_ABI_READY = "PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY"
+COPY_IN_COPY_OUT_READY = "PYTHOS:CORE:COPY_IN_COPY_OUT_READY"
 
 
 def load_test_boot_module():
@@ -65,6 +66,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(GENERAL_SYSCALL_ABI_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_copy_in_copy_out_extends_general_syscall_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        copy_markers = test_boot.SLICE_MARKERS["copy-in-copy-out-policy"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            copy_markers.index(GENERAL_SYSCALL_ABI_READY),
+            copy_markers.index(COPY_IN_COPY_OUT_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(COPY_IN_COPY_OUT_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 
