@@ -13,6 +13,7 @@ DYNAMIC_ELF_READY = "PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY"
 GENERAL_SYSCALL_ABI_READY = "PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY"
 COPY_IN_COPY_OUT_READY = "PYTHOS:CORE:COPY_IN_COPY_OUT_READY"
 DYNAMIC_CAPABILITY_GRANTS_READY = "PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY"
+PROCESS_ARGV_ENV_READY = "PYTHOS:CORE:PROCESS_ARGV_ENV_READY"
 
 
 def load_test_boot_module():
@@ -97,6 +98,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(DYNAMIC_CAPABILITY_GRANTS_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_process_argv_environment_extends_dynamic_grants_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        launch_markers = test_boot.SLICE_MARKERS["process-argv-and-environment"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            launch_markers.index(DYNAMIC_CAPABILITY_GRANTS_READY),
+            launch_markers.index(PROCESS_ARGV_ENV_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(PROCESS_ARGV_ENV_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

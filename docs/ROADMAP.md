@@ -1138,9 +1138,12 @@ enforcement at the boundary, all hardware-backed).
    creator-supplied policy, not hardcoded. PythCore proves process creation,
    zero-default inventory, no-grant denial, explicit grant issuance, and
    granted use, then emits `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`.
-5. **`process-argv-and-environment`** — minimal argument/environment
-   passing into a new process, capability-scoped (a process shouldn't see
-   environment data it wasn't granted).
+5. **`process-argv-and-environment`** — COMPLETE. ADR 0041 defines the
+   bounded launch-data policy: argv is delivered as an immutable launch vector,
+   environment entries are keyed to explicit resource capabilities, a granted
+   process can read its environment value, and an ungranted process is denied
+   even when it asks for the same key. Emits
+   `PYTHOS:CORE:PROCESS_ARGV_ENV_READY`.
 6. **`general-fault-isolation`** — re-run Phase 8's crash-containment proof
    against a dynamically loaded, intentionally malformed binary (not the
    fixed test payload) to confirm containment generalizes.
@@ -1170,8 +1173,9 @@ multi-process scheduling changes beyond what Phase 2 already provides.
 ADR 0037 for the inner `INIT.PAK` bundle format is complete. ADR 0038 for the
 syscall number space and versioning policy is complete. ADR 0039 for the
 copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
-grants is complete. The next slice is `process-argv-and-environment`; do not
-treat process grant policy as argv/env delivery or loaded-ELF execution.
+grants is complete. ADR 0041 for process argv/environment launch data is
+complete. The next slice is `general-fault-isolation`; do not treat launch-data
+delivery as loaded-ELF execution or dynamic crash containment.
 
 ---
 

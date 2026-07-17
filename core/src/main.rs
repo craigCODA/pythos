@@ -27,6 +27,7 @@ mod object_relationships;
 mod permission_validation;
 mod persistent_objects;
 mod process;
+mod process_launch;
 mod qemu_exit;
 mod resource_quotas;
 mod revision_history;
@@ -1076,6 +1077,30 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY");
+        let process_launch_proof = match process_launch::run_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if process_launch_proof.argv_delivered {
+            serial::write_line("PYTHOS:CORE:PROCESS_ARGV:DELIVERED");
+        }
+        if process_launch_proof.env_capability_allowed {
+            serial::write_line("PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED");
+        }
+        if process_launch_proof.ungranted_env_denied {
+            serial::write_line("PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED");
+        }
+        if !process_launch_proof.argv_delivered
+            || !process_launch_proof.env_capability_allowed
+            || !process_launch_proof.ungranted_env_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PROCESS_ARGV_ENV_READY");
     }
 
     #[cfg(test)]

@@ -738,6 +738,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_dynamic_capability_grant_markers_are_observed_after_copy_policy(self) -> None:
         self.run_boot_slice("dynamic-capability-grants")
 
+    def test_process_argv_environment_markers_are_observed_after_dynamic_grants(self) -> None:
+        self.run_boot_slice("process-argv-and-environment")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 
