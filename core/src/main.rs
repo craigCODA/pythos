@@ -42,6 +42,7 @@ mod shared_memory;
 mod shell_apps;
 mod shell_objects;
 mod software_renderer;
+mod storage_allocator;
 mod storage_journal;
 mod storage_service;
 mod syscall;
@@ -1364,6 +1365,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY");
         serial::write_line("PYTHOS:CORE:PHASE_9_COMPLETE");
+        if storage_allocator::run_self_test(_block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:BLOCK_ALLOCATOR_READY");
     }
 
     #[cfg(test)]
