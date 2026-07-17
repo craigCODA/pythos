@@ -753,6 +753,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_dynamic_object_count_markers_are_observed_after_allocator(self) -> None:
         self.run_boot_slice("dynamic-object-count")
 
+    def test_fragmentation_policy_markers_are_observed_after_dynamic_objects(self) -> None:
+        self.run_boot_slice("fragmentation-and-compaction-policy")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

@@ -19,6 +19,9 @@ PROCESS_MODEL_ADVERSARIAL_READY = "PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY"
 PHASE_9_COMPLETE = "PYTHOS:CORE:PHASE_9_COMPLETE"
 BLOCK_ALLOCATOR_READY = "PYTHOS:CORE:BLOCK_ALLOCATOR_READY"
 DYNAMIC_OBJECT_COUNT_READY = "PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY"
+FRAGMENTATION_COMPACTION_POLICY_READY = (
+    "PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY"
+)
 
 
 def load_test_boot_module():
@@ -182,6 +185,23 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(DYNAMIC_OBJECT_COUNT_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_fragmentation_policy_extends_dynamic_objects_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        fragmentation_markers = test_boot.SLICE_MARKERS[
+            "fragmentation-and-compaction-policy"
+        ]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            fragmentation_markers.index(DYNAMIC_OBJECT_COUNT_READY),
+            fragmentation_markers.index(FRAGMENTATION_COMPACTION_POLICY_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(FRAGMENTATION_COMPACTION_POLICY_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

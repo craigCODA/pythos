@@ -157,6 +157,42 @@ pub fn run_self_test() -> Result<(), DynamicObjectError> {
     Ok(())
 }
 
+pub fn run_fragmentation_self_test() -> Result<(), DynamicObjectError> {
+    use crate::shell_objects::ObjectKind;
+
+    let mut store = DynamicObjectStore::new(DYNAMIC_OBJECT_BASE_SECTOR + 16, 8)?;
+    let first = TypedObjectRecord::new(ObjectId::new(0x8101), ObjectKind::ServiceMonitorWindow, 1);
+    let middle = TypedObjectRecord::new(ObjectId::new(0x8102), ObjectKind::PythonConsoleWindow, 1);
+    let tail = TypedObjectRecord::new(ObjectId::new(0x8103), ObjectKind::SettingsPanelWindow, 1);
+    let replacement = TypedObjectRecord::new(
+        ObjectId::new(0x8104),
+        ObjectKind::ApplicationLauncherWindow,
+        1,
+    );
+
+    let first_extent = store.create_object(first)?;
+    let middle_extent = store.create_object(middle)?;
+    let tail_extent = store.create_object(tail)?;
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:FRAGMENTATION:POLICY_RECORDED");
+
+    store.delete_object(ObjectId::new(0x8102))?;
+    let replacement_extent = store.create_object(replacement)?;
+    if first_extent.start_block() != 0
+        || middle_extent.start_block() != 1
+        || tail_extent.start_block() != 2
+        || replacement_extent.start_block() != middle_extent.start_block()
+        || store.object_count() != 3
+        || store.allocated_block_count() != 3
+    {
+        return Err(DynamicObjectError::UnknownObject);
+    }
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:CORE:FRAGMENTATION:FREED_BLOCK_REUSED");
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -225,5 +261,46 @@ mod tests {
             store.create_object(record),
             Err(DynamicObjectError::DuplicateObject)
         );
+    }
+
+    #[test]
+    fn store_reuses_deleted_object_extent_before_tail() {
+        let mut store = DynamicObjectStore::new(64, 8).unwrap();
+        let first = store
+            .create_object(TypedObjectRecord::new(
+                ObjectId::new(0x8001),
+                ObjectKind::ServiceMonitorWindow,
+                1,
+            ))
+            .unwrap();
+        let middle = store
+            .create_object(TypedObjectRecord::new(
+                ObjectId::new(0x8002),
+                ObjectKind::PythonConsoleWindow,
+                1,
+            ))
+            .unwrap();
+        let tail = store
+            .create_object(TypedObjectRecord::new(
+                ObjectId::new(0x8003),
+                ObjectKind::SettingsPanelWindow,
+                1,
+            ))
+            .unwrap();
+
+        store.delete_object(ObjectId::new(0x8002)).unwrap();
+        let replacement = store
+            .create_object(TypedObjectRecord::new(
+                ObjectId::new(0x8004),
+                ObjectKind::ApplicationLauncherWindow,
+                1,
+            ))
+            .unwrap();
+
+        assert_eq!(first.start_block(), 0);
+        assert_eq!(middle.start_block(), 1);
+        assert_eq!(tail.start_block(), 2);
+        assert_eq!(replacement.start_block(), middle.start_block());
+        assert_eq!(store.object_count(), 3);
     }
 }

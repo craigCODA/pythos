@@ -1376,6 +1376,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY");
+        if dynamic_object_store::run_fragmentation_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY");
     }
 
     #[cfg(test)]
