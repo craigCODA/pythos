@@ -18,6 +18,7 @@ GENERAL_FAULT_ISOLATION_READY = "PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY"
 PROCESS_MODEL_ADVERSARIAL_READY = "PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY"
 PHASE_9_COMPLETE = "PYTHOS:CORE:PHASE_9_COMPLETE"
 BLOCK_ALLOCATOR_READY = "PYTHOS:CORE:BLOCK_ALLOCATOR_READY"
+DYNAMIC_OBJECT_COUNT_READY = "PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY"
 
 
 def load_test_boot_module():
@@ -166,6 +167,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(BLOCK_ALLOCATOR_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_dynamic_object_count_extends_allocator_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        dynamic_markers = test_boot.SLICE_MARKERS["dynamic-object-count"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            dynamic_markers.index(BLOCK_ALLOCATOR_READY),
+            dynamic_markers.index(DYNAMIC_OBJECT_COUNT_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(DYNAMIC_OBJECT_COUNT_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

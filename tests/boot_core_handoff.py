@@ -750,6 +750,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_block_allocator_markers_are_observed_after_phase_9(self) -> None:
         self.run_boot_slice("block-allocator")
 
+    def test_dynamic_object_count_markers_are_observed_after_allocator(self) -> None:
+        self.run_boot_slice("dynamic-object-count")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

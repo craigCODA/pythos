@@ -13,6 +13,7 @@ mod cinematic_boot;
 mod compositor;
 mod context_switch;
 mod dynamic_capabilities;
+mod dynamic_object_store;
 mod font;
 mod font_system;
 mod framebuffer;
@@ -1370,6 +1371,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:BLOCK_ALLOCATOR_READY");
+        if dynamic_object_store::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY");
     }
 
     #[cfg(test)]
