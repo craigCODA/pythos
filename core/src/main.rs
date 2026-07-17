@@ -28,6 +28,7 @@ mod permission_validation;
 mod persistent_objects;
 mod process;
 mod process_launch;
+mod process_model;
 mod qemu_exit;
 mod resource_quotas;
 mod revision_history;
@@ -169,33 +170,75 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                     qemu_exit::panic();
                 }
             };
-        let user_elf_payload = match runtime_loader::load_user_elf_payload(boot_info) {
-            Ok(payload) => payload,
-            Err(_) => {
-                serial::write_line("PYTHOS:PANIC");
-                qemu_exit::panic();
-            }
-        };
-        let user_elf_image = match user_elf::validate(user_elf_payload) {
-            Ok(image) => image,
-            Err(_) => {
-                serial::write_line("PYTHOS:PANIC");
-                qemu_exit::panic();
-            }
-        };
-        let (dynamic_elf_address_space, loaded_user_elf) =
-            match memory::r#virtual::UserAddressSpace::build_with_user_elf(
-                &mut physical_memory,
-                boot_info,
-                &user_elf_image,
-                user_elf_payload,
-            ) {
+        let (dynamic_elf_address_space, loaded_user_elf, user_elf_image) =
+            match build_dynamic_elf_address_space(&mut physical_memory, boot_info, 0) {
                 Ok(loaded) => loaded,
                 Err(_) => {
                     serial::write_line("PYTHOS:PANIC");
                     qemu_exit::panic();
                 }
             };
+        let (
+            dynamic_fault_address_space,
+            loaded_dynamic_fault_user_elf,
+            dynamic_fault_user_elf_image,
+        ) = match build_dynamic_elf_address_space(&mut physical_memory, boot_info, 1) {
+            Ok(loaded) => loaded,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let (
+            dynamic_bad_pointer_address_space,
+            loaded_dynamic_bad_pointer_user_elf,
+            dynamic_bad_pointer_user_elf_image,
+        ) = match build_dynamic_elf_address_space(&mut physical_memory, boot_info, 2) {
+            Ok(loaded) => loaded,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let (
+            dynamic_hardware_address_space,
+            loaded_dynamic_hardware_user_elf,
+            dynamic_hardware_user_elf_image,
+        ) = match build_dynamic_elf_address_space(&mut physical_memory, boot_info, 3) {
+            Ok(loaded) => loaded,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let mut loaded_adversarial_program_count = 0usize;
+        if loaded_user_elf.entry() == user_elf_image.entry()
+            && loaded_user_elf.segment_count() == user_elf_image.segment_count()
+            && loaded_user_elf.bss_zeroed()
+        {
+            loaded_adversarial_program_count += 1;
+        }
+        if loaded_dynamic_fault_user_elf.entry() == dynamic_fault_user_elf_image.entry()
+            && loaded_dynamic_fault_user_elf.segment_count()
+                == dynamic_fault_user_elf_image.segment_count()
+            && loaded_dynamic_fault_user_elf.bss_zeroed()
+        {
+            loaded_adversarial_program_count += 1;
+        }
+        if loaded_dynamic_bad_pointer_user_elf.entry() == dynamic_bad_pointer_user_elf_image.entry()
+            && loaded_dynamic_bad_pointer_user_elf.segment_count()
+                == dynamic_bad_pointer_user_elf_image.segment_count()
+            && loaded_dynamic_bad_pointer_user_elf.bss_zeroed()
+        {
+            loaded_adversarial_program_count += 1;
+        }
+        if loaded_dynamic_hardware_user_elf.entry() == dynamic_hardware_user_elf_image.entry()
+            && loaded_dynamic_hardware_user_elf.segment_count()
+                == dynamic_hardware_user_elf_image.segment_count()
+            && loaded_dynamic_hardware_user_elf.bss_zeroed()
+        {
+            loaded_adversarial_program_count += 1;
+        }
         if user_address_space
             .validate_isolated_from(&address_space)
             .is_err()
@@ -1101,6 +1144,226 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PROCESS_ARGV_ENV_READY");
+        // SAFETY:
+        // 1. Invariant: the dynamic fault root maps the faulting user ELF
+        //    entry and user stack pages while keeping kernel text/data
+        //    supervisor-only.
+        // 2. Established by: `build_with_user_elf` and
+        //    `validate_user_elf_entry` before the kernel CR3 switch.
+        // 3. Lifetime: the dynamic fault root and backing ELF pages are
+        //    retained for this boot proof.
+        // 4. Pointer ownership: the CPU borrows the dynamic user page-table
+        //    hierarchy during the one-shot fault probe.
+        // 5. Alignment: the root and user ELF page frames are 4 KiB aligned.
+        // 6. Mapped length: the hierarchy maps kernel path, trap stack, user
+        //    stack pages, and the dynamic ELF load segment pages.
+        // 7. Concurrency: single-core Phase 9 proof with one active dynamic
+        //    user fault probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            dynamic_fault_address_space.activate();
+        }
+        let dynamic_fault_result = user_mode::run_dynamic_illegal_instruction_fault_test(
+            dynamic_fault_user_elf_image.entry(),
+        );
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    for the remaining Phase 9 proof path after the dynamic user
+        //    fault probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table
+        //    hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is
+        //    mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later kernel work under the
+        //    dynamic fault proof root.
+        unsafe {
+            address_space.activate();
+        }
+        let general_fault_isolation_proof = match process_model::prove_general_fault_isolation(
+            dynamic_fault_user_elf_image.entry(),
+            dynamic_fault_user_elf_image.segment_count(),
+            loaded_dynamic_fault_user_elf,
+            dynamic_fault_result,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if general_fault_isolation_proof.dynamic_elf_loaded {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_FAULT:ELF_LOADED");
+        }
+        if general_fault_isolation_proof.dynamic_user_fault {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_FAULT:USER_FAULT");
+        }
+        if general_fault_isolation_proof.faulting_service_terminated {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_FAULT:SERVICE_TERMINATED");
+        }
+        if general_fault_isolation_proof.peer_service_alive {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_FAULT:PEER_ALIVE");
+        }
+        if !general_fault_isolation_proof.dynamic_elf_loaded
+            || !general_fault_isolation_proof.dynamic_user_fault
+            || !general_fault_isolation_proof.faulting_service_terminated
+            || !general_fault_isolation_proof.peer_service_alive
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY");
+        // SAFETY:
+        // 1. Invariant: the dynamic ELF root maps the runnable user program
+        //    entry and user stack pages while retaining supervisor-only kernel
+        //    mappings needed for trap recovery.
+        // 2. Established by: `build_with_user_elf` and
+        //    `validate_user_elf_entry`.
+        // 3. Lifetime: the dynamic ELF root and backing pages are retained for
+        //    this boot proof.
+        // 4. Pointer ownership: the CPU borrows the dynamic user page-table
+        //    hierarchy during the one-shot run probe.
+        // 5. Alignment: the root and user ELF frames are 4 KiB aligned.
+        // 6. Mapped length: kernel path, trap stack, user stack pages, and
+        //    dynamic ELF load segment pages are mapped.
+        // 7. Concurrency: single-core Phase 9 proof with one active dynamic
+        //    run probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            dynamic_elf_address_space.activate();
+        }
+        let dynamic_program_run_result =
+            user_mode::run_dynamic_breakpoint_test(user_elf_image.entry());
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    after the dynamic run probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table
+        //    hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is
+        //    mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later checks under the
+        //    dynamic user program root.
+        unsafe {
+            address_space.activate();
+        }
+        // SAFETY:
+        // 1. Invariant: the dynamic bad-pointer root maps a user ELF whose
+        //    first instruction sequence dereferences an unmapped user pointer.
+        // 2. Established by: `build_with_user_elf` and
+        //    `validate_user_elf_entry`.
+        // 3. Lifetime: the dynamic bad-pointer root and backing pages are
+        //    retained for this boot proof.
+        // 4. Pointer ownership: the CPU borrows the dynamic user page-table
+        //    hierarchy during the one-shot page-fault probe.
+        // 5. Alignment: the root and user ELF frames are 4 KiB aligned.
+        // 6. Mapped length: kernel path, trap stack, user stack pages, and
+        //    dynamic ELF load segment pages are mapped; address zero is not.
+        // 7. Concurrency: single-core Phase 9 proof with one active dynamic
+        //    page-fault probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            dynamic_bad_pointer_address_space.activate();
+        }
+        let dynamic_bad_pointer_result = user_mode::run_dynamic_bad_pointer_fault_test(
+            dynamic_bad_pointer_user_elf_image.entry(),
+        );
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    after the dynamic bad-pointer probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table
+        //    hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is
+        //    mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves later checks under the
+        //    dynamic bad-pointer root.
+        unsafe {
+            address_space.activate();
+        }
+        // SAFETY:
+        // 1. Invariant: the dynamic hardware root maps a user ELF whose first
+        //    instruction sequence attempts direct I/O port access from CPL3.
+        // 2. Established by: `build_with_user_elf` and
+        //    `validate_user_elf_entry`.
+        // 3. Lifetime: the dynamic hardware root and backing pages are
+        //    retained for this boot proof.
+        // 4. Pointer ownership: the CPU borrows the dynamic user page-table
+        //    hierarchy during the one-shot general-protection probe.
+        // 5. Alignment: the root and user ELF frames are 4 KiB aligned.
+        // 6. Mapped length: kernel path, trap stack, user stack pages, and
+        //    dynamic ELF load segment pages are mapped.
+        // 7. Concurrency: single-core Phase 9 proof with one active dynamic
+        //    privileged-instruction probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            dynamic_hardware_address_space.activate();
+        }
+        let dynamic_hardware_result =
+            user_mode::run_dynamic_hardware_fault_test(dynamic_hardware_user_elf_image.entry());
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    after the dynamic hardware probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table
+        //    hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is
+        //    mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves final checks under the
+        //    dynamic hardware root.
+        unsafe {
+            address_space.activate();
+        }
+        let process_model_adversarial_proof = match process_model::prove_adversarial_suite(
+            loaded_adversarial_program_count,
+            dynamic_program_run_result,
+            dynamic_bad_pointer_result,
+            dynamic_hardware_result,
+        ) {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if process_model_adversarial_proof.program_ran {
+            serial::write_line("PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN");
+        }
+        if process_model_adversarial_proof.variants_loaded {
+            serial::write_line("PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED");
+        }
+        if process_model_adversarial_proof.forged_capability_denied {
+            serial::write_line("PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED");
+        }
+        if process_model_adversarial_proof.bad_syscall_pointer_denied {
+            serial::write_line("PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED");
+        }
+        if process_model_adversarial_proof.hardware_access_denied {
+            serial::write_line("PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED");
+        }
+        if !process_model_adversarial_proof.variants_loaded
+            || !process_model_adversarial_proof.program_ran
+            || !process_model_adversarial_proof.forged_capability_denied
+            || !process_model_adversarial_proof.bad_syscall_pointer_denied
+            || !process_model_adversarial_proof.hardware_access_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY");
+        serial::write_line("PYTHOS:CORE:PHASE_9_COMPLETE");
     }
 
     #[cfg(test)]
@@ -1113,6 +1376,34 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
     serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
     qemu_exit::success();
+}
+
+#[cfg(not(test))]
+fn build_dynamic_elf_address_space(
+    physical_memory: &mut memory::physical::PhysicalMemory,
+    boot_info: &PythBootInfo,
+    ordinal: usize,
+) -> Result<
+    (
+        memory::r#virtual::RetainedUserAddressSpace,
+        user_elf::LoadedUserElf,
+        user_elf::UserElfImage,
+    ),
+    (),
+> {
+    let payload = runtime_loader::load_user_elf_payload_at(boot_info, ordinal).map_err(|_| ())?;
+    let image = user_elf::validate(payload).map_err(|_| ())?;
+    let (address_space, loaded) = memory::r#virtual::UserAddressSpace::build_with_user_elf(
+        physical_memory,
+        boot_info,
+        &image,
+        payload,
+    )
+    .map_err(|_| ())?;
+    address_space
+        .validate_user_elf_entry(image.entry())
+        .map_err(|_| ())?;
+    Ok((address_space.retain_for_boot(), loaded, image))
 }
 
 #[cfg(not(test))]

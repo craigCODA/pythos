@@ -39,16 +39,32 @@ pub fn validate_init_payload_bytes(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn load_user_elf_payload(boot_info: &PythBootInfo) -> Result<&[u8], RuntimeLoadError> {
-    let bytes = init_bundle_bytes(boot_info)?;
-    validate_user_elf_payload_bytes(bytes)
+    load_user_elf_payload_at(boot_info, 0)
 }
 
+pub fn load_user_elf_payload_at(
+    boot_info: &PythBootInfo,
+    ordinal: usize,
+) -> Result<&[u8], RuntimeLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_user_elf_payload_at_bytes(bytes, ordinal)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn validate_user_elf_payload_bytes(bytes: &[u8]) -> Result<&[u8], RuntimeLoadError> {
+    validate_user_elf_payload_at_bytes(bytes, 0)
+}
+
+pub fn validate_user_elf_payload_at_bytes(
+    bytes: &[u8],
+    ordinal: usize,
+) -> Result<&[u8], RuntimeLoadError> {
     let payload = init_pak_payload(bytes)?;
     let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
     let record = bundle
-        .record(init_bundle::RecordType::UserElf)
+        .record_at(init_bundle::RecordType::UserElf, ordinal)
         .ok_or(RuntimeLoadError::MissingUserElfPayload)?;
     Ok(record.bytes())
 }
@@ -196,6 +212,32 @@ mod tests {
         let exposed = validate_user_elf_payload_bytes(&bundle).unwrap();
 
         assert_eq!(exposed, user_elf);
+    }
+
+    #[test]
+    fn duplicate_inner_bundle_user_elf_records_are_addressable_by_ordinal() {
+        let payload = build_runtime_payload(HELLO_SERVICE);
+        let first_user_elf = b"\x7FELFfirst";
+        let second_user_elf = b"\x7FELFsecond";
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_RUNTIME_PAYLOAD,
+                payload.as_slice(),
+            ),
+            (pythos_shared::init_bundle::TYPE_USER_ELF, first_user_elf),
+            (pythos_shared::init_bundle::TYPE_USER_ELF, second_user_elf),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        let first = validate_user_elf_payload_at_bytes(&bundle, 0).unwrap();
+        let second = validate_user_elf_payload_at_bytes(&bundle, 1).unwrap();
+
+        assert_eq!(first, first_user_elf);
+        assert_eq!(second, second_user_elf);
+        assert_eq!(
+            validate_user_elf_payload_at_bytes(&bundle, 2),
+            Err(RuntimeLoadError::MissingUserElfPayload)
+        );
     }
 
     #[test]

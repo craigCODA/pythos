@@ -31,6 +31,9 @@ pub struct ProcessTerminationProof {
 pub enum UserFault {
     IllegalInstruction,
     BadPointer,
+    DynamicIllegalInstruction,
+    DynamicBadPointer,
+    DynamicPrivilegedInstruction,
     KernelModePageFault,
 }
 
@@ -210,7 +213,11 @@ pub fn run_crash_containment_self_test(
     fault: UserFault,
 ) -> Result<CrashContainmentProof, ProcessError> {
     match fault {
-        UserFault::IllegalInstruction | UserFault::BadPointer => {}
+        UserFault::IllegalInstruction
+        | UserFault::BadPointer
+        | UserFault::DynamicIllegalInstruction
+        | UserFault::DynamicBadPointer
+        | UserFault::DynamicPrivilegedInstruction => {}
         UserFault::KernelModePageFault => {
             return Err(ProcessError::KernelFaultNotContained);
         }
@@ -283,6 +290,15 @@ mod tests {
     #[test]
     fn crash_containment_accepts_user_bad_pointer_fault() {
         let proof = run_crash_containment_self_test(UserFault::BadPointer).unwrap();
+
+        assert!(proof.user_fault_diagnosed);
+        assert!(proof.faulting_service_terminated);
+        assert!(proof.peer_service_alive);
+    }
+
+    #[test]
+    fn crash_containment_accepts_dynamic_loaded_user_fault() {
+        let proof = run_crash_containment_self_test(UserFault::DynamicIllegalInstruction).unwrap();
 
         assert!(proof.user_fault_diagnosed);
         assert!(proof.faulting_service_terminated);

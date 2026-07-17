@@ -223,6 +223,40 @@ pub struct UserAddressSpace {
     user_elf_frame_count: usize,
 }
 
+pub struct RetainedUserAddressSpace {
+    root_table_phys: u64,
+}
+
+impl RetainedUserAddressSpace {
+    pub const fn root_table_phys(&self) -> u64 {
+        self.root_table_phys
+    }
+
+    pub unsafe fn activate(&self) {
+        // SAFETY:
+        // 1. Invariant: `root_table_phys` is a 4 KiB-aligned PML4 physical
+        //    address whose mappings were validated before the larger
+        //    `UserAddressSpace` was intentionally retained for boot.
+        // 2. Established by: `UserAddressSpace::retain_for_boot` is called
+        //    only after `validate_user_elf_entry` or equivalent validation.
+        // 3. Lifetime: the page tables are PythCore-owned and intentionally
+        //    not reclaimed in this boot path.
+        // 4. Pointer ownership: the CPU borrows the page-table hierarchy.
+        // 5. Alignment: the root came from the physical page allocator.
+        // 6. Mapped length: one complete page-table hierarchy rooted at CR3.
+        // 7. Concurrency: single-core boot proof with one active user root.
+        // 8. Violation: an incomplete mapping faults during or after `mov cr3`.
+        unsafe {
+            asm!(
+                "cli",
+                "mov cr3, {root}",
+                root = in(reg) self.root_table_phys,
+                options(nostack, preserves_flags)
+            );
+        }
+    }
+}
+
 impl UserAddressSpace {
     pub fn build(
         allocator: &mut PhysicalMemory,
@@ -255,6 +289,7 @@ impl UserAddressSpace {
         let mut user_elf_frames = [0u64; MAX_USER_ELF_FRAMES];
         let mut user_elf_frame_count = 0usize;
         map_kernel_segments(&mut tables)?;
+        map_user_stack_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
 
         let mut segment_index = 0;
@@ -324,8 +359,34 @@ impl UserAddressSpace {
         Ok(())
     }
 
+    pub fn validate_user_elf_entry(&self, entry: u64) -> Result<(), VmError> {
+        if !user_can_access_from_root(self.root_table_phys, entry)? {
+            return Err(VmError::UserAccessViolation);
+        }
+        self.validate_user_stack_protections()?;
+        if user_can_access_from_root(
+            self.root_table_phys,
+            symbol_addr(&raw const __pythcore_text_start),
+        )? {
+            return Err(VmError::UserAccessViolation);
+        }
+        if user_can_access_from_root(
+            self.root_table_phys,
+            symbol_addr(&raw const __pythcore_data_start),
+        )? {
+            return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
     pub const fn root_table_phys(&self) -> u64 {
         self.root_table_phys
+    }
+
+    pub fn retain_for_boot(self) -> RetainedUserAddressSpace {
+        RetainedUserAddressSpace {
+            root_table_phys: self.root_table_phys,
+        }
     }
 
     pub const fn table_frame_count(&self) -> usize {
@@ -355,9 +416,11 @@ impl UserAddressSpace {
         // 1. Invariant: `root_table_phys` is a 4 KiB-aligned PML4 physical
         //    address whose mappings include supervisor kernel code/data,
         //    the active kernel stack, descriptor-table storage, COM1 code
-        //    paths, and user-accessible proof code/stack pages.
-        // 2. Established by: `UserAddressSpace::build` and
-        //    `validate_isolated_from`.
+        //    paths, and either user-accessible proof code/stack pages or a
+        //    validated dynamic user ELF plus stack pages.
+        // 2. Established by: `UserAddressSpace::build` with
+        //    `validate_isolated_from` or `build_with_user_elf` with
+        //    `validate_user_elf_entry`.
         // 3. Lifetime: the page tables are PythCore-owned and not reclaimed.
         // 4. Pointer ownership: the CPU borrows the page-table hierarchy.
         // 5. Alignment: the root came from the physical page allocator.
@@ -480,7 +543,7 @@ impl<'a> PageTableBuilder<'a> {
             self.map_4k_for_user(
                 virt.checked_add(offset).ok_or(VmError::RangeOverflow)?,
                 phys.checked_add(offset).ok_or(VmError::RangeOverflow)?,
-                flags,
+                flags | PTE_USER,
             )?;
             offset = offset
                 .checked_add(PAGE_SIZE)
@@ -600,6 +663,10 @@ fn map_kernel_segments(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError>
 fn map_user_mode_proof_pages(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError> {
     let (code_start, code_len) = user_mode::user_code_region();
     tables.map_user_translated_range(code_start, code_len, 0)?;
+    map_user_stack_pages(tables)
+}
+
+fn map_user_stack_pages(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError> {
     for region in user_stacks::regions() {
         tables.map_user_translated_range(
             region.stack_start,

@@ -130,13 +130,15 @@ Verified vertical slices:
 * `copy-in-copy-out-policy` records ADR 0039's Phase 9 user-buffer validation policy. PythCore validates pointer/length pairs as checked half-open ranges contained inside one mapped user region with requested read/write access, rejects raw dereference before validation, proves out-of-range, length-overflow, and cross-mapping buffers are denied distinctly, emits `PYTHOS:CORE:COPY:VALIDATED`, `PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED`, `PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED`, `PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED`, and completes with `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`. It does not implement actual unsafe memory copies, dynamic capability grants, argv/env, loaded-ELF execution, filesystem loading, packages, networking, updates, hardware expansion, or SMP.
 * `dynamic-capability-grants` records ADR 0040's Phase 9 dynamic process grant model. PythCore creates a dynamic process record with a fresh service identity and zero process-local capabilities by default, denies use of a known resource without an initial grant, applies an explicit creator-supplied grant policy, validates granted use through the existing kernel-owned capability table, emits `PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:USE`, and completes with `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`. It does not implement argv/env, loaded-ELF execution, filesystem loading, packages, networking, updates, hardware expansion, or SMP.
 * `process-argv-and-environment` records ADR 0041's Phase 9 launch-data policy. PythCore validates bounded immutable launch strings, delivers a fixed argv vector into a dynamic process launch context, stores environment entries behind explicit resource capabilities, proves argv delivery, proves a granted environment read succeeds, proves an ungranted process cannot read the same environment entry, emits `PYTHOS:CORE:PROCESS_ARGV:DELIVERED`, `PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED`, `PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED`, and completes with `PYTHOS:CORE:PROCESS_ARGV_ENV_READY`. It does not execute the loaded ELF, load from a filesystem, install packages, add networking, add updates, expand hardware support, or add SMP.
+* `general-fault-isolation` records ADR 0042's Phase 9 dynamic fault-containment proof. PythCore loads an additional dynamic user ELF from the inner `INIT.PAK` bundle, validates and maps it into a distinct user address-space root with guarded user stack pages, enters it at CPL3, recovers from its invalid-instruction user fault through the existing trap path, proves only the faulting dynamic service terminates while a peer remains alive, emits `PYTHOS:CORE:DYNAMIC_FAULT:ELF_LOADED`, `PYTHOS:CORE:DYNAMIC_FAULT:USER_FAULT`, `PYTHOS:CORE:DYNAMIC_FAULT:SERVICE_TERMINATED`, `PYTHOS:CORE:DYNAMIC_FAULT:PEER_ALIVE`, and completes with `PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY`. It does not add filesystem loading, package launch, networking, updates, hardware expansion, or SMP.
+* `process-model-adversarial-suite` records ADR 0043's Phase 9 exit proof. PythCore loads four dynamic user ELF variants from the inner `INIT.PAK` bundle, runs one through the normal user-mode return path, contains dynamically attempted bad-pointer and direct-hardware-access faults, proves forged capability denial through the syscall-boundary capability model, proves bad pointer denial through the copy-in/copy-out policy, proves hardware access denial through CPU privilege and capability checks, emits `PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN`, `PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED`, `PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED`, `PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED`, `PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED`, completes with `PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY`, and completes Phase 9 with `PYTHOS:CORE:PHASE_9_COMPLETE`. It does not add Phase 10 storage allocation, package management, networking, updates, hardware expansion, or SMP.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-Phase 7 `persistent-object-storage` is complete. Phase 8 `real-hardware-isolation` is complete. Phase 9 `dynamic-elf-loading`, `general-syscall-abi`, `copy-in-copy-out-policy`, `dynamic-capability-grants`, and `process-argv-and-environment` are complete. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the inner `INIT.PAK` bundle format, ADR 0038 records the general syscall number space and versioning policy, ADR 0039 records the copy-in/copy-out pointer policy, ADR 0040 records the dynamic capability grant model, and ADR 0041 records the process launch argv/environment policy. Halt at the Phase 9 `process-argv-and-environment` -> `general-fault-isolation` boundary. Do not begin Phase 9 `general-fault-isolation`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
+Phase 7 `persistent-object-storage` is complete. Phase 8 `real-hardware-isolation` is complete. Phase 9 `general-purpose-process-model` is complete through `PYTHOS:CORE:PHASE_9_COMPLETE`. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the inner `INIT.PAK` bundle format, ADR 0038 records the general syscall number space and versioning policy, ADR 0039 records the copy-in/copy-out pointer policy, ADR 0040 records the dynamic capability grant model, ADR 0041 records the process launch argv/environment policy, ADR 0042 records dynamic general fault isolation, and ADR 0043 records the process-model adversarial suite. Halt at the Phase 9 -> Phase 10 boundary. Do not begin Phase 10 `block-allocator`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -451,6 +453,23 @@ PYTHOS:CORE:PROCESS_ARGV:DELIVERED
 PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED
 PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED
 PYTHOS:CORE:PROCESS_ARGV_ENV_READY
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:DYNAMIC_FAULT:ELF_LOADED
+PYTHOS:CORE:DYNAMIC_FAULT:USER_FAULT
+PYTHOS:CORE:DYNAMIC_FAULT:SERVICE_TERMINATED
+PYTHOS:CORE:DYNAMIC_FAULT:PEER_ALIVE
+PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN
+PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED
+PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED
+PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED
+PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED
+PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY
+PYTHOS:CORE:PHASE_9_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -1039,6 +1058,23 @@ PYTHOS:CORE:PROCESS_ARGV:DELIVERED
 PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED
 PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED
 PYTHOS:CORE:PROCESS_ARGV_ENV_READY
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:DYNAMIC_FAULT:ELF_LOADED
+PYTHOS:CORE:DYNAMIC_FAULT:USER_FAULT
+PYTHOS:CORE:DYNAMIC_FAULT:SERVICE_TERMINATED
+PYTHOS:CORE:DYNAMIC_FAULT:PEER_ALIVE
+PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY
+PYTHOS:CORE:USER_MODE:ENTER
+PYTHOS:CORE:USER_MODE:RETURN
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN
+PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED
+PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED
+PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED
+PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED
+PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY
+PYTHOS:CORE:PHASE_9_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -1059,7 +1095,11 @@ Phase 9 `copy-in-copy-out-policy` requires `PYTHOS:CORE:COPY:VALIDATED` after `P
 
 Phase 9 `dynamic-capability-grants` requires `PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED` after `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT` after the process-created marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED` after the zero-default marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT` after the no-grant denial marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:USE` after the grant marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY` after the use marker, and `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY` before the Phase 9 `process-argv-and-environment` markers.
 
-Phase 9 `process-argv-and-environment` requires `PYTHOS:CORE:PROCESS_ARGV:DELIVERED` after `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`, `PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED` after the argv-delivered marker, `PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED` after the capability-allowed marker, `PYTHOS:CORE:PROCESS_ARGV_ENV_READY` after the ungranted-denied marker, and `PYTHOS:CORE:PROCESS_ARGV_ENV_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+Phase 9 `process-argv-and-environment` requires `PYTHOS:CORE:PROCESS_ARGV:DELIVERED` after `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`, `PYTHOS:CORE:PROCESS_ENV:CAPABILITY_ALLOWED` after the argv-delivered marker, `PYTHOS:CORE:PROCESS_ENV:UNGRANTED_DENIED` after the capability-allowed marker, `PYTHOS:CORE:PROCESS_ARGV_ENV_READY` after the ungranted-denied marker, and `PYTHOS:CORE:PROCESS_ARGV_ENV_READY` before the Phase 9 `general-fault-isolation` markers.
+
+Phase 9 `general-fault-isolation` requires `PYTHOS:CORE:DYNAMIC_FAULT:ELF_LOADED` after a dynamic user-fault marker, `PYTHOS:CORE:DYNAMIC_FAULT:USER_FAULT` after the dynamic ELF loaded marker, `PYTHOS:CORE:DYNAMIC_FAULT:SERVICE_TERMINATED` after the dynamic user-fault marker, `PYTHOS:CORE:DYNAMIC_FAULT:PEER_ALIVE` after the dynamic service-terminated marker, `PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY` after the dynamic peer-alive marker, and `PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY` before the Phase 9 `process-model-adversarial-suite` markers.
+
+Phase 9 `process-model-adversarial-suite` requires `PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN` after `PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY`, `PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED` after the program-ran marker, `PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED` after the variants-loaded marker, `PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED` after the forged-capability denial marker, `PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED` after the bad-pointer denial marker, `PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY` after the hardware-access denial marker, `PYTHOS:CORE:PHASE_9_COMPLETE` after the adversarial-ready marker, and `PYTHOS:CORE:PHASE_9_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

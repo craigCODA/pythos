@@ -31,6 +31,7 @@ const USER_CODE_MOV_RAX_IMM64_OPCODE: u8 = 0xB8;
 const USER_CODE_LOAD_AL_FROM_RAX: u8 = 0x8A;
 const USER_CODE_LOAD_AL_FROM_RAX_MODRM: u8 = 0x00;
 const USER_INVALID_OPCODE_VECTOR: u64 = 6;
+const USER_GENERAL_PROTECTION_VECTOR: u64 = 13;
 const USER_PAGE_FAULT_VECTOR: u64 = 14;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +175,29 @@ pub fn run_bad_pointer_fault_test() -> Result<(), UserModeError> {
 }
 
 #[cfg(not(test))]
+pub fn run_dynamic_breakpoint_test(entry: u64) -> Result<(), UserModeError> {
+    run_user_entry(entry, ExpectedUserTrap::Breakpoint)
+}
+
+#[cfg(not(test))]
+pub fn run_dynamic_illegal_instruction_fault_test(entry: u64) -> Result<(), UserModeError> {
+    run_user_entry(entry, ExpectedUserTrap::Fault(USER_INVALID_OPCODE_VECTOR))
+}
+
+#[cfg(not(test))]
+pub fn run_dynamic_bad_pointer_fault_test(entry: u64) -> Result<(), UserModeError> {
+    run_user_entry(entry, ExpectedUserTrap::Fault(USER_PAGE_FAULT_VECTOR))
+}
+
+#[cfg(not(test))]
+pub fn run_dynamic_hardware_fault_test(entry: u64) -> Result<(), UserModeError> {
+    run_user_entry(
+        entry,
+        ExpectedUserTrap::Fault(USER_GENERAL_PROTECTION_VECTOR),
+    )
+}
+
+#[cfg(not(test))]
 enum ExpectedUserTrap {
     Breakpoint,
     Fault(u64),
@@ -203,9 +227,10 @@ fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeErro
     //    active until the one-shot proof returns.
     // 4. Pointer ownership: the CPU consumes the user entry/stack and trap
     //    stack; this module owns the backing storage.
-    // 5. Alignment: user entry is page aligned; stacks are 16-byte aligned.
-    // 6. Mapped length: one user code page, one user stack page, and a 16 KiB
-    //    kernel trap stack are mapped.
+    // 5. Alignment: user entry is a canonical executable user address; stacks
+    //    are 16-byte aligned.
+    // 6. Mapped length: the active user code page or dynamic ELF page, one
+    //    user stack page, and a 16 KiB kernel trap stack are mapped.
     // 7. Concurrency: single-core boot, one ring-3 proof in flight.
     // 8. Violation: bad descriptors or mappings fault through diagnostics.
     let returned = unsafe { ring3_enter_abi(entry, user_stack_top()) };

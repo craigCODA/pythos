@@ -14,6 +14,9 @@ GENERAL_SYSCALL_ABI_READY = "PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY"
 COPY_IN_COPY_OUT_READY = "PYTHOS:CORE:COPY_IN_COPY_OUT_READY"
 DYNAMIC_CAPABILITY_GRANTS_READY = "PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY"
 PROCESS_ARGV_ENV_READY = "PYTHOS:CORE:PROCESS_ARGV_ENV_READY"
+GENERAL_FAULT_ISOLATION_READY = "PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY"
+PROCESS_MODEL_ADVERSARIAL_READY = "PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY"
+PHASE_9_COMPLETE = "PYTHOS:CORE:PHASE_9_COMPLETE"
 
 
 def load_test_boot_module():
@@ -113,6 +116,40 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(PROCESS_ARGV_ENV_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_general_fault_isolation_extends_process_argv_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        fault_markers = test_boot.SLICE_MARKERS["general-fault-isolation"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            fault_markers.index(PROCESS_ARGV_ENV_READY),
+            fault_markers.index(GENERAL_FAULT_ISOLATION_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(GENERAL_FAULT_ISOLATION_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_process_model_adversarial_suite_completes_phase_9_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        adversarial_markers = test_boot.SLICE_MARKERS["process-model-adversarial-suite"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            adversarial_markers.index(GENERAL_FAULT_ISOLATION_READY),
+            adversarial_markers.index(PROCESS_MODEL_ADVERSARIAL_READY),
+        )
+        self.assertLess(
+            adversarial_markers.index(PROCESS_MODEL_ADVERSARIAL_READY),
+            adversarial_markers.index(PHASE_9_COMPLETE),
+        )
+        self.assertLess(
+            milestone_markers.index(PHASE_9_COMPLETE),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

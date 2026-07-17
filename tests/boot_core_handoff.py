@@ -741,6 +741,12 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_process_argv_environment_markers_are_observed_after_dynamic_grants(self) -> None:
         self.run_boot_slice("process-argv-and-environment")
 
+    def test_general_fault_isolation_markers_are_observed_after_process_argv_environment(self) -> None:
+        self.run_boot_slice("general-fault-isolation")
+
+    def test_process_model_adversarial_suite_markers_complete_phase_9(self) -> None:
+        self.run_boot_slice("process-model-adversarial-suite")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

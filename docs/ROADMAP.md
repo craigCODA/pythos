@@ -1144,15 +1144,21 @@ enforcement at the boundary, all hardware-backed).
    process can read its environment value, and an ungranted process is denied
    even when it asks for the same key. Emits
    `PYTHOS:CORE:PROCESS_ARGV_ENV_READY`.
-6. **`general-fault-isolation`** — re-run Phase 8's crash-containment proof
-   against a dynamically loaded, intentionally malformed binary (not the
-   fixed test payload) to confirm containment generalizes.
-7. **`process-model-adversarial-suite`** — the load-bearing proof: load
-   several different arbitrary user binaries, including at least one
-   deliberately malicious one (attempts a forged capability, an
-   out-of-bounds syscall pointer, and a privileged hardware access), and
-   confirm all three are denied by the *general* mechanism, not the fixed
-   Phase 8 test path.
+6. **`general-fault-isolation`** — COMPLETE. ADR 0042 re-runs Phase 8's
+   crash-containment proof against a dynamically loaded invalid-instruction ELF
+   payload, not the fixed Phase 8 proof page. PythCore maps the payload into a
+   dynamic user address space, enters it at CPL3, recovers through the
+   user-originated fault path, proves only the faulting service terminates, and
+   emits `PYTHOS:CORE:GENERAL_FAULT_ISOLATION_READY`.
+7. **`process-model-adversarial-suite`** — COMPLETE. ADR 0043 loads multiple
+   dynamic user ELF variants from the inner `INIT.PAK` bundle, proves a
+   runnable dynamic payload returns through the general user-mode path, proves
+   a forged capability is denied by the syscall-boundary capability model,
+   proves a bad user pointer is denied by the copy-in/copy-out policy and
+   contained when attempted by a dynamic payload, proves direct hardware access
+   is denied by the CPU privilege boundary and capability model, and emits
+   `PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY` followed by
+   `PYTHOS:CORE:PHASE_9_COMPLETE`.
 
 ### Exit condition
 
@@ -1174,8 +1180,10 @@ ADR 0037 for the inner `INIT.PAK` bundle format is complete. ADR 0038 for the
 syscall number space and versioning policy is complete. ADR 0039 for the
 copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
 grants is complete. ADR 0041 for process argv/environment launch data is
-complete. The next slice is `general-fault-isolation`; do not treat launch-data
-delivery as loaded-ELF execution or dynamic crash containment.
+complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
+for the process-model adversarial suite is complete. Phase 9 is complete; halt
+at the Phase 9 -> Phase 10 boundary and do not begin Phase 10
+`block-allocator` or later work without explicit re-invocation.
 
 ---
 

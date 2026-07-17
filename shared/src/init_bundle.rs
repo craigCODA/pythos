@@ -68,12 +68,20 @@ pub struct InitBundle<'a> {
 
 impl<'a> InitBundle<'a> {
     pub fn record(&self, record_type: RecordType) -> Option<Record<'a>> {
+        self.record_at(record_type, 0)
+    }
+
+    pub fn record_at(&self, record_type: RecordType, ordinal: usize) -> Option<Record<'a>> {
         let mut index = 0;
+        let mut seen = 0;
         while index < self.record_count {
             if let Some(record) = self.records[index]
                 && record.record_type == record_type
             {
-                return Some(record);
+                if seen == ordinal {
+                    return Some(record);
+                }
+                seen += 1;
             }
             index += 1;
         }
@@ -265,6 +273,27 @@ mod tests {
             b"runtime"
         );
         assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
+    }
+
+    #[test]
+    fn duplicate_user_elf_records_are_addressable_by_ordinal() {
+        let bundle = build_bundle(&[
+            (TYPE_RUNTIME_PAYLOAD, b"runtime"),
+            (TYPE_USER_ELF, b"first"),
+            (TYPE_USER_ELF, b"second"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(
+            parsed.record_at(RecordType::UserElf, 0).unwrap().bytes(),
+            b"first"
+        );
+        assert_eq!(
+            parsed.record_at(RecordType::UserElf, 1).unwrap().bytes(),
+            b"second"
+        );
+        assert_eq!(parsed.record_at(RecordType::UserElf, 2), None);
     }
 
     #[test]

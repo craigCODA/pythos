@@ -103,8 +103,7 @@ def build_init_bundle(records: list[tuple[int, bytes]]) -> bytes:
     return bytes(header) + bytes(table) + bytes(payloads)
 
 
-def build_user_elf_payload() -> bytes:
-    text = b"\x90\xc3"
+def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
     data_offset = 0x2000
@@ -145,7 +144,18 @@ INIT_PAK = build_init_pak(
     build_init_bundle(
         [
             (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
-            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload()),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(
+                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                ),
+            ),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+            ),
         ]
     )
 )
