@@ -10,6 +10,7 @@ KERNEL_STACKS_READY = "PYTHOS:CORE:KERNEL_STACKS_READY"
 CAPABILITY_BOUNDARY_READY = "PYTHOS:CORE:CAPABILITY_BOUNDARY_READY"
 FRAMEBUFFER_READY = "PYTHOS:CORE:FRAMEBUFFER_READY"
 DYNAMIC_ELF_READY = "PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY"
+GENERAL_SYSCALL_ABI_READY = "PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY"
 
 
 def load_test_boot_module():
@@ -49,6 +50,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(DYNAMIC_ELF_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_general_syscall_abi_extends_dynamic_elf_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        general_markers = test_boot.SLICE_MARKERS["general-syscall-abi"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            general_markers.index(DYNAMIC_ELF_READY),
+            general_markers.index(GENERAL_SYSCALL_ABI_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(GENERAL_SYSCALL_ABI_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

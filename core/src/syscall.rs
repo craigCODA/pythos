@@ -1,7 +1,7 @@
-//! Phase 8 syscall-entry proof.
+//! Phase 8 syscall-entry proof and Phase 9 general syscall ABI registry.
 //!
 //! This defines the first syscall ABI contract. It intentionally accepts no
-//! user pointers yet; Phase 8 copy-in/copy-out belongs to later slices.
+//! user pointers yet; Phase 9 copy-in/copy-out belongs to the next slice.
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 use crate::architecture::x86_64::gdt;
@@ -21,10 +21,14 @@ use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 use core::arch::{asm, global_asm};
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+pub const SYSCALL_ABI_MAJOR: u16 = 1;
+pub const SYSCALL_ABI_MINOR: u16 = 0;
+pub const SYSCALL_ABI_INFO: u64 = 0x5059_0000;
 pub const SYSCALL_SYSTEM_LOG_PROOF: u64 = 0x5059_0001;
 
+const SYSCALL_ABI_INFO_MAGIC: u64 = 0x5059_0000_0000;
 const SYSCALL_OK: u64 = 0x5059_004F;
-const SYSCALL_ERROR_BAD_NUMBER: u64 = 0xBAD0_0001;
+const SYSCALL_ERROR_UNSUPPORTED_NUMBER: u64 = 0xBAD0_0001;
 const SYSCALL_ERROR_DISPATCH: u64 = 0xBAD0_0002;
 const SYSCALL_ERROR_UNEXPECTED: u64 = 0xBAD0_0003;
 
@@ -51,7 +55,7 @@ static SYSCALL_LAST_RESULT: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyscallError {
-    BadNumber,
+    UnsupportedNumber,
     Capability(CapabilityError),
     Ipc(IpcError),
     Permission(PermissionError),
@@ -68,6 +72,52 @@ pub struct BoundaryCapabilityProof {
     pub forged_handle_denied: bool,
     pub direct_hardware_denied: bool,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GeneralSyscallAbiProof {
+    pub versioned: bool,
+    pub known_dispatch: bool,
+    pub unknown_denied: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyscallDispatchKind {
+    AbiInfo,
+    SystemLogProof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SyscallEntry {
+    number: u64,
+    name: &'static str,
+    introduced_major: u16,
+    introduced_minor: u16,
+    dispatch_kind: SyscallDispatchKind,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SyscallTableError {
+    Empty,
+    NotSortedOrDuplicate,
+    InvalidIntroducedVersion,
+}
+
+const SYSCALL_TABLE: &[SyscallEntry] = &[
+    SyscallEntry {
+        number: SYSCALL_ABI_INFO,
+        name: "SYSCALL_ABI_INFO",
+        introduced_major: 1,
+        introduced_minor: 0,
+        dispatch_kind: SyscallDispatchKind::AbiInfo,
+    },
+    SyscallEntry {
+        number: SYSCALL_SYSTEM_LOG_PROOF,
+        name: "SYSCALL_SYSTEM_LOG_PROOF",
+        introduced_major: 1,
+        introduced_minor: 0,
+        dispatch_kind: SyscallDispatchKind::SystemLogProof,
+    },
+];
 
 impl From<CapabilityError> for SyscallError {
     fn from(error: CapabilityError) -> Self {
@@ -171,8 +221,8 @@ pub extern "C" fn syscall_dispatch_abi(number: u64) -> u64 {
 
     let result = dispatch(number);
     let code = match result {
-        Ok(()) => SYSCALL_OK,
-        Err(SyscallError::BadNumber) => SYSCALL_ERROR_BAD_NUMBER,
+        Ok(code) => code,
+        Err(SyscallError::UnsupportedNumber) => SYSCALL_ERROR_UNSUPPORTED_NUMBER,
         Err(SyscallError::UnexpectedSyscall) => SYSCALL_ERROR_UNEXPECTED,
         Err(_) => SYSCALL_ERROR_DISPATCH,
     };
@@ -184,21 +234,57 @@ pub extern "C" fn syscall_dispatch_abi(number: u64) -> u64 {
     code
 }
 
-fn dispatch(number: u64) -> Result<(), SyscallError> {
+fn dispatch(number: u64) -> Result<u64, SyscallError> {
     if !EXPECTED_SYSCALL.swap(false, Ordering::SeqCst) {
         return Err(SyscallError::UnexpectedSyscall);
     }
-    if number != SYSCALL_SYSTEM_LOG_PROOF {
-        return Err(SyscallError::BadNumber);
+    let entry = lookup_syscall(number).ok_or(SyscallError::UnsupportedNumber)?;
+
+    match entry.dispatch_kind {
+        SyscallDispatchKind::AbiInfo => Ok(abi_info_result()),
+        SyscallDispatchKind::SystemLogProof => {
+            run_capability_gated_ipc_bridge()?;
+            #[cfg(not(test))]
+            serial::write_line("PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK");
+
+            run_system_log_bridge()?;
+            #[cfg(not(test))]
+            serial::write_line("PYTHOS:CORE:SYSCALL:SYSTEM_LOG");
+            Ok(SYSCALL_OK)
+        }
+    }
+}
+
+fn abi_info_result() -> u64 {
+    SYSCALL_ABI_INFO_MAGIC | (u64::from(SYSCALL_ABI_MAJOR) << 16) | u64::from(SYSCALL_ABI_MINOR)
+}
+
+fn lookup_syscall(number: u64) -> Option<&'static SyscallEntry> {
+    SYSCALL_TABLE.iter().find(|entry| entry.number == number)
+}
+
+fn validate_syscall_table(table: &[SyscallEntry]) -> Result<(), SyscallTableError> {
+    if table.is_empty() {
+        return Err(SyscallTableError::Empty);
     }
 
-    run_capability_gated_ipc_bridge()?;
-    #[cfg(not(test))]
-    serial::write_line("PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK");
+    let mut previous = None;
+    for entry in table {
+        if entry.introduced_major == 0
+            || entry.introduced_major > SYSCALL_ABI_MAJOR
+            || (entry.introduced_major == SYSCALL_ABI_MAJOR
+                && entry.introduced_minor > SYSCALL_ABI_MINOR)
+        {
+            return Err(SyscallTableError::InvalidIntroducedVersion);
+        }
+        if let Some(previous_number) = previous
+            && entry.number <= previous_number
+        {
+            return Err(SyscallTableError::NotSortedOrDuplicate);
+        }
+        previous = Some(entry.number);
+    }
 
-    run_system_log_bridge()?;
-    #[cfg(not(test))]
-    serial::write_line("PYTHOS:CORE:SYSCALL:SYSTEM_LOG");
     Ok(())
 }
 
@@ -311,6 +397,37 @@ pub fn run_boundary_capability_self_test() -> Result<BoundaryCapabilityProof, Sy
         allowed_call: true,
         forged_handle_denied,
         direct_hardware_denied,
+    })
+}
+
+pub fn run_general_abi_self_test() -> Result<GeneralSyscallAbiProof, SyscallError> {
+    if SYSCALL_ABI_MAJOR != 1 || SYSCALL_ABI_MINOR != 0 {
+        return Err(SyscallError::BadResult);
+    }
+    if validate_syscall_table(SYSCALL_TABLE).is_err() {
+        return Err(SyscallError::BadResult);
+    }
+
+    EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
+    if dispatch(SYSCALL_ABI_INFO)? != abi_info_result() {
+        return Err(SyscallError::BadResult);
+    }
+
+    EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
+    if dispatch(SYSCALL_SYSTEM_LOG_PROOF)? != SYSCALL_OK {
+        return Err(SyscallError::BadResult);
+    }
+
+    EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
+    let unknown_denied = dispatch(0x5059_FFFF) == Err(SyscallError::UnsupportedNumber);
+    if !unknown_denied {
+        return Err(SyscallError::BadResult);
+    }
+
+    Ok(GeneralSyscallAbiProof {
+        versioned: true,
+        known_dispatch: true,
+        unknown_denied,
     })
 }
 
@@ -433,6 +550,38 @@ mod tests {
     }
 
     #[test]
+    fn abi_version_and_info_result_are_stable() {
+        assert_eq!(SYSCALL_ABI_MAJOR, 1);
+        assert_eq!(SYSCALL_ABI_MINOR, 0);
+        assert_eq!(SYSCALL_ABI_INFO, 0x5059_0000);
+        assert_eq!(abi_info_result(), 0x5059_0001_0000);
+    }
+
+    #[test]
+    fn syscall_registry_is_sorted_and_duplicate_free() {
+        assert_eq!(validate_syscall_table(SYSCALL_TABLE), Ok(()));
+    }
+
+    #[test]
+    fn system_log_proof_number_is_permanent() {
+        assert_eq!(SYSCALL_SYSTEM_LOG_PROOF, 0x5059_0001);
+        let entry = lookup_syscall(SYSCALL_SYSTEM_LOG_PROOF).unwrap();
+        assert_eq!(entry.name, "SYSCALL_SYSTEM_LOG_PROOF");
+    }
+
+    #[test]
+    fn abi_info_dispatch_returns_version_metadata() {
+        EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
+        assert_eq!(dispatch(SYSCALL_ABI_INFO), Ok(abi_info_result()));
+    }
+
+    #[test]
+    fn unknown_syscall_number_is_denied_by_registry() {
+        EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
+        assert_eq!(dispatch(0x5059_FFFF), Err(SyscallError::UnsupportedNumber));
+    }
+
+    #[test]
     fn dispatch_rejects_unexpected_or_unknown_syscalls() {
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
         assert_eq!(
@@ -443,14 +592,14 @@ mod tests {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(
             dispatch(SYSCALL_SYSTEM_LOG_PROOF + 1),
-            Err(SyscallError::BadNumber)
+            Err(SyscallError::UnsupportedNumber)
         );
     }
 
     #[test]
     fn dispatch_system_log_proof_uses_capability_and_log_surfaces() {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-        assert_eq!(dispatch(SYSCALL_SYSTEM_LOG_PROOF), Ok(()));
+        assert_eq!(dispatch(SYSCALL_SYSTEM_LOG_PROOF), Ok(SYSCALL_OK));
     }
 
     #[test]
@@ -460,5 +609,14 @@ mod tests {
         assert!(proof.allowed_call);
         assert!(proof.forged_handle_denied);
         assert!(proof.direct_hardware_denied);
+    }
+
+    #[test]
+    fn general_abi_self_test_proves_version_known_dispatch_and_unknown_denial() {
+        let proof = run_general_abi_self_test().unwrap();
+
+        assert!(proof.versioned);
+        assert!(proof.known_dispatch);
+        assert!(proof.unknown_denied);
     }
 }

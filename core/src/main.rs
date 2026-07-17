@@ -990,6 +990,30 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:USER_ELF:LOADED");
         serial::write_line("PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED");
         serial::write_line("PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY");
+        let general_syscall_abi_proof = match syscall::run_general_abi_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if general_syscall_abi_proof.versioned {
+            serial::write_line("PYTHOS:CORE:SYSCALL_ABI:VERSIONED");
+        }
+        if general_syscall_abi_proof.known_dispatch {
+            serial::write_line("PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH");
+        }
+        if general_syscall_abi_proof.unknown_denied {
+            serial::write_line("PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED");
+        }
+        if !general_syscall_abi_proof.versioned
+            || !general_syscall_abi_proof.known_dispatch
+            || !general_syscall_abi_proof.unknown_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY");
     }
 
     #[cfg(test)]

@@ -1119,12 +1119,12 @@ enforcement at the boundary, all hardware-backed).
    text, RW for data, no segment ever both W and X), proves malformed buffer
    range, W+X, and kernel-range segments are denied, and emits
    `PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY`.
-2. **`general-syscall-abi`** — Phase 8's syscall gate currently serves the
-   fixed set of operations its adversarial tests exercised. Generalize the
-   dispatch to a stable, versioned syscall number space so new syscalls can
-   be added without breaking existing user binaries. This is the syscall
-   ABI's real freeze point — treat every number assignment as permanent
-   from here on.
+2. **`general-syscall-abi`** — COMPLETE. ADR 0038 defines ABI version `1.0`,
+   reserves `0x5059_0000` for side-effect-free ABI metadata, preserves
+   `0x5059_0001` as the permanent Phase 8 system-log proof syscall, routes
+   dispatch through a fixed syscall registry, denies unsupported syscall
+   numbers without running privileged bridges, and emits
+   `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`.
 3. **`copy-in-copy-out-policy`** — a formal, tested policy for validating
    every user-supplied pointer and length crossing the syscall boundary:
    bounds-checked against the calling process's actual mapped address
@@ -1165,9 +1165,10 @@ multi-process scheduling changes beyond what Phase 2 already provides.
 
 ### Required artifacts
 
-ADR 0037 for the inner `INIT.PAK` bundle format is complete. The next required
-artifact is the ADR for the syscall number space and versioning policy — this
-is the ABI freeze point, treat it with the same weight as Phase 1's boot ABI.
+ADR 0037 for the inner `INIT.PAK` bundle format is complete. ADR 0038 for the
+syscall number space and versioning policy is complete. The next slice is
+`copy-in-copy-out-policy`; do not treat the versioned syscall table as user
+pointer validation.
 
 ---
 

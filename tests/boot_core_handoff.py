@@ -729,6 +729,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_dynamic_elf_loading_markers_are_observed_after_capability_boundary(self) -> None:
         self.run_boot_slice("dynamic-elf-loading")
 
+    def test_general_syscall_abi_markers_are_observed_after_dynamic_elf_loading(self) -> None:
+        self.run_boot_slice("general-syscall-abi")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

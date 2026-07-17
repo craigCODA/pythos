@@ -261,6 +261,10 @@ OVMF
 -> PYTHOS:CORE:USER_ELF:LOADED
 -> PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED
 -> PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY
+-> PYTHOS:CORE:SYSCALL_ABI:VERSIONED
+-> PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH
+-> PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED
+-> PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -277,7 +281,9 @@ The Phase 8 `capability-enforcement-at-boundary` slice records ADR 0036, contain
 
 The Phase 9 `dynamic-elf-loading` slice records ADR 0037, preserves legacy direct ADR 0014 runtime payload loading, validates an ADR 0037 inner `INIT.PAK` bundle carrying runtime and user ELF records, validates an ELF64 `ET_EXEC` x86-64 user payload with overflow, W^X, user/kernel range, overlap, unsupported-segment, entry-point, and BSS zero-fill checks, maps its loadable segments into a distinct user address-space root without executing it, proves malformed buffer-range, writable-executable, and kernel-range segments are denied, emits `PYTHOS:CORE:USER_ELF:REJECTED:BUFFER_RANGE`, `PYTHOS:CORE:USER_ELF:REJECTED:WX_SEGMENT`, `PYTHOS:CORE:USER_ELF:REJECTED:KERNEL_RANGE`, `PYTHOS:CORE:USER_ELF:LOADED`, `PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED`, and completes with `PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 `dynamic-elf-loading` are complete. ADR 0022 records the on-disk typed-object format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the Phase 7 checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, and ADR 0037 records the `INIT.PAK` inner bundle format. Halt at the Phase 9 `dynamic-elf-loading` -> `general-syscall-abi` slice boundary; do not begin Phase 9 `general-syscall-abi` or any later networking, AI, SMP, package management, updates, or hardware-expansion work without explicit re-invocation.
+The Phase 9 `general-syscall-abi` slice records ADR 0038, preserves `0x5059_0001` as the permanent Phase 8 system-log proof syscall, adds side-effect-free ABI metadata syscall `0x5059_0000`, validates a fixed sorted syscall registry, denies unsupported numbers without running privileged bridges, emits `PYTHOS:CORE:SYSCALL_ABI:VERSIONED`, `PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH`, `PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED`, and completes with `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`.
+
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 `dynamic-elf-loading` and `general-syscall-abi` are complete. ADR 0022 records the on-disk typed-object format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the Phase 7 checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the `INIT.PAK` inner bundle format, and ADR 0038 records the general syscall number space. Halt at the Phase 9 `general-syscall-abi` -> `copy-in-copy-out-policy` slice boundary; do not begin Phase 9 `copy-in-copy-out-policy` or any later networking, AI, SMP, package management, updates, or hardware-expansion work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -499,6 +505,10 @@ PYTHOS:CORE:USER_ELF:REJECTED:KERNEL_RANGE
 PYTHOS:CORE:USER_ELF:LOADED
 PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED
 PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY
+PYTHOS:CORE:SYSCALL_ABI:VERSIONED
+PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH
+PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED
+PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
