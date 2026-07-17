@@ -759,6 +759,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_storage_quota_markers_are_observed_after_fragmentation_policy(self) -> None:
         self.run_boot_slice("storage-quota-per-service")
 
+    def test_concurrent_write_markers_are_observed_after_storage_quota(self) -> None:
+        self.run_boot_slice("concurrent-write-safety")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

@@ -23,6 +23,7 @@ FRAGMENTATION_COMPACTION_POLICY_READY = (
     "PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY"
 )
 STORAGE_QUOTA_PER_SERVICE_READY = "PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY"
+CONCURRENT_WRITE_SAFETY_READY = "PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY"
 
 
 def load_test_boot_module():
@@ -218,6 +219,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(STORAGE_QUOTA_PER_SERVICE_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_concurrent_write_extends_quota_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        concurrent_markers = test_boot.SLICE_MARKERS["concurrent-write-safety"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            concurrent_markers.index(STORAGE_QUOTA_PER_SERVICE_READY),
+            concurrent_markers.index(CONCURRENT_WRITE_SAFETY_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(CONCURRENT_WRITE_SAFETY_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 
