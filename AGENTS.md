@@ -297,6 +297,27 @@ OVMF
 -> PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED
 -> PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY
 -> PYTHOS:CORE:PHASE_9_COMPLETE
+-> PYTHOS:CORE:ALLOCATOR:BITMAP_READY
+-> PYTHOS:CORE:ALLOCATOR:METADATA_JOURNALED
+-> PYTHOS:CORE:ALLOCATOR:TORN_METADATA_ROLLED_BACK
+-> PYTHOS:CORE:BLOCK_ALLOCATOR_READY
+-> PYTHOS:CORE:DYNAMIC_OBJECT:CREATED
+-> PYTHOS:CORE:DYNAMIC_OBJECT:DELETED
+-> PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY
+-> PYTHOS:CORE:FRAGMENTATION:POLICY_RECORDED
+-> PYTHOS:CORE:FRAGMENTATION:FREED_BLOCK_REUSED
+-> PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY
+-> PYTHOS:CORE:STORAGE_QUOTA:GRANTED
+-> PYTHOS:CORE:STORAGE_QUOTA:DENIED
+-> PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY
+-> PYTHOS:CORE:CONCURRENT_WRITE:SERIALIZED
+-> PYTHOS:CORE:CONCURRENT_WRITE:CORRUPTION_DENIED
+-> PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY
+-> PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE
+-> PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED
+-> PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
+-> PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
+-> PYTHOS:CORE:PHASE_10_COMPLETE
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -325,7 +346,24 @@ The Phase 9 `general-fault-isolation` slice records ADR 0042, loads an additiona
 
 The Phase 9 `process-model-adversarial-suite` slice records ADR 0043, loads four dynamic user ELF variants from the inner `INIT.PAK` bundle, runs one through the normal user-mode return path, contains dynamically attempted bad-pointer and direct-hardware-access faults, proves forged capability denial through the syscall-boundary capability model, proves bad pointer denial through copy-in/copy-out policy, proves hardware access denial through CPU privilege and capability checks, emits `PYTHOS:CORE:PROCESS_MODEL:PROGRAM_RAN`, `PYTHOS:CORE:PROCESS_MODEL:ELF_VARIANTS_LOADED`, `PYTHOS:CORE:PROCESS_MODEL:FORGED_CAPABILITY_DENIED`, `PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED`, `PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED`, completes with `PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY`, and completes Phase 9 with `PYTHOS:CORE:PHASE_9_COMPLETE`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, and Phase 9 are complete through `PYTHOS:CORE:PHASE_9_COMPLETE`. ADR 0022 records the on-disk typed-object format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the Phase 7 checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the `INIT.PAK` inner bundle format, ADR 0038 records the general syscall number space, ADR 0039 records the copy-in/copy-out pointer policy, ADR 0040 records the dynamic capability grant model, ADR 0041 records the process launch argv/environment policy, ADR 0042 records dynamic general fault isolation, and ADR 0043 records the process-model adversarial suite. Halt at the Phase 9 -> Phase 10 boundary; do not begin Phase 10 `block-allocator` or any later storage, networking, AI, SMP, package management, updates, or hardware-expansion work without explicit re-invocation.
+The cumulative narrative paragraph above covers the Phase 1.5 through Phase 9
+foundation. The current Phase 10 extension inserts the following generalized
+storage proofs after `PYTHOS:CORE:PHASE_9_COMPLETE` and before
+`PYTHOS:CORE:FRAMEBUFFER_READY` / `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
+
+The Phase 10 `block-allocator` slice records ADR 0044, uses a first-fit bitmap allocator, journals allocator metadata before treating bitmap changes as authoritative, rolls back torn allocator metadata, and emits `PYTHOS:CORE:BLOCK_ALLOCATOR_READY`.
+
+The Phase 10 `dynamic-object-count` slice creates and deletes multiple typed objects over allocator-owned extents and emits `PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY`.
+
+The Phase 10 `fragmentation-and-compaction-policy` slice records ADR 0045, proves freed dynamic-object extents are reused, explicitly defers live-object compaction, and emits `PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY`.
+
+The Phase 10 `storage-quota-per-service` slice extends quota accounting to storage blocks, proves an over-quota write is denied without mutating usage, and emits `PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY`.
+
+The Phase 10 `concurrent-write-safety` slice serializes capability-gated storage writers with service-owned write tokens, rejects stale tokens from releasing another writer's gate, and emits `PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY`.
+
+The Phase 10 `storage-adversarial-suite` slice proves repeated dynamic create/delete cycles, an out-of-quota write denial, in-boot dynamic torn-write rollback, and a separate `scripts/test-persistent-storage.py` killed-mid-commit QEMU recovery path for Phase 10 dynamic allocation. It emits `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` and completes Phase 10 with `PYTHOS:CORE:PHASE_10_COMPLETE`.
+
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, and Phase 10 are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Halt at the Phase 10 -> Phase 11 boundary; do not begin Phase 11 `real-hardware-target-selection` or any later hardware, package-management, networking, updates, AI, or SMP work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -583,6 +621,27 @@ PYTHOS:CORE:PROCESS_MODEL:BAD_SYSCALL_POINTER_DENIED
 PYTHOS:CORE:PROCESS_MODEL:HARDWARE_ACCESS_DENIED
 PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY
 PYTHOS:CORE:PHASE_9_COMPLETE
+PYTHOS:CORE:ALLOCATOR:BITMAP_READY
+PYTHOS:CORE:ALLOCATOR:METADATA_JOURNALED
+PYTHOS:CORE:ALLOCATOR:TORN_METADATA_ROLLED_BACK
+PYTHOS:CORE:BLOCK_ALLOCATOR_READY
+PYTHOS:CORE:DYNAMIC_OBJECT:CREATED
+PYTHOS:CORE:DYNAMIC_OBJECT:DELETED
+PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY
+PYTHOS:CORE:FRAGMENTATION:POLICY_RECORDED
+PYTHOS:CORE:FRAGMENTATION:FREED_BLOCK_REUSED
+PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY
+PYTHOS:CORE:STORAGE_QUOTA:GRANTED
+PYTHOS:CORE:STORAGE_QUOTA:DENIED
+PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY
+PYTHOS:CORE:CONCURRENT_WRITE:SERIALIZED
+PYTHOS:CORE:CONCURRENT_WRITE:CORRUPTION_DENIED
+PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY
+PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE
+PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED
+PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
+PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
+PYTHOS:CORE:PHASE_10_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```

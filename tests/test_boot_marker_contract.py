@@ -24,6 +24,8 @@ FRAGMENTATION_COMPACTION_POLICY_READY = (
 )
 STORAGE_QUOTA_PER_SERVICE_READY = "PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY"
 CONCURRENT_WRITE_SAFETY_READY = "PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY"
+STORAGE_ADVERSARIAL_SUITE_READY = "PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY"
+PHASE_10_COMPLETE = "PYTHOS:CORE:PHASE_10_COMPLETE"
 
 
 def load_test_boot_module():
@@ -234,6 +236,25 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(CONCURRENT_WRITE_SAFETY_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_storage_adversarial_suite_completes_phase_10_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        adversarial_markers = test_boot.SLICE_MARKERS["storage-adversarial-suite"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            adversarial_markers.index(CONCURRENT_WRITE_SAFETY_READY),
+            adversarial_markers.index(STORAGE_ADVERSARIAL_SUITE_READY),
+        )
+        self.assertLess(
+            adversarial_markers.index(STORAGE_ADVERSARIAL_SUITE_READY),
+            adversarial_markers.index(PHASE_10_COMPLETE),
+        )
+        self.assertLess(
+            milestone_markers.index(PHASE_10_COMPLETE),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

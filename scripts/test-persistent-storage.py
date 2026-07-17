@@ -13,17 +13,26 @@ TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "persistent-storage-serial.log"
 REBOOT_IMAGE = TARGET / "persistent-object-store-reboot.img"
 TORN_IMAGE = TARGET / "persistent-object-store-torn.img"
+GENERAL_TORN_IMAGE = TARGET / "general-storage-torn.img"
 SECTOR_SIZE = 512
 STORAGE_SIZE_BYTES = 16 * 1024 * 1024
 CONTROL_SECTOR = 30
 CONTROL_MAGIC = b"PY7CTL01"
 CONTROL_ARM_TORN = 1
+GENERAL_CONTROL_SECTOR = 40
+GENERAL_CONTROL_MAGIC = b"PY10CTL1"
 KILL_WINDOW_MARKER = "PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW"
+GENERAL_KILL_WINDOW_MARKER = "PYTHOS:CORE:GENERAL_STORAGE:KILL_WINDOW"
 CREATED_MARKER = "PYTHOS:CORE:OBJECT_STORE:CREATED"
 PERSISTED_MARKER = "PYTHOS:CORE:OBJECT_STORE:PERSISTED"
 RESTORED_MARKER = "PYTHOS:CORE:OBJECT_STORE:RESTORED"
 TORN_RECOVERED_MARKER = "PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED"
+GENERAL_RESTORED_MARKER = "PYTHOS:CORE:GENERAL_STORAGE:RESTORED"
+GENERAL_TORN_RECOVERED_MARKER = (
+    "PYTHOS:CORE:GENERAL_STORAGE:DYNAMIC_TORN_WRITE_RECOVERED"
+)
 PHASE_7_COMPLETE_MARKER = "PYTHOS:CORE:PHASE_7_COMPLETE"
+PHASE_10_COMPLETE_MARKER = "PYTHOS:CORE:PHASE_10_COMPLETE"
 RESET_EXIT = 21
 
 
@@ -92,6 +101,17 @@ def seed_torn_control_image(path: Path) -> None:
         image.write(sector)
 
 
+def seed_general_torn_control_image(path: Path) -> None:
+    prepare_fresh_image(path)
+    sector = bytearray(SECTOR_SIZE)
+    sector[0:8] = GENERAL_CONTROL_MAGIC
+    sector[8] = CONTROL_ARM_TORN
+    sector[9] = 0
+    with path.open("r+b") as image:
+        image.seek(GENERAL_CONTROL_SECTOR * SECTOR_SIZE)
+        image.write(sector)
+
+
 def test_reboot_restore() -> None:
     prepare_fresh_image(REBOOT_IMAGE)
     first = run_qemu(REBOOT_IMAGE, "--expect-outcome", "success")
@@ -123,10 +143,27 @@ def test_killed_mid_commit_recovery() -> None:
     assert_contains(recovered, PHASE_7_COMPLETE_MARKER)
 
 
+def test_general_storage_killed_mid_commit_recovery() -> None:
+    seed_general_torn_control_image(GENERAL_TORN_IMAGE)
+    killed = run_qemu(
+        GENERAL_TORN_IMAGE,
+        "--kill-after-marker",
+        GENERAL_KILL_WINDOW_MARKER,
+        expected_returncode=RESET_EXIT,
+    )
+    assert_contains(killed, GENERAL_KILL_WINDOW_MARKER)
+
+    recovered = run_qemu(GENERAL_TORN_IMAGE, "--expect-outcome", "success")
+    assert_contains(recovered, GENERAL_TORN_RECOVERED_MARKER)
+    assert_contains(recovered, GENERAL_RESTORED_MARKER)
+    assert_contains(recovered, PHASE_10_COMPLETE_MARKER)
+
+
 def main() -> int:
     build_boot_image()
     test_reboot_restore()
     test_killed_mid_commit_recovery()
+    test_general_storage_killed_mid_commit_recovery()
     print("PERSISTENT_STORAGE_TEST_OK")
     return 0
 

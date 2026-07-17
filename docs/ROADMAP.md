@@ -1181,9 +1181,9 @@ syscall number space and versioning policy is complete. ADR 0039 for the
 copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
 grants is complete. ADR 0041 for process argv/environment launch data is
 complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
-for the process-model adversarial suite is complete. Phase 9 is complete; halt
-at the Phase 9 -> Phase 10 boundary and do not begin Phase 10
-`block-allocator` or later work without explicit re-invocation.
+for the process-model adversarial suite is complete. Phase 9 is complete;
+Phase 10 now follows below. The active hard stop is the Phase 10 -> Phase 11
+boundary in the Phase 10 section.
 
 ---
 
@@ -1202,31 +1202,31 @@ the bounded case).
 
 ### Locked slice sequence
 
-1. **`block-allocator`** — real free-space tracking (bitmap or freelist) over
-   the block device, replacing the fixed checkpoint sector's implicit
-   single-slot model.
-2. **`dynamic-object-count`** — the object store supports creating and
-   deleting an arbitrary, growing number of typed objects, not one fixed
-   proof object.
-3. **`fragmentation-and-compaction-policy`** — decide and document (ADR)
-   whether Phase 10 handles fragmentation now or defers it; do not silently
-   leave it undefined.
-4. **`storage-quota-per-service`** — extend Phase 8's memory/CPU quota model
-   to disk usage, so one capability-scoped service can't exhaust storage for
-   others.
-5. **`concurrent-write-safety`** — more than one service can safely write to
-   the object store without corrupting the journal, gated by the existing
-   capability model.
-6. **`storage-adversarial-suite`** — repeated create/delete/write cycles,
-   an out-of-quota write attempt (must be denied, not silently truncated),
-   and a torn write under dynamic allocation (not just the fixed Phase 7
-   checkpoint) recovers correctly.
+1. **`block-allocator`** — complete. ADR 0044 records a journaled first-fit
+   bitmap allocator; torn allocator metadata rolls back to the last committed
+   bitmap.
+2. **`dynamic-object-count`** — complete. The object store creates and deletes
+   multiple typed objects over allocator-owned extents.
+3. **`fragmentation-and-compaction-policy`** — complete. ADR 0045 records
+   freed-block reuse now and explicitly defers live-object compaction.
+4. **`storage-quota-per-service`** — complete. Storage block quotas are scoped
+   by service identity and over-quota writes are denied without mutating
+   usage.
+5. **`concurrent-write-safety`** — complete. Capability-gated write tokens
+   serialize writers and stale tokens cannot release another writer's gate.
+6. **`storage-adversarial-suite`** — complete. Repeated create/delete cycles,
+   out-of-quota denial, dynamic torn-write rollback, and a killed-mid-commit
+   QEMU recovery path are verified.
 
 ### Exit condition
 
 An arbitrary, growing set of typed objects can be created, deleted, and
 survive reboot and a torn write under dynamic allocation — the same rigor
 as Phase 7's proof, generalized past the single fixed checkpoint.
+
+Status: complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. Halt at the Phase
+10 -> Phase 11 boundary; do not begin Phase 11
+`real-hardware-target-selection` without explicit re-invocation.
 
 ### Scope boundary
 
@@ -1237,8 +1237,10 @@ prematurely commit to paths here.
 
 ### Required artifacts
 
-ADR for the on-disk allocator format (this extends `ADR 0022`/`0025` — treat
-as an amendment or successor, not an unrelated new format).
+ADR 0044 records the on-disk allocator format and journaled metadata
+consistency rule. ADR 0045 records the fragmentation/compaction policy. The
+crash-recovery harness in `scripts/test-persistent-storage.py` includes a
+Phase 10 killed-mid-commit dynamic-allocation recovery scenario.
 
 ---
 

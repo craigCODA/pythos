@@ -36,14 +36,14 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Produces: `BlockAllocator`, `AllocatorJournal`, `run_self_test()`.
 - Consumes: `BlockDeviceInfo` for bounded capacity checks.
 
-- [ ] Write failing tests for first-fit allocation, freeing/reuse, committed
+- [x] Write failing tests for first-fit allocation, freeing/reuse, committed
       bitmap journal records, and rollback of torn allocator metadata.
-- [ ] Implement fixed bitmap allocator and journaled metadata commit.
-- [ ] Emit allocator markers after `PYTHOS:CORE:PHASE_9_COMPLETE`.
-- [ ] Run `cargo test -p pythos-core storage_allocator --target x86_64-pc-windows-msvc`.
-- [ ] Run `python -m unittest tests.test_boot_marker_contract`.
-- [ ] Run `python scripts/test-boot.py --slice block-allocator --timeout 60`.
-- [ ] Commit as `feat: add phase 10 block allocator`.
+- [x] Implement fixed bitmap allocator and journaled metadata commit.
+- [x] Emit allocator markers after `PYTHOS:CORE:PHASE_9_COMPLETE`.
+- [x] Run `cargo test -p pythos-core storage_allocator --target x86_64-pc-windows-msvc`.
+- [x] Run `python -m unittest tests.test_boot_marker_contract`.
+- [x] Run `python scripts/test-boot.py --slice block-allocator --timeout 60`.
+- [x] Commit as `feat: add phase 10 block allocator`.
 
 ### Task 2: `dynamic-object-count`
 
@@ -58,12 +58,12 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Consumes: `BlockAllocator`.
 - Produces: `DynamicObjectStore`, `run_self_test()`.
 
-- [ ] Write failing tests for creating multiple typed objects, deleting one,
+- [x] Write failing tests for creating multiple typed objects, deleting one,
       and preserving count/block ownership.
-- [ ] Implement bounded dynamic object slots backed by allocator blocks.
-- [ ] Emit dynamic object markers.
-- [ ] Verify with Rust, Python marker contract, and QEMU slice tests.
-- [ ] Commit as `feat: add phase 10 dynamic object count`.
+- [x] Implement bounded dynamic object slots backed by allocator blocks.
+- [x] Emit dynamic object markers.
+- [x] Verify with Rust, Python marker contract, and QEMU slice tests.
+- [x] Commit as `feat: add phase 10 dynamic object count`.
 
 ### Task 3: `fragmentation-and-compaction-policy`
 
@@ -76,10 +76,10 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Consumes: `DynamicObjectStore::delete_object`.
 - Produces: first-fit freed-block reuse proof.
 
-- [ ] Write failing test proving a freed middle block is reused.
-- [ ] Record ADR 0045: compaction deferred, first-fit reuse required.
-- [ ] Implement/verify reuse proof and markers.
-- [ ] Commit as `feat: add phase 10 fragmentation policy`.
+- [x] Write failing test proving a freed middle block is reused.
+- [x] Record ADR 0045: compaction deferred, first-fit reuse required.
+- [x] Implement/verify reuse proof and markers.
+- [x] Commit as `feat: add phase 10 fragmentation policy`.
 
 ### Task 4: `storage-quota-per-service`
 
@@ -91,11 +91,11 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Consumes: `ServiceId`.
 - Produces: `DiskQuotaTable`, `run_self_test()`.
 
-- [ ] Write failing tests for in-quota block charge, out-of-quota denial, and
+- [x] Write failing tests for in-quota block charge, out-of-quota denial, and
       non-mutating denial.
-- [ ] Implement per-service disk quota records.
-- [ ] Emit quota markers.
-- [ ] Commit as `feat: add phase 10 storage quotas`.
+- [x] Implement per-service disk quota records.
+- [x] Emit quota markers.
+- [x] Commit as `feat: add phase 10 storage quotas`.
 
 ### Task 5: `concurrent-write-safety`
 
@@ -107,11 +107,11 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Consumes: `DynamicObjectStore`.
 - Produces: `StorageWriteGate`, serialized write proof.
 
-- [ ] Write failing tests for single-writer token ownership, second-writer
+- [x] Write failing tests for single-writer token ownership, second-writer
       denial while locked, and successful second write after commit.
-- [ ] Implement bounded serialized write gate.
-- [ ] Emit concurrent write markers.
-- [ ] Commit as `feat: add phase 10 concurrent write safety`.
+- [x] Implement bounded serialized write gate.
+- [x] Emit concurrent write markers.
+- [x] Commit as `feat: add phase 10 concurrent write safety`.
 
 ### Task 6: `storage-adversarial-suite`
 
@@ -125,12 +125,12 @@ The persistent torn-write proof must kill QEMU mid-commit and recover on reboot.
 - Consumes: allocator, dynamic object store, quotas, concurrency.
 - Produces: `run_self_test()` and Phase 10 completion marker.
 
-- [ ] Write failing tests for repeated create/delete/write cycles,
+- [x] Write failing tests for repeated create/delete/write cycles,
       out-of-quota denial, and dynamic torn-write recovery.
-- [ ] Implement adversarial suite.
-- [ ] Extend persistent-storage harness with a Phase 10 killed mid-commit path.
-- [ ] Emit `PYTHOS:CORE:PHASE_10_COMPLETE`.
-- [ ] Update `AGENTS.md`, `docs/ROADMAP.md`, and `docs/PythOS-TDD-001.md`
+- [x] Implement adversarial suite.
+- [x] Extend persistent-storage harness with a Phase 10 killed mid-commit path.
+- [x] Emit `PYTHOS:CORE:PHASE_10_COMPLETE`.
+- [x] Update `AGENTS.md`, `docs/ROADMAP.md`, and `docs/PythOS-TDD-001.md`
       to halt at Phase 10 -> Phase 11.
-- [ ] Run full local verification and CI.
-- [ ] Commit as `feat: complete phase 10 general storage`.
+- [x] Run full local verification.
+- [x] Commit as `feat: complete phase 10 general storage`.

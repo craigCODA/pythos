@@ -95,10 +95,10 @@ impl DynamicObjectStore {
     fn find_index(self, object_id: ObjectId) -> Option<usize> {
         let mut index = 0;
         while index < MAX_DYNAMIC_OBJECTS {
-            if let Some(slot) = self.objects[index] {
-                if slot.object.object_id() == object_id {
-                    return Some(index);
-                }
+            if let Some(slot) = self.objects[index]
+                && slot.object.object_id() == object_id
+            {
+                return Some(index);
             }
             index += 1;
         }

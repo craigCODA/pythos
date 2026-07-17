@@ -17,6 +17,7 @@ mod dynamic_object_store;
 mod font;
 mod font_system;
 mod framebuffer;
+mod general_storage_persistence;
 mod input_drivers;
 mod input_events;
 mod interpreter;
@@ -43,6 +44,7 @@ mod shared_memory;
 mod shell_apps;
 mod shell_objects;
 mod software_renderer;
+mod storage_adversarial;
 mod storage_allocator;
 mod storage_concurrency;
 mod storage_journal;
@@ -1393,6 +1395,16 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY");
+        if general_storage_persistence::run_self_test(_block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        if storage_adversarial::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY");
+        serial::write_line("PYTHOS:CORE:PHASE_10_COMPLETE");
     }
 
     #[cfg(test)]
