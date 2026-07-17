@@ -33,11 +33,40 @@ class IsoImageTest(unittest.TestCase):
     def test_generated_init_pak_contains_inner_bundle_records(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             payload = module.INIT_PAK[module.INIT_PAK_HEADER_LEN :]
+            record_count = 5
+            table_start = module.INIT_BUNDLE_HEADER_LEN
 
             self.assertEqual(payload[:16], b"PYTHOS_BUNDLE_V0")
-            self.assertEqual(int.from_bytes(payload[24:26], "little"), 2)
-            self.assertEqual(payload[32:36], (1).to_bytes(4, "little"))
-            self.assertEqual(payload[64:68], (2).to_bytes(4, "little"))
+            self.assertEqual(int.from_bytes(payload[24:26], "little"), record_count)
+            record_types = [
+                int.from_bytes(
+                    payload[
+                        table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN : table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN
+                        + 4
+                    ],
+                    "little",
+                )
+                for index in range(record_count)
+            ]
+            self.assertEqual(
+                record_types,
+                [
+                    module.INIT_BUNDLE_RUNTIME_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                ],
+            )
+
+            for index, expected_magic in enumerate(
+                (module.RUNTIME_PAYLOAD_MAGIC, b"\x7fELF", b"\x7fELF", b"\x7fELF", b"\x7fELF")
+            ):
+                entry = table_start + index * module.INIT_BUNDLE_RECORD_LEN
+                start = int.from_bytes(payload[entry + 8 : entry + 16], "little")
+                self.assertEqual(payload[start : start + len(expected_magic)], expected_magic)
 
     def test_iso_contains_el_torito_uefi_boot_catalog(self) -> None:
         build_iso = load_build_iso_module()
