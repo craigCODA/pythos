@@ -1132,11 +1132,12 @@ enforcement at the boundary, all hardware-backed).
    dereference before validation, and distinct denial proofs for
    out-of-range, length-overflow, and cross-mapping buffers. Emits
    `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`.
-4. **`dynamic-capability-grants`** — a newly created process starts with
-   zero capabilities by default; its initial grant set is determined by
-   whatever created it (parent process, service manager), not hardcoded.
-   Extends Phase 3's model from fixed test tasks to arbitrary spawned
-   processes.
+4. **`dynamic-capability-grants`** — COMPLETE. ADR 0040 defines the dynamic
+   process grant model: a newly created process starts with zero capabilities
+   by default; its initial grant set is determined by an explicit
+   creator-supplied policy, not hardcoded. PythCore proves process creation,
+   zero-default inventory, no-grant denial, explicit grant issuance, and
+   granted use, then emits `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`.
 5. **`process-argv-and-environment`** — minimal argument/environment
    passing into a new process, capability-scoped (a process shouldn't see
    environment data it wasn't granted).
@@ -1168,8 +1169,9 @@ multi-process scheduling changes beyond what Phase 2 already provides.
 
 ADR 0037 for the inner `INIT.PAK` bundle format is complete. ADR 0038 for the
 syscall number space and versioning policy is complete. ADR 0039 for the
-copy-in/copy-out pointer policy is complete. The next slice is
-`dynamic-capability-grants`; do not treat the copy policy as a grant model.
+copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
+grants is complete. The next slice is `process-argv-and-environment`; do not
+treat process grant policy as argv/env delivery or loaded-ELF execution.
 
 ---
 

@@ -128,13 +128,14 @@ Verified vertical slices:
 * `dynamic-elf-loading` records ADR 0037's inner `INIT.PAK` bundle format and begins Phase 9. PythCore accepts either the legacy direct ADR 0014 runtime payload or an ADR 0037 inner bundle, extracts runtime and user ELF records from the bundle, validates an arbitrary ELF64 `ET_EXEC` x86-64 user payload with checked program-header arithmetic, W^X, user/kernel range, segment-overlap, unsupported-segment, entry-point, and BSS zero-fill rules, maps its `PT_LOAD` segments into a distinct user address-space root without executing it, emits `PYTHOS:CORE:USER_ELF:REJECTED:BUFFER_RANGE`, `PYTHOS:CORE:USER_ELF:REJECTED:WX_SEGMENT`, `PYTHOS:CORE:USER_ELF:REJECTED:KERNEL_RANGE`, `PYTHOS:CORE:USER_ELF:LOADED`, `PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED`, and completes with `PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY`. It does not define the general syscall ABI, implement copy-in/copy-out, execute the loaded ELF, load from a filesystem, install packages, add networking, or add SMP.
 * `general-syscall-abi` records ADR 0038's Phase 9 syscall number-space freeze point. PythCore defines ABI version `1.0`, routes dispatch through a fixed sorted syscall registry, preserves `0x5059_0001` as the permanent Phase 8 system-log proof syscall, adds side-effect-free `0x5059_0000` ABI metadata dispatch, denies unsupported syscall numbers before any privileged bridge runs, emits `PYTHOS:CORE:SYSCALL_ABI:VERSIONED`, `PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH`, `PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED`, and completes with `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`. It does not implement copy-in/copy-out, user pointers, dynamic capability grants, argv/env, loaded-ELF execution, filesystem loading, packages, networking, updates, hardware expansion, or SMP.
 * `copy-in-copy-out-policy` records ADR 0039's Phase 9 user-buffer validation policy. PythCore validates pointer/length pairs as checked half-open ranges contained inside one mapped user region with requested read/write access, rejects raw dereference before validation, proves out-of-range, length-overflow, and cross-mapping buffers are denied distinctly, emits `PYTHOS:CORE:COPY:VALIDATED`, `PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED`, `PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED`, `PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED`, and completes with `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`. It does not implement actual unsafe memory copies, dynamic capability grants, argv/env, loaded-ELF execution, filesystem loading, packages, networking, updates, hardware expansion, or SMP.
+* `dynamic-capability-grants` records ADR 0040's Phase 9 dynamic process grant model. PythCore creates a dynamic process record with a fresh service identity and zero process-local capabilities by default, denies use of a known resource without an initial grant, applies an explicit creator-supplied grant policy, validates granted use through the existing kernel-owned capability table, emits `PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:USE`, and completes with `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY`. It does not implement argv/env, loaded-ELF execution, filesystem loading, packages, networking, updates, hardware expansion, or SMP.
 * `qemu-exit` replaces timeout-based success with deterministic QEMU outcome classification. The harness starts QMP, watches serial output for terminal success or panic markers, sends QMP `quit` after a terminal outcome, supports `isa-debug-exit` status decoding when available, prints `QEMU_OUTCOME <kind>`, and returns distinct exit codes for success, panic, reset, timeout, and marker-order violation.
 * `framebuffer-ready` implements the post-firmware boot screen after descriptor tables are live: an embedded 8x8 diagnostic font, RGB/BGR/bitmask pixel encoding, scanline-pitch-aware bounds-checked drawing through the loader-mapped device-region virtual base, and `PYTHOS:CORE:FRAMEBUFFER_READY`.
 * `milestone-1` emits `PYTHOS:CORE:MILESTONE_1_COMPLETE` after all required milestone markers have been observed in order.
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-Phase 7 `persistent-object-storage` is complete. Phase 8 `real-hardware-isolation` is complete. Phase 9 `dynamic-elf-loading`, `general-syscall-abi`, and `copy-in-copy-out-policy` are complete. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the inner `INIT.PAK` bundle format, ADR 0038 records the general syscall number space and versioning policy, and ADR 0039 records the copy-in/copy-out pointer policy. Halt at the Phase 9 `copy-in-copy-out-policy` -> `dynamic-capability-grants` boundary. Do not begin Phase 9 `dynamic-capability-grants`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
+Phase 7 `persistent-object-storage` is complete. Phase 8 `real-hardware-isolation` is complete. Phase 9 `dynamic-elf-loading`, `general-syscall-abi`, `copy-in-copy-out-policy`, and `dynamic-capability-grants` are complete. ADR 0022 records the on-disk format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, ADR 0036 records the capability-boundary proof, ADR 0037 records the inner `INIT.PAK` bundle format, ADR 0038 records the general syscall number space and versioning policy, ADR 0039 records the copy-in/copy-out pointer policy, and ADR 0040 records the dynamic capability grant model. Halt at the Phase 9 `dynamic-capability-grants` -> `process-argv-and-environment` boundary. Do not begin Phase 9 `process-argv-and-environment`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -439,6 +440,12 @@ PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED
 PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED
 PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED
 PYTHOS:CORE:COPY_IN_COPY_OUT_READY
+PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED
+PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT
+PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED
+PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT
+PYTHOS:CORE:DYNAMIC_CAPABILITY:USE
+PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -1017,6 +1024,12 @@ PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED
 PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED
 PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED
 PYTHOS:CORE:COPY_IN_COPY_OUT_READY
+PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED
+PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT
+PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED
+PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT
+PYTHOS:CORE:DYNAMIC_CAPABILITY:USE
+PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -1033,7 +1046,9 @@ Phase 9 `dynamic-elf-loading` requires `PYTHOS:CORE:USER_ELF:REJECTED:BUFFER_RAN
 
 Phase 9 `general-syscall-abi` requires `PYTHOS:CORE:SYSCALL_ABI:VERSIONED` after `PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY`, `PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH` after the versioned marker, `PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED` after the known-dispatch marker, `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY` after the unknown-denied marker, and `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY` before the Phase 9 `copy-in-copy-out-policy` markers.
 
-Phase 9 `copy-in-copy-out-policy` requires `PYTHOS:CORE:COPY:VALIDATED` after `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`, `PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED` after the validated marker, `PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED` after the out-of-range marker, `PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED` after the overflow marker, `PYTHOS:CORE:COPY_IN_COPY_OUT_READY` after the cross-mapping marker, and `PYTHOS:CORE:COPY_IN_COPY_OUT_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+Phase 9 `copy-in-copy-out-policy` requires `PYTHOS:CORE:COPY:VALIDATED` after `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY`, `PYTHOS:CORE:COPY:OUT_OF_RANGE_DENIED` after the validated marker, `PYTHOS:CORE:COPY:LENGTH_OVERFLOW_DENIED` after the out-of-range marker, `PYTHOS:CORE:COPY:CROSS_MAPPING_DENIED` after the overflow marker, `PYTHOS:CORE:COPY_IN_COPY_OUT_READY` after the cross-mapping marker, and `PYTHOS:CORE:COPY_IN_COPY_OUT_READY` before the Phase 9 `dynamic-capability-grants` markers.
+
+Phase 9 `dynamic-capability-grants` requires `PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED` after `PYTHOS:CORE:COPY_IN_COPY_OUT_READY`, `PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT` after the process-created marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED` after the zero-default marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT` after the no-grant denial marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY:USE` after the grant marker, `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY` after the use marker, and `PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

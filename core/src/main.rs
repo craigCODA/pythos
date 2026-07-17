@@ -12,6 +12,7 @@ mod capabilities;
 mod cinematic_boot;
 mod compositor;
 mod context_switch;
+mod dynamic_capabilities;
 mod font;
 mod font_system;
 mod framebuffer;
@@ -1043,6 +1044,38 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:COPY_IN_COPY_OUT_READY");
+        let dynamic_capability_grant_proof = match dynamic_capabilities::run_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if dynamic_capability_grant_proof.process_created {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY:PROCESS_CREATED");
+        }
+        if dynamic_capability_grant_proof.zero_default {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY:ZERO_DEFAULT");
+        }
+        if dynamic_capability_grant_proof.no_grant_denied {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED");
+        }
+        if dynamic_capability_grant_proof.grant_issued {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY:GRANT");
+        }
+        if dynamic_capability_grant_proof.granted_use {
+            serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY:USE");
+        }
+        if !dynamic_capability_grant_proof.process_created
+            || !dynamic_capability_grant_proof.zero_default
+            || !dynamic_capability_grant_proof.no_grant_denied
+            || !dynamic_capability_grant_proof.grant_issued
+            || !dynamic_capability_grant_proof.granted_use
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:DYNAMIC_CAPABILITY_GRANTS_READY");
     }
 
     #[cfg(test)]
