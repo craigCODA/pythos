@@ -22,6 +22,7 @@ DYNAMIC_OBJECT_COUNT_READY = "PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY"
 FRAGMENTATION_COMPACTION_POLICY_READY = (
     "PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY"
 )
+STORAGE_QUOTA_PER_SERVICE_READY = "PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY"
 
 
 def load_test_boot_module():
@@ -202,6 +203,21 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(FRAGMENTATION_COMPACTION_POLICY_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_storage_quota_extends_fragmentation_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        quota_markers = test_boot.SLICE_MARKERS["storage-quota-per-service"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            quota_markers.index(FRAGMENTATION_COMPACTION_POLICY_READY),
+            quota_markers.index(STORAGE_QUOTA_PER_SERVICE_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(STORAGE_QUOTA_PER_SERVICE_READY),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

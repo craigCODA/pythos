@@ -45,6 +45,7 @@ mod shell_objects;
 mod software_renderer;
 mod storage_allocator;
 mod storage_journal;
+mod storage_quotas;
 mod storage_service;
 mod syscall;
 mod system_api;
@@ -1381,6 +1382,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:FRAGMENTATION_COMPACTION_POLICY_READY");
+        if storage_quotas::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY");
     }
 
     #[cfg(test)]
