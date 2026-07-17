@@ -7,6 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 TEST_BOOT = ROOT / "scripts" / "test-boot.py"
 EXPECTED_PAGE_FAULT = "PYTHOS:CORE:EXPECTED_PAGE_FAULT"
 KERNEL_STACKS_READY = "PYTHOS:CORE:KERNEL_STACKS_READY"
+CAPABILITY_BOUNDARY_READY = "PYTHOS:CORE:CAPABILITY_BOUNDARY_READY"
+FRAMEBUFFER_READY = "PYTHOS:CORE:FRAMEBUFFER_READY"
+DYNAMIC_ELF_READY = "PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY"
 
 
 def load_test_boot_module():
@@ -33,6 +36,21 @@ class BootMarkerContractTest(unittest.TestCase):
 
             self.assertGreaterEqual(len(fault_indexes), 2, slice_name)
             self.assertLess(fault_indexes[-1], ready_index, slice_name)
+
+    def test_dynamic_elf_loading_extends_capability_boundary_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        dynamic_markers = test_boot.SLICE_MARKERS["dynamic-elf-loading"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            dynamic_markers.index(CAPABILITY_BOUNDARY_READY),
+            dynamic_markers.index(DYNAMIC_ELF_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(DYNAMIC_ELF_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
 
 
 if __name__ == "__main__":

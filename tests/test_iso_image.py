@@ -19,7 +19,26 @@ def load_build_iso_module():
     return module
 
 
+def load_build_image_module():
+    path = ROOT / "scripts" / "build-image.py"
+    spec = importlib.util.spec_from_file_location("build_image", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load build-image.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class IsoImageTest(unittest.TestCase):
+    def test_generated_init_pak_contains_inner_bundle_records(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            payload = module.INIT_PAK[module.INIT_PAK_HEADER_LEN :]
+
+            self.assertEqual(payload[:16], b"PYTHOS_BUNDLE_V0")
+            self.assertEqual(int.from_bytes(payload[24:26], "little"), 2)
+            self.assertEqual(payload[32:36], (1).to_bytes(4, "little"))
+            self.assertEqual(payload[64:68], (2).to_bytes(4, "little"))
+
     def test_iso_contains_el_torito_uefi_boot_catalog(self) -> None:
         build_iso = load_build_iso_module()
 

@@ -2,7 +2,7 @@
 
 use crate::architecture::x86_64::exceptions;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
-use crate::{user_mode, user_stacks};
+use crate::{user_elf, user_mode, user_stacks};
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
@@ -12,6 +12,7 @@ const TWO_MIB: u64 = 2 * 1024 * 1024;
 const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
+const MAX_USER_ELF_FRAMES: usize = 32;
 
 const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITE: u64 = 1 << 1;
@@ -70,6 +71,7 @@ pub enum VmError {
     UserAccessViolation,
     UserStackGuardViolation,
     ActiveAddressSpace,
+    UserElfTooLarge,
 }
 
 impl From<MemoryError> for VmError {
@@ -207,12 +209,18 @@ impl KernelAddressSpace {
         }
         Ok(())
     }
+
+    pub const fn root_table_phys(&self) -> u64 {
+        self.root_table_phys
+    }
 }
 
 pub struct UserAddressSpace {
     root_table_phys: u64,
     table_frames: [u64; MAX_TABLE_FRAMES],
     table_frame_count: usize,
+    user_elf_frames: [u64; MAX_USER_ELF_FRAMES],
+    user_elf_frame_count: usize,
 }
 
 impl UserAddressSpace {
@@ -232,7 +240,49 @@ impl UserAddressSpace {
             root_table_phys: tables.root_table_phys,
             table_frames,
             table_frame_count,
+            user_elf_frames: [0; MAX_USER_ELF_FRAMES],
+            user_elf_frame_count: 0,
         })
+    }
+
+    pub fn build_with_user_elf(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        let mut tables = PageTableBuilder::new(allocator)?;
+        let mut user_elf_frames = [0u64; MAX_USER_ELF_FRAMES];
+        let mut user_elf_frame_count = 0usize;
+        map_kernel_segments(&mut tables)?;
+        map_bootstrap_stack(&mut tables, boot_info)?;
+
+        let mut segment_index = 0;
+        while segment_index < image.segment_count() {
+            let segment = image.segment(segment_index).ok_or(VmError::RangeOverflow)?;
+            map_user_elf_segment(
+                &mut tables,
+                elf_bytes,
+                segment,
+                &mut user_elf_frames,
+                &mut user_elf_frame_count,
+            )?;
+            segment_index += 1;
+        }
+
+        tables.map_allocated_table_frames()?;
+        let table_frames = tables.allocated_frames;
+        let table_frame_count = tables.allocated_count;
+        Ok((
+            Self {
+                root_table_phys: tables.root_table_phys,
+                table_frames,
+                table_frame_count,
+                user_elf_frames,
+                user_elf_frame_count,
+            },
+            user_elf::LoadedUserElf::new(image.entry(), image.segment_count(), true),
+        ))
     }
 
     pub fn validate_isolated_from(&self, kernel: &KernelAddressSpace) -> Result<(), VmError> {
@@ -290,6 +340,12 @@ impl UserAddressSpace {
         while reclaimed < self.table_frame_count {
             allocator.release_allocated_page(self.table_frames[reclaimed])?;
             reclaimed += 1;
+        }
+        let mut user_frame = 0;
+        while user_frame < self.user_elf_frame_count {
+            allocator.release_allocated_page(self.user_elf_frames[user_frame])?;
+            reclaimed += 1;
+            user_frame += 1;
         }
         Ok(reclaimed)
     }
@@ -396,6 +452,32 @@ impl<'a> PageTableBuilder<'a> {
         let mut offset = 0u64;
         while virt.checked_add(offset).ok_or(VmError::RangeOverflow)? < end {
             self.map_4k(
+                virt.checked_add(offset).ok_or(VmError::RangeOverflow)?,
+                phys.checked_add(offset).ok_or(VmError::RangeOverflow)?,
+                flags,
+            )?;
+            offset = offset
+                .checked_add(PAGE_SIZE)
+                .ok_or(VmError::RangeOverflow)?;
+        }
+        Ok(())
+    }
+
+    fn map_user_physical_range(
+        &mut self,
+        virt_start: u64,
+        phys_start: u64,
+        byte_len: u64,
+        flags: u64,
+    ) -> Result<(), VmError> {
+        let virt = align_down(virt_start);
+        let phys = align_down(phys_start);
+        let prefix = virt_start.checked_sub(virt).ok_or(VmError::RangeOverflow)?;
+        let len = byte_len.checked_add(prefix).ok_or(VmError::RangeOverflow)?;
+        let end = align_up(virt.checked_add(len).ok_or(VmError::RangeOverflow)?)?;
+        let mut offset = 0u64;
+        while virt.checked_add(offset).ok_or(VmError::RangeOverflow)? < end {
+            self.map_4k_for_user(
                 virt.checked_add(offset).ok_or(VmError::RangeOverflow)?,
                 phys.checked_add(offset).ok_or(VmError::RangeOverflow)?,
                 flags,
@@ -540,6 +622,127 @@ fn map_bootstrap_stack(
             .ok_or(VmError::RangeOverflow)?,
         PTE_WRITE | PTE_NO_EXECUTE,
     )
+}
+
+fn map_user_elf_segment(
+    tables: &mut PageTableBuilder<'_>,
+    elf_bytes: &[u8],
+    segment: &user_elf::LoadSegment,
+    user_elf_frames: &mut [u64; MAX_USER_ELF_FRAMES],
+    user_elf_frame_count: &mut usize,
+) -> Result<(), VmError> {
+    let page_len = segment.page_len();
+    let mut page_offset = 0u64;
+    while page_offset < page_len {
+        if *user_elf_frame_count >= MAX_USER_ELF_FRAMES {
+            return Err(VmError::UserElfTooLarge);
+        }
+        let physical = tables.allocator.allocate_zeroed_page()?;
+        copy_user_elf_page(elf_bytes, segment, page_offset, physical)?;
+        user_elf_frames[*user_elf_frame_count] = physical;
+        *user_elf_frame_count += 1;
+
+        let flags = user_elf_page_flags(segment);
+        tables.map_user_physical_range(
+            segment
+                .page_start()
+                .checked_add(page_offset)
+                .ok_or(VmError::RangeOverflow)?,
+            physical,
+            PAGE_SIZE,
+            flags,
+        )?;
+        page_offset = page_offset
+            .checked_add(PAGE_SIZE)
+            .ok_or(VmError::RangeOverflow)?;
+    }
+    Ok(())
+}
+
+fn copy_user_elf_page(
+    elf_bytes: &[u8],
+    segment: &user_elf::LoadSegment,
+    page_offset: u64,
+    physical: u64,
+) -> Result<(), VmError> {
+    let page_virtual_start = segment
+        .page_start()
+        .checked_add(page_offset)
+        .ok_or(VmError::RangeOverflow)?;
+    let page_virtual_end = page_virtual_start
+        .checked_add(PAGE_SIZE)
+        .ok_or(VmError::RangeOverflow)?;
+    let file_virtual_start = segment.virtual_start();
+    let file_virtual_end = file_virtual_start
+        .checked_add(segment.file_size())
+        .ok_or(VmError::RangeOverflow)?;
+    let copy_start = max_u64(page_virtual_start, file_virtual_start);
+    let copy_end = min_u64(page_virtual_end, file_virtual_end);
+
+    // SAFETY:
+    // 1. Invariant: `physical` is a freshly allocated, page-aligned frame
+    //    reachable through the loader identity map while user ELF address
+    //    spaces are built before the kernel `CR3` switch.
+    // 2. Established by: `PhysicalMemory::allocate_zeroed_page` returning
+    //    success during the pre-activation address-space construction phase.
+    // 3. Lifetime: the frame is owned by the new user address space after this
+    //    copy and is tracked in `user_elf_frames`.
+    // 4. Pointer ownership: PythCore has exclusive mutable ownership of the
+    //    freshly allocated frame.
+    // 5. Alignment: allocator returns 4 KiB-aligned page frames.
+    // 6. Mapped length: exactly one 4 KiB page is written.
+    // 7. Concurrency: single-core early boot before user program execution.
+    // 8. Violation: a bad frame pointer would corrupt memory or fault before
+    //    the Phase 9 marker can be emitted.
+    let destination =
+        unsafe { core::slice::from_raw_parts_mut(physical as *mut u8, PAGE_SIZE as usize) };
+    destination.fill(0);
+    if copy_start < copy_end {
+        let source_start = segment
+            .file_offset()
+            .checked_add(
+                copy_start
+                    .checked_sub(file_virtual_start)
+                    .ok_or(VmError::RangeOverflow)?,
+            )
+            .ok_or(VmError::RangeOverflow)?;
+        let source_len = copy_end
+            .checked_sub(copy_start)
+            .ok_or(VmError::RangeOverflow)?;
+        let source_end = source_start
+            .checked_add(source_len)
+            .ok_or(VmError::RangeOverflow)?;
+        let source_start = usize::try_from(source_start).map_err(|_| VmError::RangeOverflow)?;
+        let source_end = usize::try_from(source_end).map_err(|_| VmError::RangeOverflow)?;
+        let dest_start = usize::try_from(
+            copy_start
+                .checked_sub(page_virtual_start)
+                .ok_or(VmError::RangeOverflow)?,
+        )
+        .map_err(|_| VmError::RangeOverflow)?;
+        let source = elf_bytes
+            .get(source_start..source_end)
+            .ok_or(VmError::UnmappedSource)?;
+        let dest_end = dest_start
+            .checked_add(source.len())
+            .ok_or(VmError::RangeOverflow)?;
+        destination
+            .get_mut(dest_start..dest_end)
+            .ok_or(VmError::RangeOverflow)?
+            .copy_from_slice(source);
+    }
+    Ok(())
+}
+
+fn user_elf_page_flags(segment: &user_elf::LoadSegment) -> u64 {
+    let mut flags = 0u64;
+    if segment.writable() {
+        flags |= PTE_WRITE;
+    }
+    if !segment.executable() {
+        flags |= PTE_NO_EXECUTE;
+    }
+    flags
 }
 
 fn map_firmware_tables(
@@ -812,6 +1015,14 @@ fn align_up(value: u64) -> Result<u64, VmError> {
         .checked_add(PAGE_SIZE - 1)
         .map(align_down)
         .ok_or(VmError::RangeOverflow)
+}
+
+fn min_u64(left: u64, right: u64) -> u64 {
+    if left < right { left } else { right }
+}
+
+fn max_u64(left: u64, right: u64) -> u64 {
+    if left > right { left } else { right }
 }
 
 fn symbol_addr(symbol: *const u8) -> u64 {

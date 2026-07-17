@@ -1059,32 +1059,459 @@ before any AI can invoke privileged operations.
 
 ## Later Phases
 
-These are unordered among themselves and all after Phase 8. They are described
-at the same level of detail as the original roadmap intentionally; sequencing
-them precisely now would be false precision. Each needs its own full-detail
-roadmap section written when it becomes the active phase, following this file's
-format.
+This extends `docs/ROADMAP.md`'s deliberately coarse "Later Phases" section
+now that Phase 8 is complete. It uses the same format as Phases 1.5-8:
+purpose, preconditions, locked slice sequence, exit condition, scope
+boundary, required artifacts.
 
-* Applications and package installation.
-* Immutable A/B updates, rollback, and recovery mode. This is OS-image-level
-  recovery, meaning whether the system can boot a previous known-good image,
-  distinct from Phase 7 crash recovery, meaning whether the object store can
-  recover from a torn write. Do not conflate the two when this phase is
-  detailed.
-* Networking stack: DNS, TCP, secure update transport. This is also the
-  earliest legitimate point to revisit the parked datacenter and
-  capability-brokering idea, and even then only as a research branch, not a
-  roadmap phase, until there is a concrete reason to promote it.
-* Semantic indexing, natural-language command system, optional isolated local
-  AI. This is the first phase where AI as a system-level concept legitimately
-  enters the kernel-adjacent roadmap. Patch is downstream of this, not a
-  substitute for it.
-* Physical hardware support: USB, NVMe, Ethernet, audio beyond Phase 6 QEMU
-  target, and power management.
-* SMP: multiple CPU cores. Deliberately last; every phase from 2 onward,
-  scheduler, IPC, capabilities, and syscalls, was designed and tested
-  single-core first. SMP is a correctness re-audit of all of them, not a
-  feature bolt-on.
+## Corrected Sequencing, Stated Up Front
+
+The original "Later Phases" list read as: applications, updates, networking,
+semantic indexing, hardware, SMP. That ordering assumes apps/packaging can
+build directly on what Phase 7/8 already proved. It can't. Both of those
+phases proved *bounded, fixed* surfaces:
+
+- Phase 8 proves a fixed CPL3/syscall/capability surface against fixed,
+  compile-time-known test scenarios. It does not prove PythOS can load and
+  run an arbitrary, dynamically-provided user program.
+- Phase 7 proves a fixed checkpoint object survives reboot and torn writes.
+  It does not prove general, dynamically-sized, arbitrarily-many-object
+  storage allocation.
+
+Two phases were missing from the list entirely. Corrected order:
+
+```text
+Phase 9   general-purpose-process-model   (generalizes Phase 8)
+Phase 10  general-purpose-storage          (generalizes Phase 7)
+Phase 11  physical-hardware-boot-smoke-test (cheap, do this early)
+Phase 12  applications-and-packaging       (needs 9 + 10)
+Phase 13  networking
+Phase 14  hardware-driver-expansion
+Phase 15  updates-and-recovery-mode
+Phase 16  smp                              (deliberately last)
+```
+
+Semantic indexing / local AI is intentionally not on this list — that's
+vision-layer territory (Patch's actual dependency), out of scope for "extend
+the OS itself," and stays parked per the existing rule in `docs/ROADMAP.md`.
+
+---
+
+## Phase 9: General-Purpose Process Model
+
+### Purpose
+
+Turn Phase 8's fixed adversarial proof into an actual capability: PythOS can
+load an arbitrary, dynamically-provided user program, not just run its own
+fixed test scenarios in ring 3.
+
+### Preconditions
+
+Phase 8 exit condition reproducible (ring-3 entry, syscall gate, capability
+enforcement at the boundary, all hardware-backed).
+
+### Locked slice sequence
+
+1. **`dynamic-elf-loading`** — COMPLETE. ADR 0037 defines the versioned inner
+   `INIT.PAK` bundle. PythCore loads an arbitrary user-mode ELF binary at
+   runtime from that bundle, not from a fixed compiled-in test payload,
+   validates its headers, maps its segments with correct permissions (RX for
+   text, RW for data, no segment ever both W and X), proves malformed buffer
+   range, W+X, and kernel-range segments are denied, and emits
+   `PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY`.
+2. **`general-syscall-abi`** — Phase 8's syscall gate currently serves the
+   fixed set of operations its adversarial tests exercised. Generalize the
+   dispatch to a stable, versioned syscall number space so new syscalls can
+   be added without breaking existing user binaries. This is the syscall
+   ABI's real freeze point — treat every number assignment as permanent
+   from here on.
+3. **`copy-in-copy-out-policy`** — a formal, tested policy for validating
+   every user-supplied pointer and length crossing the syscall boundary:
+   bounds-checked against the calling process's actual mapped address
+   space, never trusted as-is, never dereferenced before validation.
+   This was explicitly named as missing in the Phase 8 writeup — closing
+   it is this phase's core security work.
+4. **`dynamic-capability-grants`** — a newly created process starts with
+   zero capabilities by default; its initial grant set is determined by
+   whatever created it (parent process, service manager), not hardcoded.
+   Extends Phase 3's model from fixed test tasks to arbitrary spawned
+   processes.
+5. **`process-argv-and-environment`** — minimal argument/environment
+   passing into a new process, capability-scoped (a process shouldn't see
+   environment data it wasn't granted).
+6. **`general-fault-isolation`** — re-run Phase 8's crash-containment proof
+   against a dynamically loaded, intentionally malformed binary (not the
+   fixed test payload) to confirm containment generalizes.
+7. **`process-model-adversarial-suite`** — the load-bearing proof: load
+   several different arbitrary user binaries, including at least one
+   deliberately malicious one (attempts a forged capability, an
+   out-of-bounds syscall pointer, and a privileged hardware access), and
+   confirm all three are denied by the *general* mechanism, not the fixed
+   Phase 8 test path.
+
+### Exit condition
+
+An arbitrary, previously-unseen-by-the-kernel user ELF binary loads, runs,
+and is capability/pointer/fault-contained by the general mechanism — proven
+against a binary the test suite didn't special-case, not the fixed Phase 8
+proof payload.
+
+### Scope boundary
+
+No filesystem-backed program loading yet (that's Phase 10 dependency for
+Phase 12) — programs can be loaded from a fixed in-memory bundle or the
+existing `INIT.PAK`-style mechanism at this phase. No networking. No
+multi-process scheduling changes beyond what Phase 2 already provides.
+
+### Required artifacts
+
+ADR 0037 for the inner `INIT.PAK` bundle format is complete. The next required
+artifact is the ADR for the syscall number space and versioning policy — this
+is the ABI freeze point, treat it with the same weight as Phase 1's boot ABI.
+
+---
+
+## Phase 10: General-Purpose Storage
+
+### Purpose
+
+Generalize Phase 7's bounded checkpoint into a real allocator: arbitrary
+numbers of arbitrarily-sized typed objects, not one fixed checkpoint sector.
+
+### Preconditions
+
+Phase 7 exit condition reproducible (journal, checksums, crash recovery,
+typed-object format, reboot round-trip, torn-write recovery all proven for
+the bounded case).
+
+### Locked slice sequence
+
+1. **`block-allocator`** — real free-space tracking (bitmap or freelist) over
+   the block device, replacing the fixed checkpoint sector's implicit
+   single-slot model.
+2. **`dynamic-object-count`** — the object store supports creating and
+   deleting an arbitrary, growing number of typed objects, not one fixed
+   proof object.
+3. **`fragmentation-and-compaction-policy`** — decide and document (ADR)
+   whether Phase 10 handles fragmentation now or defers it; do not silently
+   leave it undefined.
+4. **`storage-quota-per-service`** — extend Phase 8's memory/CPU quota model
+   to disk usage, so one capability-scoped service can't exhaust storage for
+   others.
+5. **`concurrent-write-safety`** — more than one service can safely write to
+   the object store without corrupting the journal, gated by the existing
+   capability model.
+6. **`storage-adversarial-suite`** — repeated create/delete/write cycles,
+   an out-of-quota write attempt (must be denied, not silently truncated),
+   and a torn write under dynamic allocation (not just the fixed Phase 7
+   checkpoint) recovers correctly.
+
+### Exit condition
+
+An arbitrary, growing set of typed objects can be created, deleted, and
+survive reboot and a torn write under dynamic allocation — the same rigor
+as Phase 7's proof, generalized past the single fixed checkpoint.
+
+### Scope boundary
+
+No general POSIX-style filesystem hierarchy/path semantics required at this
+phase — that's a Phase 12 decision (does PythOS want paths, or does it stay
+object-graph-native per the Phase 5 `ADR 0018` design direction). Don't
+prematurely commit to paths here.
+
+### Required artifacts
+
+ADR for the on-disk allocator format (this extends `ADR 0022`/`0025` — treat
+as an amendment or successor, not an unrelated new format).
+
+---
+
+## Phase 11: Physical Hardware Boot Smoke Test
+
+### Purpose
+
+Cheap, high-value, and worth doing *before* the bigger phases, not after:
+confirm the entire Phase 1-8 boot chain — UEFI handoff through
+`MILESTONE_1_COMPLETE` — actually works on real silicon, not just QEMU and
+VMware's own UEFI implementation. This is the same instinct as the VMware
+check from earlier, extended to real hardware, and it's cheap because it
+requires zero new drivers — just booting the existing ISO on a real machine
+via USB.
+
+### Preconditions
+
+None beyond Phase 1's bootable ISO — this phase deliberately doesn't depend
+on Phases 9/10, which is why it's sequenced early despite being numbered
+after them. Can run in parallel with 9/10 if convenient.
+
+### Locked slice sequence
+
+1. **`real-hardware-target-selection`** — pick one specific real machine
+   (ideally one you already own) as the first target. Record its exact UEFI
+   firmware vendor/version in an ADR — this matters, because unlike OVMF and
+   VMware's EFI, real firmware varies significantly vendor to vendor.
+2. **`bootable-usb-creation`** — write `target/pythos.iso` to a USB drive as
+   a real bootable UEFI device.
+3. **`serial-capture-on-real-hardware`** — this is the hard part: real
+   machines don't expose COM1 the way QEMU/VMware do by default. Determine
+   whether the target has a physical serial port, a USB-to-serial adapter
+   path, or whether this phase has to fall back to framebuffer-only visual
+   verification for the first pass.
+4. **`real-hardware-boot-attempt`** — boot it. Record what actually happens:
+   full marker sequence, partial, hang, or reset.
+5. **`divergence-catalog`** — document every place real hardware behaves
+   differently from OVMF/VMware: ACPI table shape, memory map layout,
+   framebuffer pixel format/resolution, SMBIOS content. This is genuinely
+   useful data regardless of outcome.
+
+### Exit condition
+
+Either: the full marker sequence through `MILESTONE_1_COMPLETE` is observed
+on real hardware (best case, validates the whole foundation is portable),
+or: a documented, specific divergence point is identified (still valuable —
+tells you exactly what Phase 14's hardware expansion actually needs to
+handle, instead of guessing).
+
+### Scope boundary
+
+Do not start writing real drivers for USB/NVMe/Ethernet here — that's Phase
+14. This phase only proves or disproves that the existing kernel boots on
+real firmware at all.
+
+### Required artifacts
+
+A findings document (`docs/research/real-hardware-boot-findings.md`) even if
+— especially if — it fails. A documented failure here is more valuable than
+skipping this phase and finding out during Phase 14 with drivers involved.
+
+---
+
+## Phase 12: Applications and Packaging
+
+### Purpose
+
+The first phase where PythOS runs software it didn't compile itself.
+
+### Preconditions
+
+Phase 9 (general process model) and Phase 10 (general storage) both
+reproducible. This is the phase that was previously listed as immediately
+next — it isn't, until both of those exist.
+
+### Locked slice sequence
+
+1. **`package-format`** — define what a PythOS package actually is (ADR):
+   a typed object in Phase 10's store, presumably, given the project's
+   object-graph-native direction from `ADR 0018`. Decide now whether this
+   is filesystem-path-based or purely object-graph-based — this is the
+   moment that decision can no longer be deferred.
+2. **`package-install`** — install from a local source (USB, local file —
+   not networked yet, that's Phase 13) into Phase 10's storage, capability-
+   scoped so installation itself is a mediated, auditable operation.
+3. **`package-launch`** — launch an installed package as a Phase 9 process
+   with a capability grant set derived from the package's declared needs,
+   not ambient full access.
+4. **`package-uninstall`** — clean removal, including reclaiming Phase 10
+   storage and revoking any outstanding capabilities the package held.
+5. **`first-third-party-app`** — the actual proof: something you didn't
+   write as part of the kernel test suite, packaged and run through this
+   pipeline end to end.
+
+### Exit condition
+
+A package built independently of the kernel test suite installs, launches
+as a properly capability-scoped process, and uninstalls cleanly, verified
+by an automated test — not a manual demo.
+
+### Scope boundary
+
+No package registry, no remote fetching, no dependency resolution between
+packages yet. Single local package, installed and run, is the whole bar.
+
+### Required artifacts
+
+ADR for the package format (item 1) — this is a durable, user-facing format
+the moment real packages exist against it.
+
+---
+
+## Phase 13: Networking
+
+### Purpose
+
+The parking-lot condition from `docs/ROADMAP.md` — "revisit only after local
+IPC and kernel-enforced capabilities are implemented, tested, and boring" —
+is now genuinely satisfied. Phase 3 and Phase 8 made that true. This is also
+the earliest legitimate point the parked datacenter/capability-brokering
+idea from early in this project could be reopened, though only as a much
+later research branch, not as this phase's scope.
+
+### Preconditions
+
+Phase 9 (general process model, since network-facing code should run as a
+capability-scoped process, not kernel-privileged by default).
+
+### Locked slice sequence
+
+Standard layered build: `nic-driver` (virtio-net in QEMU first) →
+`link-layer` → `arp` → `ip` → `icmp` (ping as the first working proof) →
+`udp` → `tcp` → `dns` → `capability-gated-socket-api` (a process needs an
+explicit network capability, scoped to which ports/destinations, before it
+can open any socket — this is the slice that matters most given the whole
+project's capability discipline) → `secure-transport` (TLS, needed before
+any real update mechanism in Phase 15 can be trusted).
+
+### Exit condition
+
+Two PythOS processes, or PythOS and an external host, exchange data over
+TCP, with the socket capability grant proven to gate access the same way
+every other Phase 3/8 capability does — a process without the network
+capability is denied even knowing the destination, same proof shape as
+every prior phase.
+
+### Scope boundary
+
+No DNS-based service discovery beyond basic resolution, no routing beyond a
+single default gateway, no firewall/NAT. This phase proves the mechanism
+and the capability gate, not a production network stack.
+
+### Required artifacts
+
+ADR for the socket capability model — this is where PythOS's capability
+discipline either extends cleanly to network resources or reveals a gap,
+same role Phase 7 played for the Phase 5 typed-object split.
+
+---
+
+## Phase 14: Hardware Driver Expansion
+
+### Purpose
+
+The deep, unglamorous, genuinely open-ended grind: real USB, NVMe, Ethernet,
+audio beyond Phase 6's QEMU AC97 target, and power management. This is
+explicitly the least sliceable phase in the whole roadmap — driver work
+against real, varied, often undocumented hardware does not decompose into
+clean vertical slices the way kernel-theory work does.
+
+### Preconditions
+
+Phase 11's findings document exists and is read first — it tells you
+exactly where real hardware already diverges from what's been tested.
+
+### Locked slice sequence
+
+Sequence by what Phase 11 found, not a fixed list. If Phase 11 succeeded
+cleanly, start with USB (most immediately useful — keyboard/mouse beyond
+QEMU's virtual ones, mass storage). Each device class gets its own
+purpose/preconditions/exit-condition treatment written *when it becomes
+active*, same discipline as this document did for Phase 9/10/11 — don't
+pre-write driver slices for hardware you haven't tested against yet.
+
+### Exit condition
+
+Defined per device class when that sub-phase starts. No single exit
+condition for "hardware expansion" as a whole — that would be false
+precision, same reasoning the original roadmap used to leave this coarse.
+
+### Scope boundary
+
+Resist scope pressure to support "common" hardware broadly. One real,
+working USB mass storage path is worth more than five half-working ones.
+
+---
+
+## Phase 15: Immutable A/B Updates and Recovery Mode
+
+### Purpose
+
+OS-image-level recovery — can the system boot a previous known-good image —
+distinct from Phase 7/10's crash recovery, which is object-store-level.
+Don't conflate the two.
+
+### Preconditions
+
+Phase 13 (networking, for update transport) and Phase 14 (enough hardware
+support that "the machine" means something beyond QEMU) both reasonably
+mature. Phase 12 (packaging) informs what "an update" actually updates.
+
+### Locked slice sequence
+
+`dual-partition-layout` → `image-signing-and-verification` (do not skip —
+an update mechanism without signature verification is a remote-code-
+execution vector, and this is the first phase where PythOS has real network
+exposure to make that matter) → `atomic-switch` → `automatic-rollback-on-
+boot-failure` → `recovery-mode-boot-path` (a minimal, always-bootable
+fallback independent of the A/B slots themselves).
+
+### Exit condition
+
+A deliberately corrupted/failing update triggers automatic rollback to the
+last known-good image without manual intervention, verified by an automated
+test that corrupts an update and confirms recovery.
+
+### Scope boundary
+
+No delta/incremental updates — full image swap only, at this phase.
+
+### Required artifacts
+
+ADR for the signing/trust model — this is a security-critical decision that
+needs the same rigor as Phase 8's syscall ABI.
+
+---
+
+## Phase 16: SMP
+
+### Purpose
+
+Multiple CPU cores. Last, deliberately, because every phase from 2 through
+15 was designed and tested single-core first. This phase is a correctness
+re-audit of all of them, not a feature bolt-on — the same category of work
+as Phase 8's isolation migration, but broader.
+
+### Preconditions
+
+Every prior phase in this document reproducible. This is not a phase to
+start with anything else in flight.
+
+### Locked slice sequence
+
+1. **`ap-startup`** — bring up additional CPU cores (INIT-SIPI-SIPI
+   sequence), each running PythCore's existing single-core init path first,
+   proving the boot path itself is safe to run per-core before anything
+   shares state.
+2. **`per-cpu-data`** — everything that was implicitly single-instance
+   (scheduler ready queue, capability table locks, IPC queues) gets audited
+   for per-CPU vs. shared state, explicitly, one subsystem at a time.
+3. **`spinlocks-and-atomics`** — replace any single-core assumption of
+   "interrupts disabled = exclusive access" (which Phase 2's scheduler
+   likely relies on) with real cross-core synchronization primitives.
+4. **`multi-core-scheduler`** — extend Phase 2's round-robin to distribute
+   across cores without breaking the existing preemption/termination
+   proofs.
+5. **`per-subsystem-smp-audit`** — go through Phase 3 (IPC/capabilities),
+   Phase 7/10 (storage), Phase 8 (isolation), and Phase 13 (networking) one
+   at a time, re-running each phase's original adversarial/negative test
+   suite under multi-core execution, not just re-running it single-core on
+   an SMP-capable kernel.
+
+### Exit condition
+
+Every phase from 2 through 15's original negative/adversarial test suite
+passes when re-run under real multi-core execution — this phase's exit
+condition is explicitly "nothing regressed," not a new capability marker.
+
+### Scope boundary
+
+No NUMA-awareness, no core-affinity policy beyond basic distribution, no
+per-core power management (that's Phase 14 territory once cores exist).
+
+### Required artifacts
+
+A per-subsystem SMP audit document, one section per phase re-verified, with
+explicit sign-off that phase's original proofs still hold — this is the
+closest thing in the whole roadmap to a formal audit trail, appropriate
+given this phase touches everything.
 
 ## Vision (Non-Binding, Explicitly Out of Phase 1-8 Critical Path)
 
@@ -1148,6 +1575,6 @@ point of reference in this file:
 6. Do not land a slice that regresses any already verified marker.
 7. Do not claim full security where only logical isolation exists. This is
    explicitly why Phase 8 exists as a separate, later phase from Phase 3.
-8. AI remains outside the trusted core through Phase 8. This is reevaluated, not
-   assumed, at the Phase 8 architectural test and again whenever Semantic
-   Indexing or Local AI becomes active in Later Phases.
+8. AI remains outside the trusted core through Phase 8 and through the numbered
+   Phase 9-16 roadmap unless a separate vision-layer phase is explicitly
+   invoked and documented.

@@ -45,6 +45,7 @@ mod syscall;
 mod system_api;
 mod tasks;
 mod typed_object_format;
+mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
@@ -160,6 +161,33 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         let process_address_space =
             match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
                 Ok(address_space) => address_space,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+        let user_elf_payload = match runtime_loader::load_user_elf_payload(boot_info) {
+            Ok(payload) => payload,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let user_elf_image = match user_elf::validate(user_elf_payload) {
+            Ok(image) => image,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        let (dynamic_elf_address_space, loaded_user_elf) =
+            match memory::r#virtual::UserAddressSpace::build_with_user_elf(
+                &mut physical_memory,
+                boot_info,
+                &user_elf_image,
+                user_elf_payload,
+            ) {
+                Ok(loaded) => loaded,
                 Err(_) => {
                     serial::write_line("PYTHOS:PANIC");
                     qemu_exit::panic();
@@ -932,6 +960,36 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CAPABILITY_BOUNDARY_READY");
+        let user_elf_rejection_proof = match user_elf::run_rejection_self_tests() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if user_elf_rejection_proof.buffer_range_denied {
+            serial::write_line("PYTHOS:CORE:USER_ELF:REJECTED:BUFFER_RANGE");
+        }
+        if user_elf_rejection_proof.wx_segment_denied {
+            serial::write_line("PYTHOS:CORE:USER_ELF:REJECTED:WX_SEGMENT");
+        }
+        if user_elf_rejection_proof.kernel_range_denied {
+            serial::write_line("PYTHOS:CORE:USER_ELF:REJECTED:KERNEL_RANGE");
+        }
+        if !user_elf_rejection_proof.buffer_range_denied
+            || !user_elf_rejection_proof.wx_segment_denied
+            || !user_elf_rejection_proof.kernel_range_denied
+            || loaded_user_elf.entry() != user_elf_image.entry()
+            || loaded_user_elf.segment_count() != user_elf_image.segment_count()
+            || !loaded_user_elf.bss_zeroed()
+            || dynamic_elf_address_space.root_table_phys() == address_space.root_table_phys()
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:USER_ELF:LOADED");
+        serial::write_line("PYTHOS:CORE:USER_ELF:SEGMENTS_MAPPED");
+        serial::write_line("PYTHOS:CORE:DYNAMIC_ELF_LOADING_READY");
     }
 
     #[cfg(test)]

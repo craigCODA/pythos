@@ -16,6 +16,12 @@ INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
 RUNTIME_PAYLOAD_MAGIC = b"PYTHOS_MINRT_V00"
 RUNTIME_PAYLOAD_HEADER_LEN = 32
+INIT_BUNDLE_MAGIC = b"PYTHOS_BUNDLE_V0"
+INIT_BUNDLE_HEADER_LEN = 32
+INIT_BUNDLE_RECORD_LEN = 32
+INIT_BUNDLE_RUNTIME_TYPE = 0x0000_0001
+INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
+USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
     b"    async def start(self):\n"
@@ -74,6 +80,77 @@ def build_runtime_payload(source: bytes = RUNTIME_SOURCE) -> bytes:
     return bytes(header) + source
 
 
+def build_init_bundle(records: list[tuple[int, bytes]]) -> bytes:
+    table_len = len(records) * INIT_BUNDLE_RECORD_LEN
+    cursor = INIT_BUNDLE_HEADER_LEN + table_len
+    header = bytearray(INIT_BUNDLE_HEADER_LEN)
+    header[: len(INIT_BUNDLE_MAGIC)] = INIT_BUNDLE_MAGIC
+    header[16:18] = (0).to_bytes(2, "little")
+    header[18:20] = (0).to_bytes(2, "little")
+    header[20:24] = INIT_BUNDLE_HEADER_LEN.to_bytes(4, "little")
+    header[24:26] = len(records).to_bytes(2, "little")
+
+    table = bytearray(table_len)
+    payloads = bytearray()
+    for index, (record_type, payload) in enumerate(records):
+        entry = index * INIT_BUNDLE_RECORD_LEN
+        table[entry : entry + 4] = record_type.to_bytes(4, "little")
+        table[entry + 8 : entry + 16] = cursor.to_bytes(8, "little")
+        table[entry + 16 : entry + 24] = len(payload).to_bytes(8, "little")
+        table[entry + 24 : entry + 28] = (sum(payload) & 0xFFFFFFFF).to_bytes(4, "little")
+        payloads.extend(payload)
+        cursor += len(payload)
+    return bytes(header) + bytes(table) + bytes(payloads)
+
+
+def build_user_elf_payload() -> bytes:
+    text = b"\x90\xc3"
+    data = b"DATA"
+    text_offset = 0x1000
+    data_offset = 0x2000
+    data_memsz = 16
+    elf = bytearray(data_offset + len(data))
+    elf[0:4] = b"\x7fELF"
+    elf[4] = 2
+    elf[5] = 1
+    elf[6] = 1
+    elf[16:18] = (2).to_bytes(2, "little")
+    elf[18:20] = (0x3E).to_bytes(2, "little")
+    elf[20:24] = (1).to_bytes(4, "little")
+    elf[24:32] = USER_ELF_ENTRY.to_bytes(8, "little")
+    elf[32:40] = (64).to_bytes(8, "little")
+    elf[52:54] = (64).to_bytes(2, "little")
+    elf[54:56] = (56).to_bytes(2, "little")
+    elf[56:58] = (2).to_bytes(2, "little")
+
+    def phdr(index: int, flags: int, offset: int, vaddr: int, filesz: int, memsz: int) -> None:
+        entry = 64 + index * 56
+        elf[entry : entry + 4] = (1).to_bytes(4, "little")
+        elf[entry + 4 : entry + 8] = flags.to_bytes(4, "little")
+        elf[entry + 8 : entry + 16] = offset.to_bytes(8, "little")
+        elf[entry + 16 : entry + 24] = vaddr.to_bytes(8, "little")
+        elf[entry + 24 : entry + 32] = vaddr.to_bytes(8, "little")
+        elf[entry + 32 : entry + 40] = filesz.to_bytes(8, "little")
+        elf[entry + 40 : entry + 48] = memsz.to_bytes(8, "little")
+        elf[entry + 48 : entry + 56] = (0x1000).to_bytes(8, "little")
+
+    phdr(0, 0x5, text_offset, USER_ELF_ENTRY, len(text), len(text))
+    phdr(1, 0x6, data_offset, USER_ELF_ENTRY + 0x1000, len(data), data_memsz)
+    elf[text_offset : text_offset + len(text)] = text
+    elf[data_offset : data_offset + len(data)] = data
+    return bytes(elf)
+
+
+INIT_PAK = build_init_pak(
+    build_init_bundle(
+        [
+            (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload()),
+        ]
+    )
+)
+
+
 def build_font_psf() -> bytes:
     font = bytearray(PSF1_HEADER_LEN + PSF1_GLYPH_COUNT * PSF1_GLYPH_HEIGHT)
     font[0:4] = bytes([0x36, 0x04, 0x00, PSF1_GLYPH_HEIGHT])
@@ -128,7 +205,7 @@ def pythos_boot_files(loader: Path, kernel: Path) -> dict[str, bytes]:
         "EFI/BOOT/BOOTX64.EFI": loader.read_bytes(),
         "PYTHOS/PYTHCORE.ELF": kernel.read_bytes(),
         "PYTHOS/BOOT.CFG": b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
-        "PYTHOS/INIT.PAK": build_init_pak(build_runtime_payload()),
+        "PYTHOS/INIT.PAK": INIT_PAK,
         "PYTHOS/FONT.PSF": build_font_psf(),
     }
 

@@ -2,12 +2,15 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
-use pythos_shared::{boot_protocol::PythBootInfo, init_pak, runtime_payload};
+use pythos_shared::{boot_protocol::PythBootInfo, init_bundle, init_pak, runtime_payload};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeLoadError {
     BadInitPak,
+    BadInitBundle,
     BadRuntimePayload,
+    MissingRuntimePayload,
+    MissingUserElfPayload,
 }
 
 pub fn load_init_payload(
@@ -20,6 +23,37 @@ pub fn load_init_payload(
 pub fn validate_init_payload_bytes(
     bytes: &[u8],
 ) -> Result<runtime_payload::RuntimePayload<'_>, RuntimeLoadError> {
+    let payload = init_pak_payload(bytes)?;
+    match init_bundle::validate(payload) {
+        Ok(bundle) => {
+            let record = bundle
+                .record(init_bundle::RecordType::RuntimePayload)
+                .ok_or(RuntimeLoadError::MissingRuntimePayload)?;
+            runtime_payload::validate(record.bytes())
+                .map_err(|_| RuntimeLoadError::BadRuntimePayload)
+        }
+        Err(init_bundle::InitBundleError::BadMagic) => {
+            runtime_payload::validate(payload).map_err(|_| RuntimeLoadError::BadRuntimePayload)
+        }
+        Err(_) => Err(RuntimeLoadError::BadInitBundle),
+    }
+}
+
+pub fn load_user_elf_payload(boot_info: &PythBootInfo) -> Result<&[u8], RuntimeLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_user_elf_payload_bytes(bytes)
+}
+
+pub fn validate_user_elf_payload_bytes(bytes: &[u8]) -> Result<&[u8], RuntimeLoadError> {
+    let payload = init_pak_payload(bytes)?;
+    let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
+    let record = bundle
+        .record(init_bundle::RecordType::UserElf)
+        .ok_or(RuntimeLoadError::MissingUserElfPayload)?;
+    Ok(record.bytes())
+}
+
+fn init_pak_payload(bytes: &[u8]) -> Result<&[u8], RuntimeLoadError> {
     let header = init_pak::validate(bytes).map_err(|_| RuntimeLoadError::BadInitPak)?;
     let payload_start =
         usize::try_from(header.header_len).map_err(|_| RuntimeLoadError::BadInitPak)?;
@@ -31,7 +65,7 @@ pub fn validate_init_payload_bytes(
     let payload = bytes
         .get(payload_start..payload_end)
         .ok_or(RuntimeLoadError::BadInitPak)?;
-    runtime_payload::validate(payload).map_err(|_| RuntimeLoadError::BadRuntimePayload)
+    Ok(payload)
 }
 
 fn init_bundle_bytes(boot_info: &PythBootInfo) -> Result<&[u8], RuntimeLoadError> {
@@ -92,6 +126,32 @@ mod tests {
         bytes
     }
 
+    fn build_inner_bundle(records: &[(u32, &[u8])]) -> Vec<u8> {
+        let header_len = pythos_shared::init_bundle::INIT_BUNDLE_HEADER_LEN as usize;
+        let table_len = records.len() * pythos_shared::init_bundle::RECORD_ENTRY_LEN;
+        let mut bytes = vec![0u8; header_len + table_len];
+        bytes[..pythos_shared::init_bundle::INIT_BUNDLE_MAGIC.len()]
+            .copy_from_slice(pythos_shared::init_bundle::INIT_BUNDLE_MAGIC);
+        bytes[16..18].copy_from_slice(&pythos_shared::init_bundle::INIT_BUNDLE_MAJOR.to_le_bytes());
+        bytes[18..20].copy_from_slice(&pythos_shared::init_bundle::INIT_BUNDLE_MINOR.to_le_bytes());
+        bytes[20..24]
+            .copy_from_slice(&pythos_shared::init_bundle::INIT_BUNDLE_HEADER_LEN.to_le_bytes());
+        bytes[24..26].copy_from_slice(&(records.len() as u16).to_le_bytes());
+
+        let mut cursor = header_len + table_len;
+        for (index, (record_type, payload)) in records.iter().enumerate() {
+            let entry = header_len + index * pythos_shared::init_bundle::RECORD_ENTRY_LEN;
+            bytes[entry..entry + 4].copy_from_slice(&record_type.to_le_bytes());
+            bytes[entry + 8..entry + 16].copy_from_slice(&(cursor as u64).to_le_bytes());
+            bytes[entry + 16..entry + 24].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+            bytes[entry + 24..entry + 28]
+                .copy_from_slice(&pythos_shared::init_bundle::checksum(payload).to_le_bytes());
+            bytes.extend_from_slice(payload);
+            cursor += payload.len();
+        }
+        bytes
+    }
+
     #[test]
     fn valid_init_pak_runtime_payload_passes_without_execution() {
         let payload = build_runtime_payload(HELLO_SERVICE);
@@ -100,6 +160,42 @@ mod tests {
         let runtime = validate_init_payload_bytes(&bundle).unwrap();
 
         assert!(runtime.source.contains("system.log"));
+    }
+
+    #[test]
+    fn inner_bundle_runtime_payload_passes_without_execution() {
+        let payload = build_runtime_payload(HELLO_SERVICE);
+        let user_elf = b"\x7FELFuser";
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_RUNTIME_PAYLOAD,
+                payload.as_slice(),
+            ),
+            (pythos_shared::init_bundle::TYPE_USER_ELF, user_elf),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        let runtime = validate_init_payload_bytes(&bundle).unwrap();
+
+        assert!(runtime.source.contains("system.log"));
+    }
+
+    #[test]
+    fn inner_bundle_user_elf_record_is_exposed() {
+        let payload = build_runtime_payload(HELLO_SERVICE);
+        let user_elf = b"\x7FELFuser";
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_RUNTIME_PAYLOAD,
+                payload.as_slice(),
+            ),
+            (pythos_shared::init_bundle::TYPE_USER_ELF, user_elf),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        let exposed = validate_user_elf_payload_bytes(&bundle).unwrap();
+
+        assert_eq!(exposed, user_elf);
     }
 
     #[test]
