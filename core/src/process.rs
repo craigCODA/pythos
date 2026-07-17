@@ -30,6 +30,7 @@ pub struct ProcessTerminationProof {
 #[cfg_attr(not(test), allow(dead_code))]
 pub enum UserFault {
     IllegalInstruction,
+    BadPointer,
     KernelModePageFault,
 }
 
@@ -208,8 +209,11 @@ pub fn run_termination_self_test(
 pub fn run_crash_containment_self_test(
     fault: UserFault,
 ) -> Result<CrashContainmentProof, ProcessError> {
-    if fault != UserFault::IllegalInstruction {
-        return Err(ProcessError::KernelFaultNotContained);
+    match fault {
+        UserFault::IllegalInstruction | UserFault::BadPointer => {}
+        UserFault::KernelModePageFault => {
+            return Err(ProcessError::KernelFaultNotContained);
+        }
     }
 
     let faulting_address_space = ProcessAddressSpace::new(0x400000, 5)?;
@@ -270,6 +274,15 @@ mod tests {
     #[test]
     fn crash_containment_terminates_only_faulting_service() {
         let proof = run_crash_containment_self_test(UserFault::IllegalInstruction).unwrap();
+
+        assert!(proof.user_fault_diagnosed);
+        assert!(proof.faulting_service_terminated);
+        assert!(proof.peer_service_alive);
+    }
+
+    #[test]
+    fn crash_containment_accepts_user_bad_pointer_fault() {
+        let proof = run_crash_containment_self_test(UserFault::BadPointer).unwrap();
 
         assert!(proof.user_fault_diagnosed);
         assert!(proof.faulting_service_terminated);

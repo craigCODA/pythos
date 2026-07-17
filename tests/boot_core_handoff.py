@@ -723,6 +723,9 @@ class BootCoreHandoffTest(unittest.TestCase):
     def test_crash_containment_markers_are_observed_after_cpu_quotas(self) -> None:
         self.run_boot_slice("crash-containment")
 
+    def test_capability_boundary_markers_are_observed_after_crash_containment(self) -> None:
+        self.run_boot_slice("capability-enforcement-at-boundary")
+
     def test_phase_6_no_audio_fallback_still_reaches_milestone(self) -> None:
         self.run_boot_slice("graceful-audio-fallback", "--no-audio-device")
 

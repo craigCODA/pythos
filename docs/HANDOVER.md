@@ -1,7 +1,7 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `crash-containment` complete. Halt at the
-`crash-containment` -> `capability-enforcement-at-boundary` boundary.
+Current boundary: Phase 8 `real-hardware-isolation` complete. Halt at the
+Phase 8 -> Later Phases boundary.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -26,6 +26,7 @@ python scripts\test-boot.py --slice process-termination
 python scripts\test-boot.py --slice memory-quotas
 python scripts\test-boot.py --slice cpu-quotas
 python scripts\test-boot.py --slice crash-containment
+python scripts\test-boot.py --slice capability-enforcement-at-boundary
 python scripts\test-persistent-storage.py
 python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device
 python scripts\test-boot.py --slice milestone-1
@@ -63,7 +64,9 @@ Phase 8 process-termination complete
 Phase 8 memory-quotas complete
 Phase 8 cpu-quotas complete
 Phase 8 crash-containment complete
-Next allowed slice: capability-enforcement-at-boundary
+Phase 8 capability-enforcement-at-boundary complete
+Next allowed work: none inside Phase 8; Later Phases require explicit
+re-invocation and a detailed roadmap section
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -75,9 +78,10 @@ separate address-space proof. ADR 0028 records the Phase 8 syscall ABI. ADR
 8 service-local runtime-instance proof. ADR 0031 records the Phase 8 guarded
 shared-memory proof. ADR 0032 records the Phase 8 process-termination proof.
 ADR 0033 records the Phase 8 memory-quota proof. ADR 0034 records the Phase 8
-CPU-quota proof. ADR 0035 records the Phase 8 crash-containment proof. Do not
-start networking, AI, SMP, or hardware-expansion work before their roadmap
-gates.
+CPU-quota proof. ADR 0035 records the Phase 8 crash-containment proof. ADR
+0036 records the Phase 8 capability-boundary proof. Do not start networking,
+AI, SMP, package management, updates, or hardware-expansion work before their
+roadmap gates.
 
 ## Phase 6 Summary
 
@@ -139,6 +143,7 @@ process-termination
 memory-quotas
 cpu-quotas
 crash-containment
+capability-enforcement-at-boundary
 ```
 
 The first storage slice attaches a bounded raw QEMU storage image as a non-boot
@@ -303,6 +308,14 @@ the faulting service process, preserves a peer service process, and emits
 `PYTHOS:CORE:CRASH_CONTAINMENT_READY`. It does not implement capability
 forgery resistance at the syscall boundary.
 
+The capability-enforcement-at-boundary slice records ADR 0036 and closes Phase
+8. PythCore contains a fixed CPL3 bad-pointer page fault, validates legitimate
+syscall-gated capability use before IPC mutation, denies a copied handle value
+from the wrong service identity, denies hardware-resource repurposing, and
+emits `PYTHOS:CORE:CAPABILITY_BOUNDARY_READY`. It does not implement a
+general-purpose userspace ABI, copy-in/copy-out, networking, package
+management, SMP, or hardware expansion.
+
 ## Phase 8 Marker Tail
 
 The normal AC97-enabled milestone path includes this ordered tail after
@@ -407,6 +420,11 @@ PYTHOS:CORE:CRASH:USER_FAULT
 PYTHOS:CORE:CRASH:SERVICE_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 PYTHOS:CORE:CRASH_CONTAINMENT_READY
+PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED
+PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED
+PYTHOS:CORE:BOUNDARY:FORGERY_DENIED
+PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED
+PYTHOS:CORE:CAPABILITY_BOUNDARY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -501,6 +519,11 @@ PYTHOS:CORE:CRASH:USER_FAULT
 PYTHOS:CORE:CRASH:SERVICE_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 PYTHOS:CORE:CRASH_CONTAINMENT_READY
+PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED
+PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED
+PYTHOS:CORE:BOUNDARY:FORGERY_DENIED
+PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED
+PYTHOS:CORE:CAPABILITY_BOUNDARY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -572,6 +595,7 @@ docs/decisions/0032-phase-8-process-termination.md
 docs/decisions/0033-phase-8-memory-quotas.md
 docs/decisions/0034-phase-8-cpu-quotas.md
 docs/decisions/0035-phase-8-crash-containment.md
+docs/decisions/0036-phase-8-capability-boundary.md
 ```
 
 Boot artifacts:
@@ -603,8 +627,8 @@ networking
 AI inside the trusted core
 dynamic user process stacks
 user pointer copy-in/copy-out
-full hostile-code service isolation
-full hostile-code capability enforcement
+general-purpose hostile-code service isolation
+general-purpose userspace ABI
 SMP
 package management
 Open Surface
@@ -613,16 +637,18 @@ Patch
 
 Ring-3 execution, the distinct user CR3, the syscall ABI, the guarded
 user-stack pool, service-local runtime roots, guarded shared-memory proof,
-process-termination proof, quota proofs, and crash-containment proof exist only
-for bounded proof paths. Capability separation for services is still not the
-full hostile-code boundary. Do not claim hostile-code isolation until the Phase
-8 adversarial boundary tests land.
+process-termination proof, quota proofs, crash-containment proof, and
+capability-boundary proof exist only for bounded proof paths. Phase 8 proves the
+current hardware-backed authority boundary for those paths. Do not claim a
+general-purpose userspace ABI or arbitrary hostile-code service environment
+until a later phase defines one.
 
-## Next Slice
+## Next Boundary
 
-Phase 8 is `real-hardware-isolation`.
+Phase 8 is complete. Later Phases are unordered in `docs/ROADMAP.md` and need a
+fresh detailed roadmap section before implementation.
 
-Before continuing Phase 8, re-read:
+Before starting later-phase work, re-read:
 
 ```text
 AGENTS.md
@@ -631,20 +657,6 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Then begin only the next Phase 8 slice from the roadmap:
-
-```text
-capability-enforcement-at-boundary
-```
-
-Expected TDD posture for the next Phase 8 slice:
-
-1. Add a failing automated proof that a hostile user-mode service cannot forge
-   or bypass a Phase 3 capability check at the syscall gate.
-2. Keep Phase 8 scoped to hardware-enforced isolation. Do not begin networking,
-   AI, SMP, or hardware expansion before their roadmap gates.
-3. Preserve the Phase 3 capability semantics and Phase 7 storage format unless
-   an ADR explicitly records a migration.
-4. Do not claim hostile-code isolation until the Phase 8 adversarial boundary
-   tests land.
-5. Prove both ESP and ISO milestone boots still report `QEMU_OUTCOME success`.
+Do not begin networking, package management, updates, AI, SMP, or hardware
+expansion by momentum. Pick one Later Phase, write its detailed slice sequence
+and required artifacts, then start with a failing automated test.

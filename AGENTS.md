@@ -250,6 +250,11 @@ OVMF
 -> PYTHOS:CORE:CRASH:SERVICE_TERMINATED
 -> PYTHOS:CORE:CRASH:PEER_ALIVE
 -> PYTHOS:CORE:CRASH_CONTAINMENT_READY
+-> PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED
+-> PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED
+-> PYTHOS:CORE:BOUNDARY:FORGERY_DENIED
+-> PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED
+-> PYTHOS:CORE:CAPABILITY_BOUNDARY_READY
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -262,7 +267,9 @@ The Phase 8 `cpu-quotas` slice records ADR 0034, records an in-quota kernel-owne
 
 The Phase 8 `crash-containment` slice records ADR 0035, diagnoses a fixed CPL3 illegal-instruction fault as a user fault, terminates only the faulting service process, preserves a peer service process, and emits `PYTHOS:CORE:CRASH_CONTAINMENT_READY`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, and Phase 7 are complete. Phase 8 `ring-3-execution`, `separate-address-spaces`, `syscall-entry`, `user-stacks`, `service-local-python-runtimes`, `guarded-shared-memory`, `process-termination`, `memory-quotas`, `cpu-quotas`, and `crash-containment` are complete. ADR 0022 records the on-disk typed-object format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the Phase 7 checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, and ADR 0035 records the crash-containment proof. The next allowed Phase 8 slice is `capability-enforcement-at-boundary`; do not begin networking, AI, SMP, or hardware-expansion work before its roadmap gate.
+The Phase 8 `capability-enforcement-at-boundary` slice records ADR 0036, contains a fixed CPL3 bad-pointer fault, validates a legitimate syscall-gated capability before IPC mutation, denies a copied handle value from the wrong service identity, denies hardware-resource repurposing, and emits `PYTHOS:CORE:CAPABILITY_BOUNDARY_READY`.
+
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, and Phase 8 are complete. ADR 0022 records the on-disk typed-object format, ADR 0023 records the workspace-session object kind, ADR 0024 records the object-browser inspection boundary, ADR 0025 records the Phase 7 checkpoint/recovery sector contract, ADR 0026 records the ring-3 execution proof, ADR 0027 records the separate address-space proof, ADR 0028 records the syscall ABI, ADR 0029 records the guarded user-stack layout, ADR 0030 records the service-local runtime-instance proof, ADR 0031 records the guarded shared-memory proof, ADR 0032 records the process-termination proof, ADR 0033 records the memory-quota proof, ADR 0034 records the CPU-quota proof, ADR 0035 records the crash-containment proof, and ADR 0036 records the capability-boundary proof. Halt at the Phase 8 -> Later Phases boundary; do not begin networking, AI, SMP, package management, updates, or hardware-expansion work without explicit re-invocation and a detailed roadmap section.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -473,6 +480,11 @@ PYTHOS:CORE:CRASH:USER_FAULT
 PYTHOS:CORE:CRASH:SERVICE_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 PYTHOS:CORE:CRASH_CONTAINMENT_READY
+PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED
+PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED
+PYTHOS:CORE:BOUNDARY:FORGERY_DENIED
+PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED
+PYTHOS:CORE:CAPABILITY_BOUNDARY_READY
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```

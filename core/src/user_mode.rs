@@ -19,13 +19,19 @@ const KERNEL_TRAP_STACK_SIZE: usize = 16 * 4096;
 const USER_CODE_BREAKPOINT_OFFSET: usize = 0;
 const USER_CODE_SYSCALL_OFFSET: usize = 16;
 const USER_CODE_FAULT_OFFSET: usize = 32;
+const USER_CODE_BAD_POINTER_OFFSET: usize = 48;
 const USER_CODE_BREAKPOINT: u8 = 0xCC;
 const USER_CODE_HALT: u8 = 0xF4;
 const USER_CODE_SYSCALL_PREFIX: u8 = 0x0F;
 const USER_CODE_SYSCALL_OPCODE: u8 = 0x05;
 const USER_CODE_UD2_PREFIX: u8 = 0x0F;
 const USER_CODE_UD2_OPCODE: u8 = 0x0B;
+const USER_CODE_MOV_RAX_IMM64: u8 = 0x48;
+const USER_CODE_MOV_RAX_IMM64_OPCODE: u8 = 0xB8;
+const USER_CODE_LOAD_AL_FROM_RAX: u8 = 0x8A;
+const USER_CODE_LOAD_AL_FROM_RAX_MODRM: u8 = 0x00;
 const USER_INVALID_OPCODE_VECTOR: u64 = 6;
+const USER_PAGE_FAULT_VECTOR: u64 = 14;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserModeError {
@@ -80,6 +86,12 @@ const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     bytes[USER_CODE_FAULT_OFFSET] = USER_CODE_UD2_PREFIX;
     bytes[USER_CODE_FAULT_OFFSET + 1] = USER_CODE_UD2_OPCODE;
     bytes[USER_CODE_FAULT_OFFSET + 2] = USER_CODE_HALT;
+
+    bytes[USER_CODE_BAD_POINTER_OFFSET] = USER_CODE_MOV_RAX_IMM64;
+    bytes[USER_CODE_BAD_POINTER_OFFSET + 1] = USER_CODE_MOV_RAX_IMM64_OPCODE;
+    bytes[USER_CODE_BAD_POINTER_OFFSET + 10] = USER_CODE_LOAD_AL_FROM_RAX;
+    bytes[USER_CODE_BAD_POINTER_OFFSET + 11] = USER_CODE_LOAD_AL_FROM_RAX_MODRM;
+    bytes[USER_CODE_BAD_POINTER_OFFSET + 12] = USER_CODE_HALT;
     bytes
 }
 
@@ -150,6 +162,14 @@ pub fn run_illegal_instruction_fault_test() -> Result<(), UserModeError> {
     run_user_entry(
         user_fault_entry(),
         ExpectedUserTrap::Fault(USER_INVALID_OPCODE_VECTOR),
+    )
+}
+
+#[cfg(not(test))]
+pub fn run_bad_pointer_fault_test() -> Result<(), UserModeError> {
+    run_user_entry(
+        user_bad_pointer_entry(),
+        ExpectedUserTrap::Fault(USER_PAGE_FAULT_VECTOR),
     )
 }
 
@@ -256,6 +276,11 @@ fn user_fault_entry() -> u64 {
 }
 
 #[cfg(not(test))]
+fn user_bad_pointer_entry() -> u64 {
+    user_code_start() + USER_CODE_BAD_POINTER_OFFSET as u64
+}
+
+#[cfg(not(test))]
 fn user_stack_top() -> u64 {
     user_stacks::proof_stack_top()
 }
@@ -331,6 +356,18 @@ mod tests {
         assert_eq!(
             USER_CODE_PAGE.0[USER_CODE_FAULT_OFFSET + 1],
             USER_CODE_UD2_OPCODE
+        );
+    }
+
+    #[test]
+    fn user_code_page_contains_bad_pointer_probe_entry() {
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_BAD_POINTER_OFFSET],
+            USER_CODE_MOV_RAX_IMM64
+        );
+        assert_eq!(
+            USER_CODE_PAGE.0[USER_CODE_BAD_POINTER_OFFSET + 10],
+            USER_CODE_LOAD_AL_FROM_RAX
         );
     }
 

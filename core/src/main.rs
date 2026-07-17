@@ -850,6 +850,88 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:CRASH_CONTAINMENT_READY");
+        // SAFETY:
+        // 1. Invariant: the user root maps the fixed user bad-pointer probe
+        //    with user access while null and kernel pages remain unavailable
+        //    to CPL3.
+        // 2. Established by: `UserAddressSpace::build` and prior Phase 8
+        //    address-space validation.
+        // 3. Lifetime: both user and kernel roots are retained for the whole
+        //    boot path.
+        // 4. Pointer ownership: the CPU borrows the user page-table hierarchy
+        //    during the one-shot page-fault probe.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the hierarchy maps the active kernel path, trap
+        //    stack, and fixed user proof pages while leaving address zero
+        //    unmapped.
+        // 7. Concurrency: single-core Phase 8 proof with one active user
+        //    fault probe.
+        // 8. Violation: bad mappings fault through the diagnostic path.
+        unsafe {
+            user_address_space.activate();
+        }
+        let bad_pointer_result = user_mode::run_bad_pointer_fault_test();
+        // SAFETY:
+        // 1. Invariant: `address_space` is the validated kernel root required
+        //    for the final Phase 8 boundary checks after the bad-pointer
+        //    probe.
+        // 2. Established by: successful VM activation and validation earlier.
+        // 3. Lifetime: the kernel root remains retained for this whole boot.
+        // 4. Pointer ownership: the CPU borrows the kernel page-table
+        //    hierarchy.
+        // 5. Alignment: the root was allocated as a 4 KiB physical page.
+        // 6. Mapped length: the full active early-core address surface is
+        //    mapped.
+        // 7. Concurrency: single-core proof with interrupts disabled.
+        // 8. Violation: failure to restore leaves final boundary checks under
+        //    the user proof root.
+        unsafe {
+            address_space.activate();
+        }
+        if bad_pointer_result.is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        let bad_pointer_containment_proof =
+            match process::run_crash_containment_self_test(process::UserFault::BadPointer) {
+                Ok(proof) => proof,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+        if !bad_pointer_containment_proof.user_fault_diagnosed
+            || !bad_pointer_containment_proof.faulting_service_terminated
+            || !bad_pointer_containment_proof.peer_service_alive
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED");
+        let capability_boundary_proof = match syscall::run_boundary_capability_self_test() {
+            Ok(proof) => proof,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        if capability_boundary_proof.allowed_call {
+            serial::write_line("PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED");
+        }
+        if capability_boundary_proof.forged_handle_denied {
+            serial::write_line("PYTHOS:CORE:BOUNDARY:FORGERY_DENIED");
+        }
+        if capability_boundary_proof.direct_hardware_denied {
+            serial::write_line("PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED");
+        }
+        if !capability_boundary_proof.allowed_call
+            || !capability_boundary_proof.forged_handle_denied
+            || !capability_boundary_proof.direct_hardware_denied
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:CAPABILITY_BOUNDARY_READY");
     }
 
     #[cfg(test)]

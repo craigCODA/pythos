@@ -5,7 +5,9 @@
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 use crate::architecture::x86_64::gdt;
-use crate::capabilities::{CapabilityError, CapabilityTable, ResourceId, RightsMask};
+use crate::capabilities::{
+    CapabilityError, CapabilityHandle, CapabilityTable, ResourceId, RightsMask,
+};
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
 use crate::permission_validation::{self, PermissionError};
 #[cfg(not(test))]
@@ -36,8 +38,11 @@ const RFLAGS_DIRECTION: u64 = 1 << 10;
 const SYSCALL_RFLAGS_MASK: u64 = RFLAGS_INTERRUPT_ENABLE | RFLAGS_DIRECTION;
 
 const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
+const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
 const SYSCALL_MESSAGE_TYPE: u16 = 0x88;
 const SYSCALL_PAYLOAD: [u8; 4] = [0x53, 0x43, 0x41, 0x4C];
+const BOUNDARY_MESSAGE_TYPE: u16 = 0x89;
+const BOUNDARY_PAYLOAD: [u8; 4] = [0x42, 0x4F, 0x55, 0x4E];
 const SYSCALL_LOG_MESSAGE: &[u8] = b"PythOS [HISS] We Are Woken";
 
 static EXPECTED_SYSCALL: AtomicBool = AtomicBool::new(false);
@@ -55,6 +60,13 @@ pub enum SyscallError {
     UserMode(user_mode::UserModeError),
     DidNotReturn,
     BadResult,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BoundaryCapabilityProof {
+    pub allowed_call: bool,
+    pub forged_handle_denied: bool,
+    pub direct_hardware_denied: bool,
 }
 
 impl From<CapabilityError> for SyscallError {
@@ -234,6 +246,88 @@ fn run_system_log_bridge() -> Result<(), SyscallError> {
     }
 }
 
+pub fn run_boundary_capability_self_test() -> Result<BoundaryCapabilityProof, SyscallError> {
+    let mut identities = ServiceIdentityTable::new();
+    let caller = service(&mut identities, 83)?;
+    let receiver = service(&mut identities, 84)?;
+    let intruder = service(&mut identities, 85)?;
+    let mut table = CapabilityTable::new();
+    let handle = table.grant(
+        caller,
+        IPC_SYSCALL_RESOURCE,
+        RightsMask::new(RightsMask::SEND),
+    )?;
+    let mut channel = IpcChannel::new(caller, receiver);
+    let allowed_message = IpcMessage::new(BOUNDARY_MESSAGE_TYPE, &BOUNDARY_PAYLOAD)?;
+
+    syscall_gate_send_with_capability(
+        &table,
+        caller,
+        handle,
+        IPC_SYSCALL_RESOURCE,
+        &mut channel,
+        receiver,
+        allowed_message,
+    )?;
+    if channel.receive(receiver)? != allowed_message {
+        return Err(SyscallError::Ipc(IpcError::PayloadCorrupt));
+    }
+
+    let forged_message = IpcMessage::new(BOUNDARY_MESSAGE_TYPE, &BOUNDARY_PAYLOAD)?;
+    let forged_handle_denied = syscall_gate_send_with_capability(
+        &table,
+        intruder,
+        handle,
+        IPC_SYSCALL_RESOURCE,
+        &mut channel,
+        receiver,
+        forged_message,
+    ) == Err(SyscallError::Capability(CapabilityError::WrongHolder));
+    if !forged_handle_denied {
+        return Err(SyscallError::Capability(CapabilityError::WrongHolder));
+    }
+    if channel.receive(receiver) != Err(IpcError::QueueEmpty) {
+        return Err(SyscallError::Ipc(IpcError::PayloadCorrupt));
+    }
+
+    let hardware_message = IpcMessage::new(BOUNDARY_MESSAGE_TYPE, &BOUNDARY_PAYLOAD)?;
+    let direct_hardware_denied = syscall_gate_send_with_capability(
+        &table,
+        caller,
+        handle,
+        HARDWARE_PORT_RESOURCE,
+        &mut channel,
+        receiver,
+        hardware_message,
+    ) == Err(SyscallError::Capability(CapabilityError::WrongResource));
+    if !direct_hardware_denied {
+        return Err(SyscallError::Capability(CapabilityError::WrongResource));
+    }
+    if channel.receive(receiver) != Err(IpcError::QueueEmpty) {
+        return Err(SyscallError::Ipc(IpcError::PayloadCorrupt));
+    }
+
+    Ok(BoundaryCapabilityProof {
+        allowed_call: true,
+        forged_handle_denied,
+        direct_hardware_denied,
+    })
+}
+
+fn syscall_gate_send_with_capability(
+    table: &CapabilityTable,
+    caller: ServiceId,
+    handle: CapabilityHandle,
+    resource: ResourceId,
+    channel: &mut IpcChannel,
+    to: ServiceId,
+    message: IpcMessage,
+) -> Result<(), SyscallError> {
+    table.validate(caller, handle, resource, RightsMask::new(RightsMask::SEND))?;
+    channel.send(caller, to, message)?;
+    Ok(())
+}
+
 fn service(
     identities: &mut ServiceIdentityTable,
     task_id: u64,
@@ -357,5 +451,14 @@ mod tests {
     fn dispatch_system_log_proof_uses_capability_and_log_surfaces() {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(dispatch(SYSCALL_SYSTEM_LOG_PROOF), Ok(()));
+    }
+
+    #[test]
+    fn boundary_capability_self_test_denies_forged_and_hardware_requests() {
+        let proof = run_boundary_capability_self_test().unwrap();
+
+        assert!(proof.allowed_call);
+        assert!(proof.forged_handle_denied);
+        assert!(proof.direct_hardware_denied);
     }
 }

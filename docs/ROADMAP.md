@@ -844,7 +844,7 @@ why an object exists and what it blocks later, as described in
 `docs/vision/patch.md`; this phase intentionally does not build the query API,
 Causal Lens UI, or Patch.
 
-## Phase 8: Real Hardware Isolation - IN PROGRESS
+## Phase 8: Real Hardware Isolation - COMPLETE
 
 ### Purpose
 
@@ -959,9 +959,19 @@ checks were trust-the-caller; this phase makes them hardware-enforced.
    `PYTHOS:CORE:CRASH:PEER_ALIVE`, and
    `PYTHOS:CORE:CRASH_CONTAINMENT_READY`. This slice does not implement full
    hostile-code capability enforcement.
-11. `capability-enforcement-at-boundary` - every Phase 3 capability check is
-   now enforced at the syscall gate itself, not just in cooperating service
-   code. This is the actual hostile-code boundary this phase exists to build.
+11. `capability-enforcement-at-boundary` - COMPLETE. ADR 0036 records the
+   final Phase 8 syscall-boundary proof. PythCore contains a fixed CPL3
+   bad-pointer page fault, validates a legitimate capability before enqueueing
+   privileged IPC, denies a copied handle value from the wrong service identity
+   before mutation, denies a hardware-port resource request through the wrong
+   capability resource, and emits
+   `PYTHOS:CORE:BOUNDARY:BAD_POINTER_CONTAINED`,
+   `PYTHOS:CORE:BOUNDARY:CAPABILITY_ALLOWED`,
+   `PYTHOS:CORE:BOUNDARY:FORGERY_DENIED`,
+   `PYTHOS:CORE:BOUNDARY:HARDWARE_DENIED`, and
+   `PYTHOS:CORE:CAPABILITY_BOUNDARY_READY`. This slice does not implement a
+   general-purpose userspace ABI, copy-in/copy-out, networking, package
+   management, SMP, or broad hardware expansion.
 
 ### Exit Condition
 
@@ -1027,14 +1037,25 @@ illegal-instruction fault as a service crash, terminates only the faulting
 service process, and keeps a peer service process runnable, but intentionally
 does not define full syscall boundary enforcement.
 
+ADR 0036 records the `capability-enforcement-at-boundary` proof. It contains a
+fixed CPL3 bad-pointer page fault, denies copied-handle use by the wrong
+service identity, denies hardware-resource repurposing through the syscall gate,
+and completes Phase 8's hardware-backed authority boundary for the fixed proof
+surface.
+
 ### Architectural Test (Non-Binding)
 
 When capabilities are built, reevaluate post-Phase-8: are they strong enough to
 safely scope an agent, now that enforcement is hardware-backed rather than
 cooperative?
 
-This is a re-ask of the Phase 3 question, now answerable for real because Phase
-3's answer was necessarily provisional due to kernel-mode-only enforcement.
+Answer: yes for the fixed local proof surface, but not yet for arbitrary
+agent-facing workflows. Phase 8 proves the kernel, not cooperating service code,
+owns boundary enforcement for user faults, copied handle values, direct
+hardware-style resource requests, and syscall-gated privileged IPC. Agent scoping
+can build on that mechanism later, but it still needs a later user/API surface,
+copy-in/copy-out policy, storage/object authorization policy, and audit UX
+before any AI can invoke privileged operations.
 
 ## Later Phases
 
