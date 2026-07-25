@@ -92,6 +92,18 @@ sequence. The wake phrase is:
 PythOS [HISS] We Are Woken
 ```
 
+Reopened and enriched by ADR 0047 (2026-07-25): the native cinematic now renders
+a glowing "Black/Violet/Electric-Blue" serpent that forms in, shimmers, ignites
+an energy orb at the awakening beat, and resolves into the "PythOS / We Are
+Woken" title — a native port of the authored reference (the `.mp4`/HTML is a
+visual reference only, never embedded). It is a compact ~3.5 s (wall-clock
+bounded via `cinematic_boot::CINEMATIC_TICKS`) so the whole boot stays inside the
+20 s milestone-1 budget. Renderer primitives live in `core/src/framebuffer.rs`
+(gradient, additive glow dots, serpent path, shimmer, orb, glow text). Not yet
+ported from the reference: the "PYTHOS" code-rain intro and the embedded PCM
+soundtrack (audio is still AC97/QEMU-only and silent on the AMD laptop). Plan:
+`docs/superpowers/plans/2026-07-25-native-cinematic-enhancement.md`.
+
 The implementation deliberately stays bounded:
 
 * Audio target is QEMU AC97 only.

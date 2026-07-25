@@ -642,6 +642,15 @@ Replace the current diagnostic boot screen with the native identity sequence:
 "PythOS [HISS] We Are Woken." It must be natively implemented, not the
 existing prototype HTML boot animation.
 
+> Reopened by ADR 0047 (2026-07-25): the native cinematic was enriched to match
+> the authored "Black/Violet/Electric-Blue" reference — a glowing serpent that
+> forms in, shimmers, ignites an energy orb at the awakening beat, and resolves
+> into the "PythOS / We Are Woken" title. Still native (the reference `.mp4`/HTML
+> is used only as a visual reference, never embedded), still bounded (compact
+> ~3.5 s so the milestone-1 boot stays inside its 20 s budget; the full-length
+> version is a real-hardware-only option). The wake phrase and all Phase 6
+> markers are unchanged.
+
 ### Preconditions
 
 Phase 5 exit condition reproducible: shell renders and compositor is
