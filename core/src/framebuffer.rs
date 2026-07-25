@@ -72,6 +72,26 @@ const SNAKE_EYE: Rgb = Rgb {
     green: 190,
     blue: 90,
 }; // amber gaze
+const SHIMMER_BLUE: Rgb = Rgb {
+    red: 94,
+    green: 156,
+    blue: 255,
+};
+const SHIMMER_VIOLET: Rgb = Rgb {
+    red: 180,
+    green: 134,
+    blue: 255,
+};
+const ORB_CORE: Rgb = Rgb {
+    red: 225,
+    green: 236,
+    blue: 255,
+}; // near-white energy core
+const ORB_GLOW: Rgb = Rgb {
+    red: 70,
+    green: 140,
+    blue: 255,
+}; // electric-blue halo
 
 const PI_F: f32 = core::f32::consts::PI;
 const TWO_PI_F: f32 = core::f32::consts::TAU;
@@ -127,6 +147,37 @@ fn serpent_point(u: f32) -> (f32, f32) {
     }
 }
 
+/// Deterministic hash of `n` to a value in 0.0..1.0 (integer-only, no float
+/// precision surprises), used to scatter the serpent's shimmer particles.
+fn hash01(n: u32) -> f32 {
+    let mut x = n.wrapping_mul(0x9E37_79B1);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x85EB_CA77);
+    x ^= x >> 13;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Fast reciprocal square root (Quake-style, one Newton step). Uses only bit
+/// reinterpretation and f32 arithmetic — no libm.
+fn inv_sqrt(x: f32) -> f32 {
+    let i = 0x5f37_59df_u32.wrapping_sub(x.to_bits() >> 1);
+    let y = f32::from_bits(i);
+    y * (1.5 - 0.5 * x * y * y)
+}
+
+/// Unit vector perpendicular to the serpent centerline at `u`, from a finite
+/// difference of `serpent_point`. Used to spread shimmer particles across the
+/// body width.
+fn serpent_perp(u: f32) -> (f32, f32) {
+    let du = 0.004;
+    let (x0, y0) = serpent_point((u - du).max(0.0));
+    let (x1, y1) = serpent_point((u + du).min(1.0));
+    let tx = x1 - x0;
+    let ty = y1 - y0;
+    let inv = inv_sqrt(tx * tx + ty * ty + 1e-6);
+    (-ty * inv, tx * inv)
+}
+
 #[derive(Clone, Copy)]
 struct Rgb {
     red: u8,
@@ -172,6 +223,8 @@ pub fn render_cinematic_frame(framebuffer: &PythFramebufferInfo, p: f32) -> Resu
     let reveal = smoothstep_f(0.05, 0.55, p);
     let serpent_alpha = smoothstep_f(0.06, 0.30, p);
     surface.draw_serpent(reveal, serpent_alpha);
+    surface.draw_body_shimmer(reveal, serpent_alpha, p);
+    surface.draw_head_orb(p, serpent_alpha);
 
     let title = smoothstep_f(0.66, 0.96, p);
     if title > 0.01 {
@@ -364,6 +417,76 @@ impl Surface {
                 head_gain,
             );
         }
+    }
+
+    /// Scatter shimmering particles across the revealed serpent body, giving it
+    /// living texture. Particles are placed deterministically along the
+    /// centerline, offset perpendicular by up to the body width, and twinkle
+    /// over `phase`. `reveal`/`alpha` gate them with the serpent.
+    fn draw_body_shimmer(&self, reveal: f32, alpha: f32, phase: f32) {
+        const COUNT: u32 = 900;
+        if alpha <= 0.02 {
+            return;
+        }
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        for i in 0..COUNT {
+            let u = hash01(i + 40);
+            if u > reveal {
+                continue;
+            }
+            let (px, py) = serpent_point(u);
+            let body = 4.0 + sin_approx(PI_F * u) * 34.0 * (1.0 - smoothstep_f(0.83, 1.0, u));
+            let (nx, ny) = serpent_perp(u);
+            let lateral = (hash01(i + 2000) * 2.0 - 1.0) * body * 0.9;
+            let twinkle = sin_approx(i as f32 * 0.72 + phase * 26.0) * 0.5 + 0.5;
+            let twinkle = twinkle * twinkle * twinkle;
+            let gain = (alpha * (0.22 + twinkle * 0.7) * 255.0) as u8;
+            if gain == 0 {
+                continue;
+            }
+            let color = match i % 3 {
+                0 => SHIMMER_BLUE,
+                1 => SHIMMER_VIOLET,
+                _ => SNAKE_GLOW,
+            };
+            let x = ((px + nx * lateral) * sx) as i64;
+            let y = ((py + ny * lateral) * sy) as i64;
+            self.add_pixel(x, y, color, gain);
+            self.add_pixel(x + 1, y, color, gain);
+            self.add_pixel(x, y + 1, color, gain);
+            self.add_pixel(x + 1, y + 1, color, gain);
+        }
+    }
+
+    /// Draw the pulsing energy orb at the serpent's head, spiking bright at the
+    /// awakening beat (~p 0.55) and fading as the title takes over.
+    fn draw_head_orb(&self, p: f32, alpha: f32) {
+        let born = smoothstep_f(0.40, 0.58, p);
+        let fade = 1.0 - smoothstep_f(0.85, 1.0, p);
+        let z = (p - 0.55) / 0.05;
+        let spike = (1.0 - z * z).max(0.0); // brief awakening flash
+        let a = (born * fade * alpha).clamp(0.0, 1.0);
+        if a <= 0.01 {
+            return;
+        }
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        let s = sx.min(sy);
+        let (hx, hy) = serpent_point(1.0);
+        let beat = 1.0 + spike * 0.7;
+        let core_r = ((10.0 * s * beat) as i64).max(1);
+        let glow_r = (42.0 * s * beat) as i64;
+        let gain = ((0.45 + spike * 0.55) * a * 255.0) as u8;
+        self.fill_glow_dot(
+            (hx * sx) as i64,
+            (hy * sy) as i64,
+            core_r,
+            glow_r,
+            ORB_CORE,
+            ORB_GLOW,
+            gain,
+        );
     }
 
     /// Draw `text` horizontally centered at row `y`, composited additively at
