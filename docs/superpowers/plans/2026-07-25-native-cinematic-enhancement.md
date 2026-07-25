@@ -5,10 +5,24 @@
 > embedded or decoded.
 
 **Goal:** Replace the three flat green text frames with a native
-Black/Violet/Electric-Blue cinematic — gradient/glow background, a "P" sigil,
-and animated formation of the wake text — while keeping the wake phrase, the
-audio (hiss/sub-bass/tremolo), the audio-visual sync, the graceful no-audio
-fallback, and every serial marker unchanged.
+Black/Violet/Electric-Blue cinematic depicting a glowing serpent that moves and
+coils into position, while keeping the wake phrase, the audio
+(hiss/sub-bass/tremolo), the audio-visual sync, the graceful no-audio fallback,
+and every serial marker unchanged.
+
+## Cinematic Beats (owner brief, 2026-07-25)
+
+1. A snake-like figure moves/slithers around the screen, coiling into position.
+   **"PythOS"** appears during this movement.
+2. The serpent settles to face the user and hisses — **"Hsssss"** (the `[HISS]`
+   beat).
+3. Settled, it declares **"We Are Woken."**
+
+The serpent is a stylized, procedural, glowing figure (a tapered chain of
+light-segments along a serpentine path, with a facing head) — not a photoreal
+animal. The on-screen hiss text may render "Hsssss", but the canonical identity
+string `PythOS [HISS] We Are Woken` (`boot_assets::WAKE_PHRASE`, wired into
+Phase 4/8 and tests) is preserved unchanged.
 
 **Design:** `docs/decisions/0047-reopen-phase-6-native-cinematic.md`
 
