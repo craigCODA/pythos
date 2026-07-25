@@ -4,6 +4,7 @@
 mod boot_info;
 mod elf;
 mod exit_boot_services;
+mod fb_debug;
 mod firmware;
 mod font;
 mod graphics;
@@ -34,12 +35,14 @@ pub extern "efiapi" fn efi_main(
         }
         Err(()) => fail(),
     };
+    fb_debug::fill(&framebuffer, fb_debug::COLOR_GOP);
     let loaded_kernel = match elf::load_pythcore(system_table, image_handle) {
         Ok(loaded_kernel) if loaded_kernel.is_well_formed() => loaded_kernel,
         Ok(_) => fail(),
         Err(()) => fail(),
     };
     serial::write_line("PYTHOS:LOADER:KERNEL_LOADED");
+    fb_debug::fill(&framebuffer, fb_debug::COLOR_KERNEL);
 
     let init_bundle = match initrd::load_init_pak(system_table, image_handle) {
         Ok(init_bundle) if init_bundle.is_loaded() => init_bundle,
@@ -86,6 +89,7 @@ pub extern "efiapi" fn efi_main(
         Err(()) => fail(),
     };
     serial::write_line("PYTHOS:LOADER:MEMORY_MAP_READY");
+    fb_debug::fill(&framebuffer, fb_debug::COLOR_MMAP);
 
     match exit_boot_services::exit_once(system_table, image_handle, memory_map.map_key) {
         exit_boot_services::ExitBootServicesResult::Exited => {}
@@ -116,6 +120,10 @@ pub extern "efiapi" fn efi_main(
         exit_boot_services::ExitBootServicesResult::Failed => fail(),
     }
     serial::write_line("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
+    // Firmware paging is still active until `enter_pythcore` switches CR3, so the
+    // identity-mapped framebuffer is still writable. This final paint proves the
+    // loader survived ExitBootServices and is about to hand off to PythCore.
+    fb_debug::fill(&framebuffer, fb_debug::COLOR_EXIT);
 
     // SAFETY:
     // 1. Invariant: `ExitBootServices()` succeeded, `page_tables` identity-map
@@ -143,11 +151,13 @@ pub extern "efiapi" fn efi_main(
 
 fn fail() -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
+    fb_debug::fill_fail();
     qemu_exit::panic();
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
+    fb_debug::fill_fail();
     qemu_exit::panic();
 }
