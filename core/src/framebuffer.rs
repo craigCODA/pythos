@@ -104,6 +104,35 @@ fn cos_approx(x: f32) -> f32 {
     sin_approx(x + PI_F / 2.0)
 }
 
+/// Hermite smoothstep in 0..=1, matching the reference cinematic's easing.
+fn smoothstep_f(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The serpent centerline in the reference's 1280x720 space, parameterized by
+/// `u` in 0..=1 (tail -> head). Ported from the standalone animation's
+/// `serpentPoint`: an elliptical inward spiral for the body (u < 0.78) that
+/// lifts into a rising neck toward the head (u >= 0.78).
+fn serpent_point(u: f32) -> (f32, f32) {
+    if u < 0.78 {
+        let q = u / 0.78;
+        let angle = PI_F * (1.12 + q * 2.82);
+        let radius_x = 405.0 - q * 167.0;
+        let radius_y = 176.0 - q * 66.0;
+        (
+            573.0 + cos_approx(angle) * radius_x + q * 52.0,
+            447.0 + sin_approx(angle) * radius_y - q * 54.0,
+        )
+    } else {
+        let q = (u - 0.78) / 0.22;
+        (
+            745.0 + q * 162.0,
+            321.0 - sin_approx(q * PI_F) * 104.0 - q * 22.0,
+        )
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Rgb {
     red: u8,
@@ -232,12 +261,10 @@ impl Surface {
         }
     }
 
-    /// Blend `color` over the gradient background at `(x, y)` by `alpha`
-    /// (0 = background, 255 = opaque). Blending against the analytic gradient
-    /// rather than the live pixel is a deliberate approximation for the glow
-    /// passes; overlapping glows re-blend against the backdrop, which is
-    /// visually acceptable for the serpent aura.
-    fn blend_pixel(&self, x: i64, y: i64, color: Rgb, alpha: u8) {
+    /// Additively add `color` scaled by `intensity` (0..=255) over the gradient
+    /// background at `(x, y)`, saturating at white. Additive compositing gives
+    /// the reference cinematic's luminous "lighter" look on the dark backdrop.
+    fn add_pixel(&self, x: i64, y: i64, color: Rgb, intensity: u8) {
         if x < 0 || y < 0 {
             return;
         }
@@ -245,14 +272,21 @@ impl Surface {
         if x >= self.width || y >= self.height {
             return;
         }
-        let out = lerp(self.gradient_color_at(y), color, alpha);
+        let bg = self.gradient_color_at(y);
+        let f = u32::from(intensity);
+        let add = |b: u8, c: u8| (u32::from(b) + u32::from(c) * f / 255).min(255) as u8;
+        let out = Rgb {
+            red: add(bg.red, color.red),
+            green: add(bg.green, color.green),
+            blue: add(bg.blue, color.blue),
+        };
         let value = (self.encode)(&self.info, out);
         self.put_pixel(x, y, value);
     }
 
-    /// Draw a soft dot: a solid `core` disc of radius `core_r` surrounded by a
-    /// `glow` aura fading to nothing at `glow_r`. Distances stay squared, so no
-    /// `sqrt` (and no libm) is needed.
+    /// Draw a soft luminous dot: a solid `core` disc of radius `core_r`
+    /// surrounded by a `glow` aura fading to nothing at `glow_r`, composited
+    /// additively. Distances stay squared, so no `sqrt` (and no libm) is needed.
     fn fill_glow_dot(&self, cx: i64, cy: i64, core_r: i64, glow_r: i64, core: Rgb, glow: Rgb) {
         let core_r2 = core_r * core_r;
         let glow_r2 = glow_r * glow_r;
@@ -261,63 +295,58 @@ impl Surface {
             for dx in -glow_r..=glow_r {
                 let d2 = dx * dx + dy * dy;
                 if d2 <= core_r2 {
-                    self.blend_pixel(cx + dx, cy + dy, core, 255);
+                    self.add_pixel(cx + dx, cy + dy, core, 255);
                 } else if d2 <= glow_r2 {
                     let alpha = ((glow_r2 - d2) * 255 / denom).clamp(0, 255) as u8;
-                    self.blend_pixel(cx + dx, cy + dy, glow, alpha);
+                    self.add_pixel(cx + dx, cy + dy, glow, alpha);
                 }
             }
         }
     }
 
-    /// Draw the serpent in its settled, user-facing coil. A tapered chain of
-    /// glow dots traces an inward spiral from thin tail to thick head, with a
-    /// larger head and two amber eyes facing the viewer.
+    /// Draw the serpent as a luminous tube along the reference `serpent_point`
+    /// centerline: a tapered chain of additive glow dots from thin tail to a
+    /// thick body, rising to a bright head with an amber eye facing the viewer.
+    /// Coordinates are traced in the reference's 1280x720 space and scaled to
+    /// this surface.
     fn draw_settled_snake(&self) {
-        const SEG: i64 = 130;
-        const TURNS: f32 = 2.35;
-        const START_ANGLE: f32 = 0.6;
-        let cx = (self.width / 2) as f32;
-        let cy = self.height as f32 * 0.44;
-        let base = self.width.min(self.height) as f32;
-        let r_outer = base * 0.30;
+        const N: i64 = 520;
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        let s = sx.min(sy);
 
-        for i in 0..SEG {
-            let t = i as f32 / (SEG - 1) as f32; // 0 = tail, 1 = head
-            let angle = START_ANGLE + t * TURNS * TWO_PI_F;
-            let radius = r_outer * (1.0 - 0.72 * t);
-            let px = cx + radius * cos_approx(angle);
-            let py = cy + radius * sin_approx(angle) * 0.58; // squash for perspective
-            let body = 3.0 + 9.0 * t; // thin tail -> thick body
+        for i in 0..N {
+            let u = i as f32 / (N - 1) as f32;
+            let (px, py) = serpent_point(u);
+            // Reference body taper: thick mid-body, thin at tail and neck.
+            let body = 4.0 + sin_approx(PI_F * u) * 34.0 * (1.0 - smoothstep_f(0.83, 1.0, u));
+            let core_r = ((body * 0.42 * s) as i64).max(1);
+            let glow_r = (body * 1.05 * s) as i64 + 4;
             self.fill_glow_dot(
-                px as i64,
-                py as i64,
-                body as i64,
-                (body * 2.2) as i64 + 4,
+                (px * sx) as i64,
+                (py * sy) as i64,
+                core_r,
+                glow_r,
                 SNAKE_CORE,
                 SNAKE_GLOW,
             );
         }
 
-        // Head at the inner end of the spiral, facing the viewer.
-        let angle = START_ANGLE + TURNS * TWO_PI_F;
-        let radius = r_outer * (1.0 - 0.72);
-        let hx = cx + radius * cos_approx(angle);
-        let hy = cy + radius * sin_approx(angle) * 0.58;
-        self.fill_glow_dot(hx as i64, hy as i64, 16, 34, SNAKE_CORE, SNAKE_GLOW);
+        // Head at the end of the neck (u = 1), with an amber eye facing forward.
+        let (hx, hy) = serpent_point(1.0);
         self.fill_glow_dot(
-            (hx - 6.0) as i64,
-            (hy + 6.0) as i64,
-            3,
-            7,
-            SNAKE_EYE,
-            SNAKE_EYE,
+            (hx * sx) as i64,
+            (hy * sy) as i64,
+            (14.0 * s) as i64,
+            (30.0 * s) as i64,
+            SNAKE_CORE,
+            SNAKE_GLOW,
         );
         self.fill_glow_dot(
-            (hx + 6.0) as i64,
-            (hy + 6.0) as i64,
-            3,
-            7,
+            ((hx + 25.0) * sx) as i64,
+            ((hy - 9.0) * sy) as i64,
+            (3.0 * s) as i64,
+            (8.0 * s) as i64,
             SNAKE_EYE,
             SNAKE_EYE,
         );
