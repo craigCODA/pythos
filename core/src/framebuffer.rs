@@ -30,17 +30,57 @@ const BODY: Rgb = Rgb {
     green: 230,
     blue: 240,
 };
-const HISS: Rgb = Rgb {
-    red: 130,
-    green: 245,
-    blue: 185,
-};
+// Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
+// is a dark vertical gradient through these stops so the wake text and sigil
+// read against a cinematic backdrop rather than a flat fill.
+const CINE_VOID: Rgb = Rgb {
+    red: 4,
+    green: 3,
+    blue: 12,
+}; // near-black top
+const CINE_VIOLET: Rgb = Rgb {
+    red: 30,
+    green: 10,
+    blue: 56,
+}; // deep violet mid
+const CINE_ABYSS_BLUE: Rgb = Rgb {
+    red: 10,
+    green: 18,
+    blue: 60,
+}; // dark electric-blue bottom
+const CINE_TITLE: Rgb = Rgb {
+    red: 120,
+    green: 170,
+    blue: 255,
+}; // electric blue
+const CINE_HISS: Rgb = Rgb {
+    red: 176,
+    green: 96,
+    blue: 240,
+}; // violet
+const CINE_BODY: Rgb = Rgb {
+    red: 198,
+    green: 204,
+    blue: 236,
+}; // soft lavender
 
 #[derive(Clone, Copy)]
 struct Rgb {
     red: u8,
     green: u8,
     blue: u8,
+}
+
+/// Linearly blend `a` -> `b` by `f` in 0..=255 (0 = `a`, 255 = `b`).
+fn lerp(a: Rgb, b: Rgb, f: u8) -> Rgb {
+    let f = u32::from(f);
+    let inv = 255 - f;
+    let mix = |ca: u8, cb: u8| ((u32::from(ca) * inv + u32::from(cb) * f) / 255) as u8;
+    Rgb {
+        red: mix(a.red, b.red),
+        green: mix(a.green, b.green),
+        blue: mix(a.blue, b.blue),
+    }
 }
 
 /// Render the post-firmware boot screen and return whether it was drawn.
@@ -64,15 +104,19 @@ pub fn render_cinematic_boot_frame(
     visible_frame_count: usize,
 ) -> Result<(), ()> {
     let surface = Surface::new(framebuffer)?;
-    surface.clear(BACKGROUND);
+    surface.fill_vertical_gradient(CINE_VOID, CINE_VIOLET, CINE_ABYSS_BLUE);
     let count = visible_frame_count.min(assets.visual_frames.len());
     for index in 0..count {
         let frame = assets.visual_frames[index];
         let y = 56 + (index as u64) * 96;
-        let color = if frame.text == "[HISS]" { HISS } else { TITLE };
+        let color = if frame.text == "[HISS]" {
+            CINE_HISS
+        } else {
+            CINE_TITLE
+        };
         surface.draw_text(48, y, u64::from(frame.scale), frame.text, color)?;
     }
-    surface.draw_text(48, 420, 1, assets.wake_phrase, BODY)?;
+    surface.draw_text(48, 420, 1, assets.wake_phrase, CINE_BODY)?;
     Ok(())
 }
 
@@ -111,6 +155,29 @@ impl Surface {
     fn clear(&self, color: Rgb) {
         let value = (self.encode)(&self.info, color);
         for y in 0..self.height {
+            for x in 0..self.width {
+                self.put_pixel(x, y, value);
+            }
+        }
+    }
+
+    /// Fill the surface with a dark three-stop vertical gradient: `top` at the
+    /// first scanline, `mid` at the middle, `bottom` at the last. The color is
+    /// constant per row, so it is encoded once per scanline.
+    fn fill_vertical_gradient(&self, top: Rgb, mid: Rgb, bottom: Rgb) {
+        if self.height == 0 {
+            return;
+        }
+        let last = self.height.saturating_sub(1).max(1);
+        for y in 0..self.height {
+            // Position down the surface, scaled to 0..=255.
+            let t = (y * 255 / last).min(255) as u8;
+            let color = if t < 128 {
+                lerp(top, mid, t.saturating_mul(2))
+            } else {
+                lerp(mid, bottom, (t - 128).saturating_mul(2))
+            };
+            let value = (self.encode)(&self.info, color);
             for x in 0..self.width {
                 self.put_pixel(x, y, value);
             }
