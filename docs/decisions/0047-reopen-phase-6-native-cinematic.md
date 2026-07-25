@@ -1,6 +1,6 @@
 # ADR 0047: Reopen Phase 6 For A Richer Native Boot Cinematic
 
-Status: Proposed
+Status: Accepted
 
 ## Context
 
