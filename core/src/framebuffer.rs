@@ -5,7 +5,6 @@
 //! the three direct pixel formats from the boot ABI, honors the scanline
 //! pitch, and bounds-checks every pixel against the validated metadata.
 
-use crate::boot_assets::BootAssets;
 use crate::font;
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
@@ -53,11 +52,6 @@ const CINE_TITLE: Rgb = Rgb {
     green: 170,
     blue: 255,
 }; // electric blue
-const CINE_HISS: Rgb = Rgb {
-    red: 176,
-    green: 96,
-    blue: 240,
-}; // violet
 const CINE_BODY: Rgb = Rgb {
     red: 198,
     green: 204,
@@ -167,31 +161,24 @@ pub fn render_boot_screen(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn render_cinematic_boot_frame(
-    framebuffer: &PythFramebufferInfo,
-    assets: &BootAssets,
-    visible_frame_count: usize,
-) -> Result<(), ()> {
+/// Render one animation frame of the cinematic at normalized progress `p`
+/// (0.0 at the start, 1.0 at the end). The serpent forms in over the first
+/// half, holds, then the "PythOS / We Are Woken" title resolves near the end —
+/// a compact port of the reference animation's beat structure.
+pub fn render_cinematic_frame(framebuffer: &PythFramebufferInfo, p: f32) -> Result<(), ()> {
     let surface = Surface::new(framebuffer)?;
     surface.fill_vertical_gradient();
-    surface.draw_settled_snake();
-    let count = visible_frame_count.min(assets.visual_frames.len());
-    for index in 0..count {
-        let frame = assets.visual_frames[index];
-        let y = 40 + (index as u64) * 72;
-        let color = if frame.text == "[HISS]" {
-            CINE_HISS
-        } else {
-            CINE_TITLE
-        };
-        surface.draw_text_centered(y, u64::from(frame.scale), frame.text, color)?;
+
+    let reveal = smoothstep_f(0.05, 0.55, p);
+    let serpent_alpha = smoothstep_f(0.06, 0.30, p);
+    surface.draw_serpent(reveal, serpent_alpha);
+
+    let title = smoothstep_f(0.66, 0.96, p);
+    if title > 0.01 {
+        let gain = (title * 255.0) as u8;
+        surface.draw_text_glow_centered(56, 4, "PythOS", CINE_TITLE, gain);
+        surface.draw_text_glow_centered(150, 2, "We Are Woken", CINE_BODY, gain);
     }
-    surface.draw_text_centered(
-        surface.height.saturating_sub(48),
-        1,
-        assets.wake_phrase,
-        CINE_BODY,
-    )?;
     Ok(())
 }
 
@@ -287,17 +274,29 @@ impl Surface {
     /// Draw a soft luminous dot: a solid `core` disc of radius `core_r`
     /// surrounded by a `glow` aura fading to nothing at `glow_r`, composited
     /// additively. Distances stay squared, so no `sqrt` (and no libm) is needed.
-    fn fill_glow_dot(&self, cx: i64, cy: i64, core_r: i64, glow_r: i64, core: Rgb, glow: Rgb) {
+    #[allow(clippy::too_many_arguments)]
+    fn fill_glow_dot(
+        &self,
+        cx: i64,
+        cy: i64,
+        core_r: i64,
+        glow_r: i64,
+        core: Rgb,
+        glow: Rgb,
+        gain: u8,
+    ) {
         let core_r2 = core_r * core_r;
         let glow_r2 = glow_r * glow_r;
         let denom = (glow_r2 - core_r2).max(1);
+        let g = u32::from(gain);
         for dy in -glow_r..=glow_r {
             for dx in -glow_r..=glow_r {
                 let d2 = dx * dx + dy * dy;
                 if d2 <= core_r2 {
-                    self.add_pixel(cx + dx, cy + dy, core, 255);
+                    self.add_pixel(cx + dx, cy + dy, core, gain);
                 } else if d2 <= glow_r2 {
-                    let alpha = ((glow_r2 - d2) * 255 / denom).clamp(0, 255) as u8;
+                    let alpha = (glow_r2 - d2) * 255 / denom;
+                    let alpha = (alpha.clamp(0, 255) as u32 * g / 255) as u8;
                     self.add_pixel(cx + dx, cy + dy, glow, alpha);
                 }
             }
@@ -305,17 +304,24 @@ impl Surface {
     }
 
     /// Draw the serpent as a luminous tube along the reference `serpent_point`
-    /// centerline: a tapered chain of additive glow dots from thin tail to a
-    /// thick body, rising to a bright head with an amber eye facing the viewer.
-    /// Coordinates are traced in the reference's 1280x720 space and scaled to
-    /// this surface.
-    fn draw_settled_snake(&self) {
+    /// centerline. `reveal` (0..=1) draws it in from tail to head; `alpha`
+    /// (0..=1) is its overall brightness. A tapered chain of additive glow dots
+    /// runs from thin tail to thick body, rising to a bright head with an amber
+    /// eye once nearly revealed. Coordinates are traced in the reference's
+    /// 1280x720 space and scaled to this surface.
+    fn draw_serpent(&self, reveal: f32, alpha: f32) {
         const N: i64 = 520;
+        let gain = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        if gain == 0 {
+            return;
+        }
+        let reveal = reveal.clamp(0.0, 1.0);
         let sx = self.width as f32 / 1280.0;
         let sy = self.height as f32 / 720.0;
         let s = sx.min(sy);
 
-        for i in 0..N {
+        let drawn = (N as f32 * reveal) as i64;
+        for i in 0..drawn {
             let u = i as f32 / (N - 1) as f32;
             let (px, py) = serpent_point(u);
             // Reference body taper: thick mid-body, thin at tail and neck.
@@ -329,34 +335,66 @@ impl Surface {
                 glow_r,
                 SNAKE_CORE,
                 SNAKE_GLOW,
+                gain,
             );
         }
 
-        // Head at the end of the neck (u = 1), with an amber eye facing forward.
-        let (hx, hy) = serpent_point(1.0);
-        self.fill_glow_dot(
-            (hx * sx) as i64,
-            (hy * sy) as i64,
-            (14.0 * s) as i64,
-            (30.0 * s) as i64,
-            SNAKE_CORE,
-            SNAKE_GLOW,
-        );
-        self.fill_glow_dot(
-            ((hx + 25.0) * sx) as i64,
-            ((hy - 9.0) * sy) as i64,
-            (3.0 * s) as i64,
-            (8.0 * s) as i64,
-            SNAKE_EYE,
-            SNAKE_EYE,
-        );
+        // Head at the end of the neck (u = 1), fading in only as the serpent
+        // finishes revealing, with an amber eye facing forward.
+        let head = smoothstep_f(0.9, 1.0, reveal);
+        if head > 0.01 {
+            let head_gain = (alpha.clamp(0.0, 1.0) * head * 255.0) as u8;
+            let (hx, hy) = serpent_point(1.0);
+            self.fill_glow_dot(
+                (hx * sx) as i64,
+                (hy * sy) as i64,
+                (14.0 * s) as i64,
+                (30.0 * s) as i64,
+                SNAKE_CORE,
+                SNAKE_GLOW,
+                head_gain,
+            );
+            self.fill_glow_dot(
+                ((hx + 25.0) * sx) as i64,
+                ((hy - 9.0) * sy) as i64,
+                (3.0 * s) as i64,
+                (8.0 * s) as i64,
+                SNAKE_EYE,
+                SNAKE_EYE,
+                head_gain,
+            );
+        }
     }
 
-    /// Draw `text` horizontally centered on the surface at row `y`.
-    fn draw_text_centered(&self, y: u64, scale: u64, text: &str, color: Rgb) -> Result<(), ()> {
+    /// Draw `text` horizontally centered at row `y`, composited additively at
+    /// brightness `gain` (0..=255) so titles can glow in over the cinematic.
+    fn draw_text_glow_centered(&self, y: u64, scale: u64, text: &str, color: Rgb, gain: u8) {
         let text_w = (text.len() as u64) * GLYPH_WIDTH * scale;
-        let x = self.width.saturating_sub(text_w) / 2;
-        self.draw_text(x, y, scale, text, color)
+        let mut pen_x = self.width.saturating_sub(text_w) / 2;
+        for byte in text.bytes() {
+            if let Some(glyph) = font::glyph(byte) {
+                self.draw_glyph_glow(pen_x, y, scale, &glyph, color, gain);
+            }
+            pen_x = pen_x.saturating_add(GLYPH_WIDTH * scale);
+        }
+    }
+
+    /// Additive counterpart of `draw_glyph`: paint set glyph bits with `add_pixel`.
+    fn draw_glyph_glow(&self, x: u64, y: u64, scale: u64, glyph: &[u8; 8], color: Rgb, gain: u8) {
+        for (row, bits) in glyph.iter().enumerate() {
+            for column in 0..GLYPH_WIDTH {
+                if bits & (0x80 >> column) == 0 {
+                    continue;
+                }
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let px = (x + column * scale + dx) as i64;
+                        let py = (y + row as u64 * scale + dy) as i64;
+                        self.add_pixel(px, py, color, gain);
+                    }
+                }
+            }
+        }
     }
 
     fn draw_text(&self, x: u64, y: u64, scale: u64, text: &str, color: Rgb) -> Result<(), ()> {
