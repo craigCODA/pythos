@@ -228,9 +228,8 @@ const SD_BDPU: u64 = 0x1C; // BDL pointer upper (u32)
 const SDCTL_RST: u32 = 1 << 0;
 const SDCTL_RUN: u32 = 1 << 1;
 
-const HDA_PCM_FRAMES: usize = 4800; // 100 ms of 48 kHz stereo tone
+const HDA_PCM_FRAMES: usize = 4800; // 100 ms of 48 kHz stereo boot audio
 const HDA_PCM_SAMPLES: usize = HDA_PCM_FRAMES * 2;
-const HDA_TONE_HALF_PERIOD: usize = 54; // ~444 Hz square wave
 const HDA_BDL_ENTRIES: usize = 4;
 
 const GCTL_CRST: u32 = 1 << 0; // Controller Reset (0 = in reset)
@@ -584,22 +583,21 @@ fn hda_verb16(cad: u32, nid: u32, verb: u32, payload: u16) -> u32 {
     (cad << 28) | ((nid & 0xFF) << 20) | ((verb & 0xF) << 16) | u32::from(payload)
 }
 
-/// Fill the HDA PCM buffer with a fixed square-wave tone (interleaved stereo).
+/// Fill the HDA PCM buffer with the existing boot audio mix (hiss / sub-bass /
+/// tremolo), interleaved stereo — the same content AC97 plays. On real hardware
+/// with no AC97 device, HDA is the sole backend, so this routes the boot audio
+/// through it; the buffer loops for the length of the cinematic.
 #[cfg(not(test))]
-fn hda_fill_tone() {
+fn hda_fill_boot_audio() {
     let base = &raw mut HDA_PCM as *mut i16;
     for frame in 0..HDA_PCM_FRAMES {
-        let value: i16 = if (frame / HDA_TONE_HALF_PERIOD).is_multiple_of(2) {
-            8000
-        } else {
-            -8000
-        };
+        let sample = mixed_boot_sample(frame);
         // SAFETY: `HDA_PCM` is a kernel-mapped static of `HDA_PCM_SAMPLES` i16;
         // `frame < HDA_PCM_FRAMES` so `frame*2 + 1 < HDA_PCM_SAMPLES`; single-core,
         // no other writer; writes complete before the stream DMA is started.
         unsafe {
-            base.add(frame * 2).write_volatile(value);
-            base.add(frame * 2 + 1).write_volatile(value);
+            base.add(frame * 2).write_volatile(sample);
+            base.add(frame * 2 + 1).write_volatile(sample);
         }
     }
 }
@@ -622,12 +620,13 @@ fn hda_bdl_set(index: usize, addr: u64, length: u32, interrupt_on_completion: bo
     }
 }
 
-/// Slice 4 of ADR 0048: configure the DAC + pin, program the output stream
-/// descriptor with a BDL over the tone buffer, start it, and confirm the DMA
-/// position advances (proof the controller is fetching samples).
+/// Slices 4/5 of ADR 0048: fill the buffer with the existing boot audio,
+/// configure the DAC + pin, program the output stream descriptor with a BDL over
+/// it, start it, and confirm the DMA position advances (proof the controller is
+/// fetching samples).
 #[cfg(not(test))]
 pub fn hda_start_output(path: &HdaOutputPath) -> Result<(), ()> {
-    hda_fill_tone();
+    hda_fill_boot_audio();
     let pcm_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_PCM as u64)
         .map_err(|_| ())?;
     let bdl_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_BDL as u64)
