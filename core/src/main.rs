@@ -505,6 +505,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         // mapped into the kernel address space, prove its registers are reachable.
         if let Some(hda) = hda_controller {
             audio::hda_report_mapped(&hda);
+            // Slice 2b: bring the controller up (reset + CORB/RIRB). Audio is
+            // non-critical, so a failure is reported but does not halt boot.
+            if audio::hda_init_controller().is_err() {
+                serial::write_line("PYTHOS:CORE:AUDIO:HDA:INIT_FAILED");
+            }
         }
         let audio_device = match audio::select_device() {
             Ok(device) => device,

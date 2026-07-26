@@ -176,6 +176,42 @@ pub const HDA_MMIO_VIRT: u64 = 0xFFFF_C000_1000_0000;
 pub const HDA_MMIO_LEN: u64 = 0x4000;
 
 const HDA_REG_GCAP: u64 = 0x00; // Global Capabilities (u16)
+const HDA_REG_GCTL: u64 = 0x08; // Global Control (u32)
+const HDA_REG_CORBLBASE: u64 = 0x40;
+const HDA_REG_CORBUBASE: u64 = 0x44;
+const HDA_REG_CORBWP: u64 = 0x48; // u16
+const HDA_REG_CORBRP: u64 = 0x4A; // u16
+const HDA_REG_CORBCTL: u64 = 0x4C; // u8
+const HDA_REG_CORBSIZE: u64 = 0x4E; // u8
+const HDA_REG_RIRBLBASE: u64 = 0x50;
+const HDA_REG_RIRBUBASE: u64 = 0x54;
+const HDA_REG_RIRBWP: u64 = 0x58; // u16
+const HDA_REG_RINTCNT: u64 = 0x5A; // u16
+const HDA_REG_RIRBCTL: u64 = 0x5C; // u8
+const HDA_REG_RIRBSIZE: u64 = 0x5E; // u8
+
+const GCTL_CRST: u32 = 1 << 0; // Controller Reset (0 = in reset)
+const CORBCTL_RUN: u8 = 1 << 1; // CORB DMA enable
+const RIRBCTL_DMAEN: u8 = 1 << 1; // RIRB DMA enable
+const CORB_RP_RST: u16 = 1 << 15; // CORB read-pointer reset
+const RIRB_WP_RST: u16 = 1 << 15; // RIRB write-pointer reset
+const HDA_RING_ENTRIES: usize = 256;
+const HDA_SIZE_256: u8 = 0x2; // CORBSIZE/RIRBSIZE code for 256 entries
+
+#[repr(C, align(4096))]
+struct HdaCorb {
+    entries: [u32; HDA_RING_ENTRIES],
+}
+#[repr(C, align(4096))]
+struct HdaRirb {
+    entries: [u64; HDA_RING_ENTRIES],
+}
+static mut HDA_CORB: HdaCorb = HdaCorb {
+    entries: [0; HDA_RING_ENTRIES],
+};
+static mut HDA_RIRB: HdaRirb = HdaRirb {
+    entries: [0; HDA_RING_ENTRIES],
+};
 
 /// A discovered Intel HDA controller (ADR 0048). Slice 1 records its location
 /// and memory-mapped register base; later slices map and program it.
@@ -255,6 +291,137 @@ pub fn hda_report_mapped(controller: &HdaController) {
     serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_MAPPED");
     serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:GCAP=", u64::from(gcap));
     let _ = controller;
+}
+
+// --- HDA MMIO register accessors (through the mapped HDA_MMIO_VIRT window) ---
+
+#[cfg(not(test))]
+fn hda_read16(off: u64) -> u16 {
+    debug_assert!(off + 2 <= HDA_MMIO_LEN);
+    // SAFETY:
+    // 1. Invariant: `off` is a register offset with `off + 2 <= HDA_MMIO_LEN`,
+    //    and `HDA_MMIO_VIRT` maps the controller registers for that length.
+    // 2. Established by: `KernelAddressSpace::build` mapped the BAR to
+    //    `HDA_MMIO_VIRT`; callers use offsets from the HDA register map.
+    // 3. Lifetime: the mapping persists for kernel life.
+    // 4. Pointer ownership: PythCore owns the controller MMIO region.
+    // 5. Alignment: HDA `u16` registers are 2-byte aligned by the register map.
+    // 6. Mapped length: `off + 2 <= HDA_MMIO_LEN`, asserted above.
+    // 7. Concurrency: single-core; no other HDA register user in this slice.
+    // 8. Violation: an out-of-window offset would touch unmapped memory; the
+    //    HDA register map and assert keep offsets in range.
+    unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + off) as *const u16) }
+}
+
+#[cfg(not(test))]
+fn hda_read32(off: u64) -> u32 {
+    debug_assert!(off + 4 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for a 4-byte
+    // aligned `u32` register read with `off + 4 <= HDA_MMIO_LEN`.
+    unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + off) as *const u32) }
+}
+
+#[cfg(not(test))]
+fn hda_write8(off: u64, value: u8) {
+    debug_assert!(off < HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for a `u8`
+    // write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u8, value) }
+}
+
+#[cfg(not(test))]
+fn hda_write16(off: u64, value: u16) {
+    debug_assert!(off + 2 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for an aligned
+    // `u16` write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u16, value) }
+}
+
+#[cfg(not(test))]
+fn hda_write32(off: u64, value: u32) {
+    debug_assert!(off + 4 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for an aligned
+    // `u32` write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u32, value) }
+}
+
+/// Spin until `cond` holds or a bounded retry budget is exhausted; returns
+/// whether the condition was observed.
+#[cfg(not(test))]
+fn spin_until(mut cond: impl FnMut() -> bool) -> bool {
+    for _ in 0..1_000_000 {
+        if cond() {
+            return true;
+        }
+        core::hint::spin_loop();
+    }
+    false
+}
+
+/// Take the HDA controller out of reset (CRST): drive it into reset, confirm,
+/// release reset, confirm, then let codecs report on the link.
+#[cfg(not(test))]
+fn hda_reset_controller() -> Result<(), ()> {
+    hda_write32(HDA_REG_GCTL, hda_read32(HDA_REG_GCTL) & !GCTL_CRST);
+    if !spin_until(|| hda_read32(HDA_REG_GCTL) & GCTL_CRST == 0) {
+        return Err(());
+    }
+    hda_write32(HDA_REG_GCTL, hda_read32(HDA_REG_GCTL) | GCTL_CRST);
+    if !spin_until(|| hda_read32(HDA_REG_GCTL) & GCTL_CRST != 0) {
+        return Err(());
+    }
+    // Codecs need time to enumerate on the link after reset is released.
+    for _ in 0..500_000 {
+        core::hint::spin_loop();
+    }
+    Ok(())
+}
+
+/// Program and start the CORB (command) and RIRB (response) DMA rings, using
+/// the static ring buffers' physical addresses.
+#[cfg(not(test))]
+fn hda_setup_corb_rirb() -> Result<(), ()> {
+    let corb_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_CORB as u64)
+        .map_err(|_| ())?;
+    let rirb_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_RIRB as u64)
+        .map_err(|_| ())?;
+
+    // Stop both DMA engines before reprogramming.
+    hda_write8(HDA_REG_CORBCTL, 0);
+    hda_write8(HDA_REG_RIRBCTL, 0);
+
+    // CORB: base, size, and read-pointer reset handshake.
+    hda_write32(HDA_REG_CORBLBASE, corb_phys as u32);
+    hda_write32(HDA_REG_CORBUBASE, (corb_phys >> 32) as u32);
+    hda_write8(HDA_REG_CORBSIZE, HDA_SIZE_256);
+    hda_write16(HDA_REG_CORBRP, CORB_RP_RST);
+    spin_until(|| hda_read16(HDA_REG_CORBRP) & CORB_RP_RST != 0);
+    hda_write16(HDA_REG_CORBRP, 0);
+    spin_until(|| hda_read16(HDA_REG_CORBRP) & CORB_RP_RST == 0);
+    hda_write16(HDA_REG_CORBWP, 0);
+
+    // RIRB: base, size, write-pointer reset, and one response per interrupt.
+    hda_write32(HDA_REG_RIRBLBASE, rirb_phys as u32);
+    hda_write32(HDA_REG_RIRBUBASE, (rirb_phys >> 32) as u32);
+    hda_write8(HDA_REG_RIRBSIZE, HDA_SIZE_256);
+    hda_write16(HDA_REG_RIRBWP, RIRB_WP_RST);
+    hda_write16(HDA_REG_RINTCNT, 1);
+
+    // Start both DMA engines.
+    hda_write8(HDA_REG_CORBCTL, CORBCTL_RUN);
+    hda_write8(HDA_REG_RIRBCTL, RIRBCTL_DMAEN);
+    Ok(())
+}
+
+/// Slice 2b of ADR 0048: bring the mapped HDA controller out of reset and start
+/// its CORB/RIRB command rings, ready for codec enumeration.
+#[cfg(not(test))]
+pub fn hda_init_controller() -> Result<(), ()> {
+    hda_reset_controller()?;
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_RESET");
+    hda_setup_corb_rirb()?;
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_READY");
+    Ok(())
 }
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
