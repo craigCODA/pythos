@@ -175,6 +175,7 @@ def main() -> int:
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
     parser.add_argument("--no-audio-device", action="store_true")
     parser.add_argument("--audio-wav", type=Path)
+    parser.add_argument("--hda", action="store_true", help="add an Intel HDA controller")
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
     parser.add_argument("--kill-after-marker")
     args = parser.parse_args()
@@ -228,6 +229,13 @@ def main() -> int:
             "-device",
             "AC97,audiodev=pythos_audio",
         ]
+        if args.hda:
+            command += [
+                "-device",
+                "intel-hda",
+                "-device",
+                "hda-output,audiodev=pythos_audio",
+            ]
     if args.iso:
         command += [
             "-drive",

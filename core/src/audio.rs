@@ -20,7 +20,8 @@ const PCI_BAR1_OFFSET: u8 = 0x14;
 const PCI_COMMAND_IO_SPACE: u16 = 1 << 0;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
 const PCI_CLASS_MULTIMEDIA: u8 = 0x04;
-const PCI_SUBCLASS_AUDIO: u8 = 0x01;
+const PCI_SUBCLASS_AUDIO: u8 = 0x01; // AC97
+const PCI_SUBCLASS_HDA: u8 = 0x03; // Intel HDA / Azalia
 const IO_BAR_FLAG: u32 = 1;
 const IO_BAR_MASK: u32 = !0x3;
 
@@ -166,6 +167,62 @@ static mut PCM_BUFFER: PcmBuffer = PcmBuffer {
 static mut BDL: BufferDescriptorList = BufferDescriptorList {
     entries: [EMPTY_DESCRIPTOR; AC97_BDL_ENTRY_COUNT],
 };
+
+/// A discovered Intel HDA controller (ADR 0048). Slice 1 records its location
+/// and memory-mapped register base; later slices map and program it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HdaController {
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+    pub mmio_base: u64,
+}
+
+/// Compute an HDA controller's MMIO register base from its BAR0 (a memory BAR;
+/// 64-bit when the type bits select it, else 32-bit). Returns `None` for an I/O
+/// BAR or a zero base.
+fn hda_mmio_base(function: &PciFunction) -> Option<u64> {
+    let bar0 = function.bar0;
+    if bar0 & IO_BAR_FLAG != 0 {
+        return None; // HDA registers are memory-mapped, not port I/O
+    }
+    let base_low = u64::from(bar0 & 0xFFFF_FFF0);
+    let base = if (bar0 >> 1) & 0x3 == 0x2 {
+        base_low | (u64::from(function.bar1) << 32)
+    } else {
+        base_low
+    };
+    if base == 0 { None } else { Some(base) }
+}
+
+/// Scan the primary PCI bus for an Intel HDA controller (class 0x04, subclass
+/// 0x03) and report it. Slice 1 of ADR 0048: discovery and reporting only; no
+/// register access, and the AC97 audio pipeline is unchanged.
+pub fn probe_hda() -> Option<HdaController> {
+    for device in 0..PCI_DEVICE_COUNT {
+        for function in 0..PCI_FUNCTION_COUNT {
+            let candidate = read_function(PCI_BUS, device, function);
+            if vendor(candidate.vendor_device) == PCI_VENDOR_INVALID {
+                continue;
+            }
+            if class_code(candidate.class_revision) == PCI_CLASS_MULTIMEDIA
+                && subclass(candidate.class_revision) == PCI_SUBCLASS_HDA
+                && let Some(mmio_base) = hda_mmio_base(&candidate)
+            {
+                serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_FOUND");
+                serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:MMIO=", mmio_base);
+                return Some(HdaController {
+                    bus: PCI_BUS,
+                    device,
+                    function,
+                    mmio_base,
+                });
+            }
+        }
+    }
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_ABSENT");
+    None
+}
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
     match scan_primary_bus()? {

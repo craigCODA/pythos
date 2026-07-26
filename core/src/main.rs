@@ -492,6 +492,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PHASE_5_COMPLETE");
+        // ADR 0048 slice 1: report an Intel HDA controller if present. Discovery
+        // only for now; the AC97 audio pipeline below is unchanged.
+        let _hda = audio::probe_hda();
         let audio_device = match audio::select_device() {
             Ok(device) => device,
             Err(_) => {
