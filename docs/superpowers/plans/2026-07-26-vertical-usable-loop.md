@@ -35,15 +35,41 @@ reboot, and see the same object and its revision history restored.
 - Exit: `verify` reproduces `MILESTONE_1_COMPLETE`; `normal` boots and stays
   running (observable: it does not exit; a heartbeat marker/frame continues).
 
-### Slice 2: Real Python interpreter in ring 3 (the long pole)
+### Slice 2: Python interpreter in ring 3 (the long pole) — reordered per ADR 0050
 
-- Decision spike + ADR: adopt a MicroPython-class runtime (vs. growing the
-  custom interpreter). Port it `no_std`, into a ring-3 process, with a narrow
-  capability-gated `system.*`/syscall surface (no ambient host access).
-- Prove it runs an *arbitrary* small Python program (not the hardcoded
-  `HelloService`), calling one capability-gated host function.
-- Exit: an arbitrary Python snippet supplied at runtime executes in ring 3 and
-  performs a capability-checked host call.
+Superseded ordering: the interpreter does **not** come first. The host-object
+seam is defined and proven in Rust *before* the port, so MicroPython binds to a
+fixed target. Sub-slices, in order:
+
+**2a — SSE/FPU userspace enablement (start cold; small but corruption-prone).**
+- Confirm the kernel emits no SSE (`objdump -d pythcore | grep -i xmm` empty);
+  design against the fact, not the target default.
+- `fninit` + CR0 (clear EM, set MP) + CR4.OSFXSR/OSXMMEXCPT once at boot.
+- Eager FXSAVE/FXRSTOR on user-task context switch (no lazy CR0.TS/#NM —
+  CVE-2018-3665). AVX pinned off both toolchains so FXSAVE is complete.
+- TSS.RSP0 = the running user task's kernel stack on every entry to ring 3, so a
+  timer tick mid-C switches stacks safely.
+- Exit: a ring-3 task doing hardware-float + a preemption survives with FPU state
+  intact — proven by an ordered marker sequence.
+
+**2b — Host-object seam in Rust (was "slice 4"; do it before the port).**
+- Implement the ADR 0050 seam (~9–10 ops incl. opaque integer handles,
+  `retain`/`release`, `type_of`, identity) against the existing typed-object
+  store (ADR 0022 / revisions / relationships).
+- Completion criterion is the oracle, not "looks reasonable": a Rust harness
+  drives every seam op against the store and emits an ordered marker sequence.
+- Exit: the marker harness passes for every seam operation.
+
+**2c — Port MicroPython behind the seam.**
+- Vendor at a pinned commit; link `-static -no-pie` (ET_EXEC);
+  `-msse2 -mno-avx…`; `MICROPY_FLOAT_IMPL_NONE`; set `MP_STATE_THREAD(stack_top)`.
+- Instrument syscall / interpreter / GC entry-exit markers **before** dropping
+  the C blob in.
+- Exit: `eval_str` runs an arbitrary Python snippet in ring 3 that performs a
+  capability-checked host call through the seam.
+
+With 2b done, plan slice 4 (object system as app model) is largely subsumed; the
+remaining slices (3 shell, 5 object browser, 6 round trip) are unchanged.
 
 ### Slice 3: Live graphical shell
 
