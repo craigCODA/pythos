@@ -4,6 +4,18 @@
 > developed and verified against QEMU `intel-hda`. AMD ACP/I2S is parked until
 > HDA works.
 
+**Status: COMPLETE (2026-07-26).** All slices done and verified in QEMU
+(`--hda`): controller discovery, MMIO mapping, reset + CORB/RIRB, codec
+enumeration (via the Immediate Command Interface — CORB/RIRB ring sequencing
+misbehaved in QEMU after the first command), output stream + PCM playback
+(link-position advances = DMA fetching samples), and routing the existing boot
+audio through HDA. Default milestone-1 (ESP + ISO) and the no-audio fallback are
+unaffected; the `--hda` boot needs a longer timeout due to device init.
+Deferred, per ADR 0048: preferring HDA over AC97 is moot on the real target (the
+AMD laptop has no AC97, so HDA is the sole backend); AMD ACP/I2S for laptop
+speakers remains a parked investigation. Real-hardware audio unverified until a
+laptop boot checks the headphone jack.
+
 **Goal:** Real PCM audio through an Intel HDA controller, selected in preference
 to AC97 when present, so the boot cinematic can sound on HDA hardware (and the
 laptop headphone jack) — verified in QEMU via serial markers and WAV capture.
