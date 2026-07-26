@@ -2,98 +2,147 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build ADR 0051's first ring-3 object/capability shell, driven over COM2, proving object create/revise/inspect/history and reboot restore through authority reconstruction.
+**Goal:** Build ADR 0051's first ring-3 object/capability shell without creating a kernel REPL: `shell.elf` owns human command parsing and presentation, while PythCore exposes typed, capability-gated object, console, and system-control services.
 
-**Architecture:** Keep COM1 as the boot/test oracle and add COM2 as the interactive shell transport. Launch a real ring-3 `shell.elf` on normal boot; the shell uses byte-oriented syscalls for serial I/O plus a narrow versioned object-shell transaction bridge. The temporary bridge remains kernel-backed, capability-gated, and explicitly scoped until a future user-space object service exists.
+**Architecture:** Split normal boot from verification boot first, so normal boot constructs retained services and launches `shell.elf` without running the proof parade. COM1 remains the boot/test oracle; COM2 is initialized as the interactive shell transport. PythCore validates the current syscall caller, validates caller-supplied capabilities, adapts the existing Phase 10 typed-object/allocator/revision machinery into retained normal-boot state, and never parses human command text.
 
-**Tech Stack:** Rust `no_std` PythCore, Rust `no_std` user shell ELF, QEMU q35/OVMF, COM1 file serial log, COM2 TCP serial socket, Python acceptance harness, Cargo feature `verify`.
+**Tech Stack:** Rust `no_std` PythCore, Rust `no_std` user shell ELF, shared Rust ABI crate, QEMU q35/OVMF, COM1 file serial log, COM2 TCP serial socket, Python acceptance harness, Cargo feature `verify`.
 
 ## Global Constraints
 
 - Read `docs/PythOS-SAS-001.md`, `docs/PythOS-TDD-001.md`, and `docs/decisions/0051-first-ring3-object-shell.md` before editing.
-- Implement only the ring-3 object/capability shell slice described here.
-- Do not begin universal-device support, networking, package management, user-space drivers, AI agents, `grant`, or `launch`.
+- Implement only the ADR 0051 ring-3 object/capability shell slice and the minimum infrastructure required by this slice.
+- Do not begin universal-device support, networking, package management, user-space drivers, AI agents, human `grant`, or packaged `launch`.
 - Preserve `verify`: existing serial-marker proofs and `scripts/test-boot.py` must keep running under `--features verify`.
-- Normal boot must not call `qemu_exit::success()`.
+- Normal boot must skip verification-only adversarial/self-test execution while still initializing the scheduler, syscall entry, process identity, storage, object service, COM2, and shell.
 - COM1 remains the verification oracle; COM2 carries interactive shell traffic.
 - The shell is a ring-3 user process with declared bootstrap capabilities, not a privileged kernel console.
+- Human command grammar belongs in `user/shell`; PythCore receives only typed ABI requests.
 - Object IDs identify; capabilities authorize.
-- Runtime capability handles are not persisted across reboot; fresh handles are minted from stable principal/workspace authority.
-- Every unsafe block requires a documented invariant.
+- Runtime capability handles are not persisted across reboot; fresh handles are minted from stable principal/workspace policy after validated program identity is rebound.
+- Every console, object, and system-control syscall must derive authority from the current caller identity and a caller-supplied capability handle.
+- Every unsafe block requires a documented invariant with address, length, lifetime, ownership, alignment, concurrency, and violation notes.
 - Serial output, not screenshots, is the acceptance oracle.
+- The temporary kernel object bridge remains explicitly temporary, versioned, typed, and capability-gated until the object service moves to user space.
+- COM2 busy polling is acceptable for this slice only and must be documented as a temporary CPU-consuming shell loop.
+- Do not claim cryptographic code signing; the shell principal is tied to loader-validated bundle identity and digest, not to a general secure update chain.
 
 ---
 
 ## File Structure
 
-- Modify `scripts/run-qemu.py`: add optional COM2 TCP socket wiring without changing default COM1 behavior.
-- Create `scripts/test-object-shell.py`: build a normal image, drive COM2 commands, restart QEMU over the same storage image, and assert COM1/COM2 evidence.
-- Modify `core/src/serial.rs`: generalize UART access enough for COM1 writes and COM2 read/write.
-- Modify `core/src/syscall.rs`: preserve `0x5059_0000` and `0x5059_0001`, add register argument capture, shell serial syscalls, and object-shell bridge syscalls.
-- Modify `core/src/main.rs`: register new modules, initialize the object-shell bridge, and launch `shell.elf` in normal boot.
-- Modify `core/src/shell_objects.rs` and `core/src/typed_object_format.rs`: add `ObjectKind::Note` with a stable format code.
-- Create `core/src/object_shell_protocol.rs`: parse ADR 0051 command text into typed requests and format typed responses.
-- Create `core/src/object_shell_store.rs`: hold the temporary kernel-backed note object store, shell principal, workspace-root authority, revision history, persistence encoding, and capability rebinding.
-- Create `core/src/object_shell_bridge.rs`: own bounded command/response queues and expose syscall-facing byte operations against the protocol/store.
-- Create `user/shell/Cargo.toml`, `user/shell/src/main.rs`, and `user/shell/linker.ld`: build the first real ring-3 shell ELF.
-- Modify root `Cargo.toml`: add `user/shell` as a workspace member.
-- Create `scripts/build-user-shell.py`: build `pythos-user-shell` with shell-only linker flags so kernel flags remain untouched.
-- Modify `scripts/build-image.py` and `scripts/build-iso.py`: embed `shell.elf` in the inner `INIT.PAK` bundle as a named user ELF payload.
+- Create `docs/decisions/0052-object-shell-service-abi.md`: record the typed object-shell ABI, named user-program bundle record, caller-derived capability enforcement, normal/verify boot split, COM2 scope, and QEMU reboot mechanism.
+- Modify `shared/src/lib.rs`: export the typed shell ABI and user-program manifest modules.
+- Create `shared/src/object_shell_abi.rs`: define typed operations, response codes, request/response structs, object kind codes, field ids, syscall numbers, and packed capability handles.
+- Create `shared/src/user_program_manifest.rs`: define the versioned named user ELF manifest payload used for `shell.elf` and adversarial test ELFs.
+- Modify `shared/src/init_bundle.rs`: add a versioned `TYPE_NAMED_USER_ELF` record without changing existing ordinal `TYPE_USER_ELF`.
+- Modify `scripts/run-qemu.py`: add optional COM2 TCP serial wiring while preserving the first COM1 serial log.
+- Create `scripts/test-object-shell.py`: drive COM2, assert COM1 and COM2 evidence, cover forced power loss and actual shell-requested reboot.
+- Create `scripts/verify-user-elf.py`: verify shell ELF headers and program segments with `readelf` output.
+- Modify `scripts/build-image.py` and `scripts/build-iso.py`: embed `shell.elf` and the adversarial user ELF as named user-program manifest records while preserving existing verify payloads.
+- Modify `core/src/serial.rs`: initialize and use COM2 deterministically.
+- Modify `core/src/syscall.rs`: preserve existing ABI numbers, capture register args, derive the current caller, and dispatch typed console/object/system-control calls.
+- Create `core/src/process_context.rs`: track the active ring-3 process identity, principal id, validated program digest, and bootstrap capability handles for syscalls.
+- Create `core/src/normal_boot.rs`: hold the normal-boot service initialization and shell launch path separately from verification proofs.
+- Modify `core/src/main.rs`: route `verify` builds to the existing proof sequence and normal builds to `normal_boot::run`.
+- Modify `core/src/runtime_loader.rs`: validate named user-program manifest payloads and preserve existing ordinal user ELF lookup.
+- Modify `core/src/user_elf.rs`: keep existing validation and expose launch metadata needed for program identity binding.
+- Modify `core/src/user_mode.rs`: add persistent ring-3 entry and defined persistent-process fault handling.
+- Modify `core/src/dynamic_object_store.rs`: promote the Phase 10 dynamic store from self-test-only operations into reusable normal-service operations.
+- Modify `core/src/general_storage_persistence.rs`: extract reusable snapshot encode/decode/recovery helpers for retained object-service state.
+- Modify `core/src/revision_history.rs`: expose bounded current/prior revision iteration needed by persistence and history responses.
+- Modify `core/src/typed_object_format.rs` and `core/src/shell_objects.rs`: add note object kind and text field support.
+- Create `core/src/object_service.rs`: adapt the Phase 10 dynamic object store, typed records, revision history, quota table, and persistence helpers into a retained capability-gated object service.
+- Create `user/shell/Cargo.toml`, `user/shell/src/main.rs`, `user/shell/src/commands.rs`, `user/shell/src/syscalls.rs`, and `user/shell/linker.ld`: implement the real ring-3 shell.
+- Modify root `Cargo.toml`: add `user/shell`.
+- Create `scripts/build-user-shell.py`: build `pythos-user-shell` with shell-only linker flags.
 - Modify `docs/ROADMAP.md` and `docs/HANDOVER.md`: record the implemented ADR 0051 slice after it passes.
 
 ---
 
-### Task 1: COM2 QEMU Harness And Failing Acceptance Test
+### Task 1: Record ADR 0052 And Normal/Verify Boot Split Test
 
 **Files:**
-- Modify: `scripts/run-qemu.py`
-- Create: `scripts/test-object-shell.py`
-- Test: `scripts/test-object-shell.py`
+- Create: `docs/decisions/0052-object-shell-service-abi.md`
+- Create: `scripts/test-normal-fast-boot.py`
+- Modify: `core/src/main.rs`
+- Create: `core/src/normal_boot.rs`
+- Test: `scripts/test-normal-fast-boot.py`, `scripts/test-boot.py`
 
 **Interfaces:**
-- Consumes: existing `scripts/run-qemu.py --serial-log`, `--storage-image`, `--timeout`, and `--expect-outcome`.
-- Produces: `run_shell_session(storage_image: Path, commands: list[str]) -> ShellRunResult` inside `scripts/test-object-shell.py`, plus `--shell-port` in `scripts/run-qemu.py`.
+- Consumes: existing `pythcore_entry`, existing proof sequence, `scripts/run-qemu.py --serial-log`.
+- Produces: `normal_boot::run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> !`, marker `PYTHOS:CORE:NORMAL_BOOT:FAST_PATH`, marker `PYTHOS:CORE:NORMAL_SERVICES_READY`.
 
-- [ ] **Step 1: Write the failing COM2 acceptance test**
+- [ ] **Step 1: Write ADR 0052**
 
-Create `scripts/test-object-shell.py` with this shape:
+Create `docs/decisions/0052-object-shell-service-abi.md`:
+
+```markdown
+# ADR 0052: Typed Object Shell Service ABI
+
+Status: Accepted
+
+## Context
+
+ADR 0051 selects the first ring-3 object/capability shell as the next design
+target. The implementation must not turn PythCore into a command interpreter.
+Human command syntax belongs in `shell.elf`; PythCore exposes typed mechanisms.
+
+## Decision
+
+Define a typed object-shell ABI in `shared/src/object_shell_abi.rs`.
+`shell.elf` parses command text into typed requests. PythCore accepts typed
+requests only after deriving the current caller identity and validating a
+caller-supplied capability handle.
+
+Normal boot and verification boot are separate. Verification boot runs the
+existing proof sequence and exits through the QEMU oracle. Normal boot skips
+proof execution, initializes retained services, launches `shell.elf`, and keeps
+running.
+
+Named user programs use a new versioned `TYPE_NAMED_USER_ELF` bundle record.
+Existing ordinal `TYPE_USER_ELF` records remain valid for prior verification
+payloads.
+
+The initial shell principal is rebound only when the loaded process came from
+the loader-validated `shell.elf` manifest record with the expected principal id
+and digest. This is not full cryptographic code signing.
+
+The `reboot` command maps to a capability-gated system-control request. The
+QEMU target uses an early x86 reset mechanism recorded in this ADR; forced
+power loss remains a separate acceptance path.
+
+## Consequences
+
+PythCore does not parse human command grammar.
+Any ring-3 process can know syscall numbers, but only a caller holding the
+required capability can use a console, object, or system-control operation.
+Object persistence uses the retained Phase 10 object path, not a shell-private
+sector format.
+```
+
+- [ ] **Step 2: Write the failing normal-fast-boot test**
+
+Create `scripts/test-normal-fast-boot.py`:
 
 ```python
 #!/usr/bin/env python
-"""Acceptance test for ADR 0051 ring-3 object shell."""
+"""Acceptance test for the ADR 0052 normal/verify boot split."""
 
 from __future__ import annotations
 
-import socket
+import re
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
-SERIAL_LOG = TARGET / "object-shell-com1.log"
-SHELL_TRANSCRIPT = TARGET / "object-shell-com2.log"
-STORAGE_IMAGE = TARGET / "object-shell-store.img"
-STORAGE_SIZE_BYTES = 16 * 1024 * 1024
-SHELL_PORT = 4582
-
-READY = "PYTHOS:SHELL:READY"
-CREATED = "CREATED object:1042 revision:1"
-COMMITTED = "COMMITTED revision:2"
-DENIED = "DENIED missing-capability"
-RESTORED = "PYTHOS:SHELL:IDENTITY_RESTORED"
+SERIAL_LOG = TARGET / "normal-fast-boot-com1.log"
 
 
-@dataclass
-class ShellRunResult:
-    com1: str
-    com2: str
-
-
-def run(command: list[str], expected_returncode: int = 0) -> str:
-    print("+ " + " ".join(command))
+def run(command: list[str], expected: int = 0) -> str:
     result = subprocess.run(
         command,
         cwd=ROOT,
@@ -103,46 +152,305 @@ def run(command: list[str], expected_returncode: int = 0) -> str:
         check=False,
     )
     print(result.stdout)
-    if result.returncode != expected_returncode:
-        raise AssertionError(
-            f"expected return code {expected_returncode}, got {result.returncode}"
-        )
+    if result.returncode != expected:
+        raise AssertionError(f"{command} returned {result.returncode}, expected {expected}")
     return result.stdout
 
 
-def build_normal_image() -> None:
+def main() -> int:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
-    run([sys.executable, "scripts/build-user-shell.py"])
     run([sys.executable, "scripts/build-image.py"])
+    if SERIAL_LOG.exists():
+        SERIAL_LOG.unlink()
+    run(
+        [
+            sys.executable,
+            "scripts/run-qemu.py",
+            "--serial-log",
+            str(SERIAL_LOG),
+            "--timeout",
+            "20",
+            "--expect-outcome",
+            "timeout",
+        ],
+        expected=0,
+    )
+    serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
+    required = [
+        "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
+        "PYTHOS:CORE:NORMAL_SERVICES_READY",
+        "PYTHOS:CORE:NORMAL_BOOT_ALIVE",
+    ]
+    for marker in required:
+        if marker not in serial:
+            raise AssertionError(f"missing {marker}")
+    forbidden = [
+        "PYTHOS:CORE:PROCESS_MODEL_ADVERSARIAL_READY",
+        "PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY",
+        "PYTHOS:CORE:MILESTONE_1_COMPLETE",
+    ]
+    for marker in forbidden:
+        if marker in serial:
+            raise AssertionError(f"normal boot ran verification marker {marker}")
+    print("NORMAL_FAST_BOOT_TEST_OK")
+    return 0
 
 
-def prepare_storage(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()
-    with path.open("wb") as image:
-        image.truncate(STORAGE_SIZE_BYTES)
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+- [ ] **Step 3: Run the failing normal-fast-boot test**
+
+Run:
+
+```powershell
+python scripts\test-normal-fast-boot.py
+```
+
+Expected: FAIL because normal boot still reaches the existing event loop only after proof markers.
+
+- [ ] **Step 4: Split boot paths without changing proof behavior**
+
+In `core/src/main.rs`, move the existing post-initialization proof sequence into:
+
+```rust
+#[cfg(feature = "verify")]
+fn run_verification_boot(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut memory::physical::PhysicalMemory,
+) -> ! {
+    run_existing_proof_sequence(boot_info, physical_memory);
+    qemu_exit::success();
+}
+```
+
+Add the normal route:
+
+```rust
+#[cfg(not(feature = "verify"))]
+fn run_normal_boot(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut memory::physical::PhysicalMemory,
+) -> ! {
+    normal_boot::run(boot_info, physical_memory)
+}
+```
+
+In `core/src/normal_boot.rs` define:
+
+```rust
+use crate::{block_device, serial};
+use crate::memory::physical::PhysicalMemory;
+use pythos_shared::boot_protocol::PythBootInfo;
+
+#[cfg(not(test))]
+pub fn run(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+) -> ! {
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:FAST_PATH");
+    let _device = match block_device::select_device() {
+        Ok(device) => device,
+        Err(_) => {
+            serial::write_line("PYTHOS:PANIC");
+            crate::qemu_exit::panic();
+        }
+    };
+    serial::write_line("PYTHOS:CORE:NORMAL_SERVICES_READY");
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
+    let _ = boot_info;
+    let _ = physical_memory;
+    loop {
+        core::hint::spin_loop();
+    }
+}
+```
+
+The real service initialization and shell launch replace the temporary loop in later tasks.
+
+- [ ] **Step 5: Verify both boot modes**
+
+Run:
+
+```powershell
+python scripts\test-normal-fast-boot.py
+python scripts\test-boot.py
+```
+
+Expected:
+
+```text
+NORMAL_FAST_BOOT_TEST_OK
+BOOT_TEST_OK
+```
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add docs\decisions\0052-object-shell-service-abi.md scripts\test-normal-fast-boot.py core\src\main.rs core\src\normal_boot.rs
+git commit -m "feat(boot): split normal boot from verification proofs"
+```
+
+---
+
+### Task 2: COM2 UART Initialization And Harness
+
+**Files:**
+- Modify: `core/src/serial.rs`
+- Modify: `core/src/normal_boot.rs`
+- Modify: `scripts/run-qemu.py`
+- Create: `scripts/test-com2-shell-transport.py`
+- Test: `core/src/serial.rs`, `scripts/test-com2-shell-transport.py`
+
+**Interfaces:**
+- Consumes: COM1 serial writer and normal boot path from Task 1.
+- Produces: `serial::init_com2()`, `serial::write_byte_com2(byte: u8)`, `serial::try_read_byte_com2() -> Option<u8>`, marker `PYTHOS:CORE:COM2_READY`, `scripts/run-qemu.py --shell-port <port>`.
+
+- [ ] **Step 1: Write COM2 initialization unit test**
+
+In `core/src/serial.rs`, add a pure init-sequence helper test:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn com2_init_sequence_targets_legacy_base() {
+        let sequence = uart_init_sequence(COM2_BASE);
+        assert_eq!(COM2_BASE, 0x2F8);
+        assert_eq!(line_status_port(COM2_BASE), 0x2FD);
+        assert_eq!(sequence[0], UartWrite::new(COM2_BASE + 1, 0x00));
+        assert_eq!(sequence[1], UartWrite::new(COM2_BASE + 3, 0x80));
+        assert_eq!(sequence[2], UartWrite::new(COM2_BASE, 0x03));
+        assert_eq!(sequence[3], UartWrite::new(COM2_BASE + 1, 0x00));
+        assert_eq!(sequence[4], UartWrite::new(COM2_BASE + 3, 0x03));
+        assert_eq!(sequence[5], UartWrite::new(COM2_BASE + 2, 0xC7));
+        assert_eq!(sequence[6], UartWrite::new(COM2_BASE + 4, 0x0B));
+    }
+}
+```
+
+- [ ] **Step 2: Run the failing COM2 unit test**
+
+Run:
+
+```powershell
+cargo test -p pythos-core serial::tests::com2_init_sequence_targets_legacy_base
+```
+
+Expected: FAIL because COM2 helpers do not exist.
+
+- [ ] **Step 3: Implement COM2 initialization**
+
+In `core/src/serial.rs`, define:
+
+```rust
+const COM1_BASE: u16 = 0x3F8;
+const COM2_BASE: u16 = 0x2F8;
+const LINE_STATUS_OFFSET: u16 = 5;
+const RECEIVE_READY: u8 = 0x01;
+const TRANSMIT_EMPTY: u8 = 0x20;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UartWrite {
+    port: u16,
+    value: u8,
+}
+
+impl UartWrite {
+    pub const fn new(port: u16, value: u8) -> Self {
+        Self { port, value }
+    }
+}
+
+pub const fn line_status_port(base: u16) -> u16 {
+    base + LINE_STATUS_OFFSET
+}
+
+pub const fn uart_init_sequence(base: u16) -> [UartWrite; 7] {
+    [
+        UartWrite::new(base + 1, 0x00),
+        UartWrite::new(base + 3, 0x80),
+        UartWrite::new(base, 0x03),
+        UartWrite::new(base + 1, 0x00),
+        UartWrite::new(base + 3, 0x03),
+        UartWrite::new(base + 2, 0xC7),
+        UartWrite::new(base + 4, 0x0B),
+    ]
+}
+
+pub fn init_com2() {
+    for write in uart_init_sequence(COM2_BASE) {
+        outb(write.port, write.value);
+    }
+}
+```
+
+Keep COM1 behavior unchanged.
+
+- [ ] **Step 4: Add COM2 QEMU option**
+
+In `scripts/run-qemu.py`, add:
+
+```python
+parser.add_argument("--shell-port", type=int)
+```
+
+When `args.shell_port` is set, append this second serial backend after COM1:
+
+```python
+command += ["-serial", f"tcp:127.0.0.1:{args.shell_port},server=on,wait=off"]
+```
+
+- [ ] **Step 5: Write COM2 smoke test**
+
+Create `scripts/test-com2-shell-transport.py`:
+
+```python
+#!/usr/bin/env python
+"""COM2 transport smoke test for the normal shell path."""
+
+from __future__ import annotations
+
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TARGET = ROOT / "target"
+SERIAL_LOG = TARGET / "com2-transport-com1.log"
+SHELL_PORT = 4582
 
 
-def wait_for(sock: socket.socket, needle: str, timeout: float = 20.0) -> str:
+def run(command: list[str]) -> None:
+    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout)
+    if result.returncode != 0:
+        raise AssertionError(f"{command} failed with {result.returncode}")
+
+
+def wait_for_file_marker(path: Path, marker: str, timeout: float) -> str:
     deadline = time.monotonic() + timeout
-    data = ""
     while time.monotonic() < deadline:
-        try:
-            chunk = sock.recv(4096).decode("utf-8", errors="replace")
-        except socket.timeout:
-            continue
-        if chunk:
-            data += chunk
-            if needle in data:
-                return data
-    raise AssertionError(f"timed out waiting for {needle!r}; transcript was {data!r}")
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if marker in text:
+                return text
+        time.sleep(0.1)
+    raise AssertionError(f"missing marker {marker}")
 
 
-def run_shell_session(storage_image: Path, commands: list[str]) -> ShellRunResult:
-    if SHELL_TRANSCRIPT.exists():
-        SHELL_TRANSCRIPT.unlink()
+def main() -> int:
+    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run([sys.executable, "scripts/build-image.py"])
+    if SERIAL_LOG.exists():
+        SERIAL_LOG.unlink()
     process = subprocess.Popen(
         [
             sys.executable,
@@ -151,10 +459,10 @@ def run_shell_session(storage_image: Path, commands: list[str]) -> ShellRunResul
             str(SERIAL_LOG),
             "--shell-port",
             str(SHELL_PORT),
-            "--storage-image",
-            str(storage_image),
             "--timeout",
-            "90",
+            "60",
+            "--expect-outcome",
+            "timeout",
         ],
         cwd=ROOT,
         text=True,
@@ -162,29 +470,11 @@ def run_shell_session(storage_image: Path, commands: list[str]) -> ShellRunResul
         stderr=subprocess.STDOUT,
     )
     try:
-        deadline = time.monotonic() + 30
-        while time.monotonic() < deadline:
-            try:
-                with socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=1) as sock:
-                    transcript = wait_for(sock, READY)
-                    for command in commands:
-                        sock.sendall((command + "\n").encode("ascii"))
-                        if command == "reboot":
-                            transcript += wait_for(sock, "REBOOTING")
-                            break
-                        transcript += wait_for(sock, "pyth> ")
-                    SHELL_TRANSCRIPT.write_text(
-                        transcript,
-                        encoding="utf-8",
-                        errors="replace",
-                    )
-                    return ShellRunResult(
-                        com1=SERIAL_LOG.read_text(encoding="utf-8", errors="replace"),
-                        com2=transcript,
-                    )
-            except OSError:
-                time.sleep(0.2)
-        raise AssertionError("COM2 shell socket never became reachable")
+        wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 20)
+        with socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=5) as sock:
+            sock.sendall(b"\n")
+        print("COM2_TRANSPORT_TEST_OK")
+        return 0
     finally:
         process.terminate()
         try:
@@ -196,954 +486,265 @@ def run_shell_session(storage_image: Path, commands: list[str]) -> ShellRunResul
             print(process.stdout.read())
 
 
-def assert_contains(value: str, needle: str) -> None:
-    if needle not in value:
-        raise AssertionError(f"missing {needle!r} in {value!r}")
-
-
-def main() -> int:
-    build_normal_image()
-    prepare_storage(STORAGE_IMAGE)
-    first = run_shell_session(
-        STORAGE_IMAGE,
-        [
-            "create kind:note",
-            'revise object:1042 text="hello"',
-            "inspect object:9999",
-            "reboot",
-        ],
-    )
-    assert_contains(first.com1, "PYTHOS:CORE:NORMAL_BOOT_ALIVE")
-    assert_contains(first.com1, "PYTHOS:SHELL:RING3_ENTER")
-    assert_contains(first.com2, CREATED)
-    assert_contains(first.com2, COMMITTED)
-    assert_contains(first.com2, DENIED)
-
-    second = run_shell_session(STORAGE_IMAGE, ["inspect object:1042", "history object:1042"])
-    assert_contains(second.com1, RESTORED)
-    assert_contains(second.com2, 'text="hello" revision:2')
-    assert_contains(second.com2, "history object:1042 revisions:2")
-    print("OBJECT_SHELL_TEST_OK")
-    return 0
-
-
 if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 2: Run the failing test**
+- [ ] **Step 6: Wire COM2 into normal boot and verify**
+
+In `core/src/normal_boot.rs`, call:
+
+```rust
+serial::init_com2();
+serial::write_line("PYTHOS:CORE:COM2_READY");
+```
 
 Run:
 
 ```powershell
-python scripts\test-object-shell.py
-```
-
-Expected: FAIL before build because `scripts/build-user-shell.py`, package `pythos-user-shell`, and `--shell-port` do not exist.
-
-- [ ] **Step 3: Add COM2 QEMU options without making the test pass**
-
-In `scripts/run-qemu.py`, add:
-
-```python
-DEFAULT_SHELL_PORT = 4582
-```
-
-Add arguments:
-
-```python
-parser.add_argument("--shell-port", type=int)
-```
-
-When `args.shell_port` is present, append a second serial device:
-
-```python
-command += [
-    "-serial",
-    f"tcp:127.0.0.1:{args.shell_port},server=on,wait=off",
-]
-```
-
-Do not alter the first `-serial file:{args.serial_log}` entry.
-
-- [ ] **Step 4: Run harness parser checks**
-
-Run:
-
-```powershell
-python -m py_compile scripts\run-qemu.py scripts\test-object-shell.py
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Run the failing acceptance test again**
-
-Run:
-
-```powershell
-python scripts\test-object-shell.py
-```
-
-Expected: FAIL because the user shell package and kernel shell markers are still absent.
-
-- [ ] **Step 6: Commit**
-
-```powershell
-git add scripts\run-qemu.py scripts\test-object-shell.py
-git commit -m "test(shell): add COM2 object shell acceptance harness"
-```
-
----
-
-### Task 2: COM2 UART Driver And Syscall Argument Register ABI
-
-**Files:**
-- Modify: `core/src/serial.rs`
-- Modify: `core/src/syscall.rs`
-- Test: `core/src/serial.rs`, `core/src/syscall.rs`
-
-**Interfaces:**
-- Consumes: COM1 UART constants and existing syscall numbers `0x5059_0000`, `0x5059_0001`.
-- Produces: `serial::write_line_com2(value: &str)`, `serial::try_read_byte_com2() -> Option<u8>`, `serial::write_byte_com2(byte: u8)`, `SyscallArgs`, `SYSCALL_SHELL_READ_BYTE`, `SYSCALL_SHELL_WRITE_BYTE`.
-
-- [ ] **Step 1: Write UART unit tests**
-
-Add test-only pure helpers in `core/src/serial.rs`:
-
-```rust
-const COM1_BASE: u16 = 0x3F8;
-const COM2_BASE: u16 = 0x2F8;
-
-const fn line_status_port(base: u16) -> u16 {
-    base + 5
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn com_ports_have_stable_legacy_bases() {
-        assert_eq!(COM1_BASE, 0x3F8);
-        assert_eq!(COM2_BASE, 0x2F8);
-        assert_eq!(line_status_port(COM1_BASE), 0x3FD);
-        assert_eq!(line_status_port(COM2_BASE), 0x2FD);
-    }
-}
-```
-
-- [ ] **Step 2: Run UART tests to verify failure**
-
-Run:
-
-```powershell
-cargo test -p pythos-core serial::tests::com_ports_have_stable_legacy_bases
-```
-
-Expected: FAIL until constants/helpers are added.
-
-- [ ] **Step 3: Implement COM2 UART access**
-
-Replace the single COM1-only helpers with a small base-port helper:
-
-```rust
-const COM1_BASE: u16 = 0x3F8;
-const COM2_BASE: u16 = 0x2F8;
-const LINE_STATUS_OFFSET: u16 = 5;
-const RECEIVE_READY: u8 = 0x01;
-const TRANSMIT_EMPTY: u8 = 0x20;
-
-const fn line_status_port(base: u16) -> u16 {
-    base + LINE_STATUS_OFFSET
-}
-
-pub fn write_line(line: &str) {
-    write_str_to(COM1_BASE, line);
-    write_str_to(COM1_BASE, "\r\n");
-}
-
-pub fn write_line_com2(line: &str) {
-    write_str_to(COM2_BASE, line);
-    write_str_to(COM2_BASE, "\r\n");
-}
-
-pub fn write_byte_com2(byte: u8) {
-    write_byte_to(COM2_BASE, byte);
-}
-
-pub fn try_read_byte_com2() -> Option<u8> {
-    if (inb(line_status_port(COM2_BASE)) & RECEIVE_READY) == 0 {
-        return None;
-    }
-    Some(inb(COM2_BASE))
-}
-```
-
-Keep the existing `write_line` and `write_hex_u64` public behavior unchanged.
-
-- [ ] **Step 4: Write syscall ABI argument tests**
-
-Add these constants and tests in `core/src/syscall.rs`:
-
-```rust
-pub const SYSCALL_SHELL_READ_BYTE: u64 = 0x5059_0100;
-pub const SYSCALL_SHELL_WRITE_BYTE: u64 = 0x5059_0101;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SyscallArgs {
-    pub number: u64,
-    pub arg0: u64,
-    pub arg1: u64,
-    pub arg2: u64,
-    pub arg3: u64,
-    pub arg4: u64,
-}
-
-#[test]
-fn shell_syscalls_are_sorted_after_existing_phase9_numbers() {
-    assert!(SYSCALL_SYSTEM_LOG_PROOF < SYSCALL_SHELL_READ_BYTE);
-    assert!(SYSCALL_SHELL_READ_BYTE < SYSCALL_SHELL_WRITE_BYTE);
-    assert_eq!(validate_syscall_table(SYSCALL_TABLE), Ok(()));
-}
-```
-
-- [ ] **Step 5: Run syscall tests to verify failure**
-
-Run:
-
-```powershell
-cargo test -p pythos-core syscall::tests::shell_syscalls_are_sorted_after_existing_phase9_numbers
-```
-
-Expected: FAIL until syscall table entries exist.
-
-- [ ] **Step 6: Implement register argument dispatch**
-
-Change the non-test assembly so `syscall_entry_abi` passes number and five args:
-
-```asm
-mov r9, r8
-mov r8, r10
-mov rcx, rdx
-mov rdx, rsi
-mov rsi, rdi
-mov rdi, rax
-call syscall_dispatch_abi
-```
-
-Change the exported dispatcher:
-
-```rust
-#[unsafe(no_mangle)]
-pub extern "C" fn syscall_dispatch_abi(
-    number: u64,
-    arg0: u64,
-    arg1: u64,
-    arg2: u64,
-    arg3: u64,
-    arg4: u64,
-) -> u64 {
-    let result = dispatch(SyscallArgs { number, arg0, arg1, arg2, arg3, arg4 });
-    let code = syscall_result_code(result);
-    SYSCALL_LAST_RESULT.store(code, Ordering::SeqCst);
-    SYSCALL_RETURNED.store(true, Ordering::SeqCst);
-    code
-}
-```
-
-Keep compatibility by making existing test callers pass zero args.
-
-- [ ] **Step 7: Implement shell serial syscalls**
-
-Add dispatch kinds:
-
-```rust
-ShellReadByte,
-ShellWriteByte,
-```
-
-Define return values:
-
-```rust
-const SYSCALL_SHELL_NO_BYTE: u64 = 0;
-const SYSCALL_SHELL_BYTE_READY: u64 = 1 << 8;
-```
-
-For read:
-
-```rust
-fn dispatch_shell_read_byte() -> u64 {
-    match serial::try_read_byte_com2() {
-        Some(byte) => SYSCALL_SHELL_BYTE_READY | u64::from(byte),
-        None => SYSCALL_SHELL_NO_BYTE,
-    }
-}
-```
-
-For write:
-
-```rust
-fn dispatch_shell_write_byte(args: SyscallArgs) -> Result<u64, SyscallError> {
-    let byte = (args.arg0 & 0xFF) as u8;
-    serial::write_byte_com2(byte);
-    Ok(SYSCALL_OK)
-}
-```
-
-- [ ] **Step 8: Run focused tests**
-
-Run:
-
-```powershell
-cargo test -p pythos-core serial syscall
-```
-
-Expected: PASS.
-
-- [ ] **Step 9: Run verify boot smoke**
-
-Run:
-
-```powershell
+cargo test -p pythos-core serial
+python scripts\test-com2-shell-transport.py
 python scripts\test-boot.py
 ```
 
-Expected: `BOOT_TEST_OK`.
+Expected:
 
-- [ ] **Step 10: Commit**
+```text
+COM2_TRANSPORT_TEST_OK
+BOOT_TEST_OK
+```
+
+- [ ] **Step 7: Commit**
 
 ```powershell
-git add core\src\serial.rs core\src\syscall.rs
-git commit -m "feat(shell): add COM2 UART and shell serial syscalls"
+git add core\src\serial.rs core\src\normal_boot.rs scripts\run-qemu.py scripts\test-com2-shell-transport.py
+git commit -m "feat(shell): initialize COM2 transport"
 ```
 
 ---
 
-### Task 3: Object Shell Protocol And Note Object Kind
+### Task 3: Shared Typed Shell ABI And Named User Program Manifest
 
 **Files:**
-- Create: `core/src/object_shell_protocol.rs`
-- Modify: `core/src/main.rs`
-- Modify: `core/src/shell_objects.rs`
-- Modify: `core/src/typed_object_format.rs`
-- Test: `core/src/object_shell_protocol.rs`, `core/src/typed_object_format.rs`
+- Create: `shared/src/object_shell_abi.rs`
+- Create: `shared/src/user_program_manifest.rs`
+- Modify: `shared/src/lib.rs`
+- Modify: `shared/src/init_bundle.rs`
+- Test: `shared/src/object_shell_abi.rs`, `shared/src/user_program_manifest.rs`, `shared/src/init_bundle.rs`
 
 **Interfaces:**
-- Consumes: `ObjectId`, `ObjectKind`, and `TypedObjectRecord`.
-- Produces: `ShellCommand`, `ShellResponse`, `parse_command(line: &[u8]) -> Result<ShellCommand, ShellProtocolError>`, `format_response(response: ShellResponse, out: &mut ResponseBuffer)`.
+- Consumes: existing `TYPE_USER_ELF` ordinal records.
+- Produces: `ObjectShellRequest`, `ObjectShellResponse`, `PackedCapability`, `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest<'a>`.
 
-- [ ] **Step 1: Add failing note-kind tests**
+- [ ] **Step 1: Write ABI tests**
 
-In `core/src/typed_object_format.rs`:
-
-```rust
-#[test]
-fn note_kind_round_trips_with_stable_code() {
-    let record = TypedObjectRecord::new(ObjectId::new(1042), ObjectKind::Note, 1);
-    let decoded = TypedObjectRecord::decode(&record.encode()).unwrap();
-
-    assert_eq!(decoded.object_id().raw(), 1042);
-    assert_eq!(decoded.object_kind(), ObjectKind::Note);
-}
-```
-
-- [ ] **Step 2: Run note-kind test to verify failure**
-
-Run:
-
-```powershell
-cargo test -p pythos-core typed_object_format::tests::note_kind_round_trips_with_stable_code
-```
-
-Expected: FAIL because `ObjectKind::Note` is absent.
-
-- [ ] **Step 3: Add `ObjectKind::Note`**
-
-Update `core/src/shell_objects.rs`:
+In `shared/src/object_shell_abi.rs`, define tests first:
 
 ```rust
-pub enum ObjectKind {
-    ApplicationLauncherWindow,
-    BootIdentitySurface,
-    ServiceMonitorWindow,
-    PythonConsoleWindow,
-    SettingsPanelWindow,
-    WorkspaceSession,
-    ObjectBrowserWindow,
-    ButtonWidget,
-    TextFieldWidget,
-    Note,
-}
-```
-
-Update `core/src/typed_object_format.rs`:
-
-```rust
-ObjectKind::Note => 10,
-```
-
-and:
-
-```rust
-10 => Ok(ObjectKind::Note),
-```
-
-- [ ] **Step 4: Add failing protocol parser tests**
-
-Create `core/src/object_shell_protocol.rs` with test module first:
-
-```rust
-#![cfg_attr(test, allow(dead_code))]
-
-use crate::shell_objects::ObjectId;
-
-pub const MAX_COMMAND_BYTES: usize = 96;
-pub const MAX_RESPONSE_BYTES: usize = 160;
-pub const NOTE_TEXT_FIELD_ID: u16 = 1;
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShellCommand {
-    Help,
-    QueryNote,
-    CreateNote,
-    Inspect { object_id: ObjectId },
-    ReviseText { object_id: ObjectId, text: ShellText },
-    History { object_id: ObjectId },
-    Reboot,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ShellText {
-    bytes: [u8; 16],
-    len: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShellProtocolError {
-    Empty,
-    TooLong,
-    InvalidUtf8,
-    UnknownCommand,
-    InvalidObjectId,
-    TextTooLong,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn parses_adr0051_command_surface() {
-        assert_eq!(parse_command(b"help"), Ok(ShellCommand::Help));
-        assert_eq!(parse_command(b"query kind:note"), Ok(ShellCommand::QueryNote));
-        assert_eq!(parse_command(b"create kind:note"), Ok(ShellCommand::CreateNote));
-        assert_eq!(
-            parse_command(b"inspect object:1042"),
-            Ok(ShellCommand::Inspect { object_id: ObjectId::new(1042) })
-        );
-        assert_eq!(
-            parse_command(br#"revise object:1042 text="hello""#),
-            Ok(ShellCommand::ReviseText {
-                object_id: ObjectId::new(1042),
-                text: ShellText::new(b"hello").unwrap(),
-            })
-        );
-        assert_eq!(
-            parse_command(b"history object:1042"),
-            Ok(ShellCommand::History { object_id: ObjectId::new(1042) })
-        );
-        assert_eq!(parse_command(b"reboot"), Ok(ShellCommand::Reboot));
+    fn request_and_response_layouts_are_stable() {
+        assert_eq!(OBJECT_SHELL_ABI_MAJOR, 1);
+        assert_eq!(OBJECT_KIND_NOTE, 10);
+        assert_eq!(FIELD_TEXT, 1);
+        assert_eq!(OP_CREATE_OBJECT, 1);
+        assert_eq!(OP_QUERY_OBJECTS, 2);
+        assert_eq!(OP_INSPECT_OBJECT, 3);
+        assert_eq!(OP_REVISE_FIELD, 4);
+        assert_eq!(OP_GET_HISTORY, 5);
+        assert_eq!(core::mem::size_of::<ObjectShellRequest>(), 80);
+        assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 56);
     }
 
     #[test]
-    fn rejects_unknown_commands_and_bad_ids() {
-        assert_eq!(parse_command(b""), Err(ShellProtocolError::Empty));
-        assert_eq!(parse_command(b"ls /"), Err(ShellProtocolError::UnknownCommand));
-        assert_eq!(
-            parse_command(b"inspect object:notanumber"),
-            Err(ShellProtocolError::InvalidObjectId)
-        );
+    fn packed_capability_round_trips_slot_and_generation() {
+        let packed = PackedCapability::from_parts(7, 9);
+        assert_eq!(packed.slot(), 7);
+        assert_eq!(packed.generation(), 9);
     }
 }
 ```
 
-- [ ] **Step 5: Run protocol tests to verify failure**
+- [ ] **Step 2: Implement shared ABI**
 
-Run:
-
-```powershell
-cargo test -p pythos-core object_shell_protocol
-```
-
-Expected: FAIL until parser implementation exists and the module is registered.
-
-- [ ] **Step 6: Implement parser and response formatter**
-
-Add:
+Create:
 
 ```rust
-pub fn parse_command(line: &[u8]) -> Result<ShellCommand, ShellProtocolError> {
-    if line.is_empty() {
-        return Err(ShellProtocolError::Empty);
-    }
-    if line.len() > MAX_COMMAND_BYTES {
-        return Err(ShellProtocolError::TooLong);
-    }
-    let text = core::str::from_utf8(line).map_err(|_| ShellProtocolError::InvalidUtf8)?;
-    match text {
-        "help" => Ok(ShellCommand::Help),
-        "query kind:note" => Ok(ShellCommand::QueryNote),
-        "create kind:note" => Ok(ShellCommand::CreateNote),
-        "reboot" => Ok(ShellCommand::Reboot),
-        _ if text.starts_with("inspect object:") => parse_object_tail(text, "inspect object:")
-            .map(|object_id| ShellCommand::Inspect { object_id }),
-        _ if text.starts_with("history object:") => parse_object_tail(text, "history object:")
-            .map(|object_id| ShellCommand::History { object_id }),
-        _ if text.starts_with("revise object:") => parse_revise(text),
-        _ => Err(ShellProtocolError::UnknownCommand),
-    }
-}
-```
+pub const OBJECT_SHELL_ABI_MAJOR: u16 = 1;
+pub const OBJECT_SHELL_ABI_MINOR: u16 = 0;
 
-Define `ResponseBuffer`:
+pub const SYSCALL_CONSOLE_READ_BYTE: u64 = 0x5059_0100;
+pub const SYSCALL_CONSOLE_WRITE_BYTE: u64 = 0x5059_0101;
+pub const SYSCALL_OBJECT_REQUEST: u64 = 0x5059_0120;
+pub const SYSCALL_SYSTEM_REBOOT: u64 = 0x5059_0130;
 
-```rust
+pub const OBJECT_KIND_NOTE: u16 = 10;
+pub const FIELD_TEXT: u16 = 1;
+
+pub const OP_CREATE_OBJECT: u16 = 1;
+pub const OP_QUERY_OBJECTS: u16 = 2;
+pub const OP_INSPECT_OBJECT: u16 = 3;
+pub const OP_REVISE_FIELD: u16 = 4;
+pub const OP_GET_HISTORY: u16 = 5;
+
+pub const STATUS_OK: u16 = 0;
+pub const STATUS_DENIED: u16 = 1;
+pub const STATUS_NOT_FOUND: u16 = 2;
+pub const STATUS_BAD_REQUEST: u16 = 3;
+pub const STATUS_BUFFER_TOO_SMALL: u16 = 4;
+
+#[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ResponseBuffer {
-    bytes: [u8; MAX_RESPONSE_BYTES],
-    len: usize,
+pub struct PackedCapability {
+    raw: u64,
+}
+
+impl PackedCapability {
+    pub const fn from_raw(raw: u64) -> Self {
+        Self { raw }
+    }
+
+    pub const fn from_parts(slot: u32, generation: u32) -> Self {
+        Self { raw: (slot as u64) | ((generation as u64) << 32) }
+    }
+
+    pub const fn raw(self) -> u64 {
+        self.raw
+    }
+
+    pub const fn slot(self) -> u32 {
+        self.raw as u32
+    }
+
+    pub const fn generation(self) -> u32 {
+        (self.raw >> 32) as u32
+    }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectShellRequest {
+    pub abi_major: u16,
+    pub abi_minor: u16,
+    pub operation: u16,
+    pub object_kind: u16,
+    pub field_id: u16,
+    pub reserved0: u16,
+    pub authority: PackedCapability,
+    pub object_id: u64,
+    pub input_ptr: u64,
+    pub input_len: u64,
+    pub output_ptr: u64,
+    pub output_len: u64,
+    pub reserved1: u64,
+    pub reserved2: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectShellResponse {
+    pub status: u16,
+    pub reserved0: u16,
+    pub object_kind: u16,
+    pub field_id: u16,
+    pub object_id: u64,
+    pub revision: u64,
+    pub revision_count: u64,
+    pub bytes_written: u64,
+    pub capability: PackedCapability,
+    pub reserved1: u64,
 }
 ```
 
-Implement `push_str`, `push_u64_decimal`, `as_bytes`, and response formatting for:
+- [ ] **Step 3: Write named manifest tests**
+
+In `shared/src/user_program_manifest.rs`, add:
 
 ```rust
-ShellResponse::Ready
-ShellResponse::Created { object_id, revision }
-ShellResponse::Committed { revision }
-ShellResponse::DeniedMissingCapability
-ShellResponse::InspectNote { text, revision }
-ShellResponse::History { object_id, revision_count }
-ShellResponse::Help
-ShellResponse::Rebooting
-ShellResponse::Error
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn named_manifest_round_trips_identity_digest_and_elf() {
+        let mut bytes = [0u8; 96];
+        let len = encode_named_user_program(
+            &mut bytes,
+            b"shell.elf",
+            0x5059_5348_454C_4C01,
+            b"\x7FELFpayload",
+        )
+        .unwrap();
+        let manifest = validate_named_user_program(&bytes[..len]).unwrap();
+
+        assert_eq!(manifest.name(), b"shell.elf");
+        assert_eq!(manifest.principal_id(), 0x5059_5348_454C_4C01);
+        assert_eq!(manifest.elf(), b"\x7FELFpayload");
+        assert_eq!(manifest.elf_digest(), digest64(b"\x7FELFpayload"));
+    }
+}
 ```
 
-- [ ] **Step 7: Register module and run tests**
+- [ ] **Step 4: Implement named user-program manifest**
 
-In `core/src/main.rs` add:
+Create:
 
 ```rust
-mod object_shell_protocol;
-```
-
-Run:
-
-```powershell
-cargo test -p pythos-core typed_object_format object_shell_protocol
-```
-
-Expected: PASS.
-
-- [ ] **Step 8: Commit**
-
-```powershell
-git add core\src\main.rs core\src\shell_objects.rs core\src\typed_object_format.rs core\src\object_shell_protocol.rs
-git commit -m "feat(shell): define object shell protocol and note objects"
-```
-
----
-
-### Task 4: Capability-Gated Object Shell Store And Reboot Authority
-
-**Files:**
-- Create: `core/src/object_shell_store.rs`
-- Modify: `core/src/main.rs`
-- Test: `core/src/object_shell_store.rs`
-
-**Interfaces:**
-- Consumes: `ShellCommand`, `ShellResponse`, `CapabilityTable`, `ResourceId`, `RightsMask`, `ServiceIdentityTable`, `RevisionHistory`, `TypedObjectRecord`, `BlockDeviceInfo`.
-- Produces: `ObjectShellStore::restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectShellError>`, `ObjectShellStore::execute(&mut self, command: ShellCommand) -> ShellResponse`, `ObjectShellStore::persist(device: BlockDeviceInfo) -> Result<(), ObjectShellError>`.
-
-- [ ] **Step 1: Write authority and store tests**
-
-Create `core/src/object_shell_store.rs` with tests first:
-
-```rust
-#![cfg_attr(test, allow(dead_code))]
-
-use crate::{
-    object_shell_protocol::{ShellCommand, ShellResponse, ShellText},
-    shell_objects::ObjectId,
-};
+pub const NAMED_USER_PROGRAM_MAGIC: &[u8; 8] = b"PYUPGM01";
+pub const NAMED_USER_PROGRAM_MAJOR: u16 = 1;
+pub const NAMED_USER_PROGRAM_MINOR: u16 = 0;
+pub const NAMED_USER_PROGRAM_HEADER_LEN: usize = 40;
 
 pub const SHELL_PRINCIPAL_ID: u64 = 0x5059_5348_454C_4C01;
-pub const SHELL_NOTE_OBJECT_ID: ObjectId = ObjectId::new(1042);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn shell_bootstrap_has_workspace_root_but_not_global_object_access() {
-        let mut store = ObjectShellStore::new_for_test();
-
-        assert!(store.shell_has_workspace_root());
-        assert_eq!(
-            store.execute(ShellCommand::Inspect { object_id: ObjectId::new(9999) }),
-            ShellResponse::DeniedMissingCapability
-        );
-    }
-
-    #[test]
-    fn create_revise_inspect_history_are_capability_gated_transactions() {
-        let mut store = ObjectShellStore::new_for_test();
-
-        assert_eq!(
-            store.execute(ShellCommand::CreateNote),
-            ShellResponse::Created {
-                object_id: SHELL_NOTE_OBJECT_ID,
-                revision: 1,
-            }
-        );
-        assert_eq!(
-            store.execute(ShellCommand::ReviseText {
-                object_id: SHELL_NOTE_OBJECT_ID,
-                text: ShellText::new(b"hello").unwrap(),
-            }),
-            ShellResponse::Committed { revision: 2 }
-        );
-        assert_eq!(
-            store.execute(ShellCommand::Inspect {
-                object_id: SHELL_NOTE_OBJECT_ID,
-            }),
-            ShellResponse::InspectNote {
-                text: ShellText::new(b"hello").unwrap(),
-                revision: 2,
-            }
-        );
-        assert_eq!(
-            store.execute(ShellCommand::History {
-                object_id: SHELL_NOTE_OBJECT_ID,
-            }),
-            ShellResponse::History {
-                object_id: SHELL_NOTE_OBJECT_ID,
-                revision_count: 2,
-            }
-        );
-    }
-
-    #[test]
-    fn reboot_reconstructs_fresh_handles_from_stable_principal() {
-        let mut store = ObjectShellStore::new_for_test();
-        let first_handle = store.workspace_handle_generation_for_test();
-        store.execute(ShellCommand::CreateNote);
-        let snapshot = store.encode_snapshot_for_test().unwrap();
-
-        let mut restored = ObjectShellStore::decode_snapshot_for_test(snapshot).unwrap();
-
-        assert_ne!(first_handle, restored.workspace_handle_generation_for_test());
-        assert_eq!(
-            restored.execute(ShellCommand::Inspect {
-                object_id: SHELL_NOTE_OBJECT_ID,
-            }),
-            ShellResponse::InspectNote {
-                text: ShellText::new(b"").unwrap(),
-                revision: 1,
-            }
-        );
-    }
-}
-```
-
-- [ ] **Step 2: Run store tests to verify failure**
-
-Run:
-
-```powershell
-cargo test -p pythos-core object_shell_store
-```
-
-Expected: FAIL until the store module exists and is registered.
-
-- [ ] **Step 3: Implement principal, workspace authority, and runtime rebinding**
-
-Define:
-
-```rust
-pub const WORKSPACE_ROOT_RESOURCE: ResourceId = ResourceId::new(0x5059_5753_524F_4F54);
-pub const NOTE_TEXT_FIELD_ID: u16 = object_shell_protocol::NOTE_TEXT_FIELD_ID;
-const SHELL_TASK_ID: TaskId = TaskId::new(180);
-const NOTE_READ_REVISE_RIGHTS: RightsMask =
-    RightsMask::new(RightsMask::READ | RightsMask::WRITE);
-
-pub struct ObjectShellStore {
-    shell_service: ServiceId,
-    capabilities: CapabilityTable,
-    workspace_handle: CapabilityHandle,
-    history: RevisionHistory,
-    note_reachable: bool,
-    note_text: ShellText,
-}
-```
-
-`new_for_test()` and restore paths must:
-
-```rust
-let shell_service = identities.register_task(SHELL_TASK_ID)?;
-let workspace_handle = capabilities.grant(
-    shell_service,
-    WORKSPACE_ROOT_RESOURCE,
-    NOTE_READ_REVISE_RIGHTS,
-)?;
-```
-
-Do not persist `CapabilityHandle`. Persist only principal id, object id, text,
-revision count, and checksum.
-
-- [ ] **Step 4: Implement object operations**
-
-`execute()` must map commands:
-
-```rust
-ShellCommand::CreateNote => create note 1042 revision 1
-ShellCommand::ReviseText { object_id: SHELL_NOTE_OBJECT_ID, text } => commit revision 2
-ShellCommand::Inspect { object_id: SHELL_NOTE_OBJECT_ID } => return current text and revision
-ShellCommand::History { object_id: SHELL_NOTE_OBJECT_ID } => return revision count
-ShellCommand::Inspect { object_id: _ } => DeniedMissingCapability
-ShellCommand::History { object_id: _ } => DeniedMissingCapability
-ShellCommand::QueryNote => list only reachable note objects
-ShellCommand::Help => help response
-ShellCommand::Reboot => rebooting response
-```
-
-Each operation must validate `workspace_handle` before reading or mutating note state:
-
-```rust
-self.capabilities.validate(
-    self.shell_service,
-    self.workspace_handle,
-    WORKSPACE_ROOT_RESOURCE,
-    RightsMask::new(RightsMask::READ),
-)?;
-```
-
-Use `RightsMask::WRITE` for `create` and `revise`.
-
-- [ ] **Step 5: Implement snapshot encoding**
-
-Use a dedicated ADR 0051 sector range:
-
-```rust
-const OBJECT_SHELL_SECTOR: u64 = 60;
-const SNAPSHOT_MAGIC: [u8; 8] = *b"PY51SH01";
-const SNAPSHOT_VERSION: u16 = 1;
-const COMMIT_MARKER: u32 = 0x5059_5131;
-```
-
-Encode:
-
-```text
-0..8    magic
-8..10   version
-12..16  commit marker
-16..20  checksum
-24..32  shell principal id
-32..40  object id
-40..48  current revision
-48..56  revision count
-56..58  text length
-64..80  text bytes
-```
-
-Decode rejects bad magic, unsupported version, missing commit marker, bad checksum, wrong principal, and text length greater than 16.
-
-- [ ] **Step 6: Register module and run tests**
-
-In `core/src/main.rs` add:
-
-```rust
-mod object_shell_store;
-```
-
-Run:
-
-```powershell
-cargo test -p pythos-core object_shell_store
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Commit**
-
-```powershell
-git add core\src\main.rs core\src\object_shell_store.rs
-git commit -m "feat(shell): add capability-gated object shell store"
-```
-
----
-
-### Task 5: Object Shell Bridge Syscalls
-
-**Files:**
-- Create: `core/src/object_shell_bridge.rs`
-- Modify: `core/src/main.rs`
-- Modify: `core/src/syscall.rs`
-- Test: `core/src/object_shell_bridge.rs`, `core/src/syscall.rs`
-
-**Interfaces:**
-- Consumes: `ObjectShellStore`, `parse_command`, `format_response`, COM2 byte syscalls.
-- Produces: `object_shell_bridge::initialize(device: BlockDeviceInfo)`, `push_command_byte(byte: u8) -> ShellBridgeStatus`, `execute_command() -> ShellBridgeStatus`, `pop_response_byte() -> Option<u8>`, syscall numbers `0x5059_0110..0x5059_0113`.
-
-- [ ] **Step 1: Write bridge queue tests**
-
-Create `core/src/object_shell_bridge.rs` with:
-
-```rust
-#![cfg_attr(test, allow(dead_code))]
-
-pub const SYSCALL_OBJECT_SHELL_BEGIN: u64 = 0x5059_0110;
-pub const SYSCALL_OBJECT_SHELL_PUSH_BYTE: u64 = 0x5059_0111;
-pub const SYSCALL_OBJECT_SHELL_EXECUTE: u64 = 0x5059_0112;
-pub const SYSCALL_OBJECT_SHELL_POP_BYTE: u64 = 0x5059_0113;
+pub const INTRUDER_PRINCIPAL_ID: u64 = 0x5059_494E_5452_4401;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ShellBridgeStatus {
-    Ok,
-    Empty,
-    Full,
-    BadCommand,
-    NoResponseByte,
+pub enum UserProgramManifestError {
+    TooShort,
+    BadMagic,
+    UnsupportedVersion,
+    NameTooLong,
+    LengthOverflow,
+    BadDigest,
+    OutputTooSmall,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bridge_executes_command_bytes_and_returns_response_bytes() {
-        let mut bridge = ObjectShellBridge::new_for_test();
-        assert_eq!(bridge.begin_command(), ShellBridgeStatus::Ok);
-        for byte in b"create kind:note" {
-            assert_eq!(bridge.push_command_byte(*byte), ShellBridgeStatus::Ok);
-        }
-        assert_eq!(bridge.execute_command(), ShellBridgeStatus::Ok);
-
-        let response = bridge.drain_response_for_test();
-        assert_eq!(response, b"CREATED object:1042 revision:1\r\npyth> ");
-    }
-
-    #[test]
-    fn bad_command_returns_typed_error_response() {
-        let mut bridge = ObjectShellBridge::new_for_test();
-        bridge.begin_command();
-        for byte in b"ls /" {
-            bridge.push_command_byte(*byte);
-        }
-        assert_eq!(bridge.execute_command(), ShellBridgeStatus::BadCommand);
-        assert_eq!(bridge.drain_response_for_test(), b"ERROR unknown-command\r\npyth> ");
-    }
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NamedUserProgramManifest<'a> {
+    name: &'a [u8],
+    principal_id: u64,
+    elf_digest: u64,
+    elf: &'a [u8],
 }
 ```
 
-- [ ] **Step 2: Run bridge tests to verify failure**
+Use a deterministic FNV-1a 64-bit `digest64(bytes: &[u8]) -> u64`; document that it is an integrity binding for the trusted boot bundle, not a cryptographic signature.
+
+- [ ] **Step 5: Extend INIT bundle compatibly**
+
+In `shared/src/init_bundle.rs`, add:
+
+```rust
+pub const TYPE_NAMED_USER_ELF: u32 = 0x0000_0003;
+```
+
+Extend `RecordType`:
+
+```rust
+NamedUserElf,
+```
+
+Do not change `INIT_BUNDLE_MAJOR`, `INIT_BUNDLE_MINOR`, `TYPE_USER_ELF`, ordinal lookup, record header length, or existing tests.
+
+- [ ] **Step 6: Run shared tests**
 
 Run:
 
 ```powershell
-cargo test -p pythos-core object_shell_bridge
-```
-
-Expected: FAIL until the bridge implementation exists.
-
-- [ ] **Step 3: Implement bounded queues**
-
-Define:
-
-```rust
-const COMMAND_CAPACITY: usize = 96;
-const RESPONSE_CAPACITY: usize = 192;
-
-pub struct ObjectShellBridge {
-    store: ObjectShellStore,
-    command: [u8; COMMAND_CAPACITY],
-    command_len: usize,
-    response: [u8; RESPONSE_CAPACITY],
-    response_len: usize,
-    response_cursor: usize,
-}
-```
-
-`execute_command()` must parse command bytes, call `store.execute()`, format the response, append `\r\npyth> `, persist store state after successful `CreateNote` and `ReviseText`, and emit COM1 markers:
-
-```text
-PYTHOS:SHELL:COMMAND
-PYTHOS:SHELL:OBJECT_CREATED
-PYTHOS:SHELL:OBJECT_REVISED
-PYTHOS:SHELL:ACCESS_DENIED
-PYTHOS:SHELL:REBOOT_REQUESTED
-```
-
-- [ ] **Step 4: Add syscall dispatch entries**
-
-In `core/src/syscall.rs`, add shell bridge dispatch kinds:
-
-```rust
-ObjectShellBegin,
-ObjectShellPushByte,
-ObjectShellExecute,
-ObjectShellPopByte,
-```
-
-Add sorted table entries for `0x5059_0110..0x5059_0113`. Return low byte for `PopByte` with the same `SYSCALL_SHELL_BYTE_READY` convention used by COM2 read.
-
-- [ ] **Step 5: Add a single-core global bridge**
-
-In `core/src/object_shell_bridge.rs`, expose:
-
-```rust
-#[cfg(not(test))]
-pub fn initialize(device: BlockDeviceInfo) -> Result<(), ObjectShellError>;
-
-#[cfg(not(test))]
-pub fn syscall_begin_command() -> ShellBridgeStatus;
-#[cfg(not(test))]
-pub fn syscall_push_command_byte(byte: u8) -> ShellBridgeStatus;
-#[cfg(not(test))]
-pub fn syscall_execute_command() -> ShellBridgeStatus;
-#[cfg(not(test))]
-pub fn syscall_pop_response_byte() -> Option<u8>;
-```
-
-If a `static mut` bridge is used, the unsafe block must state this invariant:
-
-```rust
-// SAFETY:
-// 1. Invariant: ADR 0051 runs on the current single-core boot path and shell
-//    bridge syscalls are not re-entered while a bridge operation is active.
-// 2. Established by: QEMU target `-smp 1`, interrupts do not dispatch nested
-//    shell syscalls, and COM2 shell execution is one user process.
-// 3. Lifetime: the bridge is initialized before `shell.elf` is launched and
-//    remains valid for the entire normal boot.
-// 4. Pointer ownership: no borrowed references escape the critical section.
-// 5. Alignment: static storage is naturally aligned for `ObjectShellBridge`.
-// 6. Mapped length: exactly one `ObjectShellBridge` object is accessed.
-// 7. Concurrency: SMP is out of scope for ADR 0051.
-// 8. Violation: nested access would corrupt the command/response queues.
-```
-
-- [ ] **Step 6: Register module and run tests**
-
-In `core/src/main.rs` add:
-
-```rust
-mod object_shell_bridge;
-```
-
-Run:
-
-```powershell
-cargo test -p pythos-core object_shell_bridge syscall
+cargo test -p pythos-shared object_shell_abi user_program_manifest init_bundle
 ```
 
 Expected: PASS.
@@ -1151,31 +752,32 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```powershell
-git add core\src\main.rs core\src\syscall.rs core\src\object_shell_bridge.rs
-git commit -m "feat(shell): add object shell transaction syscalls"
+git add shared\src\lib.rs shared\src\object_shell_abi.rs shared\src\user_program_manifest.rs shared\src\init_bundle.rs
+git commit -m "feat(shell): define typed object shell ABI"
 ```
 
 ---
 
-### Task 6: Build And Package `shell.elf`
+### Task 4: Build And Verify Real `shell.elf`
 
 **Files:**
 - Modify: `Cargo.toml`
 - Create: `user/shell/Cargo.toml`
 - Create: `user/shell/src/main.rs`
+- Create: `user/shell/src/commands.rs`
+- Create: `user/shell/src/syscalls.rs`
 - Create: `user/shell/linker.ld`
 - Create: `scripts/build-user-shell.py`
-- Modify: `scripts/build-image.py`
-- Modify: `scripts/build-iso.py`
-- Test: `user/shell/src/main.rs`, `scripts/build-image.py`
+- Create: `scripts/verify-user-elf.py`
+- Test: `user/shell/src/commands.rs`, `scripts/verify-user-elf.py`
 
 **Interfaces:**
-- Consumes: shell serial syscalls and object-shell bridge syscalls from Task 2 and Task 5.
-- Produces: `target/x86_64-unknown-none/debug/pythos-user-shell`, embedded as a named user ELF payload in `INIT.PAK`.
+- Consumes: `pythos_shared::object_shell_abi`.
+- Produces: `target/x86_64-unknown-none/debug/pythos-user-shell`, shell parser `parse_command(line: &[u8]) -> Result<Command, CommandError>`.
 
-- [ ] **Step 1: Add user shell workspace package**
+- [ ] **Step 1: Add user shell crate**
 
-Update root `Cargo.toml`:
+Update root `Cargo.toml` members:
 
 ```toml
 members = [
@@ -1197,12 +799,177 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+pythos-shared = { path = "../../shared" }
+
 [[bin]]
 name = "pythos-user-shell"
 path = "src/main.rs"
 ```
 
-- [ ] **Step 2: Add linker script**
+- [ ] **Step 2: Write command parser tests in user space**
+
+Create `user/shell/src/commands.rs`:
+
+```rust
+use pythos_shared::object_shell_abi::{
+    FIELD_TEXT, OBJECT_KIND_NOTE, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT,
+    OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectShellRequest, PackedCapability,
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CommandError {
+    Empty,
+    Unknown,
+    BadObjectId,
+    TextTooLong,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ParsedCommand {
+    pub request: ObjectShellRequest,
+    pub text: [u8; 16],
+    pub text_len: usize,
+    pub reboot: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cap() -> PackedCapability {
+        PackedCapability::from_parts(2, 3)
+    }
+
+    #[test]
+    fn parses_human_commands_into_typed_requests() {
+        assert_eq!(parse_command(b"help", cap()).unwrap().reboot, false);
+        assert_eq!(parse_command(b"query kind:note", cap()).unwrap().request.operation, OP_QUERY_OBJECTS);
+        assert_eq!(parse_command(b"create kind:note", cap()).unwrap().request.operation, OP_CREATE_OBJECT);
+        assert_eq!(parse_command(b"inspect object:1042", cap()).unwrap().request.object_id, 1042);
+        let revised = parse_command(br#"revise object:1042 text="hello""#, cap()).unwrap();
+        assert_eq!(revised.request.operation, OP_REVISE_FIELD);
+        assert_eq!(revised.request.field_id, FIELD_TEXT);
+        assert_eq!(&revised.text[..revised.text_len], b"hello");
+        assert_eq!(parse_command(b"history object:1042", cap()).unwrap().request.operation, OP_GET_HISTORY);
+        assert_eq!(parse_command(b"reboot", cap()).unwrap().reboot, true);
+    }
+
+    #[test]
+    fn rejects_shell_grammar_errors_before_syscall() {
+        assert_eq!(parse_command(b"", cap()), Err(CommandError::Empty));
+        assert_eq!(parse_command(b"ls /", cap()), Err(CommandError::Unknown));
+        assert_eq!(parse_command(b"inspect object:notanumber", cap()), Err(CommandError::BadObjectId));
+    }
+}
+```
+
+- [ ] **Step 3: Implement parser and shell presentation**
+
+Implement `parse_command` so every supported human command becomes either a typed `ObjectShellRequest` or `reboot=true`. `help` is handled entirely in user space and does not call the object bridge.
+
+In `user/shell/src/main.rs`, write the shell loop:
+
+```rust
+#![no_std]
+#![no_main]
+
+mod commands;
+mod syscalls;
+
+use core::panic::PanicInfo;
+use commands::parse_command;
+use pythos_shared::object_shell_abi::PackedCapability;
+
+static mut LINE: [u8; 96] = [0; 96];
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    let console = syscalls::bootstrap_console_capability();
+    let workspace = syscalls::bootstrap_workspace_capability();
+    syscalls::write_str(console, "PYTHOS:SHELL:READY\r\n");
+    syscalls::write_str(console, "PYTHOS:SHELL:POLLING_COM2\r\n");
+    syscalls::write_str(console, "pyth> ");
+    let mut len = 0usize;
+    loop {
+        if let Some(byte) = syscalls::read_byte(console) {
+            if byte == b'\r' || byte == b'\n' {
+                syscalls::write_str(console, "\r\n");
+                let line = unsafe {
+                    // SAFETY:
+                    // 1. Invariant: `LINE[..len]` is initialized by this loop.
+                    // 2. Established by: `len` is incremented only after writing one byte.
+                    // 3. Lifetime: the slice is consumed before the next loop iteration mutates LINE.
+                    // 4. Pointer ownership: only this single ring-3 shell loop mutates LINE.
+                    // 5. Alignment: `u8` has alignment 1.
+                    // 6. Mapped length: `len <= LINE.len()` is enforced before every write.
+                    // 7. Concurrency: ADR 0051 shell is single-threaded.
+                    // 8. Violation: an invalid len would expose uninitialized command bytes.
+                    &LINE[..len]
+                };
+                run_line(console, workspace, line);
+                len = 0;
+                syscalls::write_str(console, "pyth> ");
+            } else if len < 96 {
+                unsafe {
+                    // SAFETY:
+                    // 1. Invariant: `len < LINE.len()` before this write.
+                    // 2. Established by: branch condition checks capacity.
+                    // 3. Lifetime: byte remains in LINE until command execution.
+                    // 4. Pointer ownership: only this shell loop mutates LINE.
+                    // 5. Alignment: `u8` has alignment 1.
+                    // 6. Mapped length: one byte at index len is inside LINE.
+                    // 7. Concurrency: ADR 0051 shell is single-threaded.
+                    // 8. Violation: missing capacity check would write past LINE.
+                    LINE[len] = byte;
+                }
+                len += 1;
+                syscalls::write_byte(console, byte);
+            }
+        } else {
+            core::hint::spin_loop();
+        }
+    }
+}
+
+fn run_line(console: PackedCapability, workspace: PackedCapability, line: &[u8]) {
+    match parse_command(line, workspace) {
+        Ok(parsed) if parsed.reboot => syscalls::request_reboot(console),
+        Ok(parsed) => syscalls::dispatch_object_request(console, parsed),
+        Err(_) => syscalls::write_str(console, "ERROR unknown-command\r\n"),
+    }
+}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+```
+
+- [ ] **Step 4: Add syscall wrappers with documented unsafe assembly**
+
+In `user/shell/src/syscalls.rs`, implement `syscall5` with this invariant immediately before the unsafe block:
+
+```rust
+// SAFETY:
+// 1. Invariant: the syscall numbers and register ABI are defined by
+//    `pythos_shared::object_shell_abi` and ADR 0052.
+// 2. Established by: shell build depends on the same shared crate used by
+//    PythCore.
+// 3. Lifetime: pointer arguments, when present, refer to stack or static
+//    objects that remain live until the syscall returns.
+// 4. Pointer ownership: mutable output buffers are not aliased across the call.
+// 5. Alignment: request and response pointers are naturally aligned Rust values.
+// 6. Mapped length: request and response lengths are exact `size_of` values;
+//    text/output buffers pass explicit byte lengths.
+// 7. Concurrency: this shell is single-threaded in ADR 0051.
+// 8. Violation: wrong registers or dangling pointers cause PythCore copy-in or
+//    copy-out validation to deny the call or terminate the process.
+```
+
+- [ ] **Step 5: Add shell linker and build script**
 
 Create `user/shell/linker.ld`:
 
@@ -1219,113 +986,7 @@ SECTIONS
 }
 ```
 
-- [ ] **Step 3: Write shell source**
-
-Create `user/shell/src/main.rs`:
-
-```rust
-#![no_std]
-#![no_main]
-
-use core::arch::asm;
-use core::panic::PanicInfo;
-
-const SYSCALL_SHELL_READ_BYTE: u64 = 0x5059_0100;
-const SYSCALL_SHELL_WRITE_BYTE: u64 = 0x5059_0101;
-const SYSCALL_OBJECT_SHELL_BEGIN: u64 = 0x5059_0110;
-const SYSCALL_OBJECT_SHELL_PUSH_BYTE: u64 = 0x5059_0111;
-const SYSCALL_OBJECT_SHELL_EXECUTE: u64 = 0x5059_0112;
-const SYSCALL_OBJECT_SHELL_POP_BYTE: u64 = 0x5059_0113;
-const BYTE_READY: u64 = 1 << 8;
-
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    write_str("PYTHOS:SHELL:READY\r\npyth> ");
-    begin_command();
-    loop {
-        let read = syscall1(SYSCALL_SHELL_READ_BYTE, 0);
-        if (read & BYTE_READY) == 0 {
-            spin();
-            continue;
-        }
-        let byte = (read & 0xFF) as u8;
-        if byte == b'\r' || byte == b'\n' {
-            write_byte(b'\r');
-            write_byte(b'\n');
-            execute_command();
-            drain_response();
-            begin_command();
-        } else {
-            write_byte(byte);
-            push_command_byte(byte);
-        }
-    }
-}
-
-fn begin_command() {
-    syscall1(SYSCALL_OBJECT_SHELL_BEGIN, 0);
-}
-
-fn push_command_byte(byte: u8) {
-    syscall1(SYSCALL_OBJECT_SHELL_PUSH_BYTE, u64::from(byte));
-}
-
-fn execute_command() {
-    syscall1(SYSCALL_OBJECT_SHELL_EXECUTE, 0);
-}
-
-fn drain_response() {
-    loop {
-        let value = syscall1(SYSCALL_OBJECT_SHELL_POP_BYTE, 0);
-        if (value & BYTE_READY) == 0 {
-            return;
-        }
-        write_byte((value & 0xFF) as u8);
-    }
-}
-
-fn write_str(value: &str) {
-    for byte in value.bytes() {
-        write_byte(byte);
-    }
-}
-
-fn write_byte(byte: u8) {
-    syscall1(SYSCALL_SHELL_WRITE_BYTE, u64::from(byte));
-}
-
-fn syscall1(number: u64, arg0: u64) -> u64 {
-    let result: u64;
-    unsafe {
-        asm!(
-            "syscall",
-            inlateout("rax") number => result,
-            in("rdi") arg0,
-            lateout("rcx") _,
-            lateout("r11") _,
-            options(nostack)
-        );
-    }
-    result
-}
-
-fn spin() {
-    core::hint::spin_loop();
-}
-
-#[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {
-        spin();
-    }
-}
-```
-
-If this crate introduces any unsafe block beyond `syscall1`, document the invariant before the block.
-
-- [ ] **Step 4: Add shell build script with ET_EXEC flags**
-
-Create `scripts/build-user-shell.py` so shell linker flags do not leak into the kernel package:
+Create `scripts/build-user-shell.py`:
 
 ```python
 #!/usr/bin/env python
@@ -1352,14 +1013,7 @@ def main() -> int:
         ]
     )
     return subprocess.call(
-        [
-            "cargo",
-            "build",
-            "-p",
-            "pythos-user-shell",
-            "--target",
-            "x86_64-unknown-none",
-        ],
+        ["cargo", "build", "-p", "pythos-user-shell", "--target", "x86_64-unknown-none"],
         cwd=ROOT,
         env=env,
     )
@@ -1369,283 +1023,1011 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 5: Build shell ELF**
+- [ ] **Step 6: Add readelf verification script**
+
+Create `scripts/verify-user-elf.py`:
+
+```python
+#!/usr/bin/env python
+"""Verify the ring-3 user ELF shape with readelf."""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+SHELL = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
+
+
+def main() -> int:
+    header = subprocess.run(["readelf", "-h", str(SHELL)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(header.stdout)
+    if header.returncode != 0:
+        return header.returncode
+    program = subprocess.run(["readelf", "-l", str(SHELL)], text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(program.stdout)
+    if program.returncode != 0:
+        return program.returncode
+    if re.search(r"Type:\s+EXEC", header.stdout) is None:
+        raise AssertionError("user shell is not ET_EXEC")
+    if re.search(r"Entry point address:\s+0x[0-9a-fA-F]+", header.stdout) is None:
+        raise AssertionError("user shell has no entry address")
+    if "LOAD" not in program.stdout:
+        raise AssertionError("user shell has no LOAD segment")
+    if "RWE" in program.stdout:
+        raise AssertionError("user shell has a writable-executable LOAD segment")
+    print("USER_ELF_VERIFY_OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+```
+
+- [ ] **Step 7: Run shell tests and verification**
 
 Run:
 
 ```powershell
+cargo test -p pythos-user-shell commands
 python scripts\build-user-shell.py
+python scripts\verify-user-elf.py
 ```
 
-Expected: PASS and produce an ELF64 `ET_EXEC` binary.
-
-- [ ] **Step 6: Embed shell ELF in INIT.PAK**
-
-In `scripts/build-image.py` and `scripts/build-iso.py`, read the shell binary:
-
-```python
-SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
-```
-
-Add it to the ADR 0037 inner bundle with a stable name:
-
-```python
-(INIT_BUNDLE_USER_ELF_TYPE, build_named_user_elf_payload(b"shell.elf", SHELL_ELF.read_bytes()))
-```
-
-`build_named_user_elf_payload(name: bytes, elf: bytes)` must encode:
+Expected:
 
 ```text
-u16 name_len
-name bytes
-u32 elf_len
-elf bytes
+USER_ELF_VERIFY_OK
 ```
-
-The existing unnamed user ELF payloads must remain unchanged for verify tests.
-
-- [ ] **Step 7: Run build and verify packaging**
-
-Run:
-
-```powershell
-python scripts\build-user-shell.py
-python scripts\build-image.py
-```
-
-Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
 ```powershell
-git add Cargo.toml user\shell scripts\build-user-shell.py scripts\build-image.py scripts\build-iso.py
-git commit -m "feat(shell): build and package ring-3 shell ELF"
+git add Cargo.toml user\shell scripts\build-user-shell.py scripts\verify-user-elf.py
+git commit -m "feat(shell): build real ring-3 command shell"
 ```
 
 ---
 
-### Task 7: Normal Boot Launches `shell.elf`
+### Task 5: Named Program Packaging And Authenticated Principal Binding
 
 **Files:**
+- Modify: `scripts/build-image.py`
+- Modify: `scripts/build-iso.py`
 - Modify: `core/src/runtime_loader.rs`
-- Modify: `core/src/user_elf.rs`
-- Modify: `core/src/user_mode.rs`
+- Create: `core/src/process_context.rs`
 - Modify: `core/src/main.rs`
-- Test: `core/src/runtime_loader.rs`, `core/src/user_mode.rs`, `scripts/test-object-shell.py`
+- Test: `core/src/runtime_loader.rs`, `core/src/process_context.rs`
 
 **Interfaces:**
-- Consumes: named `shell.elf` payload from Task 6, object shell bridge initialization from Task 5, existing dynamic ELF mapping helpers.
-- Produces: `runtime_loader::load_named_user_elf_payload(boot_info: &PythBootInfo, name: &[u8]) -> Result<&[u8], RuntimeLoadError>`, `runtime_loader::validate_named_user_elf_payload_bytes(bytes: &[u8], name: &[u8]) -> Result<&[u8], RuntimeLoadError>`, `user_mode::enter_persistent_user(entry: u64, user_stack_top: u64) -> !`, normal boot marker `PYTHOS:SHELL:RING3_ENTER`.
+- Consumes: `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest`, `SHELL_PRINCIPAL_ID`.
+- Produces: `runtime_loader::load_named_user_program(boot_info: &PythBootInfo, name: &[u8]) -> Result<NamedUserProgramManifest<'_>, RuntimeLoadError>`, `process_context::ActiveUserProcess`.
 
-- [ ] **Step 1: Write named user ELF loader tests**
+- [ ] **Step 1: Write runtime-loader named-program tests**
 
-In `core/src/runtime_loader.rs`, add tests for the named payload shape from Task 6:
+In `core/src/runtime_loader.rs`, add:
 
 ```rust
 #[test]
-fn named_user_elf_payload_finds_shell_by_name() {
-    let bundle = test_bundle_with_named_user_elf(b"shell.elf", b"\x7FELFpayload");
-    let shell = validate_named_user_elf_payload_bytes(&bundle, b"shell.elf").unwrap();
+fn named_user_program_loader_binds_shell_identity_to_manifest() {
+    let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+    let bundle = build_init_pak(&build_inner_bundle(&[
+        (pythos_shared::init_bundle::TYPE_RUNTIME_PAYLOAD, build_runtime_payload(HELLO_SERVICE).as_slice()),
+        (pythos_shared::init_bundle::TYPE_NAMED_USER_ELF, shell.as_slice()),
+    ]));
 
-    assert_eq!(shell, b"\x7FELFpayload");
-}
+    let loaded = validate_named_user_program_payload_bytes(&bundle, b"shell.elf").unwrap();
 
-#[test]
-fn named_user_elf_lookup_rejects_missing_name() {
-    let bundle = test_bundle_with_named_user_elf(b"other.elf", b"\x7FELFpayload");
-
-    assert_eq!(
-        validate_named_user_elf_payload_bytes(&bundle, b"shell.elf"),
-        Err(RuntimeLoadError::MissingUserElfPayload)
-    );
+    assert_eq!(loaded.name(), b"shell.elf");
+    assert_eq!(loaded.principal_id(), SHELL_PRINCIPAL_ID);
+    assert_eq!(loaded.elf(), b"\x7FELFpayload");
 }
 ```
 
-- [ ] **Step 2: Run named loader tests to verify failure**
+- [ ] **Step 2: Implement named-program loader**
+
+In `core/src/runtime_loader.rs`, add:
+
+```rust
+pub fn load_named_user_program(
+    boot_info: &PythBootInfo,
+    name: &[u8],
+) -> Result<NamedUserProgramManifest<'_>, RuntimeLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_named_user_program_payload_bytes(bytes, name)
+}
+
+pub fn validate_named_user_program_payload_bytes(
+    bytes: &[u8],
+    name: &[u8],
+) -> Result<NamedUserProgramManifest<'_>, RuntimeLoadError> {
+    let payload = init_pak_payload(bytes)?;
+    let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
+    let mut index = 0usize;
+    while let Some(record) = bundle.record_at(init_bundle::RecordType::NamedUserElf, index) {
+        let manifest = user_program_manifest::validate_named_user_program(record.bytes())
+            .map_err(|_| RuntimeLoadError::BadUserElfPayload)?;
+        if manifest.name() == name {
+            return Ok(manifest);
+        }
+        index += 1;
+    }
+    Err(RuntimeLoadError::MissingUserElfPayload)
+}
+```
+
+Preserve `load_user_elf_payload_at` and all ordinal user ELF tests.
+
+- [ ] **Step 3: Package named shell and intruder programs**
+
+In `scripts/build-image.py` and `scripts/build-iso.py`, add `build_named_user_program(name, principal_id, elf)` mirroring `shared/src/user_program_manifest.rs`.
+
+Append records:
+
+```python
+(INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()))
+(INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"intruder.elf", INTRUDER_PRINCIPAL_ID, INTRUDER_ELF_BYTES))
+```
+
+Do not remove the existing ordinal `INIT_BUNDLE_USER_ELF_TYPE` records.
+
+- [ ] **Step 4: Write process-context tests**
+
+Create `core/src/process_context.rs` with:
+
+```rust
+use crate::service_identity::{ServiceId, ServiceIdentityTable};
+use crate::tasks::TaskId;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActiveUserProcess {
+    service_id: ServiceId,
+    principal_id: u64,
+    program_digest: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn caller_identity_comes_from_active_process_not_task_slot_constant() {
+        let mut identities = ServiceIdentityTable::new();
+        let shell_service = identities.register_task(TaskId::new(180)).unwrap();
+        let intruder_service = identities.register_task(TaskId::new(181)).unwrap();
+        let shell = ActiveUserProcess::new(shell_service, SHELL_PRINCIPAL_ID, 0xAA);
+        let intruder = ActiveUserProcess::new(intruder_service, INTRUDER_PRINCIPAL_ID, 0xBB);
+
+        set_current_for_test(shell);
+        assert_eq!(current_caller_for_test().unwrap().principal_id(), SHELL_PRINCIPAL_ID);
+        set_current_for_test(intruder);
+        assert_eq!(current_caller_for_test().unwrap().principal_id(), INTRUDER_PRINCIPAL_ID);
+    }
+}
+```
+
+- [ ] **Step 5: Implement active caller tracking**
+
+Implement:
+
+```rust
+pub const fn new(service_id: ServiceId, principal_id: u64, program_digest: u64) -> ActiveUserProcess;
+pub const fn service_id(self) -> ServiceId;
+pub const fn principal_id(self) -> u64;
+pub const fn program_digest(self) -> u64;
+pub fn bind_current_process(process: ActiveUserProcess);
+pub fn current_caller() -> Result<ActiveUserProcess, ProcessContextError>;
+```
+
+If a `static mut` or `UnsafeCell` holds the active process, document this invariant:
+
+```rust
+// SAFETY:
+// 1. Invariant: ADR 0051 runs one active ring-3 process at a time on one CPU.
+// 2. Established by: QEMU target is single-core and persistent shell launch is
+//    not preemptively migrated across address spaces in this slice.
+// 3. Lifetime: copied identity values outlive the syscall that reads them.
+// 4. Pointer ownership: no borrowed process table references escape.
+// 5. Alignment: static storage is naturally aligned for `ActiveUserProcess`.
+// 6. Mapped length: exactly one process context cell is accessed.
+// 7. Concurrency: SMP is out of scope for ADR 0051.
+// 8. Violation: concurrent mutation would allow wrong-caller authority checks.
+```
+
+- [ ] **Step 6: Run tests**
 
 Run:
 
 ```powershell
-cargo test -p pythos-core runtime_loader::tests::named_user_elf
+cargo test -p pythos-core runtime_loader process_context
+python scripts\build-user-shell.py
+python scripts\build-image.py
+python scripts\verify-user-elf.py
 ```
 
-Expected: FAIL until named lookup exists.
+Expected:
 
-- [ ] **Step 3: Implement named payload lookup**
+```text
+USER_ELF_VERIFY_OK
+```
 
-Add:
+- [ ] **Step 7: Commit**
+
+```powershell
+git add scripts\build-image.py scripts\build-iso.py core\src\runtime_loader.rs core\src\process_context.rs core\src\main.rs
+git commit -m "feat(shell): bind shell principal to named ELF manifest"
+```
+
+---
+
+### Task 6: Promote Phase 10 Object Store Into Retained Service
+
+**Files:**
+- Modify: `core/src/dynamic_object_store.rs`
+- Modify: `core/src/general_storage_persistence.rs`
+- Modify: `core/src/revision_history.rs`
+- Modify: `core/src/typed_object_format.rs`
+- Modify: `core/src/shell_objects.rs`
+- Create: `core/src/object_service.rs`
+- Modify: `core/src/main.rs`
+- Test: `core/src/object_service.rs`, `core/src/dynamic_object_store.rs`, `core/src/general_storage_persistence.rs`
+
+**Interfaces:**
+- Consumes: `DynamicObjectStore`, `BlockAllocator`, `StorageQuotaTable`, `RevisionHistory`, `TypedObjectRecord`.
+- Produces: `ObjectService::restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError>`, `ObjectService::create_object`, `ObjectService::query_objects`, `ObjectService::inspect_object`, `ObjectService::revise_field`, `ObjectService::history`.
+
+- [ ] **Step 1: Add note kind test**
+
+In `core/src/typed_object_format.rs`:
 
 ```rust
-pub fn load_named_user_elf_payload(
-    boot_info: &PythBootInfo,
-    name: &[u8],
-) -> Result<&[u8], RuntimeLoadError>
+#[test]
+fn note_kind_round_trips_with_stable_code() {
+    let mut record = TypedObjectRecord::new(ObjectId::new(1042), ObjectKind::Note, 1);
+    record.push_field(TypedObjectField::new(1, 1, b"hello").unwrap()).unwrap();
+    let decoded = TypedObjectRecord::decode(&record.encode()).unwrap();
 
-pub fn validate_named_user_elf_payload_bytes(
-    bytes: &[u8],
-    name: &[u8],
-) -> Result<&[u8], RuntimeLoadError>
+    assert_eq!(decoded.object_id().raw(), 1042);
+    assert_eq!(decoded.object_kind(), ObjectKind::Note);
+    assert_eq!(decoded.field(0).unwrap().field_id(), 1);
+}
 ```
 
-`load_named_user_elf_payload()` should reuse the existing private `init_bundle_bytes(boot_info)` path, then call `validate_named_user_elf_payload_bytes()`. The validator must validate `name_len`, name bytes, `elf_len`, and range overflow before returning the ELF slice.
+- [ ] **Step 2: Add `ObjectKind::Note`**
 
-- [ ] **Step 4: Add persistent user entry**
+In `core/src/shell_objects.rs`, add:
+
+```rust
+Note,
+```
+
+In `core/src/typed_object_format.rs`, encode `ObjectKind::Note` as `10` and decode `10` as `ObjectKind::Note`.
+
+- [ ] **Step 3: Expose dynamic object lookup and iteration**
+
+In `core/src/dynamic_object_store.rs`, add tests:
+
+```rust
+#[test]
+fn store_returns_existing_typed_object_by_id() {
+    let mut store = DynamicObjectStore::new(64, 8).unwrap();
+    let record = TypedObjectRecord::new(ObjectId::new(1042), ObjectKind::Note, 1);
+    store.create_object(record).unwrap();
+
+    assert_eq!(store.object(ObjectId::new(1042)), Some(record));
+    assert_eq!(store.object(ObjectId::new(2001)), None);
+}
+```
+
+Implement:
+
+```rust
+pub fn object(self, object_id: ObjectId) -> Option<TypedObjectRecord>;
+pub fn replace_object(&mut self, object: TypedObjectRecord) -> Result<(), DynamicObjectError>;
+pub fn objects(self) -> [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS];
+pub fn allocator_bitmap(self) -> u64;
+pub fn restore_from_parts(base_sector: u64, block_count: u16, bitmap: u64, objects: [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS]) -> Result<Self, DynamicObjectError>;
+```
+
+- [ ] **Step 4: Extract reusable snapshot helpers**
+
+In `core/src/general_storage_persistence.rs`, move fixed proof-only snapshot logic behind reusable public helpers:
+
+```rust
+pub const OBJECT_SERVICE_SNAPSHOT_SECTOR: u64 = 41;
+pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 42;
+
+pub struct ObjectServiceSnapshot {
+    pub allocated_bitmap: u64,
+    pub objects: [Option<TypedObjectRecord>; 8],
+    pub current_revisions: [Option<RevisionRecord>; 4],
+    pub prior_revisions: [Option<RevisionRecord>; 8],
+}
+
+pub fn encode_object_service_snapshot(snapshot: ObjectServiceSnapshot, committed: bool) -> [u8; SECTOR_SIZE];
+pub fn decode_object_service_snapshot(sector: [u8; SECTOR_SIZE]) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError>;
+```
+
+Keep `run_self_test(device)` producing the existing Phase 10 markers.
+
+- [ ] **Step 5: Add object service tests**
+
+Create `core/src/object_service.rs` with:
+
+```rust
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_uses_workspace_and_object_capabilities_for_note_flow() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
+        assert_eq!(created.object_id, ObjectId::new(1042));
+        assert_eq!(created.revision, 1);
+
+        service.revise_field(shell, created.object_capability, ObjectId::new(1042), 1, b"hello").unwrap();
+        let inspected = service.inspect_object(shell, created.object_capability, ObjectId::new(1042)).unwrap();
+
+        assert_eq!(inspected.revision, 2);
+        assert_eq!(inspected.field_bytes(1), Some(*b"hello\0\0\0\0\0\0\0\0\0\0\0"));
+    }
+
+    #[test]
+    fn known_object_id_without_object_capability_is_denied() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let outside = service.create_ungranted_note_for_test(ObjectId::new(2001), b"secret").unwrap();
+
+        assert_eq!(outside.object_id, ObjectId::new(2001));
+        assert_eq!(
+            service.inspect_object(shell, service.test_shell_workspace_capability(), ObjectId::new(2001)),
+            Err(ObjectServiceError::Denied)
+        );
+    }
+
+    #[test]
+    fn restore_reconstructs_fresh_runtime_handles() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
+        let snapshot = service.encode_snapshot_for_test().unwrap();
+
+        let restored = ObjectService::decode_snapshot_for_test(snapshot).unwrap();
+        let restored_cap = restored.object_capability_for_test(shell, ObjectId::new(1042)).unwrap();
+
+        assert_ne!(created.object_capability.raw(), restored_cap.raw());
+    }
+}
+```
+
+- [ ] **Step 6: Implement object service**
+
+`ObjectService` must contain:
+
+```rust
+pub struct ObjectCreateResult {
+    pub object_id: ObjectId,
+    pub revision: u64,
+    pub object_capability: PackedCapability,
+}
+
+pub struct ObjectInspection {
+    pub object: TypedObjectRecord,
+    pub revision: u64,
+}
+
+impl ObjectInspection {
+    pub fn field_bytes(&self, field_id: u16) -> Option<[u8; 16]> {
+        let mut index = 0usize;
+        while index < self.object.field_count() {
+            if let Some(field) = self.object.field(index)
+                && field.field_id() == field_id
+            {
+                return Some(field.value());
+            }
+            index += 1;
+        }
+        None
+    }
+}
+
+pub struct ObjectService {
+    objects: DynamicObjectStore,
+    revisions: RevisionHistory,
+    capabilities: CapabilityTable,
+    quotas: StorageQuotaTable,
+    shell_workspace: ResourceId,
+}
+
+#[cfg(test)]
+impl ObjectService {
+    pub fn new_for_test() -> Self;
+    pub fn test_shell_caller(&self) -> ActiveUserProcess;
+    pub fn test_intruder_caller(&self) -> ActiveUserProcess;
+    pub fn test_shell_workspace_capability(&self) -> PackedCapability;
+    pub fn create_ungranted_note_for_test(
+        &mut self,
+        object_id: ObjectId,
+        text: &[u8],
+    ) -> Result<ObjectCreateResult, ObjectServiceError>;
+    pub fn encode_snapshot_for_test(&self) -> Result<[u8; SECTOR_SIZE], ObjectServiceError>;
+    pub fn decode_snapshot_for_test(bytes: [u8; SECTOR_SIZE]) -> Result<Self, ObjectServiceError>;
+    pub fn object_capability_for_test(
+        &self,
+        caller: ActiveUserProcess,
+        object_id: ObjectId,
+    ) -> Result<PackedCapability, ObjectServiceError>;
+}
+```
+
+Rules:
+
+```text
+Create/query require workspace capability.
+Inspect/revise/history require per-object capability.
+Create of a note allocates through DynamicObjectStore and records revision 1 in RevisionHistory.
+Revise writes a new TypedObjectRecord field value and records a retained revision.
+Query returns only objects reachable from the caller's workspace policy.
+Known ungranted object 2001 exists in the store but is not related to the shell workspace.
+Persist/restore use ObjectServiceSnapshot and Phase 10 commit-marker semantics.
+Runtime CapabilityHandle values are never serialized.
+```
+
+- [ ] **Step 7: Run focused tests**
+
+Run:
+
+```powershell
+cargo test -p pythos-core typed_object_format dynamic_object_store general_storage_persistence object_service
+python scripts\test-persistent-storage.py
+```
+
+Expected:
+
+```text
+PERSISTENT_STORAGE_TEST_OK
+```
+
+- [ ] **Step 8: Commit**
+
+```powershell
+git add core\src\dynamic_object_store.rs core\src\general_storage_persistence.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
+git commit -m "feat(objects): promote Phase 10 store for normal services"
+```
+
+---
+
+### Task 7: Caller-Derived Typed Syscalls
+
+**Files:**
+- Modify: `core/src/syscall.rs`
+- Modify: `core/src/process_context.rs`
+- Modify: `core/src/object_service.rs`
+- Modify: `core/src/normal_boot.rs`
+- Test: `core/src/syscall.rs`, `core/src/object_service.rs`
+
+**Interfaces:**
+- Consumes: `ObjectShellRequest`, `ObjectShellResponse`, `ObjectService`, `ActiveUserProcess`.
+- Produces: console syscalls, object request syscall, system reboot syscall, caller-derived denial marker `PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED`.
+
+- [ ] **Step 1: Write syscall caller-denial tests**
+
+In `core/src/syscall.rs`, add:
+
+```rust
+#[test]
+fn object_request_denies_intruder_without_borrowing_shell_authority() {
+    let mut service = ObjectService::new_for_test();
+    let shell = service.test_shell_caller();
+    let intruder = service.test_intruder_caller();
+    let workspace = service.test_shell_workspace_capability();
+
+    let request = ObjectShellRequest {
+        abi_major: OBJECT_SHELL_ABI_MAJOR,
+        abi_minor: OBJECT_SHELL_ABI_MINOR,
+        operation: OP_CREATE_OBJECT,
+        object_kind: OBJECT_KIND_NOTE,
+        field_id: 0,
+        reserved0: 0,
+        authority: workspace,
+        object_id: 0,
+        input_ptr: 0,
+        input_len: 0,
+        output_ptr: 0,
+        output_len: 0,
+        reserved1: 0,
+        reserved2: 0,
+    };
+    assert_eq!(dispatch_object_request_for_test(&mut service, shell, request).status, STATUS_OK);
+    assert_eq!(
+        dispatch_object_request_for_test(&mut service, intruder, request).status,
+        STATUS_DENIED
+    );
+}
+
+#[test]
+fn console_write_requires_console_capability_from_current_caller() {
+    let mut identities = ServiceIdentityTable::new();
+    let shell_service = identities.register_task(TaskId::new(180)).unwrap();
+    let intruder_service = identities.register_task(TaskId::new(181)).unwrap();
+    let shell = ActiveUserProcess::new(shell_service, SHELL_PRINCIPAL_ID, 0xAA);
+    let intruder = ActiveUserProcess::new(intruder_service, INTRUDER_PRINCIPAL_ID, 0xBB);
+    let console = bootstrap_console_capability_for_test(shell);
+
+    assert_eq!(dispatch_console_write_for_test(shell, console, b'X'), Ok(SYSCALL_OK));
+    assert_eq!(
+        dispatch_console_write_for_test(intruder, console, b'X'),
+        Err(SyscallError::Capability(CapabilityError::WrongHolder))
+    );
+}
+```
+
+- [ ] **Step 2: Capture syscall arguments**
+
+Change syscall entry assembly to pass `rax`, `rdi`, `rsi`, `rdx`, `r10`, and `r8` into `syscall_dispatch_abi`:
+
+```asm
+mov r9, r8
+mov r8, r10
+mov rcx, rdx
+mov rdx, rsi
+mov rsi, rdi
+mov rdi, rax
+call syscall_dispatch_abi
+```
+
+Update:
+
+```rust
+#[repr(C)]
+pub struct SyscallArgs {
+    pub number: u64,
+    pub arg0: u64,
+    pub arg1: u64,
+    pub arg2: u64,
+    pub arg3: u64,
+    pub arg4: u64,
+}
+```
+
+- [ ] **Step 3: Separate proof-only syscall expectation from normal syscalls**
+
+Keep `EXPECTED_SYSCALL` around the existing Phase 8 proof syscall. Add:
+
+```rust
+fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let entry = lookup_syscall(args.number).ok_or(SyscallError::UnsupportedNumber)?;
+    if entry.proof_only && !EXPECTED_SYSCALL.swap(false, Ordering::SeqCst) {
+        return Err(SyscallError::UnexpectedSyscall);
+    }
+    dispatch_known(entry.dispatch_kind, args)
+}
+```
+
+Set `proof_only: true` for `SYSCALL_SYSTEM_LOG_PROOF` and `proof_only: false` for console/object/system-control calls.
+
+- [ ] **Step 4: Implement capability-gated console syscalls**
+
+In `core/src/capabilities.rs`, add:
+
+```rust
+use pythos_shared::object_shell_abi::PackedCapability;
+
+impl CapabilityHandle {
+    pub const fn from_parts(slot: u32, generation: u32) -> Self {
+        Self { slot, generation }
+    }
+
+    pub const fn from_packed(packed: PackedCapability) -> Self {
+        Self::from_parts(packed.slot(), packed.generation())
+    }
+
+    pub const fn raw(self) -> u64 {
+        u64::from(self.slot) | (u64::from(self.generation) << 32)
+    }
+}
+```
+
+`SYSCALL_CONSOLE_READ_BYTE` and `SYSCALL_CONSOLE_WRITE_BYTE` take `arg0` as `PackedCapability::raw()`. PythCore derives:
+
+```rust
+let caller = process_context::current_caller()?;
+let handle = CapabilityHandle::from_packed(PackedCapability::from_raw(args.arg0));
+console_capabilities.validate(caller.service_id(), handle, CONSOLE_COM2_RESOURCE, RightsMask::new(RightsMask::READ))?;
+```
+
+Use `RightsMask::WRITE` for write. Only after validation may PythCore read or write COM2.
+
+- [ ] **Step 5: Implement typed object request syscall**
+
+`SYSCALL_OBJECT_REQUEST` arguments:
+
+```text
+arg0: pointer to ObjectShellRequest in caller address space
+arg1: sizeof(ObjectShellRequest)
+arg2: pointer to ObjectShellResponse in caller address space
+arg3: sizeof(ObjectShellResponse)
+arg4: reserved zero
+```
+
+Use the existing copy-in/copy-out policy to validate the request and response buffers before raw dereference. Reject bad pointers before touching object state.
+
+Dispatch only typed operations:
+
+```rust
+OP_CREATE_OBJECT => object_service.create_object(caller, request.authority, ObjectKind::Note)
+OP_QUERY_OBJECTS => object_service.query_objects(caller, request.authority, ObjectKind::Note, output)
+OP_INSPECT_OBJECT => object_service.inspect_object(caller, request.authority, ObjectId::new(request.object_id))
+OP_REVISE_FIELD => object_service.revise_field(caller, request.authority, ObjectId::new(request.object_id), request.field_id, input)
+OP_GET_HISTORY => object_service.history(caller, request.authority, ObjectId::new(request.object_id))
+```
+
+PythCore must not inspect command strings such as `create kind:note`.
+
+- [ ] **Step 6: Implement capability-gated reboot syscall**
+
+`SYSCALL_SYSTEM_REBOOT` takes `arg0` as the caller's system-control capability. Validate `SYSTEM_CONTROL_RESOURCE` with `RightsMask::WRITE`, emit:
+
+```text
+PYTHOS:SHELL:REBOOT_REQUESTED
+PYTHOS:CORE:SYSTEM:REBOOTING
+```
+
+Then call the QEMU reset helper added in Task 9.
+
+- [ ] **Step 7: Run tests**
+
+Run:
+
+```powershell
+cargo test -p pythos-core syscall process_context object_service user_copy
+python scripts\test-boot.py
+```
+
+Expected:
+
+```text
+BOOT_TEST_OK
+```
+
+- [ ] **Step 8: Commit**
+
+```powershell
+git add core\src\syscall.rs core\src\process_context.rs core\src\object_service.rs core\src\normal_boot.rs
+git commit -m "feat(shell): gate typed syscalls by current caller"
+```
+
+---
+
+### Task 8: Persistent Shell Launch And Fault Outcome
+
+**Files:**
+- Modify: `core/src/user_mode.rs`
+- Modify: `core/src/normal_boot.rs`
+- Modify: `core/src/user_elf.rs`
+- Modify: `core/src/runtime_loader.rs`
+- Test: `core/src/user_mode.rs`, `scripts/test-object-shell.py`
+
+**Interfaces:**
+- Consumes: named shell manifest, `ObjectService`, `ActiveUserProcess`, COM2, typed syscalls.
+- Produces: marker `PYTHOS:SHELL:RING3_ENTER`, marker `PYTHOS:SHELL:FAULT_TERMINATED`, `user_mode::enter_persistent_user_process(process, entry, user_stack_top) -> !`.
+
+- [ ] **Step 1: Write persistent fault policy test**
+
+In `core/src/user_mode.rs`, add a pure policy test:
+
+```rust
+#[test]
+fn persistent_user_fault_terminates_faulting_service() {
+    let mut identities = ServiceIdentityTable::new();
+    let shell_service = identities.register_task(TaskId::new(180)).unwrap();
+    let peer_service = identities.register_task(TaskId::new(182)).unwrap();
+    let shell = ActiveUserProcess::new(shell_service, SHELL_PRINCIPAL_ID, 0xAA);
+    let peer = ActiveUserProcess::new(peer_service, 0x5059_5045_4552_0001, 0xCC);
+    let outcome = classify_persistent_user_fault_for_test(shell, peer);
+
+    assert_eq!(outcome.terminated_principal, SHELL_PRINCIPAL_ID);
+    assert!(outcome.peer_alive);
+}
+```
+
+- [ ] **Step 2: Add persistent ring-3 entry**
 
 In `core/src/user_mode.rs`, add:
 
 ```rust
 #[cfg(not(test))]
-pub fn enter_persistent_user(entry: u64, user_stack_top: u64) -> ! {
+pub fn enter_persistent_user_process(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+) -> ! {
+    process_context::bind_current_process(process);
     tss::set_ring0_stack(kernel_trap_stack_top());
     serial::write_line("PYTHOS:SHELL:RING3_ENTER");
     unsafe {
         ring3_enter_forever_abi(entry, user_stack_top);
     }
-}
-```
-
-Add a new assembly entry `ring3_enter_forever_abi` that performs the same selector setup as `ring3_enter_abi` but does not install a breakpoint recovery label. Syscalls must return to user mode; unexpected faults still flow through the existing diagnostics/crash containment path.
-
-- [ ] **Step 5: Initialize bridge and launch shell in normal boot**
-
-Change the normal-boot call site after `PYTHOS:CORE:MILESTONE_1_COMPLETE` so it passes the state required to launch the shell:
-
-```rust
-normal_event_loop(&mut physical_memory, boot_info, _block_device);
-```
-
-Change `normal_event_loop()` to accept those values:
-
-```rust
-fn normal_event_loop(
-    physical_memory: &mut PhysicalMemory,
-    boot_info: &PythBootInfo,
-    block_device: BlockDeviceInfo,
-) -> !
-```
-
-In `core/src/main.rs`, replace `normal_event_loop()` body with:
-
-```rust
-serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
-serial::write_line("PYTHOS:CORE:NORMAL_BOOT:FAST_PATH");
-if object_shell_bridge::initialize(block_device).is_err() {
-    serial::write_line("PYTHOS:PANIC");
-    qemu_exit::panic();
-}
-let shell_payload = match runtime_loader::load_named_user_elf_payload(boot_info, b"shell.elf") {
-    Ok(image) => image,
-    Err(_) => {
-        serial::write_line("PYTHOS:SHELL:ELF_MISSING");
-        qemu_exit::panic();
+    loop {
+        core::hint::spin_loop();
     }
-};
-let (shell_address_space, loaded_shell, shell_image) =
-    match build_user_elf_address_space_from_image(physical_memory, boot_info, shell_payload) {
-        Ok(loaded) => loaded,
-        Err(_) => {
-            serial::write_line("PYTHOS:SHELL:ELF_INVALID");
-            qemu_exit::panic();
-        }
-    };
-if loaded_shell.entry() != shell_image.entry() {
-    serial::write_line("PYTHOS:SHELL:ELF_INVALID");
-    qemu_exit::panic();
 }
-// SAFETY:
-// 1. Invariant: `shell_address_space` owns a valid user CR3 root built by
-//    `build_user_elf_address_space_from_image()` from a validated user ELF.
-// 2. Established by: `user_elf::validate()`, mapped segment checks, and
-//    retained address-space frame ownership.
-// 3. Lifetime: the retained address space is consumed by the persistent shell
-//    launch path and is not reclaimed before entering user mode.
-// 4. Concurrency: ADR 0051 normal boot is single-core.
-unsafe {
-    shell_address_space.activate();
-}
-user_mode::enter_persistent_user(shell_image.entry(), user_stacks::proof_stack_top());
 ```
 
-Split `build_dynamic_elf_address_space` into a payload-specific helper and keep the ordinal-based helper as a wrapper for existing proofs:
+Document the unsafe invariant before `ring3_enter_forever_abi`.
+
+- [ ] **Step 3: Define fault handling outcome**
+
+For a persistent shell fault, emit:
+
+```text
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:SHELL:FAULT_TERMINATED
+PYTHOS:CORE:CRASH:PEER_ALIVE
+```
+
+Terminate only the faulting user process and leave PythCore alive. Do not use the controlled breakpoint recovery path from the proof-only user-mode tests as the persistent-shell success path.
+
+- [ ] **Step 4: Launch shell in normal boot**
+
+In `core/src/normal_boot.rs`, after object service initialization:
 
 ```rust
-fn build_user_elf_address_space_from_image(
-    physical_memory: &mut PhysicalMemory,
-    boot_info: &PythBootInfo,
-    image: &[u8],
-) -> Result<UserElfLaunch, UserElfLaunchError>
+let shell_program = runtime_loader::load_named_user_program(boot_info, b"shell.elf")?;
+let shell_elf = user_elf::validate(shell_program.elf())?;
+let shell_process = process_context::ActiveUserProcess::from_manifest(shell_service, shell_program);
+let launch = build_user_elf_address_space_from_image(physical_memory, boot_info, shell_program.elf())?;
+bootstrap_shell_capabilities(shell_process, &mut object_service)?;
+user_mode::enter_persistent_user_process(shell_process, shell_elf.entry(), user_stacks::proof_stack_top());
 ```
 
-- [ ] **Step 6: Run focused unit tests**
+`bootstrap_shell_capabilities` grants console, workspace, and system-control capabilities to the shell process. It grants per-object capabilities only for objects reachable through the shell workspace policy.
+
+- [ ] **Step 5: Run focused tests**
 
 Run:
 
 ```powershell
-cargo test -p pythos-core runtime_loader user_mode
-```
-
-Expected: PASS.
-
-- [ ] **Step 7: Run object-shell acceptance test**
-
-Run:
-
-```powershell
+cargo test -p pythos-core user_mode runtime_loader user_elf process_context
 python scripts\test-object-shell.py
 ```
 
-Expected: FAIL at this task only if object persistence or response formatting is not wired through the bridge yet; it must at least show `PYTHOS:SHELL:RING3_ENTER` on COM1 and `PYTHOS:SHELL:READY` on COM2 before the failure.
+Expected before Task 10: FAIL after `PYTHOS:SHELL:READY` if object responses are not fully wired. COM1 must contain `PYTHOS:SHELL:RING3_ENTER`.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```powershell
-git add core\src\runtime_loader.rs core\src\user_elf.rs core\src\user_mode.rs core\src\main.rs
-git commit -m "feat(shell): launch shell ELF on normal boot"
+git add core\src\user_mode.rs core\src\normal_boot.rs core\src\user_elf.rs core\src\runtime_loader.rs
+git commit -m "feat(shell): launch persistent shell process"
 ```
 
 ---
 
-### Task 8: End-To-End Object Shell Persistence
+### Task 9: System Reboot And Acceptance Harness
 
 **Files:**
-- Modify: `core/src/object_shell_bridge.rs`
-- Modify: `core/src/object_shell_store.rs`
-- Modify: `scripts/test-object-shell.py`
-- Modify: `docs/ROADMAP.md`
-- Modify: `docs/HANDOVER.md`
-- Test: `scripts/test-object-shell.py`, `scripts/test-boot.py`, `scripts/test-persistent-storage.py`
+- Modify: `core/src/qemu_exit.rs`
+- Modify: `core/src/syscall.rs`
+- Create: `scripts/test-object-shell.py`
+- Test: `scripts/test-object-shell.py`
 
 **Interfaces:**
-- Consumes: all prior tasks.
-- Produces: passing `OBJECT_SHELL_TEST_OK`, preserved `BOOT_TEST_OK`, preserved `PERSISTENT_STORAGE_TEST_OK`, and docs updated to record ADR 0051 completion.
+- Consumes: `SYSCALL_SYSTEM_REBOOT`, COM2 transport.
+- Produces: `system_reboot_qemu() -> !`, forced power-loss test path, actual reboot test path.
 
-- [ ] **Step 1: Tighten acceptance expectations**
+- [ ] **Step 1: Add QEMU reset helper**
 
-Ensure `scripts/test-object-shell.py` asserts the exact command transcript:
+In `core/src/qemu_exit.rs`, add:
 
-```text
-PYTHOS:SHELL:READY
-pyth> create kind:note
-CREATED object:1042 revision:1
-pyth> revise object:1042 text="hello"
-COMMITTED revision:2
-pyth> inspect object:9999
-DENIED missing-capability
-pyth> reboot
-REBOOTING
+```rust
+pub fn reboot_qemu() -> ! {
+    // SAFETY:
+    // 1. Invariant: writing 0xFE to port 0x64 requests a reset on the ADR 0052
+    //    QEMU q35/i8042 target.
+    // 2. Established by: ADR 0052 limits this reboot mechanism to the current
+    //    QEMU profile and system-control syscall validates authority first.
+    // 3. Lifetime: the instruction has no borrowed-memory lifetime.
+    // 4. Pointer ownership: no pointers are used.
+    // 5. Alignment: not applicable to port I/O.
+    // 6. Mapped length: not applicable to port I/O.
+    // 7. Concurrency: ADR 0051 remains single-core.
+    // 8. Violation: unsupported hardware may ignore the request and spin.
+    unsafe {
+        asm!("out dx, al", in("dx") 0x64u16, in("al") 0xFEu8, options(nomem, nostack, preserves_flags));
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
 ```
 
-Second boot transcript:
+- [ ] **Step 2: Write object-shell acceptance test**
 
-```text
-PYTHOS:SHELL:READY
-pyth> inspect object:1042
-text="hello" revision:2
-pyth> history object:1042
-history object:1042 revisions:2
+Create `scripts/test-object-shell.py` with two phases:
+
+```python
+#!/usr/bin/env python
+"""End-to-end ADR 0051 object shell test."""
+
+from __future__ import annotations
+
+import socket
+import subprocess
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+TARGET = ROOT / "target"
+SERIAL_LOG = TARGET / "object-shell-com1.log"
+TRANSCRIPT = TARGET / "object-shell-com2.log"
+STORAGE = TARGET / "object-shell-store.img"
+SHELL_PORT = 4582
+
+
+@dataclass
+class Result:
+    com1: str
+    com2: str
+
+
+def run(command: list[str]) -> None:
+    result = subprocess.run(command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    print(result.stdout)
+    if result.returncode != 0:
+        raise AssertionError(f"{command} failed with {result.returncode}")
+
+
+def wait_for_socket_text(sock: socket.socket, marker: str, timeout: float = 20) -> str:
+    deadline = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < deadline:
+        try:
+            data = sock.recv(4096)
+        except socket.timeout:
+            continue
+        if data:
+            text += data.decode("utf-8", errors="replace")
+            if marker in text:
+                return text
+    raise AssertionError(f"missing COM2 marker {marker}; transcript={text!r}")
+
+
+def wait_for_file_marker(path: Path, marker: str, timeout: float = 20) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if marker in text:
+                return text
+        time.sleep(0.1)
+    raise AssertionError(f"missing COM1 marker {marker}")
+
+
+def wait_for_file_marker_count(path: Path, marker: str, count: int, timeout: float = 30) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if text.count(marker) >= count:
+                return text
+        time.sleep(0.1)
+    raise AssertionError(f"missing {count} occurrences of COM1 marker {marker}")
+
+
+def start_qemu() -> subprocess.Popen[str]:
+    if SERIAL_LOG.exists():
+        SERIAL_LOG.unlink()
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "scripts/run-qemu.py",
+            "--serial-log",
+            str(SERIAL_LOG),
+            "--shell-port",
+            str(SHELL_PORT),
+            "--storage-image",
+            str(STORAGE),
+            "--timeout",
+            "90",
+            "--expect-outcome",
+            "timeout",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+    )
+
+
+def connect_shell() -> socket.socket:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        try:
+            sock = socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=1)
+            sock.settimeout(1)
+            return sock
+        except OSError:
+            time.sleep(0.2)
+    raise AssertionError("COM2 shell socket never became reachable")
+
+
+def stop_qemu(process: subprocess.Popen[str]) -> None:
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
+    if process.stdout is not None:
+        print(process.stdout.read())
+
+
+def session(commands: list[str], verify_actual_reboot: bool) -> Result:
+    process = start_qemu()
+    transcript = ""
+    try:
+        wait_for_file_marker(SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 30)
+        with connect_shell() as sock:
+            transcript += wait_for_socket_text(sock, "PYTHOS:SHELL:READY")
+            transcript += wait_for_socket_text(sock, "pyth> ")
+            for command in commands:
+                sock.sendall((command + "\n").encode("ascii"))
+                marker = "REBOOTING" if command == "reboot" else "pyth> "
+                transcript += wait_for_socket_text(sock, marker)
+                if command == "reboot" and verify_actual_reboot:
+                    wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:SYSTEM:REBOOTING", 10)
+                    wait_for_file_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
+                    with connect_shell() as rebooted:
+                        transcript += wait_for_socket_text(rebooted, "PYTHOS:SHELL:READY", 30)
+                        transcript += wait_for_socket_text(rebooted, "pyth> ", 30)
+                    break
+        return Result(SERIAL_LOG.read_text(encoding="utf-8", errors="replace"), transcript)
+    finally:
+        stop_qemu(process)
+
+
+def main() -> int:
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run([sys.executable, "scripts/build-image.py"])
+    STORAGE.parent.mkdir(parents=True, exist_ok=True)
+    STORAGE.write_bytes(b"\0" * (16 * 1024 * 1024))
+
+    first = session(["create kind:note", 'revise object:1042 text="hello"', "inspect object:2001"], False)
+    assert "CREATED object:1042 revision:1" in first.com2
+    assert "COMMITTED revision:2" in first.com2
+    assert "DENIED missing-capability" in first.com2
+    assert "PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED" not in first.com1
+
+    restored = session(["inspect object:1042", "history object:1042", "reboot"], True)
+    assert 'text="hello" revision:2' in restored.com2
+    assert "history object:1042 revisions:2" in restored.com2
+    assert "PYTHOS:SHELL:IDENTITY_RESTORED" in restored.com1
+    assert "PYTHOS:SHELL:WORKSPACE_CAPABILITY_REBOUND" in restored.com1
+    assert "PYTHOS:CORE:SYSTEM:REBOOTING" in restored.com1
+    assert restored.com1.count("PYTHOS:LOADER:ENTER") >= 2
+    assert restored.com2.count("PYTHOS:SHELL:READY") >= 2
+
+    TRANSCRIPT.write_text(first.com2 + restored.com2, encoding="utf-8", errors="replace")
+    print("OBJECT_SHELL_TEST_OK")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
 ```
 
-- [ ] **Step 2: Run object shell test to verify failure**
+- [ ] **Step 3: Run the failing acceptance test**
 
 Run:
 
@@ -1653,52 +2035,70 @@ Run:
 python scripts\test-object-shell.py
 ```
 
-Expected: FAIL until response text, persistence, and reboot handling match exactly.
+Expected: FAIL until Task 10 completes response text, persistence, and actual reboot behavior.
 
-- [ ] **Step 3: Finish bridge response and persistence behavior**
+- [ ] **Step 4: Commit**
 
-In `ObjectShellBridge::execute_command()`:
-
-```rust
-let command = parse_command(&self.command[..self.command_len]);
-let response = match command {
-    Ok(command) => {
-        let response = self.store.execute(command);
-        if matches!(
-            command,
-            ShellCommand::CreateNote | ShellCommand::ReviseText { .. }
-        ) {
-            self.store.persist(self.device)?;
-        }
-        response
-    }
-    Err(ShellProtocolError::UnknownCommand) => ShellResponse::ErrorUnknownCommand,
-    Err(_) => ShellResponse::Error,
-};
-self.queue_response(response);
-self.queue_prompt();
+```powershell
+git add core\src\qemu_exit.rs core\src\syscall.rs scripts\test-object-shell.py
+git commit -m "test(shell): add object shell reboot acceptance"
 ```
 
-For `ShellCommand::Reboot`, queue `REBOOTING\r\n`, emit `PYTHOS:SHELL:REBOOT_REQUESTED` on COM1, and leave QEMU restart to `scripts/test-object-shell.py`. Do not call `qemu_exit::success()` from normal boot.
+---
 
-- [ ] **Step 4: Finish restore markers**
+### Task 10: End-To-End Typed Object Shell Flow
 
-When `ObjectShellStore::restore_or_initialize()` decodes an existing shell snapshot and rebuilds authority:
+**Files:**
+- Modify: `core/src/object_service.rs`
+- Modify: `core/src/syscall.rs`
+- Modify: `user/shell/src/main.rs`
+- Modify: `user/shell/src/commands.rs`
+- Modify: `user/shell/src/syscalls.rs`
+- Test: `scripts/test-object-shell.py`, `core/src/object_service.rs`, `user/shell/src/commands.rs`
 
-```rust
-serial::write_line("PYTHOS:SHELL:IDENTITY_RESTORED");
-serial::write_line("PYTHOS:SHELL:WORKSPACE_CAPABILITY_REBOUND");
-serial::write_line("PYTHOS:SHELL:OBJECT_RESTORED");
+**Interfaces:**
+- Consumes: typed object syscall and retained object service.
+- Produces: exact shell transcript for create, revise, denied known object, inspect, and history.
+
+- [ ] **Step 1: Ensure shell formats all responses in user space**
+
+In `user/shell/src/syscalls.rs`, convert `ObjectShellResponse` statuses to text:
+
+```text
+STATUS_OK + OP_CREATE_OBJECT -> CREATED object:<id> revision:<revision>
+STATUS_OK + OP_REVISE_FIELD -> COMMITTED revision:<revision>
+STATUS_OK + OP_INSPECT_OBJECT -> text="<text>" revision:<revision>
+STATUS_OK + OP_GET_HISTORY -> history object:<id> revisions:<count>
+STATUS_DENIED -> DENIED missing-capability
+STATUS_NOT_FOUND -> DENIED missing-capability
+STATUS_BAD_REQUEST -> ERROR bad-request
+STATUS_BUFFER_TOO_SMALL -> ERROR buffer-too-small
 ```
 
-When no shell snapshot exists:
+PythCore returns typed fields only; it does not format these strings.
 
-```rust
-serial::write_line("PYTHOS:SHELL:IDENTITY_BOOTSTRAPPED");
-serial::write_line("PYTHOS:SHELL:WORKSPACE_CAPABILITY_GRANTED");
+- [ ] **Step 2: Finish typed syscall execution**
+
+In `core/src/syscall.rs`, make `SYSCALL_OBJECT_REQUEST` copy in `ObjectShellRequest`, call `object_service`, copy out `ObjectShellResponse`, and return `SYSCALL_OK` for handled request statuses. A denied object operation is a successful syscall with `response.status = STATUS_DENIED`.
+
+- [ ] **Step 3: Finish object service persistence hooks**
+
+Persist after `create_object` and `revise_field`. On restore, emit:
+
+```text
+PYTHOS:SHELL:IDENTITY_RESTORED
+PYTHOS:SHELL:WORKSPACE_CAPABILITY_REBOUND
+PYTHOS:SHELL:OBJECT_RESTORED
 ```
 
-- [ ] **Step 5: Run the end-to-end shell test**
+On first boot with no object snapshot, emit:
+
+```text
+PYTHOS:SHELL:IDENTITY_BOOTSTRAPPED
+PYTHOS:SHELL:WORKSPACE_CAPABILITY_GRANTED
+```
+
+- [ ] **Step 4: Run object shell acceptance**
 
 Run:
 
@@ -1712,13 +2112,14 @@ Expected:
 OBJECT_SHELL_TEST_OK
 ```
 
-- [ ] **Step 6: Run existing acceptance tests**
+- [ ] **Step 5: Run preserved verification suites**
 
 Run:
 
 ```powershell
 python scripts\test-boot.py
 python scripts\test-persistent-storage.py
+python scripts\test-normal-fast-boot.py
 ```
 
 Expected:
@@ -1726,44 +2127,191 @@ Expected:
 ```text
 BOOT_TEST_OK
 PERSISTENT_STORAGE_TEST_OK
+NORMAL_FAST_BOOT_TEST_OK
 ```
 
-- [ ] **Step 7: Update docs**
+- [ ] **Step 6: Commit**
 
-In `docs/ROADMAP.md`, record ADR 0051 after the vertical-loop plan:
+```powershell
+git add core\src\object_service.rs core\src\syscall.rs user\shell\src scripts\test-object-shell.py
+git commit -m "feat(shell): complete typed object shell flow"
+```
+
+---
+
+### Task 11: Adversarial Caller And Fault Tests
+
+**Files:**
+- Modify: `scripts/test-object-shell.py`
+- Modify: `scripts/build-image.py`
+- Modify: `scripts/build-iso.py`
+- Modify: `core/src/normal_boot.rs`
+- Modify: `core/src/syscall.rs`
+- Test: `scripts/test-object-shell.py`
+
+**Interfaces:**
+- Consumes: named intruder program, current caller context, typed object syscall.
+- Produces: marker `PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED`, marker `PYTHOS:SHELL:FAULT_TERMINATED`.
+
+- [ ] **Step 1: Add intruder execution to test harness**
+
+Extend `scripts/test-object-shell.py` with a control-sector writer:
+
+```python
+SECTOR_SIZE = 512
+SHELL_CONTROL_SECTOR = 43
+SHELL_CONTROL_MAGIC = b"PYSHCTL1"
+CONTROL_RUN_INTRUDER = 1
+CONTROL_RUN_FAULT_SHELL = 2
+
+
+def write_shell_control(image: Path, mode: int) -> None:
+    sector = bytearray(SECTOR_SIZE)
+    sector[0:8] = SHELL_CONTROL_MAGIC
+    sector[8:10] = mode.to_bytes(2, "little")
+    with image.open("r+b") as handle:
+        handle.seek(SHELL_CONTROL_SECTOR * SECTOR_SIZE)
+        handle.write(sector)
+```
+
+In `core/src/normal_boot.rs`, read sector 43 before launching `shell.elf`. Mode `1` launches `intruder.elf`, makes the same `SYSCALL_OBJECT_REQUEST` number with the shell workspace handle value, and asserts denial. Clear sector 43 after reading the mode so the next boot returns to the normal shell path.
+
+- [ ] **Step 2: Add intruder marker assertions**
+
+The harness must require:
 
 ```text
-The ADR 0051 `first-ring3-object-shell` slice launches a ring-3 shell over COM2,
-creates and revises note object 1042 through capability-gated typed requests,
-denies access to an ungranted object ID, restarts QEMU over the same storage
-image, reconstructs authority from shell principal/workspace policy, and
-restores the note and revision history.
+PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED
+PYTHOS:CORE:DYNAMIC_CAPABILITY:NO_GRANT_DENIED
 ```
+
+The harness must reject:
+
+```text
+PYTHOS:SHELL:OBJECT_CREATED_BY_INTRUDER
+```
+
+- [ ] **Step 3: Add persistent shell fault probe**
+
+Add a named `fault-shell.elf` manifest record with an invalid-instruction body. Mode `2` launches that program as a shell principal and asserts:
+
+```text
+PYTHOS:CORE:CRASH:USER_FAULT
+PYTHOS:SHELL:FAULT_TERMINATED
+PYTHOS:CORE:CRASH:PEER_ALIVE
+```
+
+- [ ] **Step 4: Run adversarial acceptance**
+
+Run:
+
+```powershell
+python scripts\test-object-shell.py
+python scripts\test-boot.py
+```
+
+Expected:
+
+```text
+OBJECT_SHELL_TEST_OK
+BOOT_TEST_OK
+```
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add scripts\test-object-shell.py scripts\build-image.py scripts\build-iso.py core\src\normal_boot.rs core\src\syscall.rs
+git commit -m "test(shell): prove object shell caller isolation"
+```
+
+---
+
+### Task 12: Documentation And Final Verification
+
+**Files:**
+- Modify: `docs/ROADMAP.md`
+- Modify: `docs/HANDOVER.md`
+- Test: `scripts/test-object-shell.py`, `scripts/test-normal-fast-boot.py`, `scripts/test-boot.py`, `scripts/test-persistent-storage.py`
+
+**Interfaces:**
+- Consumes: completed ADR 0051 and ADR 0052 implementation.
+- Produces: updated roadmap/handover stating verified behavior and remaining boundaries.
+
+- [ ] **Step 1: Update roadmap**
+
+In `docs/ROADMAP.md`, record:
+
+```text
+ADR 0051 first-ring3-object-shell launches a validated `shell.elf` as a
+ring-3 process during normal boot. The shell parses human command text in user
+space, submits typed object requests through ADR 0052, and receives only
+capability-gated responses. COM1 remains the oracle; COM2 carries the shell
+session. The object flow uses the retained Phase 10 object path and proves
+create, revise, denied known-object access, restore after forced power loss,
+and capability-gated reboot.
+```
+
+- [ ] **Step 2: Update handover**
 
 In `docs/HANDOVER.md`, add:
 
 ```text
-Next boundary: ADR 0051 object shell complete. Verification remains through
-COM1; interactive shell evidence is captured on COM2 by
-`scripts/test-object-shell.py`.
+Current boundary: ADR 0051 and ADR 0052 complete. Verification:
+`python scripts\test-object-shell.py`,
+`python scripts\test-normal-fast-boot.py`,
+`python scripts\test-boot.py`, and
+`python scripts\test-persistent-storage.py`.
+
+Do not start package management, networking, universal-device work, human
+`grant`, packaged `launch`, or AI agent runtime without a new design artifact.
+The typed object bridge remains a temporary kernel-backed adapter until the
+object service is moved out of PythCore.
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 3: Run final verification**
+
+Run:
 
 ```powershell
-git add core\src\object_shell_bridge.rs core\src\object_shell_store.rs scripts\test-object-shell.py docs\ROADMAP.md docs\HANDOVER.md
-git commit -m "feat(shell): complete ADR 0051 object shell persistence loop"
+python scripts\test-object-shell.py
+python scripts\test-normal-fast-boot.py
+python scripts\test-boot.py
+python scripts\test-persistent-storage.py
+```
+
+Expected:
+
+```text
+OBJECT_SHELL_TEST_OK
+NORMAL_FAST_BOOT_TEST_OK
+BOOT_TEST_OK
+PERSISTENT_STORAGE_TEST_OK
+```
+
+- [ ] **Step 4: Commit**
+
+```powershell
+git add docs\ROADMAP.md docs\HANDOVER.md
+git commit -m "docs(shell): record ADR 0051 object shell completion"
 ```
 
 ---
 
 ## Self-Review
 
-- ADR 0051 command surface is covered by Task 3 parser tests and Task 8 transcript assertions.
-- Shell principal, bootstrap workspace authority, and runtime handle rebinding are covered by Task 4 and Task 8.
-- Knowing `object:9999` without authority is denied in Task 4 and Task 8.
-- COM1/COM2 split is covered by Task 1, Task 2, and Task 8.
-- Ring-3 shell execution is covered by Task 6 and Task 7.
-- Existing `verify` behavior is protected by Task 2 and Task 8.
-- Universal-device support, networking, package management, `grant`, `launch`, user-space drivers, and agents are excluded by global constraints.
-- The temporary object bridge is explicitly named in Task 4 and Task 5 and remains kernel-backed for this slice.
+- The plan no longer creates a kernel REPL: command parsing and presentation live in `user/shell`.
+- PythCore receives typed ABI requests only.
+- Console, object, and reboot operations validate the current syscall caller and caller-supplied capabilities.
+- A second ring-3 principal using the same syscall number is denied.
+- The object path promotes the existing Phase 10 dynamic object store, typed object records, revision history, storage quotas, and persistence helpers.
+- No shell-private one-note sector store is introduced.
+- Program authority is tied to validated named manifest identity and digest, not to a constant task slot.
+- Missing authority is tested against known object `2001`, not against a missing object id.
+- Normal boot is split from verification boot before shell launch.
+- Forced power loss and actual shell-requested reboot are distinct acceptance paths.
+- COM2 initialization is explicit and separately tested.
+- User shell unsafe syscall assembly includes the required invariant.
+- Persistent shell faults terminate only the faulting service and leave PythCore alive.
+- Named ELF records are versioned and existing ordinal `TYPE_USER_ELF` records remain compatible.
+- `readelf` verification covers ET_EXEC and writable-executable segment rejection.
+- The shell busy-poll loop is recorded as temporary ADR 0051 behavior.
