@@ -3,6 +3,7 @@
 use core::arch::asm;
 use pythos_shared::qemu_exit;
 
+#[cfg(feature = "verify")]
 pub fn success() -> ! {
     exit(qemu_exit::SUCCESS);
 }

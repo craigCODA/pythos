@@ -1455,7 +1455,27 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     }
     serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
     serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
+
+    // ADR 0049: in `verify` builds the proof sequence exits deterministically for
+    // the boot-acceptance oracle. A normal build stays alive in a persistent
+    // event loop instead of exiting — the pivot from "proofs that terminate" to
+    // "a system that runs".
+    #[cfg(feature = "verify")]
     qemu_exit::success();
+
+    #[cfg(not(feature = "verify"))]
+    normal_event_loop();
+}
+
+/// Persistent event loop for a normal (non-verification) boot. PythCore stays
+/// running instead of exiting; later slices dispatch input, scheduling, and the
+/// shell from here.
+#[cfg(all(not(test), not(feature = "verify")))]
+fn normal_event_loop() -> ! {
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
+    loop {
+        core::hint::spin_loop();
+    }
 }
 
 #[cfg(not(test))]

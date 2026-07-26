@@ -1714,7 +1714,18 @@ def main() -> int:
     timeout_args = qemu_timeout_args(args.timeout)
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "pythos-core",
+            "--target",
+            "x86_64-unknown-none",
+            "--features",
+            "verify",
+        ]
+    )
     if args.media == "iso":
         run([sys.executable, "scripts/build-iso.py", "--output", str(ISO_IMAGE)])
         run(

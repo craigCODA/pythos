@@ -6,6 +6,12 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[features]
+# `verify` reproduces the boot-acceptance behavior: run the full proof sequence
+# and exit via QEMU isa-debug-exit. Without it (the default), a normal boot
+# enters a persistent event loop instead of exiting (ADR 0049).
+verify = []
+
 [dependencies]
 pythos-shared = { path = "../shared" }
 

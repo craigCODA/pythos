@@ -56,7 +56,18 @@ def run(command: list[str], expected_returncode: int = 0) -> str:
 
 def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "pythos-core",
+            "--target",
+            "x86_64-unknown-none",
+            "--features",
+            "verify",
+        ]
+    )
     run([sys.executable, "scripts/build-image.py"])
 
 
