@@ -14,6 +14,7 @@ mod compositor;
 mod context_switch;
 mod dynamic_capabilities;
 mod dynamic_object_store;
+mod fb_debug;
 mod font;
 mod font_system;
 mod framebuffer;
@@ -78,6 +79,12 @@ use pythos_shared::boot_protocol::PythBootInfo;
 /// entry contract in `docs/PythOS-TDD-001.md`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
+    // Blind liveness paint: the very first thing PythCore does, before serial or
+    // reading `boot_info`. On real hardware a white block here proves the loader
+    // handoff (CR3 switch + jump) and the framebuffer virtual mapping both work,
+    // isolating any remaining fault to `boot_info` handling. See `fb_debug`.
+    fb_debug::liveness_paint();
+
     serial::write_line("PYTHOS:CORE:ENTER");
 
     // SAFETY:
@@ -98,6 +105,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
+    fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_BOOTINFO);
 
     #[cfg_attr(test, allow(unused_mut, unused_variables))]
     let mut physical_memory = match memory::physical::initialize(boot_info) {
@@ -108,6 +116,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
     };
     serial::write_line("PYTHOS:CORE:MEMORY_READY");
+    fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_MEMORY);
 
     if architecture::x86_64::gdt::initialize().is_err() {
         serial::write_line("PYTHOS:PANIC");
@@ -120,6 +129,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:IDT_READY");
+    fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_IDT);
     serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
 
     #[cfg(not(test))]
@@ -284,6 +294,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
+        fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_KERNEL_ADDR);
         if memory::r#virtual::prove_old_identity_map_removed().is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();

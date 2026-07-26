@@ -7,6 +7,23 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## Real-Hardware Boot Status (2026-07-25)
+
+PythOS now boots on real UEFI hardware, not only QEMU. A laptop boots a USB all
+the way to the milestone-1 cinematic wake screen (`PythOS [HISS] We Are Woken`).
+See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-boot*`.
+
+- The loader identity-maps the low 512 GiB (1 GiB huge pages) so machines that
+  load the loader / boot structures above 4 GiB survive the `CR3` handoff.
+- Early loader/core milestones paint the framebuffer solid colors; PythCore's
+  first instruction is a format-independent white "liveness" paint. On a serial-
+  less machine the last color shown localizes how far boot reached.
+- Known-deferred: one desktop still stops at the loader's magenta pre-handoff
+  color; the 512 GiB map is the leading fix but is unverified on that box. The
+  laptop is the working real-hardware oracle for now.
+- Secure Boot must stay disabled (loader is unsigned). Diagnostic paints fire on
+  every boot, including successful ones; gating them to failures is a follow-up.
+
 ## Verify First
 
 Run these from `C:\Users\NeverAMoment\pythos` before continuing work:

@@ -3,10 +3,11 @@
 //! These tables exist only to carry execution from the loader into PythCore.
 //! They provide:
 //!
-//! * a temporary identity map of conventional low physical memory (2 MiB to
-//!   4 GiB) so the loader keeps executing across the `CR3` switch and so
-//!   PythCore can read `PythBootInfo`, the retained UEFI memory map, and
-//!   `INIT.PAK` through physical addresses,
+//! * a temporary identity map of low physical memory (2 MiB up to 512 GiB) so
+//!   the loader keeps executing across the `CR3` switch regardless of where
+//!   firmware loaded the loader image, and so PythCore can read `PythBootInfo`,
+//!   the retained UEFI memory map, and `INIT.PAK` through physical addresses
+//!   wherever firmware allocated them,
 //! * the PythCore ELF segments at their linked higher-half virtual addresses
 //!   with writable-XOR-executable permissions,
 //! * the framebuffer under the planned device region,
@@ -29,7 +30,16 @@ const STACK_REGION_VIRT_BASE: u64 = 0xFFFF_E000_0000_0000;
 
 const PAGE_SIZE: u64 = 4096;
 const TWO_MIB: u64 = 2 * 1024 * 1024;
-const IDENTITY_MAP_END: u64 = 4 * 1024 * 1024 * 1024;
+const ONE_GIB: u64 = 1024 * 1024 * 1024;
+/// Identity-map the low 512 GiB of physical address space. Real firmware may
+/// load the loader image and place `AllocatePages` allocations well above 4 GiB
+/// on machines with more RAM; the loader must keep executing and PythCore must
+/// keep reading those structures across the `CR3` switch. 512 GiB is one PML4
+/// entry, covering all plausible consumer/workstation RAM with a single PDPT.
+const IDENTITY_MAP_END: u64 = 512 * ONE_GIB;
+/// Fallback identity-map ceiling when the CPU lacks 1 GiB pages: the original
+/// 4 GiB, mapped with 2 MiB pages (bounded by the table pool).
+const IDENTITY_MAP_FALLBACK_END: u64 = 4 * ONE_GIB;
 const TABLE_POOL_PAGES: usize = 64;
 const STACK_PAGES: usize = 16;
 const ENTRY_COUNT: usize = 512;
@@ -100,13 +110,54 @@ pub(crate) fn build(
 }
 
 fn map_identity(tables: &mut BootPageTables) -> Result<(), ()> {
-    // Skip the first 2 MiB so null and low-address bugs fault.
+    // Map the low 1 GiB with 2 MiB pages, skipping the first 2 MiB so null and
+    // low-address bugs fault. The low 1 GiB always uses 2 MiB pages so the guard
+    // hole is preserved even when 1 GiB huge pages cover everything above it.
     let mut physical = TWO_MIB;
-    while physical < IDENTITY_MAP_END {
+    while physical < ONE_GIB {
         tables.map_2m(physical, physical, PTE_WRITE)?;
         physical += TWO_MIB;
     }
+
+    if cpu_supports_gib_pages() {
+        // Cover 1 GiB .. 512 GiB with 1 GiB huge pages. This is what lets a
+        // machine whose firmware loaded the loader (or PythCore's boot
+        // structures) above 4 GiB survive the CR3 switch: a single PDPT of
+        // huge entries maps the whole range for the cost of no extra tables.
+        while physical < IDENTITY_MAP_END {
+            tables.map_1g(physical, physical, PTE_WRITE)?;
+            physical += ONE_GIB;
+        }
+    } else {
+        // No 1 GiB pages: fall back to the original 4 GiB ceiling with 2 MiB
+        // pages (the table pool cannot afford 512 GiB of 2 MiB entries). Such
+        // CPUs are rare; a loader placed above 4 GiB there would still fault.
+        while physical < IDENTITY_MAP_FALLBACK_END {
+            tables.map_2m(physical, physical, PTE_WRITE)?;
+            physical += TWO_MIB;
+        }
+    }
     Ok(())
+}
+
+/// Whether the CPU supports 1 GiB pages (CPUID.80000001h:EDX.PDPE1GB [bit 26]).
+fn cpu_supports_gib_pages() -> bool {
+    // SAFETY:
+    // 1. Invariant: the CPU executes `cpuid` with the requested leaves.
+    // 2. Established by: x86-64 long mode guarantees `cpuid` support.
+    // 3. Lifetime: valid for these two instructions.
+    // 4. Pointer ownership: no memory pointers are used.
+    // 5. Alignment: not applicable to `cpuid`.
+    // 6. Mapped length: not applicable; `cpuid` uses registers only.
+    // 7. Concurrency: single-core execution during milestone 1.
+    // 8. Violation: none; `cpuid` cannot fault in long mode.
+    let max_extended = unsafe { core::arch::x86_64::__cpuid(0x8000_0000) }.eax;
+    if max_extended < 0x8000_0001 {
+        return false;
+    }
+    // SAFETY: identical invariants to the `cpuid` call above.
+    let features = unsafe { core::arch::x86_64::__cpuid(0x8000_0001) };
+    features.edx & (1 << 26) != 0
 }
 
 fn map_kernel(tables: &mut BootPageTables, kernel: &LoadedKernel) -> Result<(), ()> {
@@ -202,6 +253,20 @@ impl BootPageTables {
             return Err(());
         }
         write_entry(pd, index, phys | leaf_flags | PTE_PRESENT | PTE_HUGE);
+        Ok(())
+    }
+
+    fn map_1g(&mut self, virt: u64, phys: u64, leaf_flags: u64) -> Result<(), ()> {
+        if !virt.is_multiple_of(ONE_GIB) || !phys.is_multiple_of(ONE_GIB) || phys & !ADDR_MASK != 0
+        {
+            return Err(());
+        }
+        let pdpt = self.ensure_table(self.pml4_phys, table_index(virt, 39))?;
+        let index = table_index(virt, 30);
+        if read_entry(pdpt, index) & PTE_PRESENT != 0 {
+            return Err(());
+        }
+        write_entry(pdpt, index, phys | leaf_flags | PTE_PRESENT | PTE_HUGE);
         Ok(())
     }
 
