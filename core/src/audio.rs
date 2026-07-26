@@ -190,6 +190,21 @@ const HDA_REG_RINTCNT: u64 = 0x5A; // u16
 const HDA_REG_RIRBCTL: u64 = 0x5C; // u8
 const HDA_REG_RIRBSIZE: u64 = 0x5E; // u8
 
+const HDA_REG_STATESTS: u64 = 0x0E; // State Change Status (u16): codecs present
+const HDA_REG_ICOI: u64 = 0x60; // Immediate Command Output (u32)
+const HDA_REG_ICII: u64 = 0x64; // Immediate Command Input / response (u32)
+const HDA_REG_ICIS: u64 = 0x68; // Immediate Command Status (u16)
+const ICIS_ICB: u16 = 1 << 0; // Immediate Command Busy (set to issue)
+const ICIS_IRV: u16 = 1 << 1; // Immediate Result Valid
+
+const HDA_VERB_GET_PARAM: u32 = 0xF00;
+const HDA_PARAM_NODE_COUNT: u32 = 0x04; // Subordinate Node Count
+const HDA_PARAM_FG_TYPE: u32 = 0x05; // Function Group Type
+const HDA_PARAM_WIDGET_CAP: u32 = 0x09; // Audio Widget Capabilities
+const HDA_FG_AUDIO: u32 = 0x01; // Audio Function Group type
+const HDA_WIDGET_OUTPUT: u32 = 0x0; // audio output converter (DAC)
+const HDA_WIDGET_PIN: u32 = 0x4; // pin complex
+
 const GCTL_CRST: u32 = 1 << 0; // Controller Reset (0 = in reset)
 const CORBCTL_RUN: u8 = 1 << 1; // CORB DMA enable
 const RIRBCTL_DMAEN: u8 = 1 << 1; // RIRB DMA enable
@@ -370,8 +385,8 @@ fn hda_reset_controller() -> Result<(), ()> {
     if !spin_until(|| hda_read32(HDA_REG_GCTL) & GCTL_CRST != 0) {
         return Err(());
     }
-    // Codecs need time to enumerate on the link after reset is released.
-    for _ in 0..500_000 {
+    // Codecs need a short settling time on the link after reset is released.
+    for _ in 0..50_000 {
         core::hint::spin_loop();
     }
     Ok(())
@@ -422,6 +437,91 @@ pub fn hda_init_controller() -> Result<(), ()> {
     hda_setup_corb_rirb()?;
     serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_READY");
     Ok(())
+}
+
+/// A resolved codec output path (ADR 0048 slice 3): the codec address, its audio
+/// function group, an output converter (DAC), and a pin complex to drive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HdaOutputPath {
+    pub cad: u32,
+    pub afg: u32,
+    pub dac: u32,
+    pub pin: u32,
+}
+
+/// Encode an HDA command DWORD: codec address, node id, 12-bit verb, 8-bit payload.
+fn hda_verb(cad: u32, nid: u32, verb: u32, payload: u32) -> u32 {
+    (cad << 28) | ((nid & 0xFF) << 20) | ((verb & 0xFFF) << 8) | (payload & 0xFF)
+}
+
+/// Send one command through the Immediate Command Interface and return the
+/// codec's response, or `None` if the controller stays busy / no result arrives
+/// within the retry budget. Used for low-volume codec enumeration.
+#[cfg(not(test))]
+fn hda_codec_command(command: u32) -> Option<u32> {
+    if !spin_until(|| hda_read16(HDA_REG_ICIS) & ICIS_ICB == 0) {
+        return None;
+    }
+    hda_write16(HDA_REG_ICIS, ICIS_IRV); // clear any stale result-valid
+    hda_write32(HDA_REG_ICOI, command);
+    hda_write16(HDA_REG_ICIS, ICIS_ICB); // issue
+    if !spin_until(|| hda_read16(HDA_REG_ICIS) & ICIS_IRV != 0) {
+        return None;
+    }
+    Some(hda_read32(HDA_REG_ICII))
+}
+
+#[cfg(not(test))]
+fn hda_get_param(cad: u32, nid: u32, param: u32) -> Result<u32, ()> {
+    hda_codec_command(hda_verb(cad, nid, HDA_VERB_GET_PARAM, param)).ok_or(())
+}
+
+/// Slice 3 of ADR 0048: enumerate the codec that reported after reset, walk its
+/// widget graph, and resolve an output converter (DAC) plus a pin complex.
+#[cfg(not(test))]
+pub fn hda_enumerate_codec() -> Result<HdaOutputPath, ()> {
+    let statests = hda_read16(HDA_REG_STATESTS);
+    if statests == 0 {
+        return Err(());
+    }
+    let cad = statests.trailing_zeros();
+
+    let root = hda_get_param(cad, 0, HDA_PARAM_NODE_COUNT)?;
+    let fg_start = (root >> 16) & 0xFF;
+    let fg_count = root & 0xFF;
+
+    for fg in 0..fg_count {
+        let fg_nid = fg_start + fg;
+        if hda_get_param(cad, fg_nid, HDA_PARAM_FG_TYPE)? & 0xFF != HDA_FG_AUDIO {
+            continue;
+        }
+        let widgets = hda_get_param(cad, fg_nid, HDA_PARAM_NODE_COUNT)?;
+        let w_start = (widgets >> 16) & 0xFF;
+        let w_count = widgets & 0xFF;
+        let mut dac = None;
+        let mut pin = None;
+        for w in 0..w_count {
+            let nid = w_start + w;
+            let widget_type = (hda_get_param(cad, nid, HDA_PARAM_WIDGET_CAP)? >> 20) & 0xF;
+            if widget_type == HDA_WIDGET_OUTPUT && dac.is_none() {
+                dac = Some(nid);
+            } else if widget_type == HDA_WIDGET_PIN && pin.is_none() {
+                pin = Some(nid);
+            }
+        }
+        if let (Some(dac), Some(pin)) = (dac, pin) {
+            serial::write_line("PYTHOS:CORE:AUDIO:HDA:CODEC_READY");
+            serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:DAC=", u64::from(dac));
+            serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:PIN=", u64::from(pin));
+            return Ok(HdaOutputPath {
+                cad,
+                afg: fg_nid,
+                dac,
+                pin,
+            });
+        }
+    }
+    Err(())
 }
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
