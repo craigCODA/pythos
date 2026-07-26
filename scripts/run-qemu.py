@@ -176,6 +176,16 @@ def main() -> int:
     parser.add_argument("--no-audio-device", action="store_true")
     parser.add_argument("--audio-wav", type=Path)
     parser.add_argument("--hda", action="store_true", help="add an Intel HDA controller")
+    parser.add_argument(
+        "--display",
+        default="none",
+        help="QEMU -display value (e.g. gtk, sdl); default none for headless CI",
+    )
+    parser.add_argument(
+        "--audio-backend",
+        default="none",
+        help="QEMU audiodev backend (e.g. dsound to hear it on Windows speakers); default none",
+    )
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
     parser.add_argument("--kill-after-marker")
     args = parser.parse_args()
@@ -203,7 +213,7 @@ def main() -> int:
         "-serial",
         f"file:{args.serial_log}",
         "-display",
-        "none",
+        args.display,
         "-no-reboot",
         "-no-shutdown",
         "-device",
@@ -223,7 +233,7 @@ def main() -> int:
         else:
             command += [
                 "-audiodev",
-                "none,id=pythos_audio",
+                f"{args.audio_backend},id=pythos_audio",
             ]
         command += [
             "-device",
