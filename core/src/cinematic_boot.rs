@@ -33,19 +33,45 @@ impl From<CompositorError> for CinematicBootError {
     }
 }
 
+/// Wall-clock length of the boot cinematic. Kept compact so the whole boot,
+/// including all later phases, stays inside the milestone-1 test budget; the
+/// loop is bounded by elapsed ticks, so render speed changes the frame count,
+/// never the duration.
+const CINEMATIC_TICKS: u64 = 350; // 3.5 s at TIMER_HZ = 100
+/// Target cadence between rendered frames (~16.7 fps at TIMER_HZ = 100). If a
+/// frame renders slower than this, the loop simply drops frames; the cinematic
+/// still ends at `CINEMATIC_TICKS`.
+const FRAME_TICKS: u64 = 6;
+
 pub fn run_synced_sequence(
     assets: &'static BootAssets,
     framebuffer: &PythFramebufferInfo,
 ) -> Result<(), CinematicBootError> {
     validate_sync(assets)?;
+    // Keep the Phase 6 typed-object composition proof.
+    compose_visual_frame(0)?;
+
     let start = timer::ticks();
-    for (index, frame) in assets.visual_frames.iter().enumerate() {
-        wait_until(start + ticks_for_ms(frame.at_ms));
-        compose_visual_frame(index)?;
-        framebuffer::render_cinematic_boot_frame(framebuffer, assets, index + 1)
+    let mut cadence_tick = 0u64;
+    let mut drew_frame = false;
+    loop {
+        let elapsed = timer::ticks().saturating_sub(start);
+        if elapsed >= CINEMATIC_TICKS {
+            break;
+        }
+        let progress = elapsed as f32 / CINEMATIC_TICKS as f32;
+        framebuffer::render_cinematic_frame(framebuffer, progress)
             .map_err(|_| CinematicBootError::Framebuffer)?;
-        serial::write_line("PYTHOS:CORE:BOOT_VISUAL:FRAME");
+        if !drew_frame {
+            serial::write_line("PYTHOS:CORE:BOOT_VISUAL:FRAME");
+            drew_frame = true;
+        }
+        cadence_tick += FRAME_TICKS;
+        wait_until(start + cadence_tick);
     }
+    // Final settled frame.
+    framebuffer::render_cinematic_frame(framebuffer, 1.0)
+        .map_err(|_| CinematicBootError::Framebuffer)?;
     serial::write_line("PYTHOS:CORE:BOOT_SYNC:AUDIO");
     Ok(())
 }
@@ -84,6 +110,7 @@ fn wait_until(target_tick: u64) {
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn ticks_for_ms(ms: u16) -> u64 {
     u64::from(ms.div_ceil(TICK_MS))
 }

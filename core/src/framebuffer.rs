@@ -5,7 +5,6 @@
 //! the three direct pixel formats from the boot ABI, honors the scanline
 //! pitch, and bounds-checks every pixel against the validated metadata.
 
-use crate::boot_assets::BootAssets;
 use crate::font;
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
@@ -30,17 +29,172 @@ const BODY: Rgb = Rgb {
     green: 230,
     blue: 240,
 };
-const HISS: Rgb = Rgb {
-    red: 130,
-    green: 245,
-    blue: 185,
+// Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
+// is a dark vertical gradient through these stops so the wake text and sigil
+// read against a cinematic backdrop rather than a flat fill.
+const CINE_VOID: Rgb = Rgb {
+    red: 4,
+    green: 3,
+    blue: 12,
+}; // near-black top
+const CINE_VIOLET: Rgb = Rgb {
+    red: 30,
+    green: 10,
+    blue: 56,
+}; // deep violet mid
+const CINE_ABYSS_BLUE: Rgb = Rgb {
+    red: 10,
+    green: 18,
+    blue: 60,
+}; // dark electric-blue bottom
+const CINE_TITLE: Rgb = Rgb {
+    red: 120,
+    green: 170,
+    blue: 255,
+}; // electric blue
+const CINE_BODY: Rgb = Rgb {
+    red: 198,
+    green: 204,
+    blue: 236,
+}; // soft lavender
+const SNAKE_CORE: Rgb = Rgb {
+    red: 150,
+    green: 195,
+    blue: 255,
+}; // bright electric-blue body core
+const SNAKE_GLOW: Rgb = Rgb {
+    red: 120,
+    green: 60,
+    blue: 220,
+}; // violet aura
+const SNAKE_EYE: Rgb = Rgb {
+    red: 255,
+    green: 190,
+    blue: 90,
+}; // amber gaze
+const SHIMMER_BLUE: Rgb = Rgb {
+    red: 94,
+    green: 156,
+    blue: 255,
 };
+const SHIMMER_VIOLET: Rgb = Rgb {
+    red: 180,
+    green: 134,
+    blue: 255,
+};
+const ORB_CORE: Rgb = Rgb {
+    red: 225,
+    green: 236,
+    blue: 255,
+}; // near-white energy core
+const ORB_GLOW: Rgb = Rgb {
+    red: 70,
+    green: 140,
+    blue: 255,
+}; // electric-blue halo
+
+const PI_F: f32 = core::f32::consts::PI;
+const TWO_PI_F: f32 = core::f32::consts::TAU;
+
+/// `sin(x)` via Bhaskara I's approximation using only f32 arithmetic (no libm).
+/// Accurate to ~0.2%, ample for tracing the serpent's coil.
+fn sin_approx(x: f32) -> f32 {
+    // Range-reduce to [-PI, PI] without `fmod` (which would pull in libm).
+    let k = (x / TWO_PI_F) as i32;
+    let mut a = x - (k as f32) * TWO_PI_F;
+    if a > PI_F {
+        a -= TWO_PI_F;
+    } else if a < -PI_F {
+        a += TWO_PI_F;
+    }
+    let neg = a < 0.0;
+    let a = if neg { -a } else { a };
+    let prod = a * (PI_F - a);
+    let s = (16.0 * prod) / (5.0 * PI_F * PI_F - 4.0 * prod);
+    if neg { -s } else { s }
+}
+
+fn cos_approx(x: f32) -> f32 {
+    sin_approx(x + PI_F / 2.0)
+}
+
+/// Hermite smoothstep in 0..=1, matching the reference cinematic's easing.
+fn smoothstep_f(edge0: f32, edge1: f32, value: f32) -> f32 {
+    let t = ((value - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// The serpent centerline in the reference's 1280x720 space, parameterized by
+/// `u` in 0..=1 (tail -> head). Ported from the standalone animation's
+/// `serpentPoint`: an elliptical inward spiral for the body (u < 0.78) that
+/// lifts into a rising neck toward the head (u >= 0.78).
+fn serpent_point(u: f32) -> (f32, f32) {
+    if u < 0.78 {
+        let q = u / 0.78;
+        let angle = PI_F * (1.12 + q * 2.82);
+        let radius_x = 405.0 - q * 167.0;
+        let radius_y = 176.0 - q * 66.0;
+        (
+            573.0 + cos_approx(angle) * radius_x + q * 52.0,
+            447.0 + sin_approx(angle) * radius_y - q * 54.0,
+        )
+    } else {
+        let q = (u - 0.78) / 0.22;
+        (
+            745.0 + q * 162.0,
+            321.0 - sin_approx(q * PI_F) * 104.0 - q * 22.0,
+        )
+    }
+}
+
+/// Deterministic hash of `n` to a value in 0.0..1.0 (integer-only, no float
+/// precision surprises), used to scatter the serpent's shimmer particles.
+fn hash01(n: u32) -> f32 {
+    let mut x = n.wrapping_mul(0x9E37_79B1);
+    x ^= x >> 15;
+    x = x.wrapping_mul(0x85EB_CA77);
+    x ^= x >> 13;
+    (x >> 8) as f32 / (1u32 << 24) as f32
+}
+
+/// Fast reciprocal square root (Quake-style, one Newton step). Uses only bit
+/// reinterpretation and f32 arithmetic — no libm.
+fn inv_sqrt(x: f32) -> f32 {
+    let i = 0x5f37_59df_u32.wrapping_sub(x.to_bits() >> 1);
+    let y = f32::from_bits(i);
+    y * (1.5 - 0.5 * x * y * y)
+}
+
+/// Unit vector perpendicular to the serpent centerline at `u`, from a finite
+/// difference of `serpent_point`. Used to spread shimmer particles across the
+/// body width.
+fn serpent_perp(u: f32) -> (f32, f32) {
+    let du = 0.004;
+    let (x0, y0) = serpent_point((u - du).max(0.0));
+    let (x1, y1) = serpent_point((u + du).min(1.0));
+    let tx = x1 - x0;
+    let ty = y1 - y0;
+    let inv = inv_sqrt(tx * tx + ty * ty + 1e-6);
+    (-ty * inv, tx * inv)
+}
 
 #[derive(Clone, Copy)]
 struct Rgb {
     red: u8,
     green: u8,
     blue: u8,
+}
+
+/// Linearly blend `a` -> `b` by `f` in 0..=255 (0 = `a`, 255 = `b`).
+fn lerp(a: Rgb, b: Rgb, f: u8) -> Rgb {
+    let f = u32::from(f);
+    let inv = 255 - f;
+    let mix = |ca: u8, cb: u8| ((u32::from(ca) * inv + u32::from(cb) * f) / 255) as u8;
+    Rgb {
+        red: mix(a.red, b.red),
+        green: mix(a.green, b.green),
+        blue: mix(a.blue, b.blue),
+    }
 }
 
 /// Render the post-firmware boot screen and return whether it was drawn.
@@ -58,21 +212,26 @@ pub fn render_boot_screen(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
     Ok(())
 }
 
-pub fn render_cinematic_boot_frame(
-    framebuffer: &PythFramebufferInfo,
-    assets: &BootAssets,
-    visible_frame_count: usize,
-) -> Result<(), ()> {
+/// Render one animation frame of the cinematic at normalized progress `p`
+/// (0.0 at the start, 1.0 at the end). The serpent forms in over the first
+/// half, holds, then the "PythOS / We Are Woken" title resolves near the end —
+/// a compact port of the reference animation's beat structure.
+pub fn render_cinematic_frame(framebuffer: &PythFramebufferInfo, p: f32) -> Result<(), ()> {
     let surface = Surface::new(framebuffer)?;
-    surface.clear(BACKGROUND);
-    let count = visible_frame_count.min(assets.visual_frames.len());
-    for index in 0..count {
-        let frame = assets.visual_frames[index];
-        let y = 56 + (index as u64) * 96;
-        let color = if frame.text == "[HISS]" { HISS } else { TITLE };
-        surface.draw_text(48, y, u64::from(frame.scale), frame.text, color)?;
+    surface.fill_vertical_gradient();
+
+    let reveal = smoothstep_f(0.05, 0.55, p);
+    let serpent_alpha = smoothstep_f(0.06, 0.30, p);
+    surface.draw_serpent(reveal, serpent_alpha);
+    surface.draw_body_shimmer(reveal, serpent_alpha, p);
+    surface.draw_head_orb(p, serpent_alpha);
+
+    let title = smoothstep_f(0.66, 0.96, p);
+    if title > 0.01 {
+        let gain = (title * 255.0) as u8;
+        surface.draw_text_glow_centered(56, 4, "PythOS", CINE_TITLE, gain);
+        surface.draw_text_glow_centered(150, 2, "We Are Woken", CINE_BODY, gain);
     }
-    surface.draw_text(48, 420, 1, assets.wake_phrase, BODY)?;
     Ok(())
 }
 
@@ -113,6 +272,250 @@ impl Surface {
         for y in 0..self.height {
             for x in 0..self.width {
                 self.put_pixel(x, y, value);
+            }
+        }
+    }
+
+    /// The cinematic background color at scanline `y`: a dark three-stop
+    /// vertical gradient (void -> violet -> abyss blue).
+    fn gradient_color_at(&self, y: u64) -> Rgb {
+        if self.height <= 1 {
+            return CINE_VOID;
+        }
+        let last = self.height - 1;
+        let t = (y * 255 / last).min(255) as u8;
+        if t < 128 {
+            lerp(CINE_VOID, CINE_VIOLET, t.saturating_mul(2))
+        } else {
+            lerp(CINE_VIOLET, CINE_ABYSS_BLUE, (t - 128).saturating_mul(2))
+        }
+    }
+
+    /// Fill the surface with the cinematic gradient (constant per scanline).
+    fn fill_vertical_gradient(&self) {
+        for y in 0..self.height {
+            let value = (self.encode)(&self.info, self.gradient_color_at(y));
+            for x in 0..self.width {
+                self.put_pixel(x, y, value);
+            }
+        }
+    }
+
+    /// Additively add `color` scaled by `intensity` (0..=255) over the gradient
+    /// background at `(x, y)`, saturating at white. Additive compositing gives
+    /// the reference cinematic's luminous "lighter" look on the dark backdrop.
+    fn add_pixel(&self, x: i64, y: i64, color: Rgb, intensity: u8) {
+        if x < 0 || y < 0 {
+            return;
+        }
+        let (x, y) = (x as u64, y as u64);
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let bg = self.gradient_color_at(y);
+        let f = u32::from(intensity);
+        let add = |b: u8, c: u8| (u32::from(b) + u32::from(c) * f / 255).min(255) as u8;
+        let out = Rgb {
+            red: add(bg.red, color.red),
+            green: add(bg.green, color.green),
+            blue: add(bg.blue, color.blue),
+        };
+        let value = (self.encode)(&self.info, out);
+        self.put_pixel(x, y, value);
+    }
+
+    /// Draw a soft luminous dot: a solid `core` disc of radius `core_r`
+    /// surrounded by a `glow` aura fading to nothing at `glow_r`, composited
+    /// additively. Distances stay squared, so no `sqrt` (and no libm) is needed.
+    #[allow(clippy::too_many_arguments)]
+    fn fill_glow_dot(
+        &self,
+        cx: i64,
+        cy: i64,
+        core_r: i64,
+        glow_r: i64,
+        core: Rgb,
+        glow: Rgb,
+        gain: u8,
+    ) {
+        let core_r2 = core_r * core_r;
+        let glow_r2 = glow_r * glow_r;
+        let denom = (glow_r2 - core_r2).max(1);
+        let g = u32::from(gain);
+        for dy in -glow_r..=glow_r {
+            for dx in -glow_r..=glow_r {
+                let d2 = dx * dx + dy * dy;
+                if d2 <= core_r2 {
+                    self.add_pixel(cx + dx, cy + dy, core, gain);
+                } else if d2 <= glow_r2 {
+                    let alpha = (glow_r2 - d2) * 255 / denom;
+                    let alpha = (alpha.clamp(0, 255) as u32 * g / 255) as u8;
+                    self.add_pixel(cx + dx, cy + dy, glow, alpha);
+                }
+            }
+        }
+    }
+
+    /// Draw the serpent as a luminous tube along the reference `serpent_point`
+    /// centerline. `reveal` (0..=1) draws it in from tail to head; `alpha`
+    /// (0..=1) is its overall brightness. A tapered chain of additive glow dots
+    /// runs from thin tail to thick body, rising to a bright head with an amber
+    /// eye once nearly revealed. Coordinates are traced in the reference's
+    /// 1280x720 space and scaled to this surface.
+    fn draw_serpent(&self, reveal: f32, alpha: f32) {
+        const N: i64 = 520;
+        let gain = (alpha.clamp(0.0, 1.0) * 255.0) as u8;
+        if gain == 0 {
+            return;
+        }
+        let reveal = reveal.clamp(0.0, 1.0);
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        let s = sx.min(sy);
+
+        let drawn = (N as f32 * reveal) as i64;
+        for i in 0..drawn {
+            let u = i as f32 / (N - 1) as f32;
+            let (px, py) = serpent_point(u);
+            // Reference body taper: thick mid-body, thin at tail and neck.
+            let body = 4.0 + sin_approx(PI_F * u) * 34.0 * (1.0 - smoothstep_f(0.83, 1.0, u));
+            let core_r = ((body * 0.42 * s) as i64).max(1);
+            let glow_r = (body * 1.05 * s) as i64 + 4;
+            self.fill_glow_dot(
+                (px * sx) as i64,
+                (py * sy) as i64,
+                core_r,
+                glow_r,
+                SNAKE_CORE,
+                SNAKE_GLOW,
+                gain,
+            );
+        }
+
+        // Head at the end of the neck (u = 1), fading in only as the serpent
+        // finishes revealing, with an amber eye facing forward.
+        let head = smoothstep_f(0.9, 1.0, reveal);
+        if head > 0.01 {
+            let head_gain = (alpha.clamp(0.0, 1.0) * head * 255.0) as u8;
+            let (hx, hy) = serpent_point(1.0);
+            self.fill_glow_dot(
+                (hx * sx) as i64,
+                (hy * sy) as i64,
+                (14.0 * s) as i64,
+                (30.0 * s) as i64,
+                SNAKE_CORE,
+                SNAKE_GLOW,
+                head_gain,
+            );
+            self.fill_glow_dot(
+                ((hx + 25.0) * sx) as i64,
+                ((hy - 9.0) * sy) as i64,
+                (3.0 * s) as i64,
+                (8.0 * s) as i64,
+                SNAKE_EYE,
+                SNAKE_EYE,
+                head_gain,
+            );
+        }
+    }
+
+    /// Scatter shimmering particles across the revealed serpent body, giving it
+    /// living texture. Particles are placed deterministically along the
+    /// centerline, offset perpendicular by up to the body width, and twinkle
+    /// over `phase`. `reveal`/`alpha` gate them with the serpent.
+    fn draw_body_shimmer(&self, reveal: f32, alpha: f32, phase: f32) {
+        const COUNT: u32 = 900;
+        if alpha <= 0.02 {
+            return;
+        }
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        for i in 0..COUNT {
+            let u = hash01(i + 40);
+            if u > reveal {
+                continue;
+            }
+            let (px, py) = serpent_point(u);
+            let body = 4.0 + sin_approx(PI_F * u) * 34.0 * (1.0 - smoothstep_f(0.83, 1.0, u));
+            let (nx, ny) = serpent_perp(u);
+            let lateral = (hash01(i + 2000) * 2.0 - 1.0) * body * 0.9;
+            let twinkle = sin_approx(i as f32 * 0.72 + phase * 26.0) * 0.5 + 0.5;
+            let twinkle = twinkle * twinkle * twinkle;
+            let gain = (alpha * (0.22 + twinkle * 0.7) * 255.0) as u8;
+            if gain == 0 {
+                continue;
+            }
+            let color = match i % 3 {
+                0 => SHIMMER_BLUE,
+                1 => SHIMMER_VIOLET,
+                _ => SNAKE_GLOW,
+            };
+            let x = ((px + nx * lateral) * sx) as i64;
+            let y = ((py + ny * lateral) * sy) as i64;
+            self.add_pixel(x, y, color, gain);
+            self.add_pixel(x + 1, y, color, gain);
+            self.add_pixel(x, y + 1, color, gain);
+            self.add_pixel(x + 1, y + 1, color, gain);
+        }
+    }
+
+    /// Draw the pulsing energy orb at the serpent's head, spiking bright at the
+    /// awakening beat (~p 0.55) and fading as the title takes over.
+    fn draw_head_orb(&self, p: f32, alpha: f32) {
+        let born = smoothstep_f(0.40, 0.58, p);
+        let fade = 1.0 - smoothstep_f(0.85, 1.0, p);
+        let z = (p - 0.55) / 0.05;
+        let spike = (1.0 - z * z).max(0.0); // brief awakening flash
+        let a = (born * fade * alpha).clamp(0.0, 1.0);
+        if a <= 0.01 {
+            return;
+        }
+        let sx = self.width as f32 / 1280.0;
+        let sy = self.height as f32 / 720.0;
+        let s = sx.min(sy);
+        let (hx, hy) = serpent_point(1.0);
+        let beat = 1.0 + spike * 0.7;
+        let core_r = ((10.0 * s * beat) as i64).max(1);
+        let glow_r = (42.0 * s * beat) as i64;
+        let gain = ((0.45 + spike * 0.55) * a * 255.0) as u8;
+        self.fill_glow_dot(
+            (hx * sx) as i64,
+            (hy * sy) as i64,
+            core_r,
+            glow_r,
+            ORB_CORE,
+            ORB_GLOW,
+            gain,
+        );
+    }
+
+    /// Draw `text` horizontally centered at row `y`, composited additively at
+    /// brightness `gain` (0..=255) so titles can glow in over the cinematic.
+    fn draw_text_glow_centered(&self, y: u64, scale: u64, text: &str, color: Rgb, gain: u8) {
+        let text_w = (text.len() as u64) * GLYPH_WIDTH * scale;
+        let mut pen_x = self.width.saturating_sub(text_w) / 2;
+        for byte in text.bytes() {
+            if let Some(glyph) = font::glyph(byte) {
+                self.draw_glyph_glow(pen_x, y, scale, &glyph, color, gain);
+            }
+            pen_x = pen_x.saturating_add(GLYPH_WIDTH * scale);
+        }
+    }
+
+    /// Additive counterpart of `draw_glyph`: paint set glyph bits with `add_pixel`.
+    fn draw_glyph_glow(&self, x: u64, y: u64, scale: u64, glyph: &[u8; 8], color: Rgb, gain: u8) {
+        for (row, bits) in glyph.iter().enumerate() {
+            for column in 0..GLYPH_WIDTH {
+                if bits & (0x80 >> column) == 0 {
+                    continue;
+                }
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let px = (x + column * scale + dx) as i64;
+                        let py = (y + row as u64 * scale + dy) as i64;
+                        self.add_pixel(px, py, color, gain);
+                    }
+                }
             }
         }
     }
