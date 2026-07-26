@@ -8,7 +8,73 @@
 an isolated Python app (the object browser), create/edit a typed object, save it,
 reboot, and see the same object and its revision history restored.
 
-**Design:** `docs/decisions/0049-pivot-to-vertical-usable-loop.md`.
+**Design:** `docs/decisions/0049-pivot-to-vertical-usable-loop.md`,
+`docs/decisions/0050-host-interpreter-seam-micropython.md`.
+
+## Revised Ordering (native loop first — 2026-07-26)
+
+The first human-usable loop needs **no interpreter** — the object browser,
+object store, reboot round-trip, input, compositor and widgets already exist
+natively (all visible in a normal boot log through `OBJECT_STORE:RESTORED`). So
+build the native usable loop first; MicroPython (ADR 0050) lands afterward as the
+"applications become Python" layer, binding to the object seam.
+
+**Construction must be separated from proof.** "Fast-path normal boot" does *not*
+mean bypassing `run_self_test()` calls — several of those are currently the only
+construction path for their subsystem (they build local state, prove it, discard
+it). The split:
+
+```text
+Common boot
+├── initialize hardware + kernel foundations
+├── construct persistent runtime services   (production APIs; both modes)
+└── choose boot mode
+    ├── Verify → run proof suite → QEMU success exit
+    └── Normal → launch shell → live event loop
+```
+
+Normal boot still really initializes: interrupt-driven PS/2 input, compositor +
+framebuffer state, the shell application registry, the storage service, the
+persistent object store, and workspace restoration. The proofs must exercise
+those same production APIs without being their initialization mechanism.
+
+### Slice A — fast-path normal boot to a live shell (next)
+
+> Normal boot constructs persistent shell state, renders a live desktop, accepts
+> one real PS/2 input event, visibly changes shell state, and remains responsive.
+
+Marker tail (verify with these, in order):
+
+```text
+PYTHOS:CORE:NORMAL_BOOT:FAST_PATH
+PYTHOS:SHELL:READY
+PYTHOS:SHELL:INPUT
+PYTHOS:SHELL:ACTION
+```
+
+### Slice B — Object Browser as a retained live application
+
+Convert the native object browser from a disposable self-test into a persistent,
+live app driven by the shell.
+
+### Slice C — the object round-trip via real interaction
+
+Create an object through real input, commit it, reboot, restore it, reopen it —
+the full loop, human-operated.
+
+### Then: MicroPython (ADR 0050)
+
+Only after the native loop works: SSE/FPU → Rust object seam (already partly
+proven by slices B/C) → port MicroPython behind the seam. Python is unnecessary
+to prove PythOS works as a human-operated system; it upgrades the apps to Python
+against a stable shell / object API / capability boundary / lifecycle.
+
+**Latent SSE/FPU note (record, do not block on):** the cinematic already uses
+`f32`, so PythCore currently relies on *firmware-established* SSE state during
+early boot. As long as the native live path stays integer-based this is fine.
+Once preemptible applications use floating point (MicroPython, or any user
+float), PythCore must explicitly configure and preserve FPU/SSE state per task
+(ADR 0050). Real work; it does not block the native object-browser loop.
 
 ## Global Constraints
 
