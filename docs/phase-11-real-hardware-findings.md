@@ -1,0 +1,64 @@
+# Phase 11 Real-Hardware Findings
+
+Phase 11 ("Physical Hardware Boot Smoke Test") precondition artifact for later
+hardware work (Phase 15 driver expansion reads this first). Records what booting
+PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
+
+## Confirmed
+
+- **PythOS boots on real UEFI hardware.** An AMD laptop boots a prepared USB all
+  the way to the milestone-1 cinematic wake screen (`PythOS [HISS] We Are
+  Woken`), including the native serpent cinematic. QEMU is no longer the only
+  environment.
+- **GOP framebuffer works on real hardware** (AMD laptop), including the direct
+  pixel-format rendering the cinematic uses.
+
+## The handoff bug real hardware exposed (fixed — ADR 0046)
+
+- The loader's temporary page tables originally identity-mapped only physical
+  `2 MiB..4 GiB`. Real firmware may load `BOOTX64.EFI` — and place the
+  `AllocatePages` allocations PythCore reads (`PythBootInfo`, memory map,
+  `INIT.PAK`) — **above 4 GiB** on machines with more RAM. The instruction after
+  `mov cr3` then triple-faults. QEMU and the laptop happened to stay below 4 GiB.
+- Fix: identity-map the low **512 GiB** with 1 GiB huge pages (2 MiB pages for
+  the low-1 GiB null guard; 2 MiB fallback to 4 GiB when the CPU lacks 1 GiB
+  pages). Merged to `main`.
+- One desktop still went **magenta** (loader pre-handoff color) before the fix
+  was verified on it. Status: the fix is now on `main` but **not yet re-tested on
+  that desktop**.
+
+## Debugging without serial (durable lesson)
+
+- Real laptops expose **no COM/serial port**, so the milestone serial oracle is
+  invisible. Every early fault looks like a black screen.
+- Technique that worked: **paint the raw GOP framebuffer a distinct solid color
+  at each boot milestone** (loader and kernel), so the on-screen color is the
+  oracle. A format-independent white "liveness" fill as the kernel's first
+  instruction distinguishes "handoff triple-faulted" from "kernel running,
+  framebuffer mapping wrong." One physical boot's final color pinpoints the
+  failing stage.
+- Implication for all future real-hardware bring-up: build **on-screen**
+  diagnostics; do not rely on serial.
+
+## Constraints observed
+
+- **Secure Boot must be disabled** (the loader is unsigned). Signing is a future
+  need before Secure Boot can stay on.
+- Diagnostic framebuffer paints currently fire on every boot; gating them to
+  failure-only is a deferred cleanup.
+
+## Hardware gaps that drive driver priorities (Phase 15 / Phase 14)
+
+- **Audio:** AC97 (Phase 6) is QEMU-only. The AMD laptop has no AC97; it uses
+  Intel HDA and/or I2S codecs behind the AMD ACP. Laptop audio is silent.
+  - **Intel HDA** is the tractable next step: QEMU-emulated and WAV-verifiable,
+    likely drives the laptop headphone jack. Being built now (ADR 0048).
+  - **AMD ACP / I2S** (laptop speakers) is parked: not emulated in our QEMU
+    harness, machine-specific, historically very hard. Investigation only, and
+    only after HDA works.
+- **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
+  target; virtio-net (QEMU) / wired Ethernet is the tractable path when
+  networking work begins.
+- General principle: prefer hardware that QEMU can emulate so the serial/capture
+  oracle still applies; treat oracle-less real-hardware-only drivers as scoped
+  investigations with explicit uncertainty.
