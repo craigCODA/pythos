@@ -124,3 +124,10 @@ After the visual slices, the user boots the USB (Secure Boot off) on the laptop
 and confirms the cinematic renders. Audio remains silent on the AMD laptop (no
 HDA driver); that is a known, separately-tracked gap, not a regression here.
 QEMU success is necessary but not sufficient.
+
+**Confirmed (2026-07-25):** the `boot-cinematic-native` build (compact ~3.5 s,
+serpent + shimmer + head orb + title; pre-fix loader, `BOOTX64.EFI` 71680,
+`PYTHCORE.ELF` 3546432) boots successfully on the real AMD laptop from USB. Audio
+silent as expected. The laptop is the working real-hardware oracle for the
+cinematic. Not yet verified on the desktop (that needs the 512 GiB handoff fix
+from `real-hardware-usb-boot` folded in).
