@@ -509,11 +509,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             // enumerate the codec's output path. Audio is non-critical, so
             // failures are reported but do not halt boot.
             match audio::hda_init_controller() {
-                Ok(()) => {
-                    if audio::hda_enumerate_codec().is_err() {
-                        serial::write_line("PYTHOS:CORE:AUDIO:HDA:CODEC_ENUM_FAILED");
+                Ok(()) => match audio::hda_enumerate_codec() {
+                    Ok(path) => {
+                        if audio::hda_start_output(&path).is_err() {
+                            serial::write_line("PYTHOS:CORE:AUDIO:HDA:PCM_FAILED");
+                        }
                     }
-                }
+                    Err(()) => serial::write_line("PYTHOS:CORE:AUDIO:HDA:CODEC_ENUM_FAILED"),
+                },
                 Err(()) => serial::write_line("PYTHOS:CORE:AUDIO:HDA:INIT_FAILED"),
             }
         }
