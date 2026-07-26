@@ -20,7 +20,8 @@ const PCI_BAR1_OFFSET: u8 = 0x14;
 const PCI_COMMAND_IO_SPACE: u16 = 1 << 0;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
 const PCI_CLASS_MULTIMEDIA: u8 = 0x04;
-const PCI_SUBCLASS_AUDIO: u8 = 0x01;
+const PCI_SUBCLASS_AUDIO: u8 = 0x01; // AC97
+const PCI_SUBCLASS_HDA: u8 = 0x03; // Intel HDA / Azalia
 const IO_BAR_FLAG: u32 = 1;
 const IO_BAR_MASK: u32 = !0x3;
 
@@ -166,6 +167,543 @@ static mut PCM_BUFFER: PcmBuffer = PcmBuffer {
 static mut BDL: BufferDescriptorList = BufferDescriptorList {
     entries: [EMPTY_DESCRIPTOR; AC97_BDL_ENTRY_COUNT],
 };
+
+/// Kernel virtual window the HDA controller's MMIO registers are mapped to by
+/// `KernelAddressSpace::build` (ADR 0048, approach A). Distinct from and well
+/// clear of the framebuffer device mapping at `DEVICE_VIRT_BASE`.
+pub const HDA_MMIO_VIRT: u64 = 0xFFFF_C000_1000_0000;
+/// Bytes of HDA register space to map (controller regs + stream descriptors).
+pub const HDA_MMIO_LEN: u64 = 0x4000;
+
+const HDA_REG_GCAP: u64 = 0x00; // Global Capabilities (u16)
+const HDA_REG_GCTL: u64 = 0x08; // Global Control (u32)
+const HDA_REG_CORBLBASE: u64 = 0x40;
+const HDA_REG_CORBUBASE: u64 = 0x44;
+const HDA_REG_CORBWP: u64 = 0x48; // u16
+const HDA_REG_CORBRP: u64 = 0x4A; // u16
+const HDA_REG_CORBCTL: u64 = 0x4C; // u8
+const HDA_REG_CORBSIZE: u64 = 0x4E; // u8
+const HDA_REG_RIRBLBASE: u64 = 0x50;
+const HDA_REG_RIRBUBASE: u64 = 0x54;
+const HDA_REG_RIRBWP: u64 = 0x58; // u16
+const HDA_REG_RINTCNT: u64 = 0x5A; // u16
+const HDA_REG_RIRBCTL: u64 = 0x5C; // u8
+const HDA_REG_RIRBSIZE: u64 = 0x5E; // u8
+
+const HDA_REG_STATESTS: u64 = 0x0E; // State Change Status (u16): codecs present
+const HDA_REG_ICOI: u64 = 0x60; // Immediate Command Output (u32)
+const HDA_REG_ICII: u64 = 0x64; // Immediate Command Input / response (u32)
+const HDA_REG_ICIS: u64 = 0x68; // Immediate Command Status (u16)
+const ICIS_ICB: u16 = 1 << 0; // Immediate Command Busy (set to issue)
+const ICIS_IRV: u16 = 1 << 1; // Immediate Result Valid
+
+const HDA_VERB_GET_PARAM: u32 = 0xF00;
+const HDA_PARAM_NODE_COUNT: u32 = 0x04; // Subordinate Node Count
+const HDA_PARAM_FG_TYPE: u32 = 0x05; // Function Group Type
+const HDA_PARAM_WIDGET_CAP: u32 = 0x09; // Audio Widget Capabilities
+const HDA_FG_AUDIO: u32 = 0x01; // Audio Function Group type
+const HDA_WIDGET_OUTPUT: u32 = 0x0; // audio output converter (DAC)
+const HDA_WIDGET_PIN: u32 = 0x4; // pin complex
+
+const HDA_VERB_SET_STREAM_FORMAT: u32 = 0x2; // 4-bit verb, 16-bit payload
+const HDA_VERB_SET_AMP: u32 = 0x3; // 4-bit verb, 16-bit payload
+const HDA_VERB_SET_STREAM_CHANNEL: u32 = 0x706; // 12-bit verb, 8-bit payload
+const HDA_VERB_SET_PIN_CTL: u32 = 0x707;
+const HDA_VERB_SET_EAPD: u32 = 0x70C;
+const PIN_CTL_OUT_EN: u32 = 0x40; // pin output enable
+const AMP_SET_OUTPUT_BOTH: u16 = 0xB000; // set output amp, left+right, unmuted
+const AMP_GAIN: u16 = 0x2A; // moderate gain
+const EAPD_ENABLE: u32 = 0x2; // external amplifier power down enable
+const HDA_STREAM_TAG: u32 = 1; // non-zero stream number shared by DAC + SD
+const HDA_FORMAT_48K_16_STEREO: u16 = 0x0011; // 48 kHz, 16-bit, 2 channels
+
+// Output stream descriptor registers, relative to the descriptor's base.
+const SD_CTL: u64 = 0x00; // control (u32; low 3 bytes)
+const SD_LPIB: u64 = 0x04; // link position in buffer (u32)
+const SD_CBL: u64 = 0x08; // cyclic buffer length (u32)
+const SD_LVI: u64 = 0x0C; // last valid BDL index (u16)
+const SD_FMT: u64 = 0x12; // format (u16)
+const SD_BDPL: u64 = 0x18; // BDL pointer lower (u32)
+const SD_BDPU: u64 = 0x1C; // BDL pointer upper (u32)
+const SDCTL_RST: u32 = 1 << 0;
+const SDCTL_RUN: u32 = 1 << 1;
+
+const HDA_PCM_FRAMES: usize = 4800; // 100 ms of 48 kHz stereo boot audio
+const HDA_PCM_SAMPLES: usize = HDA_PCM_FRAMES * 2;
+const HDA_BDL_ENTRIES: usize = 4;
+
+const GCTL_CRST: u32 = 1 << 0; // Controller Reset (0 = in reset)
+const CORBCTL_RUN: u8 = 1 << 1; // CORB DMA enable
+const RIRBCTL_DMAEN: u8 = 1 << 1; // RIRB DMA enable
+const CORB_RP_RST: u16 = 1 << 15; // CORB read-pointer reset
+const RIRB_WP_RST: u16 = 1 << 15; // RIRB write-pointer reset
+const HDA_RING_ENTRIES: usize = 256;
+const HDA_SIZE_256: u8 = 0x2; // CORBSIZE/RIRBSIZE code for 256 entries
+
+#[repr(C, align(4096))]
+struct HdaCorb {
+    entries: [u32; HDA_RING_ENTRIES],
+}
+#[repr(C, align(4096))]
+struct HdaRirb {
+    entries: [u64; HDA_RING_ENTRIES],
+}
+static mut HDA_CORB: HdaCorb = HdaCorb {
+    entries: [0; HDA_RING_ENTRIES],
+};
+static mut HDA_RIRB: HdaRirb = HdaRirb {
+    entries: [0; HDA_RING_ENTRIES],
+};
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct HdaBdlEntry {
+    addr: u64,
+    length: u32,
+    flags: u32,
+}
+#[repr(C, align(128))]
+struct HdaBdl {
+    entries: [HdaBdlEntry; HDA_BDL_ENTRIES],
+}
+#[repr(C, align(128))]
+struct HdaPcm {
+    samples: [i16; HDA_PCM_SAMPLES],
+}
+static mut HDA_BDL: HdaBdl = HdaBdl {
+    entries: [HdaBdlEntry {
+        addr: 0,
+        length: 0,
+        flags: 0,
+    }; HDA_BDL_ENTRIES],
+};
+static mut HDA_PCM: HdaPcm = HdaPcm {
+    samples: [0; HDA_PCM_SAMPLES],
+};
+
+/// A discovered Intel HDA controller (ADR 0048). Slice 1 records its location
+/// and memory-mapped register base; later slices map and program it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HdaController {
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+    pub mmio_base: u64,
+}
+
+/// Compute an HDA controller's MMIO register base from its BAR0 (a memory BAR;
+/// 64-bit when the type bits select it, else 32-bit). Returns `None` for an I/O
+/// BAR or a zero base.
+fn hda_mmio_base(function: &PciFunction) -> Option<u64> {
+    let bar0 = function.bar0;
+    if bar0 & IO_BAR_FLAG != 0 {
+        return None; // HDA registers are memory-mapped, not port I/O
+    }
+    let base_low = u64::from(bar0 & 0xFFFF_FFF0);
+    let base = if (bar0 >> 1) & 0x3 == 0x2 {
+        base_low | (u64::from(function.bar1) << 32)
+    } else {
+        base_low
+    };
+    if base == 0 { None } else { Some(base) }
+}
+
+/// Scan the primary PCI bus for an Intel HDA controller (class 0x04, subclass
+/// 0x03) and report it. Slice 1 of ADR 0048: discovery and reporting only; no
+/// register access, and the AC97 audio pipeline is unchanged.
+pub fn probe_hda() -> Option<HdaController> {
+    for device in 0..PCI_DEVICE_COUNT {
+        for function in 0..PCI_FUNCTION_COUNT {
+            let candidate = read_function(PCI_BUS, device, function);
+            if vendor(candidate.vendor_device) == PCI_VENDOR_INVALID {
+                continue;
+            }
+            if class_code(candidate.class_revision) == PCI_CLASS_MULTIMEDIA
+                && subclass(candidate.class_revision) == PCI_SUBCLASS_HDA
+                && let Some(mmio_base) = hda_mmio_base(&candidate)
+            {
+                serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_FOUND");
+                serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:MMIO=", mmio_base);
+                return Some(HdaController {
+                    bus: PCI_BUS,
+                    device,
+                    function,
+                    mmio_base,
+                });
+            }
+        }
+    }
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_ABSENT");
+    None
+}
+
+/// Slice 2a of ADR 0048: prove the HDA controller registers are reachable
+/// through the kernel-mapped MMIO window by reading GCAP. Called after the
+/// kernel address space (which mapped `controller.mmio_base` to `HDA_MMIO_VIRT`)
+/// is active.
+#[cfg(not(test))]
+pub fn hda_report_mapped(controller: &HdaController) {
+    // SAFETY:
+    // 1. Invariant: `HDA_MMIO_VIRT` maps `controller.mmio_base` for
+    //    `HDA_MMIO_LEN` bytes; GCAP is the 16-bit register at offset 0.
+    // 2. Established by: `KernelAddressSpace::build` mapped this exact physical
+    //    range to `HDA_MMIO_VIRT` before the active CR3 switch.
+    // 3. Lifetime: the kernel address space mapping persists for kernel life.
+    // 4. Pointer ownership: PythCore owns the HDA controller MMIO region.
+    // 5. Alignment: `HDA_MMIO_VIRT` is page aligned; offset 0 is `u16` aligned.
+    // 6. Mapped length: offset 0 + 2 <= `HDA_MMIO_LEN`.
+    // 7. Concurrency: single-core, no other HDA register user in this slice.
+    // 8. Violation: an unmapped or wrong base would fault or read garbage; the
+    //    mapping above prevents it.
+    let gcap = unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + HDA_REG_GCAP) as *const u16) };
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_MAPPED");
+    serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:GCAP=", u64::from(gcap));
+    let _ = controller;
+}
+
+// --- HDA MMIO register accessors (through the mapped HDA_MMIO_VIRT window) ---
+
+#[cfg(not(test))]
+fn hda_read16(off: u64) -> u16 {
+    debug_assert!(off + 2 <= HDA_MMIO_LEN);
+    // SAFETY:
+    // 1. Invariant: `off` is a register offset with `off + 2 <= HDA_MMIO_LEN`,
+    //    and `HDA_MMIO_VIRT` maps the controller registers for that length.
+    // 2. Established by: `KernelAddressSpace::build` mapped the BAR to
+    //    `HDA_MMIO_VIRT`; callers use offsets from the HDA register map.
+    // 3. Lifetime: the mapping persists for kernel life.
+    // 4. Pointer ownership: PythCore owns the controller MMIO region.
+    // 5. Alignment: HDA `u16` registers are 2-byte aligned by the register map.
+    // 6. Mapped length: `off + 2 <= HDA_MMIO_LEN`, asserted above.
+    // 7. Concurrency: single-core; no other HDA register user in this slice.
+    // 8. Violation: an out-of-window offset would touch unmapped memory; the
+    //    HDA register map and assert keep offsets in range.
+    unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + off) as *const u16) }
+}
+
+#[cfg(not(test))]
+fn hda_read32(off: u64) -> u32 {
+    debug_assert!(off + 4 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for a 4-byte
+    // aligned `u32` register read with `off + 4 <= HDA_MMIO_LEN`.
+    unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + off) as *const u32) }
+}
+
+#[cfg(not(test))]
+fn hda_write8(off: u64, value: u8) {
+    debug_assert!(off < HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for a `u8`
+    // write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u8, value) }
+}
+
+#[cfg(not(test))]
+fn hda_write16(off: u64, value: u16) {
+    debug_assert!(off + 2 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for an aligned
+    // `u16` write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u16, value) }
+}
+
+#[cfg(not(test))]
+fn hda_write32(off: u64, value: u32) {
+    debug_assert!(off + 4 <= HDA_MMIO_LEN);
+    // SAFETY: identical MMIO-window invariants to `hda_read16`, for an aligned
+    // `u32` write of a controller register within the mapped range.
+    unsafe { core::ptr::write_volatile((HDA_MMIO_VIRT + off) as *mut u32, value) }
+}
+
+/// Spin until `cond` holds or a bounded retry budget is exhausted; returns
+/// whether the condition was observed.
+#[cfg(not(test))]
+fn spin_until(mut cond: impl FnMut() -> bool) -> bool {
+    for _ in 0..1_000_000 {
+        if cond() {
+            return true;
+        }
+        core::hint::spin_loop();
+    }
+    false
+}
+
+/// Take the HDA controller out of reset (CRST): drive it into reset, confirm,
+/// release reset, confirm, then let codecs report on the link.
+#[cfg(not(test))]
+fn hda_reset_controller() -> Result<(), ()> {
+    hda_write32(HDA_REG_GCTL, hda_read32(HDA_REG_GCTL) & !GCTL_CRST);
+    if !spin_until(|| hda_read32(HDA_REG_GCTL) & GCTL_CRST == 0) {
+        return Err(());
+    }
+    hda_write32(HDA_REG_GCTL, hda_read32(HDA_REG_GCTL) | GCTL_CRST);
+    if !spin_until(|| hda_read32(HDA_REG_GCTL) & GCTL_CRST != 0) {
+        return Err(());
+    }
+    // Codecs need a short settling time on the link after reset is released.
+    for _ in 0..50_000 {
+        core::hint::spin_loop();
+    }
+    Ok(())
+}
+
+/// Program and start the CORB (command) and RIRB (response) DMA rings, using
+/// the static ring buffers' physical addresses.
+#[cfg(not(test))]
+fn hda_setup_corb_rirb() -> Result<(), ()> {
+    let corb_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_CORB as u64)
+        .map_err(|_| ())?;
+    let rirb_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_RIRB as u64)
+        .map_err(|_| ())?;
+
+    // Stop both DMA engines before reprogramming.
+    hda_write8(HDA_REG_CORBCTL, 0);
+    hda_write8(HDA_REG_RIRBCTL, 0);
+
+    // CORB: base, size, and read-pointer reset handshake.
+    hda_write32(HDA_REG_CORBLBASE, corb_phys as u32);
+    hda_write32(HDA_REG_CORBUBASE, (corb_phys >> 32) as u32);
+    hda_write8(HDA_REG_CORBSIZE, HDA_SIZE_256);
+    hda_write16(HDA_REG_CORBRP, CORB_RP_RST);
+    spin_until(|| hda_read16(HDA_REG_CORBRP) & CORB_RP_RST != 0);
+    hda_write16(HDA_REG_CORBRP, 0);
+    spin_until(|| hda_read16(HDA_REG_CORBRP) & CORB_RP_RST == 0);
+    hda_write16(HDA_REG_CORBWP, 0);
+
+    // RIRB: base, size, write-pointer reset, and one response per interrupt.
+    hda_write32(HDA_REG_RIRBLBASE, rirb_phys as u32);
+    hda_write32(HDA_REG_RIRBUBASE, (rirb_phys >> 32) as u32);
+    hda_write8(HDA_REG_RIRBSIZE, HDA_SIZE_256);
+    hda_write16(HDA_REG_RIRBWP, RIRB_WP_RST);
+    hda_write16(HDA_REG_RINTCNT, 1);
+
+    // Start both DMA engines.
+    hda_write8(HDA_REG_CORBCTL, CORBCTL_RUN);
+    hda_write8(HDA_REG_RIRBCTL, RIRBCTL_DMAEN);
+    Ok(())
+}
+
+/// Slice 2b of ADR 0048: bring the mapped HDA controller out of reset and start
+/// its CORB/RIRB command rings, ready for codec enumeration.
+#[cfg(not(test))]
+pub fn hda_init_controller() -> Result<(), ()> {
+    hda_reset_controller()?;
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_RESET");
+    hda_setup_corb_rirb()?;
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_READY");
+    Ok(())
+}
+
+/// A resolved codec output path (ADR 0048 slice 3): the codec address, its audio
+/// function group, an output converter (DAC), and a pin complex to drive.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct HdaOutputPath {
+    pub cad: u32,
+    pub afg: u32,
+    pub dac: u32,
+    pub pin: u32,
+}
+
+/// Encode an HDA command DWORD: codec address, node id, 12-bit verb, 8-bit payload.
+fn hda_verb(cad: u32, nid: u32, verb: u32, payload: u32) -> u32 {
+    (cad << 28) | ((nid & 0xFF) << 20) | ((verb & 0xFFF) << 8) | (payload & 0xFF)
+}
+
+/// Send one command through the Immediate Command Interface and return the
+/// codec's response, or `None` if the controller stays busy / no result arrives
+/// within the retry budget. Used for low-volume codec enumeration.
+#[cfg(not(test))]
+fn hda_codec_command(command: u32) -> Option<u32> {
+    if !spin_until(|| hda_read16(HDA_REG_ICIS) & ICIS_ICB == 0) {
+        return None;
+    }
+    hda_write16(HDA_REG_ICIS, ICIS_IRV); // clear any stale result-valid
+    hda_write32(HDA_REG_ICOI, command);
+    hda_write16(HDA_REG_ICIS, ICIS_ICB); // issue
+    if !spin_until(|| hda_read16(HDA_REG_ICIS) & ICIS_IRV != 0) {
+        return None;
+    }
+    Some(hda_read32(HDA_REG_ICII))
+}
+
+#[cfg(not(test))]
+fn hda_get_param(cad: u32, nid: u32, param: u32) -> Result<u32, ()> {
+    hda_codec_command(hda_verb(cad, nid, HDA_VERB_GET_PARAM, param)).ok_or(())
+}
+
+/// Slice 3 of ADR 0048: enumerate the codec that reported after reset, walk its
+/// widget graph, and resolve an output converter (DAC) plus a pin complex.
+#[cfg(not(test))]
+pub fn hda_enumerate_codec() -> Result<HdaOutputPath, ()> {
+    let statests = hda_read16(HDA_REG_STATESTS);
+    if statests == 0 {
+        return Err(());
+    }
+    let cad = statests.trailing_zeros();
+
+    let root = hda_get_param(cad, 0, HDA_PARAM_NODE_COUNT)?;
+    let fg_start = (root >> 16) & 0xFF;
+    let fg_count = root & 0xFF;
+
+    for fg in 0..fg_count {
+        let fg_nid = fg_start + fg;
+        if hda_get_param(cad, fg_nid, HDA_PARAM_FG_TYPE)? & 0xFF != HDA_FG_AUDIO {
+            continue;
+        }
+        let widgets = hda_get_param(cad, fg_nid, HDA_PARAM_NODE_COUNT)?;
+        let w_start = (widgets >> 16) & 0xFF;
+        let w_count = widgets & 0xFF;
+        let mut dac = None;
+        let mut pin = None;
+        for w in 0..w_count {
+            let nid = w_start + w;
+            let widget_type = (hda_get_param(cad, nid, HDA_PARAM_WIDGET_CAP)? >> 20) & 0xF;
+            if widget_type == HDA_WIDGET_OUTPUT && dac.is_none() {
+                dac = Some(nid);
+            } else if widget_type == HDA_WIDGET_PIN && pin.is_none() {
+                pin = Some(nid);
+            }
+        }
+        if let (Some(dac), Some(pin)) = (dac, pin) {
+            serial::write_line("PYTHOS:CORE:AUDIO:HDA:CODEC_READY");
+            serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:DAC=", u64::from(dac));
+            serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:PIN=", u64::from(pin));
+            return Ok(HdaOutputPath {
+                cad,
+                afg: fg_nid,
+                dac,
+                pin,
+            });
+        }
+    }
+    Err(())
+}
+
+/// Encode an HDA command DWORD for a 4-bit verb with a 16-bit payload
+/// (e.g. set-format, set-amp).
+fn hda_verb16(cad: u32, nid: u32, verb: u32, payload: u16) -> u32 {
+    (cad << 28) | ((nid & 0xFF) << 20) | ((verb & 0xF) << 16) | u32::from(payload)
+}
+
+/// Fill the HDA PCM buffer with the existing boot audio mix (hiss / sub-bass /
+/// tremolo), interleaved stereo — the same content AC97 plays. On real hardware
+/// with no AC97 device, HDA is the sole backend, so this routes the boot audio
+/// through it; the buffer loops for the length of the cinematic.
+#[cfg(not(test))]
+fn hda_fill_boot_audio() {
+    let base = &raw mut HDA_PCM as *mut i16;
+    for frame in 0..HDA_PCM_FRAMES {
+        let sample = mixed_boot_sample(frame);
+        // SAFETY: `HDA_PCM` is a kernel-mapped static of `HDA_PCM_SAMPLES` i16;
+        // `frame < HDA_PCM_FRAMES` so `frame*2 + 1 < HDA_PCM_SAMPLES`; single-core,
+        // no other writer; writes complete before the stream DMA is started.
+        unsafe {
+            base.add(frame * 2).write_volatile(sample);
+            base.add(frame * 2 + 1).write_volatile(sample);
+        }
+    }
+}
+
+/// Write one buffer-descriptor-list entry.
+#[cfg(not(test))]
+fn hda_bdl_set(index: usize, addr: u64, length: u32, interrupt_on_completion: bool) {
+    debug_assert!(index < HDA_BDL_ENTRIES);
+    let entry = HdaBdlEntry {
+        addr,
+        length,
+        flags: u32::from(interrupt_on_completion),
+    };
+    // SAFETY: `HDA_BDL` is a kernel-mapped static of `HDA_BDL_ENTRIES`; `index`
+    // is in range (asserted); single-core; written before the stream is started.
+    unsafe {
+        (&raw mut HDA_BDL as *mut HdaBdlEntry)
+            .add(index)
+            .write_volatile(entry)
+    }
+}
+
+/// Slices 4/5 of ADR 0048: fill the buffer with the existing boot audio,
+/// configure the DAC + pin, program the output stream descriptor with a BDL over
+/// it, start it, and confirm the DMA position advances (proof the controller is
+/// fetching samples).
+#[cfg(not(test))]
+pub fn hda_start_output(path: &HdaOutputPath) -> Result<(), ()> {
+    hda_fill_boot_audio();
+    let pcm_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_PCM as u64)
+        .map_err(|_| ())?;
+    let bdl_phys = crate::memory::r#virtual::translate_active_address(&raw const HDA_BDL as u64)
+        .map_err(|_| ())?;
+    let buffer_bytes = (HDA_PCM_SAMPLES * 2) as u32;
+    let half = buffer_bytes / 2;
+    // Two BDL entries (the spec requires at least two), both over the buffer.
+    hda_bdl_set(0, pcm_phys, half, false);
+    hda_bdl_set(1, pcm_phys + u64::from(half), half, true);
+
+    // DAC: stream format, stream/channel tag, unmuted output amp.
+    hda_codec_command(hda_verb16(
+        path.cad,
+        path.dac,
+        HDA_VERB_SET_STREAM_FORMAT,
+        HDA_FORMAT_48K_16_STEREO,
+    ));
+    hda_codec_command(hda_verb(
+        path.cad,
+        path.dac,
+        HDA_VERB_SET_STREAM_CHANNEL,
+        HDA_STREAM_TAG << 4,
+    ));
+    hda_codec_command(hda_verb16(
+        path.cad,
+        path.dac,
+        HDA_VERB_SET_AMP,
+        AMP_SET_OUTPUT_BOTH | AMP_GAIN,
+    ));
+    // Pin: output enable, unmuted output amp, external amp powered.
+    hda_codec_command(hda_verb(
+        path.cad,
+        path.pin,
+        HDA_VERB_SET_PIN_CTL,
+        PIN_CTL_OUT_EN,
+    ));
+    hda_codec_command(hda_verb16(
+        path.cad,
+        path.pin,
+        HDA_VERB_SET_AMP,
+        AMP_SET_OUTPUT_BOTH | AMP_GAIN,
+    ));
+    hda_codec_command(hda_verb(path.cad, path.pin, HDA_VERB_SET_EAPD, EAPD_ENABLE));
+
+    // Output stream descriptor 0 sits after the input streams (NISS of them).
+    let niss = u64::from((hda_read16(HDA_REG_GCAP) >> 8) & 0xF);
+    let sd = 0x80 + niss * 0x20;
+
+    // Reset the stream.
+    hda_write32(sd + SD_CTL, SDCTL_RST);
+    spin_until(|| hda_read32(sd + SD_CTL) & SDCTL_RST != 0);
+    hda_write32(sd + SD_CTL, 0);
+    spin_until(|| hda_read32(sd + SD_CTL) & SDCTL_RST == 0);
+
+    // Program buffer, length, format.
+    hda_write32(sd + SD_BDPL, bdl_phys as u32);
+    hda_write32(sd + SD_BDPU, (bdl_phys >> 32) as u32);
+    hda_write32(sd + SD_CBL, buffer_bytes);
+    hda_write16(sd + SD_LVI, 1); // two BDL entries
+    hda_write16(sd + SD_FMT, HDA_FORMAT_48K_16_STEREO);
+
+    // Set the stream number and start DMA.
+    hda_write32(sd + SD_CTL, (HDA_STREAM_TAG << 20) | SDCTL_RUN);
+
+    // Confirm the link position advances: the controller is fetching samples.
+    let position_before = hda_read32(sd + SD_LPIB);
+    for _ in 0..300_000 {
+        core::hint::spin_loop();
+    }
+    let position_after = hda_read32(sd + SD_LPIB);
+    serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:LPIB=", u64::from(position_after));
+    if position_after == position_before {
+        return Err(());
+    }
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:PCM_PLAYBACK");
+    Ok(())
+}
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
     match scan_primary_bus()? {

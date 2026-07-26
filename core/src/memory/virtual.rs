@@ -123,6 +123,7 @@ impl KernelAddressSpace {
     pub fn build(
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
+        hda_mmio: Option<(u64, u64, u64)>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
@@ -155,6 +156,11 @@ impl KernelAddressSpace {
             boot_info.framebuffer.byte_length,
             PTE_WRITE | PTE_NO_EXECUTE,
         )?;
+        // ADR 0048: map the runtime-discovered HDA controller MMIO into the
+        // kernel device window so the audio driver can reach its registers.
+        if let Some((phys, virt, len)) = hda_mmio {
+            tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
+        }
         tables.map_allocated_table_frames()?;
 
         Ok(Self {

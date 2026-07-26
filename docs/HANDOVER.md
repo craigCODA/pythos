@@ -24,6 +24,20 @@ See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-bo
 - Secure Boot must stay disabled (loader is unsigned). Diagnostic paints fire on
   every boot, including successful ones; gating them to failures is a follow-up.
 
+## Intel HDA Audio (2026-07-26, branch `hda-audio`)
+
+An Intel HDA (Azalia) audio backend is implemented alongside AC97 (ADR 0048,
+`docs/phase-11-real-hardware-findings.md`, plan
+`docs/superpowers/plans/2026-07-25-intel-hda-audio.md`). PythCore discovers the
+controller, maps its MMIO into the kernel address space at VM-build time,
+resets it, enumerates the codec's output path (DAC + pin) via the Immediate
+Command Interface, and plays the boot audio through an output stream (verified
+by the link-position register advancing). Enabled with `python
+scripts/run-qemu.py ... --hda` (needs a longer `--timeout`); default milestone-1
+is unaffected because HDA init is skipped when no controller is present. AMD
+ACP/I2S (laptop speakers) is parked; real-hardware audio (headphone jack) is
+unverified pending a laptop boot. Branch not yet merged to `main`.
+
 ## Verify First
 
 Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
