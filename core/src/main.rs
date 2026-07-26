@@ -146,14 +146,23 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:INTERRUPTS_READY");
 
-        let address_space =
-            match memory::r#virtual::KernelAddressSpace::build(&mut physical_memory, boot_info) {
-                Ok(address_space) => address_space,
-                Err(_) => {
-                    serial::write_line("PYTHOS:PANIC");
-                    qemu_exit::panic();
-                }
-            };
+        // ADR 0048: discover the HDA controller now (PCI config I/O works before
+        // the VM switch) so its MMIO can be mapped into the kernel address space.
+        let hda_controller = audio::probe_hda();
+        let hda_mmio =
+            hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
+
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            hda_mmio,
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
         let user_address_space =
             match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
                 Ok(address_space) => address_space,
@@ -492,9 +501,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:PHASE_5_COMPLETE");
-        // ADR 0048 slice 1: report an Intel HDA controller if present. Discovery
-        // only for now; the AC97 audio pipeline below is unchanged.
-        let _hda = audio::probe_hda();
+        // ADR 0048 slice 2a: if an HDA controller was discovered and its MMIO
+        // mapped into the kernel address space, prove its registers are reachable.
+        if let Some(hda) = hda_controller {
+            audio::hda_report_mapped(&hda);
+        }
         let audio_device = match audio::select_device() {
             Ok(device) => device,
             Err(_) => {

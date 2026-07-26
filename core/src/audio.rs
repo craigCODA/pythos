@@ -168,6 +168,15 @@ static mut BDL: BufferDescriptorList = BufferDescriptorList {
     entries: [EMPTY_DESCRIPTOR; AC97_BDL_ENTRY_COUNT],
 };
 
+/// Kernel virtual window the HDA controller's MMIO registers are mapped to by
+/// `KernelAddressSpace::build` (ADR 0048, approach A). Distinct from and well
+/// clear of the framebuffer device mapping at `DEVICE_VIRT_BASE`.
+pub const HDA_MMIO_VIRT: u64 = 0xFFFF_C000_1000_0000;
+/// Bytes of HDA register space to map (controller regs + stream descriptors).
+pub const HDA_MMIO_LEN: u64 = 0x4000;
+
+const HDA_REG_GCAP: u64 = 0x00; // Global Capabilities (u16)
+
 /// A discovered Intel HDA controller (ADR 0048). Slice 1 records its location
 /// and memory-mapped register base; later slices map and program it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -222,6 +231,30 @@ pub fn probe_hda() -> Option<HdaController> {
     }
     serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_ABSENT");
     None
+}
+
+/// Slice 2a of ADR 0048: prove the HDA controller registers are reachable
+/// through the kernel-mapped MMIO window by reading GCAP. Called after the
+/// kernel address space (which mapped `controller.mmio_base` to `HDA_MMIO_VIRT`)
+/// is active.
+#[cfg(not(test))]
+pub fn hda_report_mapped(controller: &HdaController) {
+    // SAFETY:
+    // 1. Invariant: `HDA_MMIO_VIRT` maps `controller.mmio_base` for
+    //    `HDA_MMIO_LEN` bytes; GCAP is the 16-bit register at offset 0.
+    // 2. Established by: `KernelAddressSpace::build` mapped this exact physical
+    //    range to `HDA_MMIO_VIRT` before the active CR3 switch.
+    // 3. Lifetime: the kernel address space mapping persists for kernel life.
+    // 4. Pointer ownership: PythCore owns the HDA controller MMIO region.
+    // 5. Alignment: `HDA_MMIO_VIRT` is page aligned; offset 0 is `u16` aligned.
+    // 6. Mapped length: offset 0 + 2 <= `HDA_MMIO_LEN`.
+    // 7. Concurrency: single-core, no other HDA register user in this slice.
+    // 8. Violation: an unmapped or wrong base would fault or read garbage; the
+    //    mapping above prevents it.
+    let gcap = unsafe { core::ptr::read_volatile((HDA_MMIO_VIRT + HDA_REG_GCAP) as *const u16) };
+    serial::write_line("PYTHOS:CORE:AUDIO:HDA:CONTROLLER_MAPPED");
+    serial::write_hex_u64("PYTHOS:CORE:AUDIO:HDA:GCAP=", u64::from(gcap));
+    let _ = controller;
 }
 
 pub fn select_device() -> Result<AudioDeviceSelection, AudioError> {
