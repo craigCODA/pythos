@@ -20,13 +20,14 @@
 - Human command grammar belongs in `user/shell`; PythCore receives only typed ABI requests.
 - Object IDs identify; capabilities authorize.
 - Runtime capability handles are not persisted across reboot; fresh handles are minted from stable principal/workspace policy after validated program identity is rebound.
-- Fresh handle means no runtime handle was serialized, a new runtime capability table minted authority for the restored caller, and a stale handle from the previous caller/runtime context is denied. Do not assert numeric handle inequality across boots.
+- Fresh handle means no runtime handle was serialized, old user address spaces and process state disappeared during reboot, and the new shell received authority only by querying its workspace in a new runtime capability table. Do not assert numeric handle inequality or invoke an old raw handle across boots unless a boot epoch is added by a separate ADR. Within one boot, handles remain holder-bound and revocable.
 - `shell.elf` receives a read-only bootstrap capability block at launch with console, workspace, and system-control capabilities. It keeps a bounded object-id to object-capability map in user space.
-- `create` stores the returned object capability. `query` returns fixed `ObjectListEntry { object_id, capability }` records and refreshes the shell map. `inspect`, `revise`, and `history` must use a per-object capability, querying first after reboot if the map has no entry.
+- `create` stores the returned object capability. `query` returns fixed `ObjectListEntry { object_id, capability }` records and refreshes the shell map. `inspect`, `revise`, and `history` must use a per-object capability, querying first after reboot if the map has no entry. `CapabilityMap` retains the workspace capability separately from its object entries.
 - Every console, object, and system-control syscall must derive authority from the current caller identity and a caller-supplied capability handle.
-- Object-service persistence is a multi-sector checkpoint ABI recorded in ADR 0052. One-sector snapshots are forbidden for this slice.
+- Object-service persistence is a two-slot, multi-sector checkpoint ABI recorded in ADR 0052. One-sector snapshots are forbidden for this slice.
 - The retained object service has one static normal-boot owner. Syscall dispatch reaches it only through a documented single-core access boundary after initialization and before shell launch.
 - Known-object denial must target an object seeded in normal boot and proven on COM1 as existing outside the shell workspace before access is denied by capability validation.
+- Normal boot must initialize the production substrate needed by the shell rather than relying on proof-only side effects.
 - Every unsafe block requires a documented invariant with address, length, lifetime, ownership, alignment, concurrency, and violation notes.
 - Serial output, not screenshots, is the acceptance oracle.
 - The temporary kernel object bridge remains explicitly temporary, versioned, typed, and capability-gated until the object service moves to user space.
@@ -49,6 +50,7 @@
 - Modify `core/src/serial.rs`: initialize and use COM2 deterministically.
 - Modify `core/src/syscall.rs`: preserve existing ABI numbers, capture register args, derive the current caller, and dispatch typed console/object/system-control calls.
 - Create `core/src/process_context.rs`: track the active ring-3 process identity, principal id, validated program digest, and bootstrap capability handles for syscalls.
+- Create `core/src/normal_init.rs`: extract production initialization from proof routines for normal boot.
 - Create `core/src/normal_boot.rs`: hold the normal-boot service initialization and shell launch path separately from verification proofs.
 - Create `core/src/retained_services.rs`: own static retained normal-boot service storage and expose a documented single-core syscall access boundary.
 - Modify `core/src/main.rs`: route `verify` builds to the existing proof sequence and normal builds to `normal_boot::run`.
@@ -57,12 +59,14 @@
 - Modify `core/src/user_mode.rs`: add persistent ring-3 entry and defined persistent-process fault handling.
 - Modify `core/src/dynamic_object_store.rs`: promote the Phase 10 dynamic store from self-test-only operations into reusable normal-service operations.
 - Create `core/src/object_service_checkpoint.rs`: define the ADR 0052 multi-sector object-service checkpoint layout and encode/decode/recovery helpers.
+- Modify `core/src/object_relationships.rs`: add durable `belongs-to` workspace relationships for shell authority reconstruction.
 - Modify `core/src/revision_history.rs`: expose bounded current/prior revision iteration needed by persistence and history responses.
 - Modify `core/src/typed_object_format.rs` and `core/src/shell_objects.rs`: add note object kind and text field support.
 - Create `core/src/object_service.rs`: adapt the Phase 10 dynamic object store, typed records, revision history, quota table, and persistence helpers into a retained capability-gated object service.
 - Create `user/shell/Cargo.toml`, `user/shell/src/lib.rs`, `user/shell/src/main.rs`, `user/shell/src/commands.rs`, `user/shell/src/capability_map.rs`, `user/shell/src/syscalls.rs`, and `user/shell/linker.ld`: implement the real ring-3 shell.
 - Create `user/probes/intruder` and `user/probes/fault-shell`: build concrete adversarial user ELFs instead of manifest-only placeholders.
 - Modify root `Cargo.toml`: add `user/shell`.
+- Modify `AGENTS.md`: after ADR 0052 is accepted, authorize `user/shell` and `user/probes` only for this ADR 0051 slice while preserving the ban on general ring-3 applications.
 - Create `scripts/build-user-shell.py`: build `pythos-user-shell` with shell-only linker flags.
 - Modify `docs/ROADMAP.md` and `docs/HANDOVER.md`: record the implemented ADR 0051 slice after it passes.
 
@@ -74,12 +78,15 @@
 - Create: `docs/decisions/0052-object-shell-service-abi.md`
 - Create: `scripts/test-normal-fast-boot.py`
 - Modify: `core/src/main.rs`
+- Create: `core/src/normal_init.rs`
 - Create: `core/src/normal_boot.rs`
+- Modify: `core/src/syscall.rs`
+- Modify: `AGENTS.md`
 - Test: `scripts/test-normal-fast-boot.py`, `scripts/test-boot.py`
 
 **Interfaces:**
 - Consumes: existing `pythcore_entry`, existing proof sequence, `scripts/run-qemu.py --serial-log`.
-- Produces: `normal_boot::run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> !`, marker `PYTHOS:CORE:NORMAL_BOOT:FAST_PATH`, marker `PYTHOS:CORE:NORMAL_SERVICES_READY`.
+- Produces: `syscall::initialize()`, `normal_init::initialize_normal_substrate(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> Result<NormalBootSubstrate, NormalInitError>`, `normal_boot::run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> !`, marker `PYTHOS:CORE:NORMAL_BOOT:FAST_PATH`, marker `PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY`, marker `PYTHOS:CORE:NORMAL_SERVICES_READY`.
 
 - [ ] **Step 1: Write ADR 0052**
 
@@ -105,8 +112,31 @@ caller-supplied capability handle.
 
 Normal boot and verification boot are separate. Verification boot runs the
 existing proof sequence and exits through the QEMU oracle. Normal boot skips
-proof execution, initializes retained services, launches `shell.elf`, and keeps
-running.
+proof execution, initializes the production boot substrate, launches
+`shell.elf`, and keeps running.
+
+Normal boot initialization order:
+
+```text
+memory and kernel address space
+interrupts and timer
+task/process substrate
+ring-3 GDT/TSS state
+syscall gate through syscall::initialize()
+user address-space support
+guarded user stacks
+block device
+retained object service
+COM2
+shell address space and bootstrap block
+shell entry
+```
+
+Proof functions may call the same production initializers, but normal boot must
+not depend on proof-only side effects. In particular, syscall MSR setup moves
+from `syscall::run_self_test()` into `syscall::initialize()`, and
+`run_self_test()` calls that initializer before emitting the existing proof
+markers.
 
 Named user programs use a new versioned `TYPE_NAMED_USER_ELF` bundle record.
 Existing ordinal `TYPE_USER_ELF` records remain valid for prior verification
@@ -126,19 +156,45 @@ capability; `query` returns fixed `ObjectListEntry { object_id, capability }`
 records; the shell stores those capabilities in a bounded shell-side map before
 `inspect`, `revise`, or `history`.
 
-The object service checkpoint is multi-sector durable ABI:
+Workspace authority is reconstructed from durable object relationships:
 
 ```text
-sector 72: metadata/header, counts, layout version, checksum
-sectors 73-80: object records with object id, allocated extent, and typed record
-sectors 81-92: current/prior revision records
-sector 93: commit marker
-sector 94: torn-write test sector
+object:1042 -> belongs-to -> workspace:shell
+object:2001 -> belongs-to -> workspace:external
 ```
 
-The checkpoint preserves each object's allocated extent and does not serialize
-runtime capability handles. Restored access is rebuilt from the validated shell
-principal and workspace policy into a new runtime capability table.
+The object service checkpoint stores these `belongs-to` relationships alongside
+objects, extents, and revisions. Query grants object capabilities only for
+objects related to the caller's workspace.
+
+The object service checkpoint is a two-slot, multi-sector durable ABI:
+
+```text
+Slot A
+  sector 192: metadata/header, generation, counts, layout version, checksum
+  sectors 193-200: object records with object id, allocated extent, and typed record
+  sectors 201-204: workspace belongs-to relationships
+  sectors 205-216: current/prior revision records
+  sector 217: commit marker
+
+Slot B
+  sector 224: metadata/header, generation, counts, layout version, checksum
+  sectors 225-232: object records with object id, allocated extent, and typed record
+  sectors 233-236: workspace belongs-to relationships
+  sectors 237-248: current/prior revision records
+  sector 249: commit marker
+
+sector 250: torn-write test sector
+```
+
+Updates write the inactive slot completely, write that slot's commit marker
+last, verify the slot, and then treat the highest valid committed generation as
+current. Recovery selects the highest valid committed generation. The checksum
+covers header metadata, object records, extent records, workspace
+relationships, and revision records. The checkpoint preserves each object's
+allocated extent and does not serialize runtime capability handles. Restored
+access is rebuilt from the validated shell principal and workspace relationship
+policy into a new runtime capability table.
 
 The retained object service lives in static normal-boot storage initialized
 before shell launch. ADR 0051 is single-core, so syscall dispatch may borrow it
@@ -149,6 +205,12 @@ normal idle loop; no automatic shell restart is part of this slice.
 The `reboot` command maps to a capability-gated system-control request. The
 QEMU target uses an early x86 reset mechanism recorded in this ADR; forced
 power loss remains a separate acceptance path.
+
+The current repository instructions initially restrict the writable milestone
+tree to `boot/`, `core/`, `shared/`, `scripts/`, `tests/`, and `docs/`, and
+forbid ring-3 applications. ADR 0052 updates that active boundary to allow only
+`user/shell` and `user/probes` for this first ring-3 shell slice. It does not
+authorize general application work.
 
 ## Consequences
 
@@ -217,6 +279,14 @@ def main() -> int:
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
     required = [
         "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
+        "PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY",
+        "PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY",
+        "PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY",
+        "PYTHOS:CORE:NORMAL_INIT:RING3_READY",
+        "PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY",
+        "PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY",
+        "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
+        "PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY",
         "PYTHOS:CORE:NORMAL_SERVICES_READY",
         "PYTHOS:CORE:NORMAL_BOOT_ALIVE",
     ]
@@ -276,10 +346,94 @@ fn run_normal_boot(
 }
 ```
 
+In `core/src/syscall.rs`, extract the proof-only gate setup:
+
+```rust
+#[cfg(not(test))]
+pub fn initialize() {
+    configure_gate();
+}
+```
+
+Then change `run_self_test()` to call `initialize()` before emitting
+`PYTHOS:CORE:SYSCALL:MSRS_READY`. Existing verification markers must remain in
+the same order.
+
+Create `core/src/normal_init.rs`:
+
+```rust
+use crate::{block_device::BlockDeviceInfo, memory::physical::PhysicalMemory, serial};
+use pythos_shared::boot_protocol::PythBootInfo;
+
+pub struct NormalBootSubstrate {
+    pub block_device: BlockDeviceInfo,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NormalInitError {
+    Memory,
+    InterruptsTimer,
+    TaskProcess,
+    Ring3,
+    Syscall,
+    UserStacks,
+    BlockDevice,
+}
+
+#[cfg(not(test))]
+pub fn initialize_normal_substrate(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+) -> Result<NormalBootSubstrate, NormalInitError> {
+    initialize_memory_and_kernel_address_space(boot_info, physical_memory)
+        .map_err(|_| NormalInitError::Memory)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY");
+
+    initialize_interrupts_timer_and_clock().map_err(|_| NormalInitError::InterruptsTimer)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY");
+
+    initialize_task_process_and_kernel_stack_state().map_err(|_| NormalInitError::TaskProcess)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY");
+
+    initialize_ring3_selectors_tss_and_user_address_spaces()
+        .map_err(|_| NormalInitError::Ring3)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:RING3_READY");
+
+    crate::syscall::initialize();
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY");
+
+    initialize_guarded_user_stack_pool().map_err(|_| NormalInitError::UserStacks)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY");
+
+    let block_device = crate::block_device::select_device()
+        .map_err(|_| NormalInitError::BlockDevice)?;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY");
+
+    Ok(NormalBootSubstrate { block_device })
+}
+```
+
+Each `initialize_*` helper is extracted from the corresponding existing proof
+path and performs only production setup. It must not emit self-test/adversarial
+markers or deliberately trigger expected faults.
+
+Define the private helper signatures in this task:
+
+```rust
+fn initialize_memory_and_kernel_address_space(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+) -> Result<(), NormalInitError>;
+fn initialize_interrupts_timer_and_clock() -> Result<(), NormalInitError>;
+fn initialize_task_process_and_kernel_stack_state() -> Result<(), NormalInitError>;
+fn initialize_ring3_selectors_tss_and_user_address_spaces() -> Result<(), NormalInitError>;
+fn initialize_guarded_user_stack_pool() -> Result<(), NormalInitError>;
+```
+
 In `core/src/normal_boot.rs` define:
 
 ```rust
-use crate::{block_device, serial};
+use crate::{normal_init, serial};
 use crate::memory::physical::PhysicalMemory;
 use pythos_shared::boot_protocol::PythBootInfo;
 
@@ -289,17 +443,17 @@ pub fn run(
     physical_memory: &mut PhysicalMemory,
 ) -> ! {
     serial::write_line("PYTHOS:CORE:NORMAL_BOOT:FAST_PATH");
-    let _device = match block_device::select_device() {
-        Ok(device) => device,
+    let substrate = match normal_init::initialize_normal_substrate(boot_info, physical_memory) {
+        Ok(substrate) => substrate,
         Err(_) => {
             serial::write_line("PYTHOS:PANIC");
             crate::qemu_exit::panic();
         }
     };
+    let _ = substrate.block_device;
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
     serial::write_line("PYTHOS:CORE:NORMAL_SERVICES_READY");
     serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
-    let _ = boot_info;
-    let _ = physical_memory;
     loop {
         core::hint::spin_loop();
     }
@@ -308,7 +462,19 @@ pub fn run(
 
 The real service initialization and shell launch replace the temporary loop in later tasks.
 
-- [ ] **Step 5: Verify both boot modes**
+- [ ] **Step 5: Update active agent boundary**
+
+Because the live `AGENTS.md` scope boundary still lists only
+`boot/core/shared/scripts/tests/docs` and forbids ring-3 applications, update
+that boundary after ADR 0052 is accepted:
+
+```text
+The ADR 0051 first-ring3-object-shell slice may additionally create
+`user/shell` and `user/probes` only. This does not authorize general ring-3
+applications, package management, networking, AI, or universal-device work.
+```
+
+- [ ] **Step 6: Verify both boot modes**
 
 Run:
 
@@ -324,10 +490,10 @@ NORMAL_FAST_BOOT_TEST_OK
 BOOT_TEST_OK
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```powershell
-git add docs\decisions\0052-object-shell-service-abi.md scripts\test-normal-fast-boot.py core\src\main.rs core\src\normal_boot.rs
+git add docs\decisions\0052-object-shell-service-abi.md scripts\test-normal-fast-boot.py core\src\main.rs core\src\normal_init.rs core\src\normal_boot.rs core\src\syscall.rs AGENTS.md
 git commit -m "feat(boot): split normal boot from verification proofs"
 ```
 
@@ -638,7 +804,7 @@ pub const STATUS_BUFFER_TOO_SMALL: u16 = 4;
 
 pub const SHELL_BOOTSTRAP_MAGIC: u64 = 0x3154_4F4F_4259_5350;
 pub const MAX_SHELL_OBJECT_CAPS: usize = 8;
-pub const MAX_QUERY_RESULTS: usize = 4;
+pub const MAX_QUERY_RESULTS: usize = 8;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1033,11 +1199,12 @@ pub mod commands;
 pub mod syscalls;
 ```
 
-Create `user/shell/src/capability_map.rs`. It must keep at most
-`MAX_SHELL_OBJECT_CAPS` entries, seed itself from `BootstrapCapabilityBlock`,
-store the object capability returned by `create`, update entries returned by
-`query`, and perform a workspace `query kind:note` before `inspect`, `revise`,
-or `history` when the requested object id has no cached object capability.
+Create `user/shell/src/capability_map.rs`. It must retain the workspace
+capability separately from object entries, keep at most `MAX_SHELL_OBJECT_CAPS`
+object entries, seed itself from `BootstrapCapabilityBlock`, store the object
+capability returned by `create`, update entries returned by `query`, and
+perform a workspace `query kind:note` before `inspect`, `revise`, or `history`
+when the requested object id has no cached object capability.
 
 `dispatch_object_request` must set authority by operation:
 
@@ -1423,12 +1590,13 @@ git commit -m "feat(shell): bind shell principal to named ELF manifest"
 - Modify: `core/src/dynamic_object_store.rs`
 - Create: `core/src/object_service_checkpoint.rs`
 - Create: `core/src/retained_services.rs`
+- Modify: `core/src/object_relationships.rs`
 - Modify: `core/src/revision_history.rs`
 - Modify: `core/src/typed_object_format.rs`
 - Modify: `core/src/shell_objects.rs`
 - Create: `core/src/object_service.rs`
 - Modify: `core/src/main.rs`
-- Test: `core/src/object_service.rs`, `core/src/dynamic_object_store.rs`, `core/src/object_service_checkpoint.rs`, `core/src/retained_services.rs`
+- Test: `core/src/object_service.rs`, `core/src/dynamic_object_store.rs`, `core/src/object_service_checkpoint.rs`, `core/src/object_relationships.rs`, `core/src/retained_services.rs`
 
 **Interfaces:**
 - Consumes: `DynamicObjectStore`, `BlockAllocator`, `StorageQuotaTable`, `RevisionHistory`, `TypedObjectRecord`.
@@ -1480,35 +1648,120 @@ fn store_returns_existing_typed_object_by_id() {
 Implement:
 
 ```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DynamicObjectRecord {
+    pub object: TypedObjectRecord,
+    pub extent: BlockExtent,
+}
+
 pub fn object(self, object_id: ObjectId) -> Option<TypedObjectRecord>;
 pub fn replace_object(&mut self, object: TypedObjectRecord) -> Result<(), DynamicObjectError>;
-pub fn objects(self) -> [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS];
+pub fn object_records(self) -> [Option<DynamicObjectRecord>; MAX_DYNAMIC_OBJECTS];
 pub fn allocator_bitmap(self) -> u64;
-pub fn restore_from_parts(base_sector: u64, block_count: u16, bitmap: u64, objects: [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS]) -> Result<Self, DynamicObjectError>;
+pub fn restore_from_records(
+    base_sector: u64,
+    block_count: u16,
+    bitmap: u64,
+    objects: [Option<DynamicObjectRecord>; MAX_DYNAMIC_OBJECTS],
+) -> Result<Self, DynamicObjectError>;
 ```
 
-- [ ] **Step 4: Define multi-sector object-service checkpoint helpers**
+`restore_from_records` validates that every extent is inside the allocator
+range, every occupied extent bit is present in `bitmap`, no two object extents
+overlap, and no set bitmap bit lacks a corresponding restored extent.
+
+- [ ] **Step 4: Add durable workspace membership relationships**
+
+In `core/src/object_relationships.rs`, extend `RelationshipKind`:
+
+```rust
+pub const SHELL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4845_4C01;
+pub const EXTERNAL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4558_5401;
+
+BelongsTo,
+```
+
+Add tests:
+
+```rust
+#[test]
+fn belongs_to_relationship_distinguishes_shell_and_external_workspaces() {
+    let shell_workspace = object(SHELL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+    let external_workspace = object(EXTERNAL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+    let note = object(1042, ObjectKind::Note);
+    let external_note = object(2001, ObjectKind::Note);
+    let mut store = RelationshipStore::new();
+    store.insert_object(shell_workspace).unwrap();
+    store.insert_object(external_workspace).unwrap();
+    store.insert_object(note).unwrap();
+    store.insert_object(external_note).unwrap();
+
+    store
+        .add_relationship(ObjectRelationship::new(
+            note.object_id(),
+            RelationshipKind::BelongsTo,
+            shell_workspace.object_id(),
+        ))
+        .unwrap();
+    store
+        .add_relationship(ObjectRelationship::new(
+            external_note.object_id(),
+            RelationshipKind::BelongsTo,
+            external_workspace.object_id(),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        store.query_first(note.object_id(), RelationshipKind::BelongsTo).unwrap().target(),
+        shell_workspace.object_id()
+    );
+    assert_eq!(
+        store.query_first(external_note.object_id(), RelationshipKind::BelongsTo).unwrap().target(),
+        external_workspace.object_id()
+    );
+}
+```
+
+The shell workspace is represented by stable object id
+`SHELL_WORKSPACE_OBJECT_ID`; the known denial fixture uses
+`EXTERNAL_WORKSPACE_OBJECT_ID`. Object-service `query` reconstructs authority
+from `BelongsTo` relationships, not from object-id ranges or record order.
+
+- [ ] **Step 5: Define two-slot object-service checkpoint helpers**
 
 Create `core/src/object_service_checkpoint.rs` for the ADR 0052 durable layout.
 Do not encode this state into one 512-byte sector.
 
 ```rust
-pub const OBJECT_SERVICE_CHECKPOINT_HEADER_SECTOR: u64 = 72;
-pub const OBJECT_SERVICE_OBJECT_TABLE_SECTOR: u64 = 73;
+use crate::block_device::{self, BlockDeviceInfo};
+
+pub const OBJECT_SERVICE_SLOT_A_HEADER_SECTOR: u64 = 192;
+pub const OBJECT_SERVICE_SLOT_A_OBJECT_TABLE_SECTOR: u64 = 193;
+pub const OBJECT_SERVICE_SLOT_A_RELATIONSHIP_TABLE_SECTOR: u64 = 201;
+pub const OBJECT_SERVICE_SLOT_A_REVISION_TABLE_SECTOR: u64 = 205;
+pub const OBJECT_SERVICE_SLOT_A_COMMIT_SECTOR: u64 = 217;
+pub const OBJECT_SERVICE_SLOT_B_HEADER_SECTOR: u64 = 224;
+pub const OBJECT_SERVICE_SLOT_B_OBJECT_TABLE_SECTOR: u64 = 225;
+pub const OBJECT_SERVICE_SLOT_B_RELATIONSHIP_TABLE_SECTOR: u64 = 233;
+pub const OBJECT_SERVICE_SLOT_B_REVISION_TABLE_SECTOR: u64 = 237;
+pub const OBJECT_SERVICE_SLOT_B_COMMIT_SECTOR: u64 = 249;
+pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 250;
 pub const OBJECT_SERVICE_OBJECT_TABLE_SECTORS: u64 = 8;
-pub const OBJECT_SERVICE_REVISION_TABLE_SECTOR: u64 = 81;
+pub const OBJECT_SERVICE_RELATIONSHIP_TABLE_SECTORS: u64 = 4;
 pub const OBJECT_SERVICE_REVISION_TABLE_SECTORS: u64 = 12;
-pub const OBJECT_SERVICE_CHECKPOINT_COMMIT_SECTOR: u64 = 93;
-pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 94;
 
 #[repr(C)]
 pub struct ObjectServiceCheckpointHeader {
     pub magic: [u8; 8],
     pub version: u16,
+    pub slot: u16,
     pub object_count: u16,
-    pub current_revision_count: u16,
-    pub prior_revision_count: u16,
+    pub relationship_count: u16,
+    pub revision_count: u16,
+    pub reserved0: u16,
+    pub generation: u64,
     pub object_table_sector: u64,
+    pub relationship_table_sector: u64,
     pub revision_table_sector: u64,
     pub commit_sector: u64,
     pub checksum: u64,
@@ -1521,29 +1774,57 @@ pub struct ObjectExtentRecord {
     pub object: TypedObjectRecord,
 }
 
+#[derive(Clone, Copy)]
+pub struct WorkspaceRelationshipRecord {
+    pub object_id: ObjectId,
+    pub workspace_id: ObjectId,
+}
+
 pub struct ObjectServiceSnapshot {
+    pub generation: u64,
     pub allocated_bitmap: u64,
     pub objects: [Option<ObjectExtentRecord>; 8],
+    pub workspace_relationships: [Option<WorkspaceRelationshipRecord>; 8],
     pub current_revisions: [Option<RevisionRecord>; 4],
     pub prior_revisions: [Option<RevisionRecord>; 8],
 }
 
+impl ObjectServiceSnapshot {
+    #[cfg(test)]
+    pub fn contains_runtime_handle_for_test(&self, handle: PackedCapability) -> bool;
+}
+
 pub fn write_object_service_checkpoint(
-    device: &mut dyn BlockDevice,
+    device: BlockDeviceInfo,
     snapshot: &ObjectServiceSnapshot,
 ) -> Result<(), GeneralStoragePersistenceError>;
 
 pub fn read_object_service_checkpoint(
-    device: &mut dyn BlockDevice,
+    device: BlockDeviceInfo,
 ) -> Result<Option<ObjectServiceSnapshot>, GeneralStoragePersistenceError>;
 ```
 
-The checkpoint writer emits object records into sectors 73-80, revision records
-into sectors 81-92, and the commit marker only after all content sectors are
-durable. The restored dynamic store must preserve each object's allocated
-extent. Keep `run_self_test(device)` producing the existing Phase 10 markers.
+Use the repository's existing block-device surface:
 
-- [ ] **Step 5: Add object service tests**
+```rust
+block_device::read_sector(device, sector)?;
+block_device::write_sector(device, sector, &bytes)?;
+```
+
+Do not introduce a `BlockDevice` trait in this slice. Unit tests for encoding
+and recovery can use pure sector-array helpers; QEMU acceptance covers the real
+`BlockDeviceInfo` path.
+
+The checkpoint writer reads the current committed slot, chooses the inactive
+slot, writes all object, relationship, revision, and header sectors for
+`generation + 1`, writes that slot's commit marker last, verifies the written
+slot, and leaves the previous committed slot intact. Recovery selects the
+highest valid committed generation. The checksum covers header metadata,
+object records, extent records, workspace relationship records, and revision
+records. The restored dynamic store must preserve each object's allocated
+extent. Keep existing Phase 10 self-tests producing their markers.
+
+- [ ] **Step 6: Add object service tests**
 
 Create `core/src/object_service.rs` with:
 
@@ -1598,30 +1879,56 @@ mod tests {
     }
 
     #[test]
-    fn restore_reconstructs_runtime_handles_without_serializing_them() {
+    fn snapshot_does_not_serialize_runtime_capability_handles() {
         let mut service = ObjectService::new_for_test();
-        let old_shell = service.test_shell_caller();
+        let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
-        let created = service.create_object(old_shell, workspace, ObjectKind::Note).unwrap();
+        let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
         let snapshot = service.encode_snapshot_for_test().unwrap();
 
         assert!(!snapshot.contains_runtime_handle_for_test(created.object_capability));
+    }
+
+    #[test]
+    fn restored_shell_regains_authority_by_workspace_query() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
+        let snapshot = service.encode_snapshot_for_test().unwrap();
+
         let restored = ObjectService::decode_snapshot_for_test(snapshot).unwrap();
         let restored_shell = restored.test_shell_caller();
         let restored_workspace = restored.test_shell_workspace_capability();
         let restored_entries = restored.query_objects(restored_shell, restored_workspace, ObjectKind::Note).unwrap();
         let restored_cap = restored_entries[0].capability;
 
+        assert_eq!(restored_entries[0].object_id, created.object_id);
         assert!(restored.inspect_object(restored_shell, restored_cap, ObjectId::new(1042)).is_ok());
+    }
+
+    #[test]
+    fn capability_handles_remain_holder_bound_and_revocable_within_one_boot() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let intruder = service.test_intruder_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
+
         assert_eq!(
-            restored.inspect_object(old_shell, created.object_capability, ObjectId::new(1042)),
+            service.inspect_object(intruder, created.object_capability, ObjectId::new(1042)),
+            Err(ObjectServiceError::Denied)
+        );
+        service.revoke_object_capability_for_test(shell, created.object_capability).unwrap();
+        assert_eq!(
+            service.inspect_object(shell, created.object_capability, ObjectId::new(1042)),
             Err(ObjectServiceError::Denied)
         );
     }
 }
 ```
 
-- [ ] **Step 6: Implement object service**
+- [ ] **Step 7: Implement object service**
 
 `ObjectService` must contain:
 
@@ -1654,6 +1961,7 @@ impl ObjectInspection {
 
 pub struct ObjectService {
     objects: DynamicObjectStore,
+    relationships: RelationshipStore,
     revisions: RevisionHistory,
     capabilities: CapabilityTable,
     quotas: StorageQuotaTable,
@@ -1680,6 +1988,11 @@ impl ObjectService {
         caller: ActiveUserProcess,
         object_id: ObjectId,
     ) -> Result<PackedCapability, ObjectServiceError>;
+    pub fn revoke_object_capability_for_test(
+        &mut self,
+        caller: ActiveUserProcess,
+        capability: PackedCapability,
+    ) -> Result<(), ObjectServiceError>;
 }
 ```
 
@@ -1688,15 +2001,15 @@ Rules:
 ```text
 Create/query require workspace capability.
 Inspect/revise/history require per-object capability.
-Create of a note allocates through DynamicObjectStore and records revision 1 in RevisionHistory.
+Create of a note allocates through DynamicObjectStore, records revision 1 in RevisionHistory, and records `object -> BelongsTo -> SHELL_WORKSPACE_OBJECT_ID`.
 Revise writes a new TypedObjectRecord field value and records a retained revision.
-Query returns only objects reachable from the caller's workspace policy as bounded `ObjectListEntry` records containing object id plus freshly rebound object capability.
-Known ungranted object 2001 exists in the normal-boot store but is not related to the shell workspace.
-Persist/restore use the ADR 0052 multi-sector ObjectServiceSnapshot checkpoint and Phase 10 commit-marker semantics.
+Query returns only objects with a durable `BelongsTo` relationship to the caller's workspace as bounded `ObjectListEntry` records containing object id plus freshly rebound object capability.
+Known ungranted object 2001 exists in the normal-boot store and has `object:2001 -> BelongsTo -> EXTERNAL_WORKSPACE_OBJECT_ID`.
+Persist/restore use the ADR 0052 two-slot multi-sector ObjectServiceSnapshot checkpoint and Phase 10 commit-marker semantics.
 Runtime CapabilityHandle values are never serialized.
 ```
 
-- [ ] **Step 7: Add retained service owner**
+- [ ] **Step 8: Add retained service owner**
 
 Create `core/src/retained_services.rs`:
 
@@ -1731,7 +2044,7 @@ Document the unsafe invariant at the only raw access point:
 If the shell terminates or faults, the retained service remains initialized and
 PythCore enters the normal idle loop without restarting the shell.
 
-- [ ] **Step 8: Run focused tests**
+- [ ] **Step 9: Run focused tests**
 
 Run:
 
@@ -1746,10 +2059,10 @@ Expected:
 PERSISTENT_STORAGE_TEST_OK
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```powershell
-git add core\src\dynamic_object_store.rs core\src\object_service_checkpoint.rs core\src\retained_services.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
+git add core\src\dynamic_object_store.rs core\src\object_service_checkpoint.rs core\src\retained_services.rs core\src\object_relationships.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
 git commit -m "feat(objects): promote Phase 10 store for normal services"
 ```
 
@@ -2313,6 +2626,8 @@ def main() -> int:
     assert 'text="hello" revision:2' in restored.com2
     assert "history object:1042 revisions:2" in restored.com2
     assert "PYTHOS:SHELL:IDENTITY_RESTORED" in restored.com1
+    assert "PYTHOS:CORE:REBOOT:USER_PROCESS_STATE_CLEARED" in restored.com1
+    assert "PYTHOS:CORE:REBOOT:USER_ADDRESS_SPACES_REBUILT" in restored.com1
     assert "PYTHOS:SHELL:WORKSPACE_CAPABILITY_REBOUND" in restored.com1
     assert "PYTHOS:CORE:SYSTEM:REBOOTING" in restored.com1
     assert restored.com1.count("PYTHOS:LOADER:ENTER") >= 2
@@ -2407,6 +2722,8 @@ On restore, emit:
 
 ```text
 PYTHOS:SHELL:IDENTITY_RESTORED
+PYTHOS:CORE:REBOOT:USER_PROCESS_STATE_CLEARED
+PYTHOS:CORE:REBOOT:USER_ADDRESS_SPACES_REBUILT
 PYTHOS:SHELL:WORKSPACE_CAPABILITY_REBOUND
 PYTHOS:SHELL:OBJECT_RESTORED
 ```
@@ -2501,8 +2818,9 @@ def write_shell_control(image: Path, mode: int) -> None:
 ```
 
 In `core/src/normal_boot.rs`, read sector 95 before launching `shell.elf`. This
-sector is outside the ADR 0052 checkpoint sectors 72-94 and before the dynamic
-object extent base. Mode `1` launches `intruder.elf`, makes the same
+sector is outside the ADR 0052 checkpoint slots at sectors 192-250 and before
+the dynamic object extent base at sector 96. Mode `1` launches `intruder.elf`,
+makes the same
 `SYSCALL_OBJECT_REQUEST` number with the shell workspace handle value, and
 asserts denial. Clear sector 95 after reading the mode so the next boot returns
 to the normal shell path.
@@ -2573,7 +2891,8 @@ intruder ELF into the normal object-shell image:
 (INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"intruder.elf", INTRUDER_PRINCIPAL_ID, INTRUDER_ELF.read_bytes()))
 ```
 
-For the fault acceptance run, `scripts/build-image.py --shell-elf <fault-shell>`
+For the fault acceptance run,
+`scripts/build-image.py --shell-elf target/x86_64-unknown-none/debug/pythos-fault-shell`
 builds a separate test image that packages the fault body under the unique
 trusted name `shell.elf` with `SHELL_PRINCIPAL_ID`. Do not package both the real
 shell and a second fault program with the shell principal into the same bundle.
