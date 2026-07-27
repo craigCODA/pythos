@@ -20,11 +20,9 @@ use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
 use pythos_user_shell::{
     capability_map::CapabilityMap,
     commands::{Command, parse_command},
+    line_editor::{LineAction, LineEditor},
     syscalls,
 };
-
-#[cfg(not(test))]
-const MAX_LINE_LEN: usize = 96;
 
 /// Process entry. PythCore's launch ABI passes the read-only
 /// `BootstrapCapabilityBlock` pointer in `rdi` (the standard `extern "C"`
@@ -45,7 +43,12 @@ const MAX_LINE_LEN: usize = 96;
 pub unsafe extern "C" fn _start(bootstrap_ptr: *const BootstrapCapabilityBlock) -> ! {
     // SAFETY: matches this function's own `# Safety` contract above; the
     // pointer comes directly from the PythCore launch ABI argument.
-    let bootstrap = unsafe { syscalls::bootstrap_capabilities(bootstrap_ptr) };
+    let bootstrap = match unsafe { syscalls::bootstrap_capabilities(bootstrap_ptr) } {
+        Ok(bootstrap) => bootstrap,
+        Err(_) => loop {
+            core::hint::spin_loop();
+        },
+    };
     let console = bootstrap.console;
     let system_control = bootstrap.system_control;
     let mut object_caps = CapabilityMap::from_bootstrap(&bootstrap);
@@ -53,23 +56,21 @@ pub unsafe extern "C" fn _start(bootstrap_ptr: *const BootstrapCapabilityBlock) 
     syscalls::write_str(console, "PYTHOS:SHELL:READY\r\n");
     syscalls::write_str(console, "pyth> ");
 
-    let mut line = [0u8; MAX_LINE_LEN];
-    let mut len = 0usize;
+    let mut line_editor = LineEditor::new();
     loop {
         match syscalls::read_byte(console) {
-            Some(byte) if byte == b'\r' || byte == b'\n' => {
-                syscalls::write_str(console, "\r\n");
-                run_line(console, system_control, &mut object_caps, &line[..len]);
-                len = 0;
-                syscalls::write_str(console, "pyth> ");
-            }
-            Some(byte) => {
-                if len < MAX_LINE_LEN {
-                    line[len] = byte;
-                    len += 1;
-                    syscalls::write_byte(console, byte);
+            Some(byte) => match line_editor.input(byte) {
+                LineAction::None => {}
+                LineAction::Echo(byte) => syscalls::write_byte(console, byte),
+                LineAction::Execute { line, len } => {
+                    syscalls::write_str(console, "\r\n");
+                    run_line(console, system_control, &mut object_caps, &line[..len]);
+                    syscalls::write_str(console, "pyth> ");
                 }
-            }
+                LineAction::RejectOverflow => {
+                    syscalls::write_str(console, "\r\nERROR line-too-long\r\npyth> ");
+                }
+            },
             None => core::hint::spin_loop(),
         }
     }

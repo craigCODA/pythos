@@ -154,6 +154,9 @@ fn parse_quoted_text_field<'a>(field: &'a [u8], prefix: &[u8]) -> Result<&'a [u8
         .iter()
         .position(|&byte| byte == b'"')
         .ok_or(CommandError::Unknown)?;
+    if !trim(&after_quote[close + 1..]).is_empty() {
+        return Err(CommandError::Unknown);
+    }
     Ok(&after_quote[..close])
 }
 
@@ -230,6 +233,14 @@ mod tests {
         assert_eq!(
             parse_command(br#"revise object:1042 text="this text is far too long""#),
             Err(CommandError::TextTooLong)
+        );
+    }
+
+    #[test]
+    fn revise_rejects_characters_after_closing_quote() {
+        assert_eq!(
+            parse_command(br#"revise object:1042 text="hello" trailing"#),
+            Err(CommandError::Unknown)
         );
     }
 

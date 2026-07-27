@@ -12,6 +12,8 @@ pub const SYSCALL_CONSOLE_READ_BYTE: u64 = 0x5059_0100;
 pub const SYSCALL_CONSOLE_WRITE_BYTE: u64 = 0x5059_0101;
 pub const SYSCALL_OBJECT_REQUEST: u64 = 0x5059_0120;
 pub const SYSCALL_SYSTEM_REBOOT: u64 = 0x5059_0130;
+pub const SYSCALL_OK: u64 = 0x5059_004F;
+pub const NO_BYTE: u64 = u64::MAX;
 
 pub const OBJECT_KIND_NOTE: u16 = 10;
 pub const FIELD_TEXT: u16 = 1;
@@ -137,6 +139,7 @@ mod tests {
         assert_eq!(OP_INSPECT_OBJECT, 3);
         assert_eq!(OP_REVISE_FIELD, 4);
         assert_eq!(OP_GET_HISTORY, 5);
+        assert_eq!(NO_BYTE, u64::MAX);
         assert_eq!(core::mem::size_of::<ObjectShellRequest>(), 80);
         assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 56);
         assert_eq!(core::mem::size_of::<ObjectListEntry>(), 16);

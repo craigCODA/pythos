@@ -24,6 +24,7 @@ SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-she
 # Mirrors core/src/user_elf.rs exactly.
 EI_CLASS_64 = 2
 EI_DATA_LITTLE_ENDIAN = 1
+ELF_VERSION_CURRENT = 1
 ET_EXEC = 2
 EM_X86_64 = 0x3E
 PT_LOAD = 1
@@ -33,6 +34,7 @@ PF_X = 0x1
 PF_W = 0x2
 ELF64_EHDR_SIZE = 64
 ELF64_PHDR_SIZE = 56
+MAX_LOAD_SEGMENTS = 8
 USER_VIRT_MIN = 0x0020_0000
 USER_VIRT_MAX = 0x0000_8000_0000_0000
 KERNEL_VIRT_MIN = 0xFFFF_FFFF_8000_0000
@@ -72,6 +74,8 @@ def verify(data: bytes) -> None:
         raise ElfVerifyError(f"not ELF64 (EI_CLASS={data[4]})")
     if data[5] != EI_DATA_LITTLE_ENDIAN:
         raise ElfVerifyError(f"not little-endian (EI_DATA={data[5]})")
+    if data[6] != ELF_VERSION_CURRENT:
+        raise ElfVerifyError(f"unsupported ELF ident version (EI_VERSION={data[6]})")
 
     e_type = read_u16(data, 16)
     if e_type != ET_EXEC:
@@ -79,6 +83,9 @@ def verify(data: bytes) -> None:
     e_machine = read_u16(data, 18)
     if e_machine != EM_X86_64:
         raise ElfVerifyError(f"not x86-64 (e_machine=0x{e_machine:x})")
+    e_version = read_u32(data, 20)
+    if e_version != ELF_VERSION_CURRENT:
+        raise ElfVerifyError(f"unsupported ELF header version (e_version={e_version})")
 
     e_entry = read_u64(data, 24)
     e_phoff = read_u64(data, 32)
@@ -104,6 +111,11 @@ def verify(data: bytes) -> None:
             raise ElfVerifyError(
                 f"unexpected non-PT_LOAD program header type 0x{p_type:x} at index {index} "
                 "(the explicit PHDRS linker script should prevent this - check linker.ld)"
+            )
+        if len(load_segments) >= MAX_LOAD_SEGMENTS:
+            raise ElfVerifyError(
+                f"too many PT_LOAD segments ({len(load_segments) + 1}); "
+                f"kernel loader limit is {MAX_LOAD_SEGMENTS}"
             )
 
         flags = read_u32(data, entry + 4)
