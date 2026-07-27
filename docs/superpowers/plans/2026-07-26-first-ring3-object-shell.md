@@ -4,7 +4,7 @@
 
 **Goal:** Build ADR 0051's first ring-3 object/capability shell without creating a kernel REPL: `shell.elf` owns human command parsing and presentation, while PythCore exposes typed, capability-gated object, console, and system-control services.
 
-**Architecture:** Split normal boot from verification boot first, so normal boot constructs retained services and launches `shell.elf` without running the proof parade. COM1 remains the boot/test oracle; COM2 is initialized as the interactive shell transport. PythCore validates the current syscall caller, validates caller-supplied capabilities, adapts the existing Phase 10 typed-object/allocator/revision machinery into retained normal-boot state, and never parses human command text.
+**Architecture:** Split normal boot from verification boot first, so normal boot constructs retained services and launches `shell.elf` without running the proof parade. COM1 remains the boot/test oracle; COM2 is initialized as the interactive shell transport. PythCore validates the current syscall caller, validates caller-supplied capabilities, adapts the existing Phase 10 typed-object/allocator/revision machinery into retained normal-boot state, and never parses human command text. Shell authority is delivered through a read-only launch bootstrap block, per-object authority is kept in a bounded shell-side map, and retained object-service state lives in static normal-boot storage reachable by syscall dispatch.
 
 **Tech Stack:** Rust `no_std` PythCore, Rust `no_std` user shell ELF, shared Rust ABI crate, QEMU q35/OVMF, COM1 file serial log, COM2 TCP serial socket, Python acceptance harness, Cargo feature `verify`.
 
@@ -20,7 +20,13 @@
 - Human command grammar belongs in `user/shell`; PythCore receives only typed ABI requests.
 - Object IDs identify; capabilities authorize.
 - Runtime capability handles are not persisted across reboot; fresh handles are minted from stable principal/workspace policy after validated program identity is rebound.
+- Fresh handle means no runtime handle was serialized, a new runtime capability table minted authority for the restored caller, and a stale handle from the previous caller/runtime context is denied. Do not assert numeric handle inequality across boots.
+- `shell.elf` receives a read-only bootstrap capability block at launch with console, workspace, and system-control capabilities. It keeps a bounded object-id to object-capability map in user space.
+- `create` stores the returned object capability. `query` returns fixed `ObjectListEntry { object_id, capability }` records and refreshes the shell map. `inspect`, `revise`, and `history` must use a per-object capability, querying first after reboot if the map has no entry.
 - Every console, object, and system-control syscall must derive authority from the current caller identity and a caller-supplied capability handle.
+- Object-service persistence is a multi-sector checkpoint ABI recorded in ADR 0052. One-sector snapshots are forbidden for this slice.
+- The retained object service has one static normal-boot owner. Syscall dispatch reaches it only through a documented single-core access boundary after initialization and before shell launch.
+- Known-object denial must target an object seeded in normal boot and proven on COM1 as existing outside the shell workspace before access is denied by capability validation.
 - Every unsafe block requires a documented invariant with address, length, lifetime, ownership, alignment, concurrency, and violation notes.
 - Serial output, not screenshots, is the acceptance oracle.
 - The temporary kernel object bridge remains explicitly temporary, versioned, typed, and capability-gated until the object service moves to user space.
@@ -33,7 +39,7 @@
 
 - Create `docs/decisions/0052-object-shell-service-abi.md`: record the typed object-shell ABI, named user-program bundle record, caller-derived capability enforcement, normal/verify boot split, COM2 scope, and QEMU reboot mechanism.
 - Modify `shared/src/lib.rs`: export the typed shell ABI and user-program manifest modules.
-- Create `shared/src/object_shell_abi.rs`: define typed operations, response codes, request/response structs, object kind codes, field ids, syscall numbers, and packed capability handles.
+- Create `shared/src/object_shell_abi.rs`: define typed operations, response codes, request/response structs, object kind codes, field ids, syscall numbers, packed capability handles, `BootstrapCapabilityBlock`, `ObjectListEntry`, query capacity, and shell object-capability cache capacity.
 - Create `shared/src/user_program_manifest.rs`: define the versioned named user ELF manifest payload used for `shell.elf` and adversarial test ELFs.
 - Modify `shared/src/init_bundle.rs`: add a versioned `TYPE_NAMED_USER_ELF` record without changing existing ordinal `TYPE_USER_ELF`.
 - Modify `scripts/run-qemu.py`: add optional COM2 TCP serial wiring while preserving the first COM1 serial log.
@@ -44,16 +50,18 @@
 - Modify `core/src/syscall.rs`: preserve existing ABI numbers, capture register args, derive the current caller, and dispatch typed console/object/system-control calls.
 - Create `core/src/process_context.rs`: track the active ring-3 process identity, principal id, validated program digest, and bootstrap capability handles for syscalls.
 - Create `core/src/normal_boot.rs`: hold the normal-boot service initialization and shell launch path separately from verification proofs.
+- Create `core/src/retained_services.rs`: own static retained normal-boot service storage and expose a documented single-core syscall access boundary.
 - Modify `core/src/main.rs`: route `verify` builds to the existing proof sequence and normal builds to `normal_boot::run`.
 - Modify `core/src/runtime_loader.rs`: validate named user-program manifest payloads and preserve existing ordinal user ELF lookup.
 - Modify `core/src/user_elf.rs`: keep existing validation and expose launch metadata needed for program identity binding.
 - Modify `core/src/user_mode.rs`: add persistent ring-3 entry and defined persistent-process fault handling.
 - Modify `core/src/dynamic_object_store.rs`: promote the Phase 10 dynamic store from self-test-only operations into reusable normal-service operations.
-- Modify `core/src/general_storage_persistence.rs`: extract reusable snapshot encode/decode/recovery helpers for retained object-service state.
+- Create `core/src/object_service_checkpoint.rs`: define the ADR 0052 multi-sector object-service checkpoint layout and encode/decode/recovery helpers.
 - Modify `core/src/revision_history.rs`: expose bounded current/prior revision iteration needed by persistence and history responses.
 - Modify `core/src/typed_object_format.rs` and `core/src/shell_objects.rs`: add note object kind and text field support.
 - Create `core/src/object_service.rs`: adapt the Phase 10 dynamic object store, typed records, revision history, quota table, and persistence helpers into a retained capability-gated object service.
-- Create `user/shell/Cargo.toml`, `user/shell/src/main.rs`, `user/shell/src/commands.rs`, `user/shell/src/syscalls.rs`, and `user/shell/linker.ld`: implement the real ring-3 shell.
+- Create `user/shell/Cargo.toml`, `user/shell/src/lib.rs`, `user/shell/src/main.rs`, `user/shell/src/commands.rs`, `user/shell/src/capability_map.rs`, `user/shell/src/syscalls.rs`, and `user/shell/linker.ld`: implement the real ring-3 shell.
+- Create `user/probes/intruder` and `user/probes/fault-shell`: build concrete adversarial user ELFs instead of manifest-only placeholders.
 - Modify root `Cargo.toml`: add `user/shell`.
 - Create `scripts/build-user-shell.py`: build `pythos-user-shell` with shell-only linker flags.
 - Modify `docs/ROADMAP.md` and `docs/HANDOVER.md`: record the implemented ADR 0051 slice after it passes.
@@ -105,8 +113,38 @@ Existing ordinal `TYPE_USER_ELF` records remain valid for prior verification
 payloads.
 
 The initial shell principal is rebound only when the loaded process came from
-the loader-validated `shell.elf` manifest record with the expected principal id
-and digest. This is not full cryptographic code signing.
+the loader-validated `shell.elf` manifest record, kernel policy maps that name
+to `SHELL_PRINCIPAL_ID`, the ELF digest matches the bundle record, and no other
+named record duplicates the shell name or principal id. This is
+loader-validated identity binding for the trusted bundle, not full
+cryptographic code signing.
+
+PythCore maps a read-only bootstrap block into the shell process at launch:
+console capability, workspace capability, system-control capability, ABI
+version, and any initial reachable object entries. `create` returns an object
+capability; `query` returns fixed `ObjectListEntry { object_id, capability }`
+records; the shell stores those capabilities in a bounded shell-side map before
+`inspect`, `revise`, or `history`.
+
+The object service checkpoint is multi-sector durable ABI:
+
+```text
+sector 72: metadata/header, counts, layout version, checksum
+sectors 73-80: object records with object id, allocated extent, and typed record
+sectors 81-92: current/prior revision records
+sector 93: commit marker
+sector 94: torn-write test sector
+```
+
+The checkpoint preserves each object's allocated extent and does not serialize
+runtime capability handles. Restored access is rebuilt from the validated shell
+principal and workspace policy into a new runtime capability table.
+
+The retained object service lives in static normal-boot storage initialized
+before shell launch. ADR 0051 is single-core, so syscall dispatch may borrow it
+through one documented `retained_services::with_object_service` boundary. If
+the shell terminates, the service remains initialized and PythCore enters the
+normal idle loop; no automatic shell restart is part of this slice.
 
 The `reboot` command maps to a capability-gated system-control request. The
 QEMU target uses an early x86 reset mechanism recorded in this ADR; forced
@@ -534,7 +572,7 @@ git commit -m "feat(shell): initialize COM2 transport"
 
 **Interfaces:**
 - Consumes: existing `TYPE_USER_ELF` ordinal records.
-- Produces: `ObjectShellRequest`, `ObjectShellResponse`, `PackedCapability`, `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest<'a>`.
+- Produces: `ObjectShellRequest`, `ObjectShellResponse`, `ObjectListEntry`, `BootstrapCapabilityBlock`, `PackedCapability`, `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest<'a>`.
 
 - [ ] **Step 1: Write ABI tests**
 
@@ -557,6 +595,8 @@ mod tests {
         assert_eq!(OP_GET_HISTORY, 5);
         assert_eq!(core::mem::size_of::<ObjectShellRequest>(), 80);
         assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 56);
+        assert_eq!(core::mem::size_of::<ObjectListEntry>(), 16);
+        assert_eq!(core::mem::size_of::<BootstrapCapabilityBlock>(), 168);
     }
 
     #[test]
@@ -596,6 +636,10 @@ pub const STATUS_NOT_FOUND: u16 = 2;
 pub const STATUS_BAD_REQUEST: u16 = 3;
 pub const STATUS_BUFFER_TOO_SMALL: u16 = 4;
 
+pub const SHELL_BOOTSTRAP_MAGIC: u64 = 0x3154_4F4F_4259_5350;
+pub const MAX_SHELL_OBJECT_CAPS: usize = 8;
+pub const MAX_QUERY_RESULTS: usize = 4;
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackedCapability {
@@ -622,6 +666,27 @@ impl PackedCapability {
     pub const fn generation(self) -> u32 {
         (self.raw >> 32) as u32
     }
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectListEntry {
+    pub object_id: u64,
+    pub capability: PackedCapability,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BootstrapCapabilityBlock {
+    pub magic: u64,
+    pub abi_major: u16,
+    pub abi_minor: u16,
+    pub object_count: u16,
+    pub reserved0: u16,
+    pub console: PackedCapability,
+    pub workspace: PackedCapability,
+    pub system_control: PackedCapability,
+    pub objects: [ObjectListEntry; MAX_SHELL_OBJECT_CAPS],
 }
 
 #[repr(C)]
@@ -763,8 +828,10 @@ git commit -m "feat(shell): define typed object shell ABI"
 **Files:**
 - Modify: `Cargo.toml`
 - Create: `user/shell/Cargo.toml`
+- Create: `user/shell/src/lib.rs`
 - Create: `user/shell/src/main.rs`
 - Create: `user/shell/src/commands.rs`
+- Create: `user/shell/src/capability_map.rs`
 - Create: `user/shell/src/syscalls.rs`
 - Create: `user/shell/linker.ld`
 - Create: `scripts/build-user-shell.py`
@@ -805,6 +872,10 @@ pythos-shared = { path = "../../shared" }
 [[bin]]
 name = "pythos-user-shell"
 path = "src/main.rs"
+
+[lib]
+name = "pythos_user_shell"
+path = "src/lib.rs"
 ```
 
 - [ ] **Step 2: Write command parser tests in user space**
@@ -814,7 +885,7 @@ Create `user/shell/src/commands.rs`:
 ```rust
 use pythos_shared::object_shell_abi::{
     FIELD_TEXT, OBJECT_KIND_NOTE, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT,
-    OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectShellRequest, PackedCapability,
+    OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectShellRequest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -826,47 +897,63 @@ pub enum CommandError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct ParsedCommand {
-    pub request: ObjectShellRequest,
-    pub text: [u8; 16],
-    pub text_len: usize,
-    pub reboot: bool,
+pub enum Command {
+    Help,
+    Reboot,
+    Object {
+        request: ObjectShellRequest,
+        text: [u8; 16],
+        text_len: usize,
+    },
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn cap() -> PackedCapability {
-        PackedCapability::from_parts(2, 3)
-    }
-
     #[test]
     fn parses_human_commands_into_typed_requests() {
-        assert_eq!(parse_command(b"help", cap()).unwrap().reboot, false);
-        assert_eq!(parse_command(b"query kind:note", cap()).unwrap().request.operation, OP_QUERY_OBJECTS);
-        assert_eq!(parse_command(b"create kind:note", cap()).unwrap().request.operation, OP_CREATE_OBJECT);
-        assert_eq!(parse_command(b"inspect object:1042", cap()).unwrap().request.object_id, 1042);
-        let revised = parse_command(br#"revise object:1042 text="hello""#, cap()).unwrap();
-        assert_eq!(revised.request.operation, OP_REVISE_FIELD);
-        assert_eq!(revised.request.field_id, FIELD_TEXT);
-        assert_eq!(&revised.text[..revised.text_len], b"hello");
-        assert_eq!(parse_command(b"history object:1042", cap()).unwrap().request.operation, OP_GET_HISTORY);
-        assert_eq!(parse_command(b"reboot", cap()).unwrap().reboot, true);
+        assert_eq!(parse_command(b"help").unwrap(), Command::Help);
+        assert_eq!(parse_command(b"reboot").unwrap(), Command::Reboot);
+        assert!(matches!(
+            parse_command(b"query kind:note").unwrap(),
+            Command::Object { request, .. } if request.operation == OP_QUERY_OBJECTS
+        ));
+        assert!(matches!(
+            parse_command(b"create kind:note").unwrap(),
+            Command::Object { request, .. } if request.operation == OP_CREATE_OBJECT
+        ));
+        assert!(matches!(
+            parse_command(b"inspect object:1042").unwrap(),
+            Command::Object { request, .. } if request.operation == OP_INSPECT_OBJECT && request.object_id == 1042
+        ));
+        let revised = parse_command(br#"revise object:1042 text="hello""#).unwrap();
+        match revised {
+            Command::Object { request, text, text_len } => {
+                assert_eq!(request.operation, OP_REVISE_FIELD);
+                assert_eq!(request.field_id, FIELD_TEXT);
+                assert_eq!(&text[..text_len], b"hello");
+            }
+            _ => panic!("expected object command"),
+        }
+        assert!(matches!(
+            parse_command(b"history object:1042").unwrap(),
+            Command::Object { request, .. } if request.operation == OP_GET_HISTORY
+        ));
     }
 
     #[test]
     fn rejects_shell_grammar_errors_before_syscall() {
-        assert_eq!(parse_command(b"", cap()), Err(CommandError::Empty));
-        assert_eq!(parse_command(b"ls /", cap()), Err(CommandError::Unknown));
-        assert_eq!(parse_command(b"inspect object:notanumber", cap()), Err(CommandError::BadObjectId));
+        assert_eq!(parse_command(b""), Err(CommandError::Empty));
+        assert_eq!(parse_command(b"ls /"), Err(CommandError::Unknown));
+        assert_eq!(parse_command(b"inspect object:notanumber"), Err(CommandError::BadObjectId));
     }
 }
 ```
 
 - [ ] **Step 3: Implement parser and shell presentation**
 
-Implement `parse_command` so every supported human command becomes either a typed `ObjectShellRequest` or `reboot=true`. `help` is handled entirely in user space and does not call the object bridge.
+Implement `parse_command` so every supported human command becomes a `Command` variant. `help` is handled entirely in user space and does not call the object bridge. The parser sets `request.authority = PackedCapability::from_raw(0)`; `run_line` fills the workspace or per-object capability after consulting the shell capability map.
 
 In `user/shell/src/main.rs`, write the shell loop:
 
@@ -874,19 +961,21 @@ In `user/shell/src/main.rs`, write the shell loop:
 #![no_std]
 #![no_main]
 
-mod commands;
-mod syscalls;
-
 use core::panic::PanicInfo;
-use commands::parse_command;
-use pythos_shared::object_shell_abi::PackedCapability;
-
-static mut LINE: [u8; 96] = [0; 96];
+use pythos_shared::object_shell_abi::{BootstrapCapabilityBlock, PackedCapability};
+use pythos_user_shell::{
+    capability_map::CapabilityMap,
+    commands::{parse_command, Command},
+    syscalls,
+};
 
 #[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    let console = syscalls::bootstrap_console_capability();
-    let workspace = syscalls::bootstrap_workspace_capability();
+pub extern "C" fn _start(bootstrap_ptr: *const BootstrapCapabilityBlock) -> ! {
+    let bootstrap = syscalls::bootstrap_capabilities(bootstrap_ptr);
+    let console = bootstrap.console;
+    let system_control = bootstrap.system_control;
+    let mut object_caps = CapabilityMap::from_bootstrap(&bootstrap);
+    let mut line = [0u8; 96];
     syscalls::write_str(console, "PYTHOS:SHELL:READY\r\n");
     syscalls::write_str(console, "PYTHOS:SHELL:POLLING_COM2\r\n");
     syscalls::write_str(console, "pyth> ");
@@ -895,34 +984,11 @@ pub extern "C" fn _start() -> ! {
         if let Some(byte) = syscalls::read_byte(console) {
             if byte == b'\r' || byte == b'\n' {
                 syscalls::write_str(console, "\r\n");
-                let line = unsafe {
-                    // SAFETY:
-                    // 1. Invariant: `LINE[..len]` is initialized by this loop.
-                    // 2. Established by: `len` is incremented only after writing one byte.
-                    // 3. Lifetime: the slice is consumed before the next loop iteration mutates LINE.
-                    // 4. Pointer ownership: only this single ring-3 shell loop mutates LINE.
-                    // 5. Alignment: `u8` has alignment 1.
-                    // 6. Mapped length: `len <= LINE.len()` is enforced before every write.
-                    // 7. Concurrency: ADR 0051 shell is single-threaded.
-                    // 8. Violation: an invalid len would expose uninitialized command bytes.
-                    &LINE[..len]
-                };
-                run_line(console, workspace, line);
+                run_line(console, system_control, &mut object_caps, &line[..len]);
                 len = 0;
                 syscalls::write_str(console, "pyth> ");
             } else if len < 96 {
-                unsafe {
-                    // SAFETY:
-                    // 1. Invariant: `len < LINE.len()` before this write.
-                    // 2. Established by: branch condition checks capacity.
-                    // 3. Lifetime: byte remains in LINE until command execution.
-                    // 4. Pointer ownership: only this shell loop mutates LINE.
-                    // 5. Alignment: `u8` has alignment 1.
-                    // 6. Mapped length: one byte at index len is inside LINE.
-                    // 7. Concurrency: ADR 0051 shell is single-threaded.
-                    // 8. Violation: missing capacity check would write past LINE.
-                    LINE[len] = byte;
-                }
+                line[len] = byte;
                 len += 1;
                 syscalls::write_byte(console, byte);
             }
@@ -932,14 +998,23 @@ pub extern "C" fn _start() -> ! {
     }
 }
 
-fn run_line(console: PackedCapability, workspace: PackedCapability, line: &[u8]) {
-    match parse_command(line, workspace) {
-        Ok(parsed) if parsed.reboot => syscalls::request_reboot(console),
-        Ok(parsed) => syscalls::dispatch_object_request(console, parsed),
+fn run_line(
+    console: PackedCapability,
+    system_control: PackedCapability,
+    object_caps: &mut CapabilityMap,
+    line: &[u8],
+) {
+    match parse_command(line) {
+        Ok(Command::Help) => syscalls::write_help(console),
+        Ok(Command::Reboot) => syscalls::request_reboot(system_control),
+        Ok(Command::Object { mut request, text, text_len }) => {
+            syscalls::dispatch_object_request(console, object_caps, &mut request, &text[..text_len])
+        }
         Err(_) => syscalls::write_str(console, "ERROR unknown-command\r\n"),
     }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
     loop {
@@ -947,6 +1022,37 @@ fn panic(_info: &PanicInfo) -> ! {
     }
 }
 ```
+
+Create `user/shell/src/lib.rs`:
+
+```rust
+#![no_std]
+
+pub mod capability_map;
+pub mod commands;
+pub mod syscalls;
+```
+
+Create `user/shell/src/capability_map.rs`. It must keep at most
+`MAX_SHELL_OBJECT_CAPS` entries, seed itself from `BootstrapCapabilityBlock`,
+store the object capability returned by `create`, update entries returned by
+`query`, and perform a workspace `query kind:note` before `inspect`, `revise`,
+or `history` when the requested object id has no cached object capability.
+
+`dispatch_object_request` must set authority by operation:
+
+```text
+OP_CREATE_OBJECT  -> bootstrap workspace capability
+OP_QUERY_OBJECTS  -> bootstrap workspace capability
+OP_INSPECT_OBJECT -> cached/rebound object capability for request.object_id
+OP_REVISE_FIELD   -> cached/rebound object capability for request.object_id
+OP_GET_HISTORY    -> cached/rebound object capability for request.object_id
+```
+
+If no object capability can be obtained after the refresh query, the shell
+still sends the typed request with a zero authority handle only to receive and
+present the expected `DENIED missing-capability`; it must not substitute the
+workspace capability for per-object operations.
 
 - [ ] **Step 4: Add syscall wrappers with documented unsafe assembly**
 
@@ -968,6 +1074,12 @@ In `user/shell/src/syscalls.rs`, implement `syscall5` with this invariant immedi
 // 8. Violation: wrong registers or dangling pointers cause PythCore copy-in or
 //    copy-out validation to deny the call or terminate the process.
 ```
+
+Also implement `bootstrap_capabilities(ptr: *const BootstrapCapabilityBlock)`.
+It validates `SHELL_BOOTSTRAP_MAGIC`, ABI major, and `object_count <=
+MAX_SHELL_OBJECT_CAPS`, then copies the block into a stack value. The pointer is
+read-only user memory supplied in `rdi` by the PythCore launch ABI; the shell
+must not fabricate bootstrap capabilities if validation fails.
 
 - [ ] **Step 5: Add shell linker and build script**
 
@@ -1033,6 +1145,7 @@ Create `scripts/verify-user-elf.py`:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -1091,7 +1204,7 @@ git commit -m "feat(shell): build real ring-3 command shell"
 
 ---
 
-### Task 5: Named Program Packaging And Authenticated Principal Binding
+### Task 5: Named Program Packaging And Loader-Validated Principal Binding
 
 **Files:**
 - Modify: `scripts/build-image.py`
@@ -1124,6 +1237,36 @@ fn named_user_program_loader_binds_shell_identity_to_manifest() {
     assert_eq!(loaded.principal_id(), SHELL_PRINCIPAL_ID);
     assert_eq!(loaded.elf(), b"\x7FELFpayload");
 }
+
+#[test]
+fn named_user_program_loader_rejects_duplicate_shell_principal_claim() {
+    let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+    let impostor = build_named_user_program(b"other.elf", SHELL_PRINCIPAL_ID, b"\x7FELFimpostor");
+    let bundle = build_init_pak(&build_inner_bundle(&[
+        (pythos_shared::init_bundle::TYPE_NAMED_USER_ELF, shell.as_slice()),
+        (pythos_shared::init_bundle::TYPE_NAMED_USER_ELF, impostor.as_slice()),
+    ]));
+
+    assert_eq!(
+        validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
+        Err(RuntimeLoadError::DuplicateProgramPrincipal)
+    );
+}
+
+#[test]
+fn named_user_program_loader_rejects_duplicate_shell_name() {
+    let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+    let duplicate = build_named_user_program(b"shell.elf", INTRUDER_PRINCIPAL_ID, b"\x7FELFother");
+    let bundle = build_init_pak(&build_inner_bundle(&[
+        (pythos_shared::init_bundle::TYPE_NAMED_USER_ELF, shell.as_slice()),
+        (pythos_shared::init_bundle::TYPE_NAMED_USER_ELF, duplicate.as_slice()),
+    ]));
+
+    assert_eq!(
+        validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
+        Err(RuntimeLoadError::DuplicateProgramName)
+    );
+}
 ```
 
 - [ ] **Step 2: Implement named-program loader**
@@ -1145,22 +1288,33 @@ pub fn validate_named_user_program_payload_bytes(
 ) -> Result<NamedUserProgramManifest<'_>, RuntimeLoadError> {
     let payload = init_pak_payload(bytes)?;
     let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
+    let mut policy = NamedProgramPolicy::empty();
+    let mut selected = None;
     let mut index = 0usize;
     while let Some(record) = bundle.record_at(init_bundle::RecordType::NamedUserElf, index) {
         let manifest = user_program_manifest::validate_named_user_program(record.bytes())
             .map_err(|_| RuntimeLoadError::BadUserElfPayload)?;
+        policy.observe(manifest)?;
         if manifest.name() == name {
-            return Ok(manifest);
+            selected = Some(manifest);
         }
         index += 1;
     }
-    Err(RuntimeLoadError::MissingUserElfPayload)
+    let manifest = selected.ok_or(RuntimeLoadError::MissingUserElfPayload)?;
+    enforce_kernel_identity_policy(manifest)?;
+    Ok(manifest)
 }
 ```
 
-Preserve `load_user_elf_payload_at` and all ordinal user ELF tests.
+`enforce_unique_named_program_policy` must scan all `TYPE_NAMED_USER_ELF`
+records and reject duplicate names or duplicate principals before returning any
+manifest. `enforce_kernel_identity_policy` must bind `b"shell.elf"` to
+`SHELL_PRINCIPAL_ID`; a different named record may not claim that principal.
+The FNV digest remains an integrity check inside the trusted bundle, not proof
+that a program is entitled to choose its own principal. Preserve
+`load_user_elf_payload_at` and all ordinal user ELF tests.
 
-- [ ] **Step 3: Package named shell and intruder programs**
+- [ ] **Step 3: Package named shell program**
 
 In `scripts/build-image.py` and `scripts/build-iso.py`, add `build_named_user_program(name, principal_id, elf)` mirroring `shared/src/user_program_manifest.rs`.
 
@@ -1168,10 +1322,11 @@ Append records:
 
 ```python
 (INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()))
-(INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"intruder.elf", INTRUDER_PRINCIPAL_ID, INTRUDER_ELF_BYTES))
 ```
 
-Do not remove the existing ordinal `INIT_BUNDLE_USER_ELF_TYPE` records.
+Do not remove the existing ordinal `INIT_BUNDLE_USER_ELF_TYPE` records. The
+intruder probe is packaged later in Task 11 after its concrete source and build
+script exist.
 
 - [ ] **Step 4: Write process-context tests**
 
@@ -1266,17 +1421,18 @@ git commit -m "feat(shell): bind shell principal to named ELF manifest"
 
 **Files:**
 - Modify: `core/src/dynamic_object_store.rs`
-- Modify: `core/src/general_storage_persistence.rs`
+- Create: `core/src/object_service_checkpoint.rs`
+- Create: `core/src/retained_services.rs`
 - Modify: `core/src/revision_history.rs`
 - Modify: `core/src/typed_object_format.rs`
 - Modify: `core/src/shell_objects.rs`
 - Create: `core/src/object_service.rs`
 - Modify: `core/src/main.rs`
-- Test: `core/src/object_service.rs`, `core/src/dynamic_object_store.rs`, `core/src/general_storage_persistence.rs`
+- Test: `core/src/object_service.rs`, `core/src/dynamic_object_store.rs`, `core/src/object_service_checkpoint.rs`, `core/src/retained_services.rs`
 
 **Interfaces:**
 - Consumes: `DynamicObjectStore`, `BlockAllocator`, `StorageQuotaTable`, `RevisionHistory`, `TypedObjectRecord`.
-- Produces: `ObjectService::restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError>`, `ObjectService::create_object`, `ObjectService::query_objects`, `ObjectService::inspect_object`, `ObjectService::revise_field`, `ObjectService::history`.
+- Produces: `ObjectService::restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError>`, `ObjectService::create_object`, `ObjectService::query_objects`, `ObjectService::inspect_object`, `ObjectService::revise_field`, `ObjectService::history`, `retained_services::initialize_object_service`, `retained_services::with_object_service`.
 
 - [ ] **Step 1: Add note kind test**
 
@@ -1331,26 +1487,61 @@ pub fn allocator_bitmap(self) -> u64;
 pub fn restore_from_parts(base_sector: u64, block_count: u16, bitmap: u64, objects: [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS]) -> Result<Self, DynamicObjectError>;
 ```
 
-- [ ] **Step 4: Extract reusable snapshot helpers**
+- [ ] **Step 4: Define multi-sector object-service checkpoint helpers**
 
-In `core/src/general_storage_persistence.rs`, move fixed proof-only snapshot logic behind reusable public helpers:
+Create `core/src/object_service_checkpoint.rs` for the ADR 0052 durable layout.
+Do not encode this state into one 512-byte sector.
 
 ```rust
-pub const OBJECT_SERVICE_SNAPSHOT_SECTOR: u64 = 41;
-pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 42;
+pub const OBJECT_SERVICE_CHECKPOINT_HEADER_SECTOR: u64 = 72;
+pub const OBJECT_SERVICE_OBJECT_TABLE_SECTOR: u64 = 73;
+pub const OBJECT_SERVICE_OBJECT_TABLE_SECTORS: u64 = 8;
+pub const OBJECT_SERVICE_REVISION_TABLE_SECTOR: u64 = 81;
+pub const OBJECT_SERVICE_REVISION_TABLE_SECTORS: u64 = 12;
+pub const OBJECT_SERVICE_CHECKPOINT_COMMIT_SECTOR: u64 = 93;
+pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 94;
+
+#[repr(C)]
+pub struct ObjectServiceCheckpointHeader {
+    pub magic: [u8; 8],
+    pub version: u16,
+    pub object_count: u16,
+    pub current_revision_count: u16,
+    pub prior_revision_count: u16,
+    pub object_table_sector: u64,
+    pub revision_table_sector: u64,
+    pub commit_sector: u64,
+    pub checksum: u64,
+}
+
+#[derive(Clone, Copy)]
+pub struct ObjectExtentRecord {
+    pub extent_start: u64,
+    pub extent_len: u16,
+    pub object: TypedObjectRecord,
+}
 
 pub struct ObjectServiceSnapshot {
     pub allocated_bitmap: u64,
-    pub objects: [Option<TypedObjectRecord>; 8],
+    pub objects: [Option<ObjectExtentRecord>; 8],
     pub current_revisions: [Option<RevisionRecord>; 4],
     pub prior_revisions: [Option<RevisionRecord>; 8],
 }
 
-pub fn encode_object_service_snapshot(snapshot: ObjectServiceSnapshot, committed: bool) -> [u8; SECTOR_SIZE];
-pub fn decode_object_service_snapshot(sector: [u8; SECTOR_SIZE]) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError>;
+pub fn write_object_service_checkpoint(
+    device: &mut dyn BlockDevice,
+    snapshot: &ObjectServiceSnapshot,
+) -> Result<(), GeneralStoragePersistenceError>;
+
+pub fn read_object_service_checkpoint(
+    device: &mut dyn BlockDevice,
+) -> Result<Option<ObjectServiceSnapshot>, GeneralStoragePersistenceError>;
 ```
 
-Keep `run_self_test(device)` producing the existing Phase 10 markers.
+The checkpoint writer emits object records into sectors 73-80, revision records
+into sectors 81-92, and the commit marker only after all content sectors are
+durable. The restored dynamic store must preserve each object's allocated
+extent. Keep `run_self_test(device)` producing the existing Phase 10 markers.
 
 - [ ] **Step 5: Add object service tests**
 
@@ -1385,6 +1576,8 @@ mod tests {
         let outside = service.create_ungranted_note_for_test(ObjectId::new(2001), b"secret").unwrap();
 
         assert_eq!(outside.object_id, ObjectId::new(2001));
+        assert!(service.object_exists_for_test(ObjectId::new(2001)));
+        assert!(service.object_outside_shell_workspace_for_test(ObjectId::new(2001)));
         assert_eq!(
             service.inspect_object(shell, service.test_shell_workspace_capability(), ObjectId::new(2001)),
             Err(ObjectServiceError::Denied)
@@ -1392,17 +1585,38 @@ mod tests {
     }
 
     #[test]
-    fn restore_reconstructs_fresh_runtime_handles() {
+    fn query_returns_rebound_object_capabilities() {
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
         let created = service.create_object(shell, workspace, ObjectKind::Note).unwrap();
+
+        let results = service.query_objects(shell, workspace, ObjectKind::Note).unwrap();
+
+        assert_eq!(results[0].object_id, created.object_id);
+        assert_eq!(service.inspect_object(shell, results[0].capability, created.object_id).unwrap().revision, 1);
+    }
+
+    #[test]
+    fn restore_reconstructs_runtime_handles_without_serializing_them() {
+        let mut service = ObjectService::new_for_test();
+        let old_shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service.create_object(old_shell, workspace, ObjectKind::Note).unwrap();
         let snapshot = service.encode_snapshot_for_test().unwrap();
 
+        assert!(!snapshot.contains_runtime_handle_for_test(created.object_capability));
         let restored = ObjectService::decode_snapshot_for_test(snapshot).unwrap();
-        let restored_cap = restored.object_capability_for_test(shell, ObjectId::new(1042)).unwrap();
+        let restored_shell = restored.test_shell_caller();
+        let restored_workspace = restored.test_shell_workspace_capability();
+        let restored_entries = restored.query_objects(restored_shell, restored_workspace, ObjectKind::Note).unwrap();
+        let restored_cap = restored_entries[0].capability;
 
-        assert_ne!(created.object_capability.raw(), restored_cap.raw());
+        assert!(restored.inspect_object(restored_shell, restored_cap, ObjectId::new(1042)).is_ok());
+        assert_eq!(
+            restored.inspect_object(old_shell, created.object_capability, ObjectId::new(1042)),
+            Err(ObjectServiceError::Denied)
+        );
     }
 }
 ```
@@ -1452,13 +1666,15 @@ impl ObjectService {
     pub fn test_shell_caller(&self) -> ActiveUserProcess;
     pub fn test_intruder_caller(&self) -> ActiveUserProcess;
     pub fn test_shell_workspace_capability(&self) -> PackedCapability;
+    pub fn object_exists_for_test(&self, object_id: ObjectId) -> bool;
+    pub fn object_outside_shell_workspace_for_test(&self, object_id: ObjectId) -> bool;
     pub fn create_ungranted_note_for_test(
         &mut self,
         object_id: ObjectId,
         text: &[u8],
     ) -> Result<ObjectCreateResult, ObjectServiceError>;
-    pub fn encode_snapshot_for_test(&self) -> Result<[u8; SECTOR_SIZE], ObjectServiceError>;
-    pub fn decode_snapshot_for_test(bytes: [u8; SECTOR_SIZE]) -> Result<Self, ObjectServiceError>;
+    pub fn encode_snapshot_for_test(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError>;
+    pub fn decode_snapshot_for_test(snapshot: ObjectServiceSnapshot) -> Result<Self, ObjectServiceError>;
     pub fn object_capability_for_test(
         &self,
         caller: ActiveUserProcess,
@@ -1474,18 +1690,53 @@ Create/query require workspace capability.
 Inspect/revise/history require per-object capability.
 Create of a note allocates through DynamicObjectStore and records revision 1 in RevisionHistory.
 Revise writes a new TypedObjectRecord field value and records a retained revision.
-Query returns only objects reachable from the caller's workspace policy.
-Known ungranted object 2001 exists in the store but is not related to the shell workspace.
-Persist/restore use ObjectServiceSnapshot and Phase 10 commit-marker semantics.
+Query returns only objects reachable from the caller's workspace policy as bounded `ObjectListEntry` records containing object id plus freshly rebound object capability.
+Known ungranted object 2001 exists in the normal-boot store but is not related to the shell workspace.
+Persist/restore use the ADR 0052 multi-sector ObjectServiceSnapshot checkpoint and Phase 10 commit-marker semantics.
 Runtime CapabilityHandle values are never serialized.
 ```
 
-- [ ] **Step 7: Run focused tests**
+- [ ] **Step 7: Add retained service owner**
+
+Create `core/src/retained_services.rs`:
+
+```rust
+pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedServiceError>;
+
+pub fn with_object_service<R>(
+    f: impl FnOnce(&mut ObjectService) -> R,
+) -> Result<R, RetainedServiceError>;
+```
+
+Back it with one static `MaybeUninit<ObjectService>` plus an initialized flag.
+Document the unsafe invariant at the only raw access point:
+
+```rust
+// SAFETY:
+// 1. Invariant: object service storage is initialized exactly once before
+//    shell launch and syscall dispatch.
+// 2. Established by: normal_boot calls initialize_object_service before
+//    enter_persistent_user_process, and verify boot does not use this path.
+// 3. Lifetime: storage is static and lives for the whole boot.
+// 4. Pointer ownership: with_object_service grants one mutable borrow for the
+//    duration of one syscall dispatch closure.
+// 5. Alignment: MaybeUninit<ObjectService> provides ObjectService alignment.
+// 6. Mapped length: exactly one ObjectService object is accessed.
+// 7. Concurrency: ADR 0051 is single-core and does not re-enter syscalls while
+//    one object-service borrow is active.
+// 8. Violation: concurrent access could corrupt object state or grant authority
+//    to the wrong caller.
+```
+
+If the shell terminates or faults, the retained service remains initialized and
+PythCore enters the normal idle loop without restarting the shell.
+
+- [ ] **Step 8: Run focused tests**
 
 Run:
 
 ```powershell
-cargo test -p pythos-core typed_object_format dynamic_object_store general_storage_persistence object_service
+cargo test -p pythos-core typed_object_format dynamic_object_store object_service_checkpoint object_service retained_services
 python scripts\test-persistent-storage.py
 ```
 
@@ -1495,10 +1746,10 @@ Expected:
 PERSISTENT_STORAGE_TEST_OK
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```powershell
-git add core\src\dynamic_object_store.rs core\src\general_storage_persistence.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
+git add core\src\dynamic_object_store.rs core\src\object_service_checkpoint.rs core\src\retained_services.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
 git commit -m "feat(objects): promote Phase 10 store for normal services"
 ```
 
@@ -1511,6 +1762,7 @@ git commit -m "feat(objects): promote Phase 10 store for normal services"
 - Modify: `core/src/process_context.rs`
 - Modify: `core/src/object_service.rs`
 - Modify: `core/src/normal_boot.rs`
+- Modify: `core/src/retained_services.rs`
 - Test: `core/src/syscall.rs`, `core/src/object_service.rs`
 
 **Interfaces:**
@@ -1659,6 +1911,13 @@ arg4: reserved zero
 
 Use the existing copy-in/copy-out policy to validate the request and response buffers before raw dereference. Reject bad pointers before touching object state.
 
+For `OP_QUERY_OBJECTS`, `request.output_ptr` and `request.output_len` describe
+a caller-writable array of `ObjectListEntry`. `output_len` must be at least
+`MAX_QUERY_RESULTS * size_of::<ObjectListEntry>()` or PythCore returns
+`STATUS_BUFFER_TOO_SMALL`. The response `bytes_written` is the exact number of
+entry bytes copied out. The shell consumes those entries to refresh its
+object-capability map; PythCore does not format a human object list.
+
 Dispatch only typed operations:
 
 ```rust
@@ -1668,6 +1927,17 @@ OP_INSPECT_OBJECT => object_service.inspect_object(caller, request.authority, Ob
 OP_REVISE_FIELD => object_service.revise_field(caller, request.authority, ObjectId::new(request.object_id), request.field_id, input)
 OP_GET_HISTORY => object_service.history(caller, request.authority, ObjectId::new(request.object_id))
 ```
+
+In normal boot, dispatch obtains the service through:
+
+```rust
+retained_services::with_object_service(|service| {
+    dispatch_object_request_to_service(service, caller, request, input, output)
+})?
+```
+
+Do not keep a local `ObjectService` variable in `normal_boot` after shell launch
+and then separately mutate another service instance from syscalls.
 
 PythCore must not inspect command strings such as `create kind:note`.
 
@@ -1700,7 +1970,7 @@ BOOT_TEST_OK
 - [ ] **Step 8: Commit**
 
 ```powershell
-git add core\src\syscall.rs core\src\process_context.rs core\src\object_service.rs core\src\normal_boot.rs
+git add core\src\syscall.rs core\src\process_context.rs core\src\object_service.rs core\src\normal_boot.rs core\src\retained_services.rs
 git commit -m "feat(shell): gate typed syscalls by current caller"
 ```
 
@@ -1716,8 +1986,8 @@ git commit -m "feat(shell): gate typed syscalls by current caller"
 - Test: `core/src/user_mode.rs`, `scripts/test-object-shell.py`
 
 **Interfaces:**
-- Consumes: named shell manifest, `ObjectService`, `ActiveUserProcess`, COM2, typed syscalls.
-- Produces: marker `PYTHOS:SHELL:RING3_ENTER`, marker `PYTHOS:SHELL:FAULT_TERMINATED`, `user_mode::enter_persistent_user_process(process, entry, user_stack_top) -> !`.
+- Consumes: named shell manifest, retained `ObjectService`, `ActiveUserProcess`, COM2, typed syscalls.
+- Produces: marker `PYTHOS:SHELL:RING3_ENTER`, marker `PYTHOS:SHELL:FAULT_TERMINATED`, `BootstrapCapabilityBlock`, `user_mode::enter_persistent_user_process(process, entry, user_stack_top, bootstrap_user_ptr) -> !`.
 
 - [ ] **Step 1: Write persistent fault policy test**
 
@@ -1748,12 +2018,13 @@ pub fn enter_persistent_user_process(
     process: ActiveUserProcess,
     entry: u64,
     user_stack_top: u64,
+    bootstrap_user_ptr: u64,
 ) -> ! {
     process_context::bind_current_process(process);
     tss::set_ring0_stack(kernel_trap_stack_top());
     serial::write_line("PYTHOS:SHELL:RING3_ENTER");
     unsafe {
-        ring3_enter_forever_abi(entry, user_stack_top);
+        ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
     }
     loop {
         core::hint::spin_loop();
@@ -1761,7 +2032,10 @@ pub fn enter_persistent_user_process(
 }
 ```
 
-Document the unsafe invariant before `ring3_enter_forever_abi`.
+Document the unsafe invariant before `ring3_enter_forever_abi`, including that
+`entry` is the validated user ELF entry point, `user_stack_top` is a mapped
+guarded user stack, and `bootstrap_user_ptr` is a user-readable,
+kernel-owned/read-only mapping containing a valid `BootstrapCapabilityBlock`.
 
 - [ ] **Step 3: Define fault handling outcome**
 
@@ -1773,7 +2047,13 @@ PYTHOS:SHELL:FAULT_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 ```
 
-Terminate only the faulting user process and leave PythCore alive. Do not use the controlled breakpoint recovery path from the proof-only user-mode tests as the persistent-shell success path.
+Terminate only the faulting user process and leave PythCore alive. The peer is
+the normal supervisor process record created before shell launch with principal
+`NORMAL_SUPERVISOR_PRINCIPAL_ID`; it remains schedulable/alive after shell
+termination. PythCore then clears the active process context and enters the
+normal idle loop with retained services still initialized. Do not use the
+controlled breakpoint recovery path from the proof-only user-mode tests as the
+persistent-shell success path.
 
 - [ ] **Step 4: Launch shell in normal boot**
 
@@ -1784,11 +2064,24 @@ let shell_program = runtime_loader::load_named_user_program(boot_info, b"shell.e
 let shell_elf = user_elf::validate(shell_program.elf())?;
 let shell_process = process_context::ActiveUserProcess::from_manifest(shell_service, shell_program);
 let launch = build_user_elf_address_space_from_image(physical_memory, boot_info, shell_program.elf())?;
-bootstrap_shell_capabilities(shell_process, &mut object_service)?;
-user_mode::enter_persistent_user_process(shell_process, shell_elf.entry(), user_stacks::proof_stack_top());
+let bootstrap = retained_services::with_object_service(|service| {
+    build_shell_bootstrap_block(shell_process, service)
+})??;
+let bootstrap_user_ptr = map_read_only_bootstrap_block(&mut launch.address_space, &bootstrap)?;
+user_mode::enter_persistent_user_process(
+    shell_process,
+    shell_elf.entry(),
+    launch.user_stack_top(),
+    bootstrap_user_ptr,
+);
 ```
 
-`bootstrap_shell_capabilities` grants console, workspace, and system-control capabilities to the shell process. It grants per-object capabilities only for objects reachable through the shell workspace policy.
+`build_shell_bootstrap_block` grants console, workspace, and system-control
+capabilities to the shell process. It includes per-object entries only for
+objects reachable through the shell workspace policy. The mapped page is
+read-only in the shell address space and kernel-owned in PythCore. The shell's
+`syscalls::bootstrap_capabilities(bootstrap_ptr)` reads this block; it must not
+synthesize capabilities from constants.
 
 - [ ] **Step 5: Run focused tests**
 
@@ -1974,6 +2267,7 @@ def stop_qemu(process: subprocess.Popen[str]) -> None:
 def session(commands: list[str], verify_actual_reboot: bool) -> Result:
     process = start_qemu()
     transcript = ""
+    reboot_requested = False
     try:
         wait_for_file_marker(SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 30)
         with connect_shell() as sock:
@@ -1984,12 +2278,14 @@ def session(commands: list[str], verify_actual_reboot: bool) -> Result:
                 marker = "REBOOTING" if command == "reboot" else "pyth> "
                 transcript += wait_for_socket_text(sock, marker)
                 if command == "reboot" and verify_actual_reboot:
-                    wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:SYSTEM:REBOOTING", 10)
-                    wait_for_file_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
-                    with connect_shell() as rebooted:
-                        transcript += wait_for_socket_text(rebooted, "PYTHOS:SHELL:READY", 30)
-                        transcript += wait_for_socket_text(rebooted, "pyth> ", 30)
+                    reboot_requested = True
                     break
+        if reboot_requested:
+            wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:SYSTEM:REBOOTING", 10)
+            wait_for_file_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
+            with connect_shell() as rebooted:
+                transcript += wait_for_socket_text(rebooted, "PYTHOS:SHELL:READY", 30)
+                transcript += wait_for_socket_text(rebooted, "pyth> ", 30)
         return Result(SERIAL_LOG.read_text(encoding="utf-8", errors="replace"), transcript)
     finally:
         stop_qemu(process)
@@ -2007,9 +2303,13 @@ def main() -> int:
     assert "CREATED object:1042 revision:1" in first.com2
     assert "COMMITTED revision:2" in first.com2
     assert "DENIED missing-capability" in first.com2
+    assert "PYTHOS:CORE:OBJECT_SERVICE:EXTERNAL_OBJECT_READY object:2001" in first.com1
+    assert "PYTHOS:CORE:OBJECT_SERVICE:OUTSIDE_WORKSPACE object:2001" in first.com1
+    assert "PYTHOS:CORE:OBJECT_SERVICE:CAPABILITY_DENIED object:2001" in first.com1
     assert "PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED" not in first.com1
 
-    restored = session(["inspect object:1042", "history object:1042", "reboot"], True)
+    restored = session(["query kind:note", "inspect object:1042", "history object:1042", "reboot"], True)
+    assert "object:1042 kind:note" in restored.com2
     assert 'text="hello" revision:2' in restored.com2
     assert "history object:1042 revisions:2" in restored.com2
     assert "PYTHOS:SHELL:IDENTITY_RESTORED" in restored.com1
@@ -2066,6 +2366,7 @@ In `user/shell/src/syscalls.rs`, convert `ObjectShellResponse` statuses to text:
 
 ```text
 STATUS_OK + OP_CREATE_OBJECT -> CREATED object:<id> revision:<revision>
+STATUS_OK + OP_QUERY_OBJECTS -> object:<id> kind:note
 STATUS_OK + OP_REVISE_FIELD -> COMMITTED revision:<revision>
 STATUS_OK + OP_INSPECT_OBJECT -> text="<text>" revision:<revision>
 STATUS_OK + OP_GET_HISTORY -> history object:<id> revisions:<count>
@@ -2075,7 +2376,10 @@ STATUS_BAD_REQUEST -> ERROR bad-request
 STATUS_BUFFER_TOO_SMALL -> ERROR buffer-too-small
 ```
 
-PythCore returns typed fields only; it does not format these strings.
+PythCore returns typed fields only; it does not format these strings. For
+`OP_QUERY_OBJECTS`, `syscalls.rs` reads `ObjectListEntry` records from the
+query output buffer, prints object ids/kinds, and stores each returned
+capability in `CapabilityMap`.
 
 - [ ] **Step 2: Finish typed syscall execution**
 
@@ -2083,7 +2387,23 @@ In `core/src/syscall.rs`, make `SYSCALL_OBJECT_REQUEST` copy in `ObjectShellRequ
 
 - [ ] **Step 3: Finish object service persistence hooks**
 
-Persist after `create_object` and `revise_field`. On restore, emit:
+Persist after `create_object` and `revise_field`. During normal service
+initialization, seed known external object `2001`, prove it exists outside the
+shell workspace, and emit:
+
+```text
+PYTHOS:CORE:OBJECT_SERVICE:EXTERNAL_OBJECT_READY object:2001
+PYTHOS:CORE:OBJECT_SERVICE:OUTSIDE_WORKSPACE object:2001
+```
+
+When an inspect/revise/history request for that object reaches capability
+validation and fails, emit:
+
+```text
+PYTHOS:CORE:OBJECT_SERVICE:CAPABILITY_DENIED object:2001
+```
+
+On restore, emit:
 
 ```text
 PYTHOS:SHELL:IDENTITY_RESTORED
@@ -2145,8 +2465,14 @@ git commit -m "feat(shell): complete typed object shell flow"
 - Modify: `scripts/test-object-shell.py`
 - Modify: `scripts/build-image.py`
 - Modify: `scripts/build-iso.py`
+- Modify: `Cargo.toml`
 - Modify: `core/src/normal_boot.rs`
 - Modify: `core/src/syscall.rs`
+- Create: `user/probes/intruder/Cargo.toml`
+- Create: `user/probes/intruder/src/main.rs`
+- Create: `user/probes/fault-shell/Cargo.toml`
+- Create: `user/probes/fault-shell/src/main.rs`
+- Create: `scripts/build-user-probes.py`
 - Test: `scripts/test-object-shell.py`
 
 **Interfaces:**
@@ -2159,7 +2485,7 @@ Extend `scripts/test-object-shell.py` with a control-sector writer:
 
 ```python
 SECTOR_SIZE = 512
-SHELL_CONTROL_SECTOR = 43
+SHELL_CONTROL_SECTOR = 95
 SHELL_CONTROL_MAGIC = b"PYSHCTL1"
 CONTROL_RUN_INTRUDER = 1
 CONTROL_RUN_FAULT_SHELL = 2
@@ -2174,7 +2500,12 @@ def write_shell_control(image: Path, mode: int) -> None:
         handle.write(sector)
 ```
 
-In `core/src/normal_boot.rs`, read sector 43 before launching `shell.elf`. Mode `1` launches `intruder.elf`, makes the same `SYSCALL_OBJECT_REQUEST` number with the shell workspace handle value, and asserts denial. Clear sector 43 after reading the mode so the next boot returns to the normal shell path.
+In `core/src/normal_boot.rs`, read sector 95 before launching `shell.elf`. This
+sector is outside the ADR 0052 checkpoint sectors 72-94 and before the dynamic
+object extent base. Mode `1` launches `intruder.elf`, makes the same
+`SYSCALL_OBJECT_REQUEST` number with the shell workspace handle value, and
+asserts denial. Clear sector 95 after reading the mode so the next boot returns
+to the normal shell path.
 
 - [ ] **Step 2: Add intruder marker assertions**
 
@@ -2191,9 +2522,67 @@ The harness must reject:
 PYTHOS:SHELL:OBJECT_CREATED_BY_INTRUDER
 ```
 
-- [ ] **Step 3: Add persistent shell fault probe**
+- [ ] **Step 3: Add concrete adversarial probe ELFs**
 
-Add a named `fault-shell.elf` manifest record with an invalid-instruction body. Mode `2` launches that program as a shell principal and asserts:
+Create `user/probes/intruder/src/main.rs` as a `no_std`, `no_main` program that
+imports `pythos_shared::object_shell_abi`, builds an `ObjectShellRequest` for
+`OP_CREATE_OBJECT`, intentionally places the shell workspace raw handle value
+from its argv/env test input into `request.authority`, invokes
+`SYSCALL_OBJECT_REQUEST` with documented unsafe syscall assembly, and spins
+after the syscall returns. It must not share shell code or a bootstrap block.
+
+Add both probe crates to the root workspace, or build them via
+`cargo build --manifest-path user/probes/intruder/Cargo.toml` and
+`cargo build --manifest-path user/probes/fault-shell/Cargo.toml` with explicit
+workspace exclusion. Do not embed synthetic byte arrays in
+`scripts/build-image.py`.
+
+Create `user/probes/fault-shell/src/main.rs`:
+
+```rust
+#![no_std]
+#![no_main]
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    // SAFETY:
+    // 1. Invariant: `ud2` deliberately raises an invalid-opcode user fault for
+    //    the ADR 0051 persistent-shell fault acceptance path.
+    // 2. Established by: this program is packaged only as `fault-shell.elf` and
+    //    launched only when the harness writes CONTROL_RUN_FAULT_SHELL.
+    // 3. Lifetime: no borrowed memory is involved.
+    // 4. Pointer ownership: no pointers are used.
+    // 5. Alignment: not applicable.
+    // 6. Mapped length: not applicable.
+    // 7. Concurrency: ADR 0051 is single-core.
+    // 8. Violation: if launched accidentally it terminates only its user process.
+    unsafe {
+        core::arch::asm!("ud2", options(nomem, nostack));
+    }
+    loop {
+        core::hint::spin_loop();
+    }
+}
+```
+
+Create `scripts/build-user-probes.py` to build both probe crates with the same
+user-ELF linker policy as `scripts/build-user-shell.py`. Package only the
+intruder ELF into the normal object-shell image:
+
+```python
+(INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(b"intruder.elf", INTRUDER_PRINCIPAL_ID, INTRUDER_ELF.read_bytes()))
+```
+
+For the fault acceptance run, `scripts/build-image.py --shell-elf <fault-shell>`
+builds a separate test image that packages the fault body under the unique
+trusted name `shell.elf` with `SHELL_PRINCIPAL_ID`. Do not package both the real
+shell and a second fault program with the shell principal into the same bundle.
+
+- [ ] **Step 4: Add persistent shell fault probe**
+
+Mode `2` boots the fault-test image where `shell.elf` contains the
+invalid-instruction body, so the loader-validated shell principal is still
+bound through the normal `shell.elf` name. It asserts:
 
 ```text
 PYTHOS:CORE:CRASH:USER_FAULT
@@ -2201,11 +2590,12 @@ PYTHOS:SHELL:FAULT_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 ```
 
-- [ ] **Step 4: Run adversarial acceptance**
+- [ ] **Step 5: Run adversarial acceptance**
 
 Run:
 
 ```powershell
+python scripts\build-user-probes.py
 python scripts\test-object-shell.py
 python scripts\test-boot.py
 ```
@@ -2217,10 +2607,10 @@ OBJECT_SHELL_TEST_OK
 BOOT_TEST_OK
 ```
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```powershell
-git add scripts\test-object-shell.py scripts\build-image.py scripts\build-iso.py core\src\normal_boot.rs core\src\syscall.rs
+git add Cargo.toml scripts\test-object-shell.py scripts\build-image.py scripts\build-iso.py scripts\build-user-probes.py user\probes core\src\normal_boot.rs core\src\syscall.rs
 git commit -m "test(shell): prove object shell caller isolation"
 ```
 
