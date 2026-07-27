@@ -37,5 +37,23 @@ SECTIONS
         *(COMMON)
         *(.bss .bss.*)
     } :data
+
+    /* Task 11: a real, unmapped guard page on each side of the syscall
+       kernel stack, so an overflow (or a read below the stack) takes a
+       deterministic #PF instead of silently corrupting whatever static
+       data the linker would otherwise have placed adjacent to it. These
+       ranges are intentionally left out of __pythcore_data_start .. _end's
+       normal mapping loop; see map_kernel_segments in memory/virtual.rs. */
+    . = ALIGN(4K);
+    __pythcore_syscall_stack_guard_low_start = .;
+    . += 4K;
+    __pythcore_syscall_stack_start = .;
+    .syscall_stack : ALIGN(4K) {
+        *(.syscall_stack)
+    } :data
+    . = ALIGN(4K);
+    __pythcore_syscall_stack_guard_high_start = .;
+    . += 4K;
+    __pythcore_syscall_stack_guard_high_end = .;
     __pythcore_data_end = .;
 }

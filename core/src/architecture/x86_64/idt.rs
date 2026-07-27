@@ -7,6 +7,8 @@ use core::cell::UnsafeCell;
 const IDT_ENTRIES: usize = 256;
 const INTERRUPT_GATE_PRESENT: u8 = 0x8E;
 const USER_INTERRUPT_GATE_PRESENT: u8 = 0xEE;
+const DOUBLE_FAULT_VECTOR: usize = 8;
+const PAGE_FAULT_VECTOR: usize = 14;
 
 #[repr(C, packed)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -35,14 +37,14 @@ impl IdtEntry {
 
     #[cfg(test)]
     fn new(handler: u64, selector: u16) -> Self {
-        Self::new_with_attributes(handler, selector, INTERRUPT_GATE_PRESENT)
+        Self::new_with_attributes_and_ist(handler, selector, INTERRUPT_GATE_PRESENT, 0)
     }
 
-    fn new_with_attributes(handler: u64, selector: u16, attributes: u8) -> Self {
+    fn new_with_attributes_and_ist(handler: u64, selector: u16, attributes: u8, ist: u8) -> Self {
         Self {
             offset_low: handler as u16,
             selector,
-            ist: 0,
+            ist,
             attributes,
             offset_mid: (handler >> 16) as u16,
             offset_high: (handler >> 32) as u32,
@@ -94,7 +96,23 @@ pub fn initialize() -> Result<(), ()> {
         } else {
             INTERRUPT_GATE_PRESENT
         };
-        *entry = IdtEntry::new_with_attributes(handler, gdt::KERNEL_CODE_SELECTOR, attributes);
+        // Task 11: double fault (8) and page fault (14) always switch to the
+        // IST1 stack (architecture/x86_64/tss.rs), independent of the
+        // current RSP. This is what makes the syscall-stack guard pages
+        // (linker.ld / memory/virtual.rs) deliver a diagnosable fault
+        // instead of a second, cascading fault on a stack that just
+        // overran its buffer.
+        let ist = if index == DOUBLE_FAULT_VECTOR || index == PAGE_FAULT_VECTOR {
+            1
+        } else {
+            0
+        };
+        *entry = IdtEntry::new_with_attributes_and_ist(
+            handler,
+            gdt::KERNEL_CODE_SELECTOR,
+            attributes,
+            ist,
+        );
     }
 
     let idtr = DescriptorTablePointer {
@@ -140,10 +158,11 @@ mod tests {
 
     #[test]
     fn breakpoint_gate_can_be_invoked_from_ring3() {
-        let entry = IdtEntry::new_with_attributes(
+        let entry = IdtEntry::new_with_attributes_and_ist(
             0xFFFF_FFFF_8123_4567,
             gdt::KERNEL_CODE_SELECTOR,
             USER_INTERRUPT_GATE_PRESENT,
+            0,
         );
         let attributes = entry.attributes;
 

@@ -34,6 +34,10 @@ unsafe extern "C" {
     static __pythcore_text_end: u8;
     static __pythcore_data_start: u8;
     static __pythcore_data_end: u8;
+    static __pythcore_syscall_stack_guard_low_start: u8;
+    static __pythcore_syscall_stack_start: u8;
+    static __pythcore_syscall_stack_guard_high_start: u8;
+    static __pythcore_syscall_stack_guard_high_end: u8;
     fn old_identity_probe_fault(address: u64) -> u64;
 }
 
@@ -106,6 +110,34 @@ pub fn prove_old_identity_map_removed() -> Result<(), VmError> {
     // 8. Violation: an unexpected fault is reported by the diagnostic handler
     //    and enters the panic loop.
     if unsafe { old_identity_probe_fault(OLD_IDENTITY_PROBE) } != 1 {
+        return Err(VmError::LowGuardMapping);
+    }
+    Ok(())
+}
+
+/// Task 11 regression coverage: prove the two 4 KiB pages `map_kernel_segments`
+/// deliberately leaves out of the active mapping (immediately below and above
+/// `syscall_kernel_stack`, see `core/linker.ld`) are genuinely unmapped, not
+/// just absent from the source symbols by coincidence. Reuses the same
+/// expected-page-fault probe `prove_old_identity_map_removed` uses.
+pub fn prove_syscall_stack_guard_pages_unmapped() -> Result<(), VmError> {
+    let guard_low = symbol_addr(&raw const __pythcore_syscall_stack_guard_low_start);
+    let guard_high = symbol_addr(&raw const __pythcore_syscall_stack_guard_high_start);
+
+    if translate_active(guard_low).is_ok() || translate_active(guard_high).is_ok() {
+        return Err(VmError::LowGuardMapping);
+    }
+
+    // SAFETY: matches `prove_old_identity_map_removed` above - `guard_low`
+    // and `guard_high` were just confirmed unmapped by `translate_active`,
+    // and the probe's internal recovery RIP means an unexpected fault
+    // elsewhere is reported by the diagnostic handler rather than silently
+    // continuing.
+    if unsafe { old_identity_probe_fault(guard_low) } != 1 {
+        return Err(VmError::LowGuardMapping);
+    }
+    // SAFETY: matches the guard_low probe immediately above.
+    if unsafe { old_identity_probe_fault(guard_high) } != 1 {
         return Err(VmError::LowGuardMapping);
     }
     Ok(())
@@ -711,12 +743,36 @@ fn map_kernel_segments(tables: &mut PageTableBuilder<'_>) -> Result<(), VmError>
         )?,
         0,
     )?;
+    // Task 11: map .data/.bss in three pieces, deliberately skipping the two
+    // 4 KiB guard pages the linker script placed around `syscall_stack`
+    // (core/linker.ld), so an overflow of that stack takes a #PF instead of
+    // silently corrupting whatever static data used to sit adjacent to it.
+    let data_start = symbol_addr(&raw const __pythcore_data_start);
+    let data_end = symbol_addr(&raw const __pythcore_data_end);
+    let guard_low_start = symbol_addr(&raw const __pythcore_syscall_stack_guard_low_start);
+    let stack_start = symbol_addr(&raw const __pythcore_syscall_stack_start);
+    let guard_high_start = symbol_addr(&raw const __pythcore_syscall_stack_guard_high_start);
+    let guard_high_end = symbol_addr(&raw const __pythcore_syscall_stack_guard_high_end);
+
     tables.map_translated_range(
-        symbol_addr(&raw const __pythcore_data_start),
-        symbol_range_len(
-            &raw const __pythcore_data_start,
-            &raw const __pythcore_data_end,
-        )?,
+        data_start,
+        guard_low_start
+            .checked_sub(data_start)
+            .ok_or(VmError::RangeOverflow)?,
+        PTE_WRITE | PTE_NO_EXECUTE,
+    )?;
+    tables.map_translated_range(
+        stack_start,
+        guard_high_start
+            .checked_sub(stack_start)
+            .ok_or(VmError::RangeOverflow)?,
+        PTE_WRITE | PTE_NO_EXECUTE,
+    )?;
+    tables.map_translated_range(
+        guard_high_end,
+        data_end
+            .checked_sub(guard_high_end)
+            .ok_or(VmError::RangeOverflow)?,
         PTE_WRITE | PTE_NO_EXECUTE,
     )?;
     Ok(())

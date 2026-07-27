@@ -18,6 +18,14 @@ pub enum RetainedServiceError {
     ObjectService(ObjectServiceError),
     #[cfg(not(test))]
     Persistence(GeneralStoragePersistenceError),
+    /// Task 11: `persist_object_service` was called while running on a stack
+    /// other than the guarded `syscall_kernel_stack` (see
+    /// `syscall::kernel_stack_bounds`). Only that stack's headroom has been
+    /// measured and hardened with guard pages; calling this from, e.g.,
+    /// `normal_boot.rs`'s main boot stack is refused until that stack gets
+    /// the same treatment.
+    #[cfg(not(test))]
+    UnmeasuredStackContext,
 }
 
 struct RetainedObjectServiceStorage(UnsafeCell<MaybeUninit<ObjectService>>);
@@ -135,6 +143,9 @@ pub fn initialize_object_service_from_device(
 /// after any syscall that mutates durable object state (create, revise).
 #[cfg(not(test))]
 pub fn persist_object_service() -> Result<(), RetainedServiceError> {
+    if !running_on_syscall_kernel_stack() {
+        return Err(RetainedServiceError::UnmeasuredStackContext);
+    }
     let snapshot = with_object_service(|service| service.encode_snapshot())?
         .map_err(RetainedServiceError::ObjectService)?;
     // SAFETY: matches RetainedDeviceStorage's own invariant above - this read
@@ -144,6 +155,37 @@ pub fn persist_object_service() -> Result<(), RetainedServiceError> {
     let device = unsafe { (*OBJECT_SERVICE_DEVICE.0.get()).assume_init() };
     crate::object_service_checkpoint::write_object_service_checkpoint(device, &snapshot)
         .map_err(RetainedServiceError::Persistence)
+}
+
+/// Task 11: `persist_object_service`'s call chain has only been stress-tested
+/// and bisected for headroom on the syscall-entry kernel stack (see
+/// `syscall::kernel_stack_bounds`). Refuse to run it from any other stack
+/// (e.g. `normal_boot.rs`'s main boot stack) until that stack gets the same
+/// measurement and guard-page treatment.
+#[cfg(not(test))]
+fn running_on_syscall_kernel_stack() -> bool {
+    let (start, end) = crate::syscall::kernel_stack_bounds();
+    let rsp = current_rsp();
+    rsp >= start && rsp < end
+}
+
+#[cfg(not(test))]
+fn current_rsp() -> u64 {
+    let rsp: u64;
+    // SAFETY:
+    // 1. Invariant: reading RSP into a general-purpose register is valid at
+    //    any privilege level and has no side effects.
+    // 2. Established by: this is a plain register read.
+    // 3. Lifetime: the read value is a snapshot; not a borrow.
+    // 4. Pointer ownership: no memory is accessed.
+    // 5. Alignment: not applicable to a register read.
+    // 6. Mapped length: not applicable.
+    // 7. Concurrency: single-core boot; RSP is per-CPU-core state.
+    // 8. Violation: none; this instruction cannot fault.
+    unsafe {
+        core::arch::asm!("mov {out}, rsp", out = out(reg) rsp, options(nomem, nostack, preserves_flags));
+    }
+    rsp
 }
 
 pub fn with_object_service<R>(

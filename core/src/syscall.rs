@@ -298,7 +298,16 @@ impl From<user_mode::UserModeError> for SyscallError {
 #[cfg(not(test))]
 global_asm!(
     r#"
-    .section .bss
+    // Task 11: this stack lives in its own linker-script output section
+    // (`.syscall_stack`, see core/linker.ld), sandwiched between two 4 KiB
+    // ranges that `map_kernel_segments` (memory/virtual.rs) deliberately
+    // leaves unmapped in every page table it builds. An overflow that
+    // pushes rsp below `syscall_kernel_stack` now takes a #PF against the
+    // low guard page - routed onto the IST1 fault stack (architecture/
+    // x86_64/tss.rs, idt.rs) so the fault is delivered even though the
+    // stack that just overflowed cannot be trusted - instead of silently
+    // corrupting whatever static data used to sit below it.
+    .section .syscall_stack, "aw", @nobits
     .balign 16
     // ADR 0052 durable-mutation persistence (`retained_services::persist_object_service`)
     // runs on this stack during `create`/`revise` dispatch and its call chain
@@ -309,7 +318,9 @@ global_asm!(
     // buffer, the overflow does not fault; it corrupts whatever static data
     // (e.g. GDT/IDT/page-table state) happens to sit below it in `.bss`,
     // which only surfaces later as an unexplained triple fault. 256 KiB
-    // leaves >2x headroom over the ~96 KiB observed requirement.
+    // leaves >2x headroom over the ~96 KiB observed requirement. The guard
+    // pages above are the deterministic backstop if that headroom is ever
+    // exceeded.
     syscall_kernel_stack:
         .zero 262144
     syscall_kernel_stack_end:
@@ -354,6 +365,23 @@ global_asm!(
 #[cfg(not(test))]
 unsafe extern "C" {
     fn syscall_entry_abi();
+    static syscall_kernel_stack: u8;
+    static syscall_kernel_stack_end: u8;
+}
+
+/// The `[start, end)` byte range of the static stack `syscall_entry_abi`
+/// switches onto for every ring-3 to ring-0 syscall entry. Used by
+/// `retained_services::persist_object_service` (Task 11) to assert it is
+/// actually running on the guarded syscall stack, not some other
+/// unmeasured boot stack. `retained_services` itself is excluded from the
+/// `verify` build, so this accessor is legitimately unused there.
+#[cfg(not(test))]
+#[cfg_attr(feature = "verify", allow(dead_code))]
+pub fn kernel_stack_bounds() -> (u64, u64) {
+    (
+        &raw const syscall_kernel_stack as u64,
+        &raw const syscall_kernel_stack_end as u64,
+    )
 }
 
 /// Program the `syscall`/`sysret` MSRs. Production setup, reusable by both the

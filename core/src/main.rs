@@ -129,6 +129,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     serial::write_line("PYTHOS:CORE:MEMORY_READY");
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_MEMORY);
 
+    architecture::x86_64::tss::initialize_ist1();
+
     if architecture::x86_64::gdt::initialize().is_err() {
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
@@ -323,6 +325,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:IDENTITY_MAP_REMOVED");
+        if memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        serial::write_line("PYTHOS:CORE:SYSCALL_STACK_GUARD_PAGES_READY");
         if boot_metadata::validate_complete(boot_info).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
