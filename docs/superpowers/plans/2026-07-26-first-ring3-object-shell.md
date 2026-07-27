@@ -2894,11 +2894,18 @@ PythCore returns typed fields only; it does not format these strings. For
 query output buffer, prints object ids/kinds, and stores each returned
 capability in `CapabilityMap`.
 
-- [ ] **Step 2: Finish typed syscall execution**
+- [x] **Step 1: Ensure shell formats all responses in user space** (done; response text differs slightly from this section's original sketch — see status note)
 
-In `core/src/syscall.rs`, make `SYSCALL_OBJECT_REQUEST` copy in `ObjectShellRequest`, call `object_service`, copy out `ObjectShellResponse`, and return `SYSCALL_OK` for handled request statuses. A denied object operation is a successful syscall with `response.status = STATUS_DENIED`.
+- [x] **Step 2: Finish typed syscall execution** (already complete from Tasks 5-8; verified, not re-done)
 
-- [ ] **Step 3: Finish object service persistence hooks**
+**Status note (Steps 1-2, actual implementation):**
+`user/shell/src/syscalls.rs`'s `present_response`/`present_ok_response` now format every operation/status combination: `CREATED object:<id> revision:<revision>`, `object:<id> kind:note` (one line per query result), `COMMITTED revision:<revision>`, `text="<text>" revision:<revision>`, `history object:<id> revisions:<count>`, `DENIED missing-capability` (for both `STATUS_DENIED` and `STATUS_NOT_FOUND`), `ERROR buffer-too-small`, `ERROR bad-request`. `dispatch_object_request_with_transport`/`send_object_request_with_transport`/`refresh_workspace_query` gained a `query_results: &mut [ObjectListEntry; MAX_QUERY_RESULTS]` out-parameter so the query listing can be printed from the exact response, not re-derived from the capability cache (which is additive across calls, not a per-query snapshot).
+
+`OP_INSPECT_OBJECT` needed a field the ABI didn't have: PythCore validated and computed the field's revision but never returned the field's bytes. Added `field_bytes: [u8; 16]` to `ObjectShellResponse` (replacing `reserved1: u64`; struct grows 56 → 64 bytes) and reused the existing `bytes_written` field for the exact length. `ObjectInspection` gained `field_value_len()` alongside the existing `field_bytes()`. Updated the ABI's `offset_of!`/`size_of` tests accordingly (`shared/src/object_shell_abi.rs`).
+
+`core/src/syscall.rs`'s `dispatch_object_request`/`dispatch_object_request_to_service` were already fully wired for all five operations by Tasks 5-8 (create/query/inspect/revise/history) - confirmed by reading, not re-implemented.
+
+- [ ] **Step 3: Finish object service persistence hooks** — blocked; see status note below
 
 Persist after `create_object` and `revise_field`. During normal service
 initialization, seed known external object `2001`, prove it exists outside the
@@ -2933,7 +2940,20 @@ PYTHOS:SHELL:IDENTITY_BOOTSTRAPPED
 PYTHOS:SHELL:WORKSPACE_CAPABILITY_GRANTED
 ```
 
-- [ ] **Step 4: Run object shell acceptance**
+**Status note (Step 3 — BLOCKED, root cause found in `block_device.rs`, not object-service code):**
+
+`core/src/object_service_checkpoint.rs::write_object_service_checkpoint` had existed since Tasks 5-8 but had *zero* callers anywhere in the running kernel — it was dead code, exercised only by host-side unit tests against a simulated device. This session added the plumbing to call it for real: `ObjectService::encode_snapshot` made `pub`; `retained_services.rs` gained a retained `BlockDeviceInfo` slot (written once in `initialize_object_service_from_device`, alongside the existing `OBJECT_SERVICE` static) and `pub fn persist_object_service()`, which encodes the current service state and calls `write_object_service_checkpoint`. Wiring `persist_object_service()` into `dispatch_object_request_with_raw_buffers` (call it after a successful `OP_CREATE_OBJECT`/`OP_REVISE_FIELD`) is the one-line change Step 3 needs — but doing so **hard-resets the QEMU machine with no panic or crash marker**, confirmed reproducible.
+
+Bisection (temporary serial markers bracketing every sub-step, since removed):
+- The reset is a genuine CPU-level reset (a second `PYTHOS:LOADER:ENTER`/`PYTHOS:SHELL:RING3_ENTER` pair appears in the COM1 log under `--allow-reboot`), not a Rust panic (no `PYTHOS:PANIC`) and not a hang (confirmed via the reset marker, not just a timeout).
+- It reproduces identically when `persist_object_service()` is called once, synchronously, from `normal_boot.rs` in ring 0 — **before** the shell ever launches and **before** any ring-3/syscall/user-address-space activation exists. This rules out the address-space/DMA-mapping class of bug this project hit in earlier tasks (Task 1, Task 8): it is not about the shell's page tables.
+- `ObjectService::restore_or_initialize_in_place` (which also calls the checkpoint module's read path, `with_restored_object_service_checkpoint`) already runs once, successfully, earlier in the exact same boot, as part of normal `initialize_object_service_from_device`. The crash is not on the *first* use of the checkpoint/block-device machinery in a boot session — it is specifically on a **second** `object_service_checkpoint` read/write cycle within the same session. Markers placed at each statement inside `write_object_service_checkpoint`'s non-test branch show it crashes on the very first sub-call (`with_restored_object_service_checkpoint`, itself the same function that already succeeded once earlier), before reaching any of the write-specific steps (`encode_slot_into_with_generation`, `write_slot_image`, `read_slot_image_into`, `decode_slot`).
+- A pre-existing separate concern (fixed, unrelated to the block-device bug): the syscall-entry trampoline's static kernel stack (`core/src/syscall.rs`'s `syscall_kernel_stack`) was only 16 KiB; `ObjectServiceSnapshot` alone is 3832 bytes and `ObjectService` is 6968 bytes (measured via a temporary `size_of` probe, since removed), and copying these through the persist call chain overflowed it in one earlier reproduction. Bumped to 65536 bytes (matching this codebase's other kernel-stack sizing convention, e.g. `SCHEDULER_STACK_SIZE`) — legitimate, kept. This did **not** fix the main crash; it only stopped a separate, real overflow risk from masking the diagnosis.
+- Best current hypothesis: `block_device.rs`'s `initialize_queue()` does a full virtio device status/feature/queue-select re-negotiation on *every single sector operation* (`execute_sector_request` calls it every time, no persistent "already initialized" state). This has never been exercised twice within one boot before — `general_storage_persistence.rs` also calls `block_device::write_sector`, but only from the verify-boot proof sequence, and normal boot's only prior block-device consumer (`initialize_object_service_from_device`) was called exactly once per boot. A second independent round of `initialize_queue()` calls, later in the same session, is new territory and is the most likely fault site, but this was not confirmed down to the exact instruction/register state (would need GDB-attached QEMU).
+
+**Decision:** did not attempt a blind fix to `block_device.rs`'s queue re-init discipline — it's a shared primitive for all storage operations (`general_storage_persistence.rs` too), and getting it wrong risks silently breaking already-verified storage guarantees elsewhere. `persist_object_service()` exists and is correct in isolation (proven safe when called exactly once per boot) but is **not called** from the live syscall path; `create`/`revise` work correctly in-memory and return the exact typed response text, but nothing is durable across reboot yet. `scripts/test-object-shell.py` was scoped down accordingly: it asserts the full lifecycle's response text (create/inspect/revise/inspect/history) and Task 9's reboot repeatability, but does not claim persistence survives reboot.
+
+- [ ] **Step 4: Run object shell acceptance** (ran in the reduced scope above; full `OBJECT_SHELL_TEST_OK` per the original two-phase design remains blocked on Step 3)
 
 Run:
 

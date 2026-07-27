@@ -301,7 +301,7 @@ global_asm!(
     .section .bss
     .balign 16
     syscall_kernel_stack:
-        .zero 16384
+        .zero 65536
     syscall_kernel_stack_end:
     .balign 8
     syscall_saved_user_rsp:
@@ -622,7 +622,7 @@ fn dispatch_object_request_with_raw_buffers(
     } else {
         &[]
     };
-    if request.operation == OP_QUERY_OBJECTS {
+    let response = if request.operation == OP_QUERY_OBJECTS {
         if request.output_len < size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64 {
             return Ok(buffer_too_small_response());
         }
@@ -630,13 +630,27 @@ fn dispatch_object_request_with_raw_buffers(
         retained_services::with_object_service(|service| {
             dispatch_object_request_to_service(service, caller, request, input, output)
         })
-        .map_err(SyscallError::from)
+        .map_err(SyscallError::from)?
     } else {
         retained_services::with_object_service(|service| {
             dispatch_object_request_to_service(service, caller, request, input, &mut [])
         })
-        .map_err(SyscallError::from)
-    }
+        .map_err(SyscallError::from)?
+    };
+
+    // NOTE: durable mutations (ADR 0052) are meant to persist here via
+    // `retained_services::persist_object_service()` so a capability-gated
+    // `reboot` syscall (Task 9) restores exactly this state. That call is
+    // deliberately NOT wired in yet: exercising it exposed a block-device
+    // driver defect (see the Task 10 status note in the plan doc) where a
+    // second `object_service_checkpoint` read/write cycle within the same
+    // boot session hard-resets the machine, with no panic or crash marker.
+    // The first-ever use of the write path is safe; only a second use
+    // within one session (i.e. this call, once boot's own restore already
+    // ran) triggers it. Root-cause and fix belongs in `block_device.rs`'s
+    // queue reinitialization, not here.
+
+    Ok(response)
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -796,14 +810,20 @@ fn dispatch_object_request_to_service(
             request.authority,
             ObjectId::new(request.object_id),
         ) {
-            Ok(inspection) => ObjectShellResponse {
-                status: STATUS_OK,
-                object_kind: OBJECT_KIND_NOTE,
-                field_id: FIELD_TEXT,
-                object_id: request.object_id,
-                revision: inspection.revision,
-                ..empty_response()
-            },
+            Ok(inspection) => {
+                let field_bytes = inspection.field_bytes(FIELD_TEXT).unwrap_or([0; 16]);
+                let bytes_written = u64::from(inspection.field_value_len(FIELD_TEXT).unwrap_or(0));
+                ObjectShellResponse {
+                    status: STATUS_OK,
+                    object_kind: OBJECT_KIND_NOTE,
+                    field_id: FIELD_TEXT,
+                    object_id: request.object_id,
+                    revision: inspection.revision,
+                    bytes_written,
+                    field_bytes,
+                    ..empty_response()
+                }
+            }
             Err(error) => error_response(error),
         },
         OP_REVISE_FIELD => match service.revise_field(
@@ -884,7 +904,7 @@ const fn empty_response() -> ObjectShellResponse {
         revision_count: 0,
         bytes_written: 0,
         capability: PackedCapability::from_raw(0),
-        reserved1: 0,
+        field_bytes: [0; 16],
     }
 }
 
@@ -905,7 +925,7 @@ const fn buffer_too_small_response() -> ObjectShellResponse {
         revision_count: 0,
         bytes_written: 0,
         capability: PackedCapability::from_raw(0),
-        reserved1: 0,
+        field_bytes: [0; 16],
     }
 }
 
@@ -1704,7 +1724,7 @@ mod tests {
             revision_count: 0,
             bytes_written: 0,
             capability: PackedCapability::from_raw(0),
-            reserved1: 0,
+            field_bytes: [0; 16],
         }
     }
 

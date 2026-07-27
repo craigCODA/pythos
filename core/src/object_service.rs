@@ -117,12 +117,20 @@ pub struct ObjectInspection {
 
 impl ObjectInspection {
     pub fn field_bytes(&self, field_id: u16) -> Option<[u8; 16]> {
+        self.field(field_id).map(TypedObjectField::value)
+    }
+
+    pub fn field_value_len(&self, field_id: u16) -> Option<u16> {
+        self.field(field_id).map(TypedObjectField::value_len)
+    }
+
+    fn field(&self, field_id: u16) -> Option<TypedObjectField> {
         let mut index = 0usize;
         while index < self.object.field_count() {
             if let Some(field) = self.object.field(index)
                 && field.field_id() == field_id
             {
-                return Some(field.value());
+                return Some(field);
             }
             index += 1;
         }
@@ -480,7 +488,7 @@ impl ObjectService {
         Ok(service)
     }
 
-    fn encode_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
+    pub fn encode_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
         let object_records = self.objects.object_records();
         let mut objects = [None; crate::object_service_checkpoint::OBJECT_SERVICE_OBJECT_CAPACITY];
         let mut relationships = [None;

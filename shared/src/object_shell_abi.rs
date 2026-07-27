@@ -122,7 +122,9 @@ pub struct ObjectShellResponse {
     pub revision_count: u64,
     pub bytes_written: u64,
     pub capability: PackedCapability,
-    pub reserved1: u64,
+    /// `OP_INSPECT_OBJECT`'s field value, zero-padded; `bytes_written` gives
+    /// the exact length. Unused (all zero) by every other operation.
+    pub field_bytes: [u8; 16],
 }
 
 #[cfg(test)]
@@ -141,7 +143,7 @@ mod tests {
         assert_eq!(OP_GET_HISTORY, 5);
         assert_eq!(NO_BYTE, u64::MAX);
         assert_eq!(core::mem::size_of::<ObjectShellRequest>(), 80);
-        assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 56);
+        assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 64);
         assert_eq!(core::mem::size_of::<ObjectListEntry>(), 16);
         assert_eq!(core::mem::size_of::<BootstrapCapabilityBlock>(), 168);
     }
@@ -194,7 +196,7 @@ mod tests {
             32
         );
         assert_eq!(core::mem::offset_of!(ObjectShellResponse, capability), 40);
-        assert_eq!(core::mem::offset_of!(ObjectShellResponse, reserved1), 48);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, field_bytes), 48);
     }
 
     #[test]

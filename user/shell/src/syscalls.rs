@@ -10,9 +10,10 @@ use core::arch::asm;
 use core::mem::size_of;
 use pythos_shared::object_shell_abi::{
     BootstrapCapabilityBlock, MAX_QUERY_RESULTS, MAX_SHELL_OBJECT_CAPS, NO_BYTE, OBJECT_KIND_NOTE,
-    OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_QUERY_OBJECTS,
-    ObjectListEntry, ObjectShellRequest, ObjectShellResponse, PackedCapability,
-    SHELL_BOOTSTRAP_MAGIC, STATUS_BAD_REQUEST, STATUS_OK, SYSCALL_CONSOLE_READ_BYTE,
+    OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_GET_HISTORY,
+    OP_INSPECT_OBJECT, OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
+    ObjectShellResponse, PackedCapability, SHELL_BOOTSTRAP_MAGIC, STATUS_BAD_REQUEST,
+    STATUS_BUFFER_TOO_SMALL, STATUS_DENIED, STATUS_NOT_FOUND, STATUS_OK, SYSCALL_CONSOLE_READ_BYTE,
     SYSCALL_CONSOLE_WRITE_BYTE, SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
 
@@ -204,9 +205,15 @@ pub fn dispatch_object_request(
     text: &[u8],
 ) {
     let mut transport = KernelObjectRequestTransport;
-    let response =
-        dispatch_object_request_with_transport(object_caps, request, text, &mut transport);
-    present_response(console, &response);
+    let mut query_results = [empty_object_list_entry(); MAX_QUERY_RESULTS];
+    let response = dispatch_object_request_with_transport(
+        object_caps,
+        request,
+        text,
+        &mut transport,
+        &mut query_results,
+    );
+    present_response(console, request.operation, &response, &query_results);
 }
 
 trait ObjectRequestTransport {
@@ -248,6 +255,7 @@ fn dispatch_object_request_with_transport<T: ObjectRequestTransport>(
     request: &mut ObjectShellRequest,
     text: &[u8],
     transport: &mut T,
+    query_results: &mut [ObjectListEntry; MAX_QUERY_RESULTS],
 ) -> ObjectShellResponse {
     match request.operation {
         OP_CREATE_OBJECT | OP_QUERY_OBJECTS => {
@@ -255,7 +263,8 @@ fn dispatch_object_request_with_transport<T: ObjectRequestTransport>(
         }
         _ => {
             if object_caps.object_capability(request.object_id).is_none() {
-                refresh_workspace_query(object_caps, transport);
+                let mut discard = [empty_object_list_entry(); MAX_QUERY_RESULTS];
+                refresh_workspace_query(object_caps, transport, &mut discard);
             }
             request.authority = object_caps
                 .object_capability(request.object_id)
@@ -267,7 +276,8 @@ fn dispatch_object_request_with_transport<T: ObjectRequestTransport>(
         request.input_ptr = text.as_ptr() as u64;
         request.input_len = text.len() as u64;
     }
-    let response = send_object_request_with_transport(object_caps, request, transport);
+    let response =
+        send_object_request_with_transport(object_caps, request, transport, query_results);
 
     if request.operation == OP_CREATE_OBJECT && response.status == STATUS_OK {
         object_caps.remember(response.object_id, response.capability);
@@ -279,9 +289,9 @@ fn send_object_request_with_transport<T: ObjectRequestTransport>(
     object_caps: &mut CapabilityMap,
     request: &mut ObjectShellRequest,
     transport: &mut T,
+    query_results: &mut [ObjectListEntry; MAX_QUERY_RESULTS],
 ) -> ObjectShellResponse {
     let mut response = empty_response();
-    let mut query_results = [empty_object_list_entry(); MAX_QUERY_RESULTS];
     if request.operation == OP_QUERY_OBJECTS {
         request.output_ptr = query_results.as_mut_ptr() as u64;
         request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
@@ -296,7 +306,7 @@ fn send_object_request_with_transport<T: ObjectRequestTransport>(
     }
 
     if request.operation == OP_QUERY_OBJECTS {
-        remember_valid_query_results(object_caps, &mut response, &query_results);
+        remember_valid_query_results(object_caps, &mut response, query_results);
     }
     response
 }
@@ -312,7 +322,7 @@ const fn empty_response() -> ObjectShellResponse {
         revision_count: 0,
         bytes_written: 0,
         capability: PackedCapability::from_raw(0),
-        reserved1: 0,
+        field_bytes: [0; 16],
     }
 }
 
@@ -326,6 +336,7 @@ const fn empty_object_list_entry() -> ObjectListEntry {
 fn refresh_workspace_query<T: ObjectRequestTransport>(
     object_caps: &mut CapabilityMap,
     transport: &mut T,
+    query_results: &mut [ObjectListEntry; MAX_QUERY_RESULTS],
 ) {
     let mut request = ObjectShellRequest {
         abi_major: OBJECT_SHELL_ABI_MAJOR,
@@ -343,7 +354,7 @@ fn refresh_workspace_query<T: ObjectRequestTransport>(
         reserved1: 0,
         reserved2: 0,
     };
-    let _ = send_object_request_with_transport(object_caps, &mut request, transport);
+    let _ = send_object_request_with_transport(object_caps, &mut request, transport, query_results);
 }
 
 fn remember_valid_query_results(
@@ -364,11 +375,91 @@ fn remember_valid_query_results(
     object_caps.remember_query_results(&query_results[..count]);
 }
 
-fn present_response(console: PackedCapability, response: &ObjectShellResponse) {
-    if response.status == STATUS_OK {
-        write_str(console, "OK\r\n");
-    } else {
-        write_str(console, "DENIED missing-capability\r\n");
+/// Format a typed response into the exact human transcript ADR 0051 shell
+/// sessions produce. PythCore returns only typed fields; all presentation
+/// text lives here in user space.
+fn present_response(
+    console: PackedCapability,
+    operation: u16,
+    response: &ObjectShellResponse,
+    query_results: &[ObjectListEntry; MAX_QUERY_RESULTS],
+) {
+    match response.status {
+        STATUS_OK => present_ok_response(console, operation, response, query_results),
+        STATUS_DENIED | STATUS_NOT_FOUND => {
+            write_str(console, "DENIED missing-capability\r\n");
+        }
+        STATUS_BUFFER_TOO_SMALL => write_str(console, "ERROR buffer-too-small\r\n"),
+        _ => write_str(console, "ERROR bad-request\r\n"),
+    }
+}
+
+fn present_ok_response(
+    console: PackedCapability,
+    operation: u16,
+    response: &ObjectShellResponse,
+    query_results: &[ObjectListEntry; MAX_QUERY_RESULTS],
+) {
+    match operation {
+        OP_CREATE_OBJECT => {
+            write_str(console, "CREATED object:");
+            write_decimal(console, response.object_id);
+            write_str(console, " revision:");
+            write_decimal(console, response.revision);
+            write_str(console, "\r\n");
+        }
+        OP_QUERY_OBJECTS => {
+            let entry_size = size_of::<ObjectListEntry>() as u64;
+            let count = (response.bytes_written / entry_size) as usize;
+            for entry in &query_results[..count.min(query_results.len())] {
+                write_str(console, "object:");
+                write_decimal(console, entry.object_id);
+                write_str(console, " kind:note\r\n");
+            }
+        }
+        OP_REVISE_FIELD => {
+            write_str(console, "COMMITTED revision:");
+            write_decimal(console, response.revision);
+            write_str(console, "\r\n");
+        }
+        OP_INSPECT_OBJECT => {
+            write_str(console, "text=\"");
+            let len = (response.bytes_written as usize).min(response.field_bytes.len());
+            write_text_bytes(console, &response.field_bytes[..len]);
+            write_str(console, "\" revision:");
+            write_decimal(console, response.revision);
+            write_str(console, "\r\n");
+        }
+        OP_GET_HISTORY => {
+            write_str(console, "history object:");
+            write_decimal(console, response.object_id);
+            write_str(console, " revisions:");
+            write_decimal(console, response.revision_count);
+            write_str(console, "\r\n");
+        }
+        _ => write_str(console, "OK\r\n"),
+    }
+}
+
+fn write_decimal(console: PackedCapability, mut value: u64) {
+    let mut digits = [0u8; 20];
+    let mut len = 0usize;
+    loop {
+        digits[len] = b'0' + (value % 10) as u8;
+        len += 1;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    for &digit in digits[..len].iter().rev() {
+        write_byte(console, digit);
+    }
+}
+
+fn write_text_bytes(console: PackedCapability, bytes: &[u8]) {
+    for &byte in bytes {
+        write_byte(console, byte);
     }
 }
 
@@ -479,9 +570,15 @@ mod tests {
             reserved2: 0,
         };
         let mut transport = QueryThenInspectTransport::default();
+        let mut query_results = [empty_object_list_entry(); MAX_QUERY_RESULTS];
 
-        let response =
-            dispatch_object_request_with_transport(&mut map, &mut request, b"", &mut transport);
+        let response = dispatch_object_request_with_transport(
+            &mut map,
+            &mut request,
+            b"",
+            &mut transport,
+            &mut query_results,
+        );
 
         assert_eq!(response.status, STATUS_OK);
         assert_eq!(transport.call_count, 2);
@@ -533,11 +630,13 @@ mod tests {
             reserved2: 0,
         };
 
+        let mut query_results = [empty_object_list_entry(); MAX_QUERY_RESULTS];
         let response = dispatch_object_request_with_transport(
             &mut map,
             &mut request,
             b"",
             &mut UnhandledTransport,
+            &mut query_results,
         );
 
         assert_eq!(response.status, STATUS_BAD_REQUEST);
@@ -583,11 +682,13 @@ mod tests {
             reserved2: 0,
         };
 
+        let mut query_results = [empty_object_list_entry(); MAX_QUERY_RESULTS];
         let response = dispatch_object_request_with_transport(
             &mut map,
             &mut request,
             b"",
             &mut MalformedQueryTransport,
+            &mut query_results,
         );
 
         assert_eq!(response.status, STATUS_BAD_REQUEST);

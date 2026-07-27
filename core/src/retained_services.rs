@@ -7,6 +7,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(not(test))]
 use crate::block_device::BlockDeviceInfo;
+#[cfg(not(test))]
+use crate::general_storage_persistence::GeneralStoragePersistenceError;
 use crate::object_service::{ObjectService, ObjectServiceError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,6 +16,8 @@ pub enum RetainedServiceError {
     ObjectServiceAlreadyInitialized,
     ObjectServiceUnavailable,
     ObjectService(ObjectServiceError),
+    #[cfg(not(test))]
+    Persistence(GeneralStoragePersistenceError),
 }
 
 struct RetainedObjectServiceStorage(UnsafeCell<MaybeUninit<ObjectService>>);
@@ -37,6 +41,30 @@ unsafe impl Sync for RetainedObjectServiceStorage {}
 static OBJECT_SERVICE: RetainedObjectServiceStorage =
     RetainedObjectServiceStorage(UnsafeCell::new(MaybeUninit::uninit()));
 static OBJECT_SERVICE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(not(test))]
+struct RetainedDeviceStorage(UnsafeCell<MaybeUninit<BlockDeviceInfo>>);
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: the retained device handle is written exactly once, before
+//    the object service is marked initialized, and read only by
+//    `persist_object_service` after that point.
+// 2. Established by: `initialize_object_service_from_device` writes this slot
+//    and only then flips `OBJECT_SERVICE_INITIALIZED`, which every reader
+//    checks first.
+// 3. Lifetime: storage is static and lives for the whole boot.
+// 4. Pointer ownership: this module exclusively owns the storage.
+// 5. Alignment: `MaybeUninit<BlockDeviceInfo>` provides its alignment.
+// 6. Mapped length: exactly one `BlockDeviceInfo` value is accessed.
+// 7. Concurrency: ADR 0051 normal boot is single-core and non-reentrant.
+// 8. Violation: reading before the one write would expose uninitialized data;
+//    the initialized-flag check on every read path prevents this.
+unsafe impl Sync for RetainedDeviceStorage {}
+
+#[cfg(not(test))]
+static OBJECT_SERVICE_DEVICE: RetainedDeviceStorage =
+    RetainedDeviceStorage(UnsafeCell::new(MaybeUninit::uninit()));
 
 pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedServiceError> {
     if OBJECT_SERVICE_INITIALIZED
@@ -93,7 +121,29 @@ pub fn initialize_object_service_from_device(
         OBJECT_SERVICE_INITIALIZED.store(false, Ordering::SeqCst);
         return Err(RetainedServiceError::ObjectService(error));
     }
+    // SAFETY: matches RetainedDeviceStorage's own invariant above - this is
+    // the one write, performed before any caller can observe
+    // OBJECT_SERVICE_INITIALIZED as true and call persist_object_service.
+    unsafe {
+        (*OBJECT_SERVICE_DEVICE.0.get()).write(device);
+    }
     Ok(())
+}
+
+/// Encode the retained object service's current state and write it to the
+/// ADR 0052 two-slot checkpoint, so it survives a reboot. Callers invoke this
+/// after any syscall that mutates durable object state (create, revise).
+#[cfg(not(test))]
+pub fn persist_object_service() -> Result<(), RetainedServiceError> {
+    let snapshot = with_object_service(|service| service.encode_snapshot())?
+        .map_err(RetainedServiceError::ObjectService)?;
+    // SAFETY: matches RetainedDeviceStorage's own invariant above - this read
+    // only happens once OBJECT_SERVICE_INITIALIZED is true (checked inside
+    // with_object_service above, which this call is gated behind), and the
+    // device slot is always written before that flag is observably true.
+    let device = unsafe { (*OBJECT_SERVICE_DEVICE.0.get()).assume_init() };
+    crate::object_service_checkpoint::write_object_service_checkpoint(device, &snapshot)
+        .map_err(RetainedServiceError::Persistence)
 }
 
 pub fn with_object_service<R>(

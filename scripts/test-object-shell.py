@@ -1,6 +1,15 @@
 #!/usr/bin/env python
-"""Task 8/9 acceptance test: persistent ring-3 shell launch, plus a
-repeatable, capability-gated `reboot` that actually resets the machine."""
+"""Task 8/9/10 acceptance test: persistent ring-3 shell launch, a
+repeatable capability-gated `reboot` that actually resets the machine, and
+the typed object lifecycle (create/inspect/revise/history) with exact
+response text asserted per operation.
+
+Does NOT yet assert that object state survives `reboot` - persistence-on-
+write is implemented (`retained_services::persist_object_service`) but not
+wired into the live syscall path, because exercising it exposed a
+block-device driver defect (a second `object_service_checkpoint`
+read/write cycle within one boot session hard-resets the machine). See the
+Task 10 status note in the plan doc."""
 
 from __future__ import annotations
 
@@ -15,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "object-shell-com1.log"
+STORAGE_IMAGE = TARGET / "pythos-store.img"
 SHELL_PORT = 4583
 
 
@@ -86,6 +96,16 @@ def read_until(sock: socket.socket, needle: bytes, timeout: float) -> bytes:
     raise AssertionError(f"timed out waiting for {needle!r}; received {bytes(buffer)!r}")
 
 
+def send_command(sock: socket.socket, line: bytes, timeout: float = 10) -> bytes:
+    sock.sendall(line + b"\r\n")
+    return read_until(sock, b"pyth> ", timeout)
+
+
+def expect_line(transcript: bytes, expected: bytes, context: str) -> None:
+    if expected not in transcript:
+        raise AssertionError(f"{context}: expected {expected!r} in {transcript!r}")
+
+
 def build_verified_user_shell() -> None:
     run([sys.executable, "scripts/build-user-shell.py"])
     run([sys.executable, "scripts/verify-user-elf.py"])
@@ -128,6 +148,11 @@ def main() -> int:
     build_boot_image()
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
+    # Task 10's lifecycle asserts a specific deterministic object id
+    # (1042, the first `next_shell_note_id`); a storage image left over
+    # from an earlier run would already have consumed that id.
+    if STORAGE_IMAGE.exists():
+        STORAGE_IMAGE.unlink()
     popen_kwargs: dict[str, object] = {}
     if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
@@ -167,6 +192,37 @@ def main() -> int:
                 raise AssertionError(f"missing help output: {help_output!r}")
             print("OBJECT_SHELL_TASK8_TEST_OK")
 
+            # Task 10: the full typed object lifecycle, asserting the exact
+            # response text ADR 0051 defines for each operation - not just
+            # success markers. `next_shell_note_id` starts at 1042 on a fresh
+            # boot, so the first created object is deterministically 1042.
+            expect_line(
+                send_command(sock, b"create kind:note"),
+                b"CREATED object:1042 revision:1\r\n",
+                "create",
+            )
+            expect_line(
+                send_command(sock, b"inspect object:1042"),
+                b'text="" revision:1\r\n',
+                "inspect before revise",
+            )
+            expect_line(
+                send_command(sock, b'revise object:1042 text="hello"'),
+                b"COMMITTED revision:2\r\n",
+                "revise",
+            )
+            expect_line(
+                send_command(sock, b"inspect object:1042"),
+                b'text="hello" revision:2\r\n',
+                "inspect after revise, before reboot",
+            )
+            expect_line(
+                send_command(sock, b"history object:1042"),
+                b"history object:1042 revisions:2\r\n",
+                "history before reboot",
+            )
+            print("OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK")
+
             # Task 9: `reboot` must actually reset the machine (a second real
             # boot, not a stub that only prints markers) and the shell must
             # come back up cleanly, proving the reset path is repeatable.
@@ -179,7 +235,7 @@ def main() -> int:
                 raise AssertionError(
                     f"missing post-reboot shell ready banner: {second_banner!r}"
                 )
-        print("OBJECT_SHELL_TASK9_REBOOT_TEST_OK")
+            print("OBJECT_SHELL_TASK9_REBOOT_TEST_OK")
         return 0
     finally:
         terminate_process_tree(process)
