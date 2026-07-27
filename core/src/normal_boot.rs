@@ -7,7 +7,7 @@
 //! now normal boot ends in a persistent idle loop.
 
 use crate::memory::physical::PhysicalMemory;
-use crate::{normal_init, qemu_exit, serial};
+use crate::{normal_init, qemu_exit, retained_services, serial};
 use pythos_shared::boot_protocol::PythBootInfo;
 
 #[cfg(not(test))]
@@ -21,7 +21,10 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         }
     };
     let _ = &substrate.kernel_address_space;
-    let _ = substrate.block_device;
+    if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
 
     serial::init_com2();

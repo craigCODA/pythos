@@ -92,6 +92,16 @@ Slot B
 sector 250: torn-write test sector
 ```
 
+The bounded service capacity is explicit: the shell query/bootstrap surface
+supports eight reachable object entries, and the retained store reserves one
+additional dynamic object slot for the known external denial fixture. Current
+revision and workspace-membership checkpoint tables match that nine-object
+retained-store capacity, so the external proof object does not reduce the
+shell's eight-entry query surface. The retained object service uses
+service-specific relationship and revision-history bounds: the relationship
+object index keeps those nine dynamic objects plus two workspace roots, while
+legacy Phase 7 verification stores keep their smaller stack-friendly defaults.
+
 Updates write the inactive slot completely, write that slot's commit marker
 last, verify the slot, and then treat the highest valid committed generation as
 current. Recovery selects the highest valid committed generation. The checksum

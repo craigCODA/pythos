@@ -249,6 +249,7 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::TextFieldWidget => 7,
         ObjectKind::WorkspaceSession => 8,
         ObjectKind::ObjectBrowserWindow => 9,
+        ObjectKind::Note => 10,
     }
 }
 
@@ -263,6 +264,7 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         7 => Ok(ObjectKind::TextFieldWidget),
         8 => Ok(ObjectKind::WorkspaceSession),
         9 => Ok(ObjectKind::ObjectBrowserWindow),
+        10 => Ok(ObjectKind::Note),
         _ => Err(ObjectFormatError::InvalidKind),
     }
 }
@@ -330,6 +332,23 @@ mod tests {
         assert_eq!(field.field_version(), 2);
         assert_eq!(field.value_len(), 8);
         assert_eq!(decoded.field(1), None);
+    }
+
+    #[test]
+    fn note_kind_round_trips_with_stable_code() {
+        let mut record = TypedObjectRecord::new(ObjectId::new(1042), ObjectKind::Note, 1);
+        record
+            .push_field(TypedObjectField::new(1, 1, b"hello").unwrap())
+            .unwrap();
+
+        let decoded = TypedObjectRecord::decode(&record.encode()).unwrap();
+        let field = decoded.field(0).unwrap();
+
+        assert_eq!(decoded.object_kind(), ObjectKind::Note);
+        assert_eq!(decoded.object_id(), ObjectId::new(1042));
+        assert_eq!(field.field_id(), 1);
+        assert_eq!(field.value_len(), 5);
+        assert_eq!(&field.value()[..5], b"hello");
     }
 
     #[test]

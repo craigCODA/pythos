@@ -26,7 +26,7 @@ pub struct BlockExtent {
 }
 
 impl BlockExtent {
-    const fn new(start_block: u16, block_count: u16) -> Self {
+    pub const fn new(start_block: u16, block_count: u16) -> Self {
         Self {
             start_block,
             block_count,
@@ -187,6 +187,20 @@ impl BlockAllocator {
         if end > device.capacity_sectors() {
             return Err(AllocatorError::InvalidLayout);
         }
+        Ok(allocator)
+    }
+
+    pub fn restore_from_bitmap(
+        base_sector: u64,
+        block_count: u16,
+        committed_bitmap: u64,
+    ) -> Result<Self, AllocatorError> {
+        let mut allocator = Self::new(base_sector, block_count)?;
+        if bitmap_outside_block_count(committed_bitmap, block_count) {
+            return Err(AllocatorError::InvalidExtent);
+        }
+        allocator.bitmap = committed_bitmap;
+        allocator.committed_bitmap = committed_bitmap;
         Ok(allocator)
     }
 
@@ -386,6 +400,15 @@ fn bitmap_with_extent(
         offset += 1;
     }
     Ok(bitmap)
+}
+
+fn bitmap_outside_block_count(bitmap: u64, block_count: u16) -> bool {
+    if block_count == MAX_ALLOCATOR_BLOCKS {
+        false
+    } else {
+        let allowed = (1u64 << block_count) - 1;
+        bitmap & !allowed != 0
+    }
 }
 
 fn validate_record(record: AllocatorJournalRecord) -> Result<(), AllocatorError> {

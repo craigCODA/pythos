@@ -6,7 +6,7 @@ use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
 use crate::tasks::TaskId;
 
-const CAPABILITY_TABLE_SLOTS: usize = 8;
+const CAPABILITY_TABLE_SLOTS: usize = 32;
 const PROOF_RESOURCE_ID: ResourceId = ResourceId::new(0xC0DA_0001);
 const PROOF_RIGHTS: RightsMask = RightsMask::new(RightsMask::READ | RightsMask::WRITE);
 
@@ -24,6 +24,20 @@ pub enum CapabilityError {
 pub struct CapabilityHandle {
     slot: u32,
     generation: u32,
+}
+
+impl CapabilityHandle {
+    pub const fn from_parts(slot: u32, generation: u32) -> Self {
+        Self { slot, generation }
+    }
+
+    pub const fn slot(self) -> u32 {
+        self.slot
+    }
+
+    pub const fn generation(self) -> u32 {
+        self.generation
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

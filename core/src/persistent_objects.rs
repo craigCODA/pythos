@@ -312,6 +312,7 @@ fn relationship_kind_code(kind: RelationshipKind) -> u16 {
         RelationshipKind::Blocks => 1,
         RelationshipKind::CreatedBy => 2,
         RelationshipKind::DependsOn => 3,
+        RelationshipKind::BelongsTo => 4,
     }
 }
 
@@ -320,6 +321,7 @@ fn relationship_kind_from_code(code: u16) -> Result<RelationshipKind, Persistent
         1 => Ok(RelationshipKind::Blocks),
         2 => Ok(RelationshipKind::CreatedBy),
         3 => Ok(RelationshipKind::DependsOn),
+        4 => Ok(RelationshipKind::BelongsTo),
         _ => Err(PersistentObjectError::BadSnapshot),
     }
 }

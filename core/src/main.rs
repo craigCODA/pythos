@@ -31,6 +31,10 @@ mod normal_boot;
 mod normal_init;
 mod object_browser;
 mod object_relationships;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+mod object_service;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+mod object_service_checkpoint;
 mod permission_validation;
 mod persistent_objects;
 mod process;
@@ -39,6 +43,8 @@ mod process_launch;
 mod process_model;
 mod qemu_exit;
 mod resource_quotas;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+mod retained_services;
 mod revision_history;
 mod runtime_loader;
 mod scheduler;

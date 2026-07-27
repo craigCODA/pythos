@@ -7,9 +7,15 @@ use crate::service_identity::{ServiceId, ServiceIdentityError, ServiceIdentityTa
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::tasks::TaskId;
 use crate::typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord};
+use pythos_shared::object_shell_abi::MAX_QUERY_RESULTS;
 
-const MAX_CURRENT_OBJECTS: usize = 4;
-const MAX_REVISIONS: usize = 8;
+pub const MAX_CURRENT_OBJECTS: usize = 4;
+pub const MAX_REVISIONS: usize = MAX_QUERY_RESULTS;
+pub const OBJECT_SERVICE_CURRENT_OBJECTS: usize = MAX_QUERY_RESULTS + 1;
+
+pub type RevisionHistory = BoundedRevisionHistory<MAX_CURRENT_OBJECTS, MAX_REVISIONS>;
+pub type ObjectServiceRevisionHistory =
+    BoundedRevisionHistory<OBJECT_SERVICE_CURRENT_OBJECTS, MAX_REVISIONS>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RevisionHistoryError {
@@ -44,6 +50,22 @@ pub struct RevisionRecord {
 }
 
 impl RevisionRecord {
+    pub const fn new(
+        object_id: ObjectId,
+        revision: u64,
+        timestamp_ticks: u64,
+        writer: ServiceId,
+        object: TypedObjectRecord,
+    ) -> Self {
+        Self {
+            object_id,
+            revision,
+            timestamp_ticks,
+            writer,
+            object,
+        }
+    }
+
     pub const fn object_id(self) -> ObjectId {
         self.object_id
     }
@@ -86,16 +108,18 @@ impl CurrentObject {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RevisionHistory {
-    current: [Option<CurrentObject>; MAX_CURRENT_OBJECTS],
-    revisions: [Option<RevisionRecord>; MAX_REVISIONS],
+pub struct BoundedRevisionHistory<const CURRENT_CAPACITY: usize, const REVISION_CAPACITY: usize> {
+    current: [Option<CurrentObject>; CURRENT_CAPACITY],
+    revisions: [Option<RevisionRecord>; REVISION_CAPACITY],
 }
 
-impl RevisionHistory {
+impl<const CURRENT_CAPACITY: usize, const REVISION_CAPACITY: usize>
+    BoundedRevisionHistory<CURRENT_CAPACITY, REVISION_CAPACITY>
+{
     pub const fn new() -> Self {
         Self {
-            current: [None; MAX_CURRENT_OBJECTS],
-            revisions: [None; MAX_REVISIONS],
+            current: [None; CURRENT_CAPACITY],
+            revisions: [None; REVISION_CAPACITY],
         }
     }
 
@@ -109,7 +133,7 @@ impl RevisionHistory {
             return Err(RevisionHistoryError::DuplicateObject);
         }
         let mut index = 0;
-        while index < MAX_CURRENT_OBJECTS {
+        while index < CURRENT_CAPACITY {
             if self.current[index].is_none() {
                 self.current[index] = Some(CurrentObject {
                     revision: 1,
@@ -155,7 +179,7 @@ impl RevisionHistory {
 
     pub fn prior_revision(self, object_id: ObjectId, revision: u64) -> Option<RevisionRecord> {
         let mut index = 0;
-        while index < MAX_REVISIONS {
+        while index < REVISION_CAPACITY {
             if let Some(record) = self.revisions[index]
                 && record.object_id() == object_id
                 && record.revision() == revision
@@ -170,7 +194,7 @@ impl RevisionHistory {
     pub fn revision_count(self, object_id: ObjectId) -> usize {
         let mut count = 0;
         let mut index = 0;
-        while index < MAX_REVISIONS {
+        while index < REVISION_CAPACITY {
             if let Some(record) = self.revisions[index]
                 && record.object_id() == object_id
             {
@@ -181,9 +205,59 @@ impl RevisionHistory {
         count
     }
 
+    pub fn current_records(self) -> [Option<RevisionRecord>; CURRENT_CAPACITY] {
+        let mut records = [None; CURRENT_CAPACITY];
+        let mut index = 0;
+        while index < CURRENT_CAPACITY {
+            records[index] = self.current[index].map(CurrentObject::as_revision);
+            index += 1;
+        }
+        records
+    }
+
+    pub fn prior_records(self) -> [Option<RevisionRecord>; REVISION_CAPACITY] {
+        self.revisions
+    }
+
+    pub fn restore_from_records(
+        current: [Option<RevisionRecord>; CURRENT_CAPACITY],
+        revisions: [Option<RevisionRecord>; REVISION_CAPACITY],
+    ) -> Result<Self, RevisionHistoryError> {
+        let mut restored = Self::new();
+        let mut index = 0;
+        while index < CURRENT_CAPACITY {
+            if let Some(record) = current[index] {
+                if record.object_id() != record.object().object_id() {
+                    return Err(RevisionHistoryError::UnknownObject);
+                }
+                if restored.current_index(record.object_id()).is_some() {
+                    return Err(RevisionHistoryError::DuplicateObject);
+                }
+                restored.current[index] = Some(CurrentObject {
+                    revision: record.revision(),
+                    timestamp_ticks: record.timestamp_ticks(),
+                    writer: record.writer(),
+                    object: record.object(),
+                });
+            }
+            index += 1;
+        }
+        let mut revision_index = 0;
+        while revision_index < REVISION_CAPACITY {
+            if let Some(record) = revisions[revision_index] {
+                if restored.current_index(record.object_id()).is_none() {
+                    return Err(RevisionHistoryError::UnknownObject);
+                }
+            }
+            revision_index += 1;
+        }
+        restored.revisions = revisions;
+        Ok(restored)
+    }
+
     fn push_revision(&mut self, record: RevisionRecord) -> Result<(), RevisionHistoryError> {
         let mut index = 0;
-        while index < MAX_REVISIONS {
+        while index < REVISION_CAPACITY {
             if self.revisions[index].is_none() {
                 self.revisions[index] = Some(record);
                 return Ok(());
@@ -195,7 +269,7 @@ impl RevisionHistory {
 
     fn current_index(self, object_id: ObjectId) -> Option<usize> {
         let mut index = 0;
-        while index < MAX_CURRENT_OBJECTS {
+        while index < CURRENT_CAPACITY {
             if let Some(current) = self.current[index]
                 && current.object.object_id() == object_id
             {
@@ -341,6 +415,38 @@ mod tests {
         assert_eq!(
             history.update_object(object(2, b"two"), 50, writer),
             Err(RevisionHistoryError::NonMonotonicTimestamp)
+        );
+    }
+
+    #[test]
+    fn current_capacity_keeps_eight_shell_notes_plus_external_denial_fixture() {
+        let writer = writer(6);
+        let mut history = ObjectServiceRevisionHistory::new();
+        history
+            .create_object(
+                TypedObjectRecord::new(ObjectId::new(2001), ObjectKind::Note, 1),
+                1,
+                writer,
+            )
+            .unwrap();
+
+        for index in 0..pythos_shared::object_shell_abi::MAX_QUERY_RESULTS {
+            history
+                .create_object(
+                    TypedObjectRecord::new(ObjectId::new(1042 + index as u64), ObjectKind::Note, 1),
+                    2 + index as u64,
+                    writer,
+                )
+                .unwrap();
+        }
+
+        assert!(history.current_revision(ObjectId::new(2001)).is_some());
+        assert!(
+            history
+                .current_revision(ObjectId::new(
+                    1042 + pythos_shared::object_shell_abi::MAX_QUERY_RESULTS as u64 - 1
+                ))
+                .is_some()
         );
     }
 }

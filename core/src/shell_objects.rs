@@ -35,6 +35,7 @@ pub enum ObjectKind {
     ObjectBrowserWindow,
     ButtonWidget,
     TextFieldWidget,
+    Note,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

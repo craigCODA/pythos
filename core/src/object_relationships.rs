@@ -5,9 +5,19 @@
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::typed_object_format::TypedObjectRecord;
+use pythos_shared::object_shell_abi::MAX_QUERY_RESULTS;
 
-const MAX_OBJECTS: usize = 4;
-const MAX_RELATIONSHIPS: usize = 8;
+pub const SHELL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4845_4C01;
+pub const EXTERNAL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4558_5401;
+const LEGACY_RELATIONSHIP_OBJECTS: usize = 4;
+const LEGACY_RELATIONSHIPS: usize = 8;
+pub const OBJECT_SERVICE_RELATIONSHIP_OBJECTS: usize = MAX_QUERY_RESULTS + 3;
+pub const OBJECT_SERVICE_RELATIONSHIPS: usize = MAX_QUERY_RESULTS + 1;
+
+pub type RelationshipStore =
+    BoundedRelationshipStore<LEGACY_RELATIONSHIP_OBJECTS, LEGACY_RELATIONSHIPS>;
+pub type ObjectServiceRelationshipStore =
+    BoundedRelationshipStore<OBJECT_SERVICE_RELATIONSHIP_OBJECTS, OBJECT_SERVICE_RELATIONSHIPS>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelationshipError {
@@ -24,6 +34,7 @@ pub enum RelationshipKind {
     Blocks,
     CreatedBy,
     DependsOn,
+    BelongsTo,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -56,16 +67,21 @@ impl ObjectRelationship {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RelationshipStore {
-    objects: [Option<TypedObjectRecord>; MAX_OBJECTS],
-    relationships: [Option<ObjectRelationship>; MAX_RELATIONSHIPS],
+pub struct BoundedRelationshipStore<
+    const OBJECT_CAPACITY: usize,
+    const RELATIONSHIP_CAPACITY: usize,
+> {
+    objects: [Option<TypedObjectRecord>; OBJECT_CAPACITY],
+    relationships: [Option<ObjectRelationship>; RELATIONSHIP_CAPACITY],
 }
 
-impl RelationshipStore {
+impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
+    BoundedRelationshipStore<OBJECT_CAPACITY, RELATIONSHIP_CAPACITY>
+{
     pub const fn new() -> Self {
         Self {
-            objects: [None; MAX_OBJECTS],
-            relationships: [None; MAX_RELATIONSHIPS],
+            objects: [None; OBJECT_CAPACITY],
+            relationships: [None; RELATIONSHIP_CAPACITY],
         }
     }
 
@@ -74,7 +90,7 @@ impl RelationshipStore {
             return Err(RelationshipError::DuplicateObject);
         }
         let mut index = 0;
-        while index < MAX_OBJECTS {
+        while index < OBJECT_CAPACITY {
             if self.objects[index].is_none() {
                 self.objects[index] = Some(object);
                 return Ok(());
@@ -98,7 +114,7 @@ impl RelationshipStore {
             return Err(RelationshipError::DuplicateRelationship);
         }
         let mut index = 0;
-        while index < MAX_RELATIONSHIPS {
+        while index < RELATIONSHIP_CAPACITY {
             if self.relationships[index].is_none() {
                 self.relationships[index] = Some(relationship);
                 return Ok(());
@@ -114,7 +130,7 @@ impl RelationshipStore {
         kind: RelationshipKind,
     ) -> Option<ObjectRelationship> {
         let mut index = 0;
-        while index < MAX_RELATIONSHIPS {
+        while index < RELATIONSHIP_CAPACITY {
             if let Some(relationship) = self.relationships[index]
                 && relationship.source() == source
                 && relationship.kind() == kind
@@ -129,7 +145,7 @@ impl RelationshipStore {
     pub fn relationship_count(self) -> usize {
         let mut count = 0;
         let mut index = 0;
-        while index < MAX_RELATIONSHIPS {
+        while index < RELATIONSHIP_CAPACITY {
             if self.relationships[index].is_some() {
                 count += 1;
             }
@@ -138,9 +154,17 @@ impl RelationshipStore {
         count
     }
 
+    pub fn has_object(self, object_id: ObjectId) -> bool {
+        self.contains_object(object_id)
+    }
+
+    pub fn relationship_records(self) -> [Option<ObjectRelationship>; RELATIONSHIP_CAPACITY] {
+        self.relationships
+    }
+
     fn contains_object(self, object_id: ObjectId) -> bool {
         let mut index = 0;
-        while index < MAX_OBJECTS {
+        while index < OBJECT_CAPACITY {
             if let Some(object) = self.objects[index]
                 && object.object_id() == object_id
             {
@@ -153,7 +177,7 @@ impl RelationshipStore {
 
     fn contains_relationship(self, relationship: ObjectRelationship) -> bool {
         let mut index = 0;
-        while index < MAX_RELATIONSHIPS {
+        while index < RELATIONSHIP_CAPACITY {
             if self.relationships[index] == Some(relationship) {
                 return true;
             }
@@ -286,6 +310,85 @@ mod tests {
         assert_eq!(
             store.add_relationship(relationship),
             Err(RelationshipError::DuplicateRelationship)
+        );
+    }
+
+    #[test]
+    fn belongs_to_relationship_distinguishes_shell_and_external_workspaces() {
+        let shell_workspace = object(SHELL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+        let external_workspace = object(EXTERNAL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+        let note = object(1042, ObjectKind::Note);
+        let external_note = object(2001, ObjectKind::Note);
+        let mut store = RelationshipStore::new();
+        store.insert_object(shell_workspace).unwrap();
+        store.insert_object(external_workspace).unwrap();
+        store.insert_object(note).unwrap();
+        store.insert_object(external_note).unwrap();
+
+        store
+            .add_relationship(ObjectRelationship::new(
+                note.object_id(),
+                RelationshipKind::BelongsTo,
+                shell_workspace.object_id(),
+            ))
+            .unwrap();
+        store
+            .add_relationship(ObjectRelationship::new(
+                external_note.object_id(),
+                RelationshipKind::BelongsTo,
+                external_workspace.object_id(),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            store
+                .query_first(note.object_id(), RelationshipKind::BelongsTo)
+                .unwrap()
+                .target(),
+            shell_workspace.object_id()
+        );
+        assert_eq!(
+            store
+                .query_first(external_note.object_id(), RelationshipKind::BelongsTo)
+                .unwrap()
+                .target(),
+            external_workspace.object_id()
+        );
+    }
+
+    #[test]
+    fn relationship_capacity_keeps_eight_shell_notes_plus_workspace_roots_and_external_fixture() {
+        let mut store = ObjectServiceRelationshipStore::new();
+        let shell_workspace = object(SHELL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+        let external_workspace = object(EXTERNAL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
+        store.insert_object(shell_workspace).unwrap();
+        store.insert_object(external_workspace).unwrap();
+
+        for index in 0..pythos_shared::object_shell_abi::MAX_QUERY_RESULTS {
+            let note = object(1042 + index as u64, ObjectKind::Note);
+            store.insert_object(note).unwrap();
+            store
+                .add_relationship(ObjectRelationship::new(
+                    note.object_id(),
+                    RelationshipKind::BelongsTo,
+                    shell_workspace.object_id(),
+                ))
+                .unwrap();
+        }
+
+        let external_note = object(2001, ObjectKind::Note);
+        store.insert_object(external_note).unwrap();
+        store
+            .add_relationship(ObjectRelationship::new(
+                external_note.object_id(),
+                RelationshipKind::BelongsTo,
+                external_workspace.object_id(),
+            ))
+            .unwrap();
+
+        assert_eq!(
+            store.relationship_count(),
+            pythos_shared::object_shell_abi::MAX_QUERY_RESULTS + 1
         );
     }
 }
