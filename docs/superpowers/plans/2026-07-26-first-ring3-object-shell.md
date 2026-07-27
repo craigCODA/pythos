@@ -527,6 +527,29 @@ git commit -m "feat(boot): split normal boot from verification proofs"
 
 ### Task 2: COM2 UART Initialization And Harness
 
+**Status: COMPLETE (2026-07-26).** Implemented as specified, with two
+adaptations:
+
+- Since `serial.rs`'s COM2 items (`init_com2`, `write_byte_com2`,
+  `try_read_byte_com2`, `uart_init_sequence`, `UartWrite`, `COM2_BASE`,
+  `RECEIVE_READY`) are only called from `normal_boot` (a `verify`-excluded
+  module), they are legitimately dead code under `--features verify`. Added
+  `#![cfg_attr(feature = "verify", allow(dead_code))]` at the module level
+  (matching the existing `cinematic_boot.rs` precedent for the same class of
+  build-config-asymmetric dead code) rather than gating each item individually.
+- **Real bug found and fixed in `scripts/test-com2-shell-transport.py`
+  itself**, not the product code: the original (plan-provided) version used
+  `subprocess.Popen(..., stdout=subprocess.PIPE)` and `process.terminate()` to
+  end the test early after the socket check. On Windows,
+  `Popen.terminate()`/`.kill()` only signal the *direct* child
+  (`run-qemu.py`'s own Python process) via `TerminateProcess`, which bypasses
+  that process's own `finally` cleanup entirely — so its
+  `qemu-system-x86_64.exe` grandchild was never reaped and was left running
+  indefinitely after every test run (confirmed: found an orphaned QEMU process
+  still alive after the harness "completed"). Fixed by redirecting stdout to
+  `DEVNULL` (removing an unrelated pipe-buffer deadlock risk too) and using
+  `taskkill /F /T /PID <pid>` on Windows to kill the whole process tree.
+
 **Files:**
 - Modify: `core/src/serial.rs`
 - Modify: `core/src/normal_boot.rs`
@@ -538,7 +561,7 @@ git commit -m "feat(boot): split normal boot from verification proofs"
 - Consumes: COM1 serial writer and normal boot path from Task 1.
 - Produces: `serial::init_com2()`, `serial::write_byte_com2(byte: u8)`, `serial::try_read_byte_com2() -> Option<u8>`, marker `PYTHOS:CORE:COM2_READY`, `scripts/run-qemu.py --shell-port <port>`.
 
-- [ ] **Step 1: Write COM2 initialization unit test**
+- [x] **Step 1: Write COM2 initialization unit test**
 
 In `core/src/serial.rs`, add a pure init-sequence helper test:
 
@@ -563,7 +586,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run the failing COM2 unit test**
+- [x] **Step 2: Run the failing COM2 unit test**
 
 Run:
 
@@ -573,7 +596,7 @@ cargo test -p pythos-core serial::tests::com2_init_sequence_targets_legacy_base
 
 Expected: FAIL because COM2 helpers do not exist.
 
-- [ ] **Step 3: Implement COM2 initialization**
+- [x] **Step 3: Implement COM2 initialization**
 
 In `core/src/serial.rs`, define:
 
@@ -621,7 +644,7 @@ pub fn init_com2() {
 
 Keep COM1 behavior unchanged.
 
-- [ ] **Step 4: Add COM2 QEMU option**
+- [x] **Step 4: Add COM2 QEMU option**
 
 In `scripts/run-qemu.py`, add:
 
@@ -635,7 +658,7 @@ When `args.shell_port` is set, append this second serial backend after COM1:
 command += ["-serial", f"tcp:127.0.0.1:{args.shell_port},server=on,wait=off"]
 ```
 
-- [ ] **Step 5: Write COM2 smoke test**
+- [x] **Step 5: Write COM2 smoke test**
 
 Create `scripts/test-com2-shell-transport.py`:
 
@@ -720,7 +743,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 6: Wire COM2 into normal boot and verify**
+- [x] **Step 6: Wire COM2 into normal boot and verify**
 
 In `core/src/normal_boot.rs`, call:
 
@@ -744,7 +767,7 @@ COM2_TRANSPORT_TEST_OK
 BOOT_TEST_OK
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add core\src\serial.rs core\src\normal_boot.rs scripts\run-qemu.py scripts\test-com2-shell-transport.py

@@ -186,6 +186,11 @@ def main() -> int:
         default="none",
         help="QEMU audiodev backend (e.g. dsound to hear it on Windows speakers); default none",
     )
+    parser.add_argument(
+        "--shell-port",
+        type=int,
+        help="add a second serial backend (COM2) as a TCP server on this port",
+    )
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
     parser.add_argument("--kill-after-marker")
     args = parser.parse_args()
@@ -219,6 +224,13 @@ def main() -> int:
         "-device",
         "isa-debug-exit,iobase=0x501,iosize=0x04",
     ]
+    if args.shell_port is not None:
+        # QEMU assigns successive -serial flags to COM1, COM2, ... in order;
+        # this becomes COM2, the interactive object-shell transport (ADR 0052).
+        command += [
+            "-serial",
+            f"tcp:127.0.0.1:{args.shell_port},server=on,wait=off",
+        ]
     if args.audio_wav and args.no_audio_device:
         raise SystemExit("--audio-wav requires an audio device")
     if not args.no_audio_device:
