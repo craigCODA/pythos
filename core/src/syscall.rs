@@ -300,8 +300,18 @@ global_asm!(
     r#"
     .section .bss
     .balign 16
+    // ADR 0052 durable-mutation persistence (`retained_services::persist_object_service`)
+    // runs on this stack during `create`/`revise` dispatch and its call chain
+    // builds a full ~3.8 KiB `ObjectServiceSnapshot` (plus checkpoint encode/
+    // decode locals) through several unelided intermediate copies. 64 KiB was
+    // enough for dispatch alone but silently overran into adjacent static
+    // data once persistence was wired in - with no guard page below this
+    // buffer, the overflow does not fault; it corrupts whatever static data
+    // (e.g. GDT/IDT/page-table state) happens to sit below it in `.bss`,
+    // which only surfaces later as an unexplained triple fault. 256 KiB
+    // leaves >2x headroom over the ~96 KiB observed requirement.
     syscall_kernel_stack:
-        .zero 65536
+        .zero 262144
     syscall_kernel_stack_end:
     .balign 8
     syscall_saved_user_rsp:
