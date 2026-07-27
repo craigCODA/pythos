@@ -1,7 +1,8 @@
-//! Phase 8 syscall-entry proof and Phase 9 general syscall ABI registry.
+//! Phase 8 syscall-entry proof, Phase 9 general syscall ABI registry, and the
+//! ADR 0051 typed object-shell syscall bridge.
 //!
-//! This defines the first syscall ABI contract. It intentionally accepts no
-//! user pointers yet; Phase 9 copy-in/copy-out belongs to the next slice.
+//! Object-shell requests use the retained active process `UserCopyMap` before
+//! raw copy-in/copy-out. Human command parsing stays in `shell.elf`.
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
 use crate::architecture::x86_64::gdt;
@@ -22,6 +23,9 @@ use crate::service_identity::{ServiceId, ServiceIdentityTable};
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::system_api::{SystemApiError, SystemApiHost};
 use crate::tasks::TaskId;
+use crate::user_copy::UserCopyError;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::user_copy::{UserCopyAccess, UserCopyMap};
 use crate::user_mode;
 use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 #[cfg(not(test))]
@@ -131,6 +135,7 @@ pub enum SyscallError {
     Ipc(IpcError),
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
+    UserCopy(UserCopyError),
     #[cfg(any(test, all(not(test), not(feature = "verify"))))]
     ObjectService(ObjectServiceError),
     #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -255,6 +260,12 @@ impl From<PermissionError> for SyscallError {
 impl From<ProcessContextError> for SyscallError {
     fn from(error: ProcessContextError) -> Self {
         Self::ProcessContext(error)
+    }
+}
+
+impl From<UserCopyError> for SyscallError {
+    fn from(error: UserCopyError) -> Self {
+        Self::UserCopy(error)
     }
 }
 
@@ -546,39 +557,46 @@ fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg1 != size_of::<ObjectShellRequest>() as u64
         || args.arg3 != size_of::<ObjectShellResponse>() as u64
         || args.arg4 != 0
-        || !is_aligned(args.arg0, align_of::<ObjectShellRequest>())
-        || !is_aligned(args.arg2, align_of::<ObjectShellResponse>())
     {
         return Err(SyscallError::BadResult);
     }
+    let copy_map = caller.copy_map();
+    validate_user_buffer(
+        &copy_map,
+        args.arg0,
+        args.arg1,
+        align_of::<ObjectShellRequest>(),
+        UserCopyAccess::Read,
+    )?;
+    validate_user_buffer(
+        &copy_map,
+        args.arg2,
+        args.arg3,
+        align_of::<ObjectShellResponse>(),
+        UserCopyAccess::Write,
+    )?;
     let request_ptr = args.arg0 as *const ObjectShellRequest;
     let response_ptr = args.arg2 as *mut ObjectShellResponse;
-    if request_ptr.is_null() || response_ptr.is_null() {
-        return Err(SyscallError::BadResult);
-    }
     // SAFETY:
     // 1. Invariant: `request_ptr` names a live, readable
     //    ObjectShellRequest supplied by the active user process for this
     //    syscall; `response_ptr` names a live, writable ObjectShellResponse.
-    // 2. Established by: Task 7's fixed ABI length/alignment/null checks above
-    //    and the ADR 0051 launch contract that maps these shell buffers in the
-    //    active user address space. Full address-space map lookup lands with
-    //    the shell execution slice.
+    // 2. Established by: exact ABI size checks, natural alignment checks, and
+    //    the active process's retained UserCopyMap validation above.
     // 3. Lifetime: both buffers remain valid only for this syscall; neither
     //    pointer is retained after returning.
     // 4. Pointer ownership: the user process owns the buffers, PythCore only
     //    copies in/out.
     // 5. Alignment: checked against repr(C) alignment before dereference.
-    // 6. Mapped length: checked against the exact ABI struct sizes.
+    // 6. Mapped length: UserCopyMap validated each exact ABI-sized range.
     // 7. Concurrency: ADR 0051 shell is single-threaded and one syscall is
     //    handled at a time.
-    // 8. Violation: a forged mapping could fault or corrupt user memory; Task 9
-    //    retains fault containment and the upcoming launch slice supplies the
-    //    scheduler-owned mapping source.
+    // 8. Violation: stale or forged map state could fault or corrupt user
+    //    memory; Task 8 must bind this map from the validated launch surface.
     let request = unsafe { request_ptr.read() };
-    let response = dispatch_object_request_with_raw_buffers(caller, request)?;
+    let response = dispatch_object_request_with_raw_buffers(caller, &copy_map, request)?;
     // SAFETY: see the invariant block above; this is the matching copy-out to
-    // the already length/alignment/null-validated response pointer.
+    // the already UserCopyMap-validated response pointer.
     unsafe {
         response_ptr.write(response);
     }
@@ -593,75 +611,105 @@ fn dispatch_object_request(_args: SyscallArgs) -> Result<u64, SyscallError> {
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 fn dispatch_object_request_with_raw_buffers(
     caller: ActiveUserProcess,
+    copy_map: &UserCopyMap,
     request: ObjectShellRequest,
 ) -> Result<ObjectShellResponse, SyscallError> {
     if !valid_object_request_header(&request) {
         return Ok(bad_request_response());
     }
     let input = if request.operation == OP_REVISE_FIELD {
-        checked_request_input(&request)?
+        checked_request_input(copy_map, &request)?
     } else {
         &[]
     };
-    retained_services::with_object_service(|service| {
-        if request.operation == OP_QUERY_OBJECTS {
-            let output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
-            if request.output_len < output_len
-                || !is_aligned(request.output_ptr, align_of::<ObjectListEntry>())
-            {
-                return buffer_too_small_response();
-            }
-            let output_ptr = request.output_ptr as *mut ObjectListEntry;
-            if output_ptr.is_null() {
-                return buffer_too_small_response();
-            }
-            // SAFETY:
-            // 1. Invariant: query output points at a writable array of
-            //    MAX_QUERY_RESULTS ObjectListEntry values in the caller's
-            //    address space.
-            // 2. Established by: fixed Task 7 ABI requires `output_len` at
-            //    least the full array size and natural ObjectListEntry
-            //    alignment; the shell supplies this buffer immediately before
-            //    invoking SYSCALL_OBJECT_REQUEST.
-            // 3. Lifetime: the slice is used only inside this syscall.
-            // 4. Pointer ownership: user space owns the memory; PythCore writes
-            //    bounded result entries and does not retain the pointer.
-            // 5. Alignment: checked above.
-            // 6. Mapped length: checked above against the full fixed array.
-            // 7. Concurrency: shell is single-threaded in ADR 0051.
-            // 8. Violation: a forged output mapping could fault; the future
-            //    launch path supplies the authoritative user mapping.
-            let output = unsafe { slice::from_raw_parts_mut(output_ptr, MAX_QUERY_RESULTS) };
-            dispatch_object_request_to_service(service, caller, request, input, output)
-        } else {
-            dispatch_object_request_to_service(service, caller, request, input, &mut [])
+    if request.operation == OP_QUERY_OBJECTS {
+        if request.output_len < size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64 {
+            return Ok(buffer_too_small_response());
         }
-    })
-    .map_err(SyscallError::from)
+        let output = checked_query_output(copy_map, &request)?;
+        retained_services::with_object_service(|service| {
+            dispatch_object_request_to_service(service, caller, request, input, output)
+        })
+        .map_err(SyscallError::from)
+    } else {
+        retained_services::with_object_service(|service| {
+            dispatch_object_request_to_service(service, caller, request, input, &mut [])
+        })
+        .map_err(SyscallError::from)
+    }
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
-fn checked_request_input(request: &ObjectShellRequest) -> Result<&[u8], SyscallError> {
+fn validate_user_buffer(
+    copy_map: &UserCopyMap,
+    ptr: u64,
+    len: u64,
+    alignment: usize,
+    access: UserCopyAccess,
+) -> Result<(), SyscallError> {
+    if !is_aligned(ptr, alignment) {
+        return Err(SyscallError::BadResult);
+    }
+    copy_map.validate_range(ptr, len, access)?;
+    Ok(())
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn checked_query_output<'a>(
+    copy_map: &UserCopyMap,
+    request: &ObjectShellRequest,
+) -> Result<&'a mut [ObjectListEntry], SyscallError> {
+    let output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
+    validate_user_buffer(
+        copy_map,
+        request.output_ptr,
+        output_len,
+        align_of::<ObjectListEntry>(),
+        UserCopyAccess::Write,
+    )?;
+    let output_ptr = request.output_ptr as *mut ObjectListEntry;
+    // SAFETY:
+    // 1. Invariant: query output points at a writable array of
+    //    MAX_QUERY_RESULTS ObjectListEntry values in the caller's
+    //    address space.
+    // 2. Established by: fixed Task 7 ABI requires `output_len` at least the
+    //    full array size and UserCopyMap validates that exact writable range
+    //    with natural ObjectListEntry alignment above.
+    // 3. Lifetime: the slice is used only inside this syscall.
+    // 4. Pointer ownership: user space owns the memory; PythCore writes
+    //    bounded result entries and does not retain the pointer.
+    // 5. Alignment: checked above.
+    // 6. Mapped length: UserCopyMap checked the full fixed array range.
+    // 7. Concurrency: shell is single-threaded in ADR 0051.
+    // 8. Violation: stale map state could fault or corrupt user memory.
+    Ok(unsafe { slice::from_raw_parts_mut(output_ptr, MAX_QUERY_RESULTS) })
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn checked_request_input<'a>(
+    copy_map: &UserCopyMap,
+    request: &ObjectShellRequest,
+) -> Result<&'a [u8], SyscallError> {
     if request.input_len == 0 {
         return Ok(&[]);
     }
-    if request.input_len > 16 || request.input_ptr == 0 {
+    if request.input_len > 16 {
         return Err(SyscallError::BadResult);
     }
+    copy_map.validate_range(request.input_ptr, request.input_len, UserCopyAccess::Read)?;
     // SAFETY:
     // 1. Invariant: non-empty request input points at at most 16 readable bytes
     //    in the active shell process.
     // 2. Established by: Task 7 caps input_len at one TypedObjectField payload
-    //    and rejects a null pointer before slicing.
+    //    and UserCopyMap validates the exact readable byte range above.
     // 3. Lifetime: the returned slice is consumed during the current syscall
     //    and never stored.
     // 4. Pointer ownership: user space owns the input bytes; PythCore reads
     //    them only for typed object mutation.
     // 5. Alignment: byte slices require no stricter alignment than 1.
-    // 6. Mapped length: bounded to 16 bytes by the check above.
+    // 6. Mapped length: UserCopyMap checked the requested bounded length.
     // 7. Concurrency: shell is single-threaded in ADR 0051.
-    // 8. Violation: a forged input mapping could fault; the upcoming launch
-    //    slice provides scheduler-owned user mapping validation.
+    // 8. Violation: stale map state could fault or read unrelated memory.
     Ok(
         unsafe {
             slice::from_raw_parts(request.input_ptr as *const u8, request.input_len as usize)
@@ -1182,9 +1230,11 @@ mod tests {
     use super::*;
     use crate::object_service::ObjectService;
     use crate::shell_objects::ObjectKind;
+    use crate::user_copy::{UserCopyError, UserCopyMap};
     use pythos_shared::object_shell_abi::{
-        OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT,
-        OP_QUERY_OBJECTS, ObjectListEntry, ObjectShellRequest, STATUS_DENIED, STATUS_OK,
+        FIELD_TEXT, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR,
+        OP_CREATE_OBJECT, OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
+        ObjectShellResponse, STATUS_DENIED, STATUS_OK,
     };
 
     #[test]
@@ -1374,6 +1424,211 @@ mod tests {
     }
 
     #[test]
+    fn object_request_rejects_unmapped_request_before_service_mutation() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
+        );
+        assert_eq!(retained_note_count(shell, workspace), 0);
+    }
+
+    #[test]
+    fn object_request_rejects_cross_mapping_request_before_service_mutation() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
+        let mut response = Box::new(empty_test_response());
+        let request_ptr = (&*request as *const ObjectShellRequest) as u64;
+        let mut copy_map = UserCopyMap::new();
+        copy_map.add_mapping(request_ptr, 40, true, false).unwrap();
+        copy_map
+            .add_mapping(request_ptr + 40, 40, true, false)
+            .unwrap();
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::CrossMapping))
+        );
+        assert_eq!(retained_note_count(shell, workspace), 0);
+    }
+
+    #[test]
+    fn object_request_rejects_kernel_request_pointer_before_service_mutation() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+        let args = SyscallArgs {
+            number: SYSCALL_OBJECT_REQUEST,
+            arg0: 0xFFFF_FFFF_8000_0000,
+            arg1: size_of::<ObjectShellRequest>() as u64,
+            arg2: &mut *response as *mut ObjectShellResponse as u64,
+            arg3: size_of::<ObjectShellResponse>() as u64,
+            arg4: 0,
+        };
+
+        assert_eq!(
+            dispatch_object_request(args),
+            Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
+        );
+        assert_eq!(retained_note_count(shell, workspace), 0);
+    }
+
+    #[test]
+    fn object_request_rejects_overflowing_request_range_before_service_mutation() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+        let args = SyscallArgs {
+            number: SYSCALL_OBJECT_REQUEST,
+            arg0: u64::MAX - 7,
+            arg1: size_of::<ObjectShellRequest>() as u64,
+            arg2: &mut *response as *mut ObjectShellResponse as u64,
+            arg3: size_of::<ObjectShellResponse>() as u64,
+            arg4: 0,
+        };
+
+        assert_eq!(
+            dispatch_object_request(args),
+            Err(SyscallError::UserCopy(UserCopyError::LengthOverflow))
+        );
+        assert_eq!(retained_note_count(shell, workspace), 0);
+    }
+
+    #[test]
+    fn object_request_requires_writable_response_before_service_mutation() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &mut *response, true, false);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::PermissionDenied))
+        );
+        assert_eq!(retained_note_count(shell, workspace), 0);
+    }
+
+    #[test]
+    fn object_query_requires_writable_output_before_service_borrow() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut request = Box::new(object_request(OP_QUERY_OBJECTS, workspace));
+        let mut response = Box::new(empty_test_response());
+        let mut output = Box::new(empty_query_output());
+        request.output_ptr = (&mut output[0] as *mut ObjectListEntry) as u64;
+        request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &mut *response, true, true);
+        map_slice(&mut copy_map, &*output, true, false);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::PermissionDenied))
+        );
+        assert_eq!(
+            output.iter().filter(|entry| entry.object_id != 0).count(),
+            0
+        );
+    }
+
+    #[test]
+    fn object_query_rejects_overflowing_output_range_before_writing_entries() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut request = Box::new(object_request(OP_QUERY_OBJECTS, workspace));
+        let mut response = Box::new(empty_test_response());
+        request.output_ptr = u64::MAX - 7;
+        request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::LengthOverflow))
+        );
+        assert_eq!(response.status, STATUS_BAD_REQUEST);
+    }
+
+    #[test]
+    fn object_revise_rejects_unmapped_input_without_mutating_object() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let input = Box::new(*b"hello");
+        let mut request = Box::new(object_request(OP_REVISE_FIELD, created.object_capability));
+        request.object_id = created.object_id.raw();
+        request.field_id = FIELD_TEXT;
+        request.input_ptr = input.as_ptr() as u64;
+        request.input_len = input.len() as u64;
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &mut *response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&*request, &mut *response)),
+            Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
+        );
+        retained_services::with_object_service(|service| {
+            let inspection = service
+                .inspect_object(shell, created.object_capability, created.object_id)
+                .unwrap();
+            assert_eq!(inspection.revision, 1);
+            assert_eq!(inspection.field_bytes(FIELD_TEXT), None);
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn system_reboot_requires_system_control_capability_from_current_caller() {
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
@@ -1407,5 +1662,92 @@ mod tests {
         assert!(proof.versioned);
         assert!(proof.known_dispatch);
         assert!(proof.unknown_denied);
+    }
+
+    fn object_request(operation: u16, authority: PackedCapability) -> ObjectShellRequest {
+        ObjectShellRequest {
+            abi_major: OBJECT_SHELL_ABI_MAJOR,
+            abi_minor: OBJECT_SHELL_ABI_MINOR,
+            operation,
+            object_kind: OBJECT_KIND_NOTE,
+            field_id: 0,
+            reserved0: 0,
+            authority,
+            object_id: 0,
+            input_ptr: 0,
+            input_len: 0,
+            output_ptr: 0,
+            output_len: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    const fn empty_test_response() -> ObjectShellResponse {
+        ObjectShellResponse {
+            status: STATUS_BAD_REQUEST,
+            reserved0: 0,
+            object_kind: 0,
+            field_id: 0,
+            object_id: 0,
+            revision: 0,
+            revision_count: 0,
+            bytes_written: 0,
+            capability: PackedCapability::from_raw(0),
+            reserved1: 0,
+        }
+    }
+
+    const fn empty_query_output() -> [ObjectListEntry; MAX_QUERY_RESULTS] {
+        [ObjectListEntry {
+            object_id: 0,
+            capability: PackedCapability::from_raw(0),
+        }; MAX_QUERY_RESULTS]
+    }
+
+    fn object_args(
+        request: &ObjectShellRequest,
+        response: &mut ObjectShellResponse,
+    ) -> SyscallArgs {
+        SyscallArgs {
+            number: SYSCALL_OBJECT_REQUEST,
+            arg0: request as *const ObjectShellRequest as u64,
+            arg1: size_of::<ObjectShellRequest>() as u64,
+            arg2: response as *mut ObjectShellResponse as u64,
+            arg3: size_of::<ObjectShellResponse>() as u64,
+            arg4: 0,
+        }
+    }
+
+    fn map_value<T>(map: &mut UserCopyMap, value: &T, readable: bool, writable: bool) {
+        map.add_mapping(
+            value as *const T as u64,
+            size_of::<T>() as u64,
+            readable,
+            writable,
+        )
+        .unwrap();
+    }
+
+    fn map_slice<T>(map: &mut UserCopyMap, values: &[T], readable: bool, writable: bool) {
+        map.add_mapping(
+            values.as_ptr() as u64,
+            core::mem::size_of_val(values) as u64,
+            readable,
+            writable,
+        )
+        .unwrap();
+    }
+
+    fn retained_note_count(shell: ActiveUserProcess, workspace: PackedCapability) -> usize {
+        retained_services::with_object_service(|service| {
+            service
+                .query_objects(shell, workspace, ObjectKind::Note)
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.object_id != 0)
+                .count()
+        })
+        .unwrap()
     }
 }

@@ -3,14 +3,19 @@
 #![cfg_attr(test, allow(dead_code))]
 
 use core::cell::UnsafeCell;
+use core::mem::size_of;
 
 use crate::service_identity::ServiceId;
+use crate::user_copy::{UserCopyError, UserCopyMap};
+use crate::{user_elf, user_stacks};
+use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ActiveUserProcess {
     service_id: ServiceId,
     principal_id: u64,
     program_digest: u64,
+    copy_map: UserCopyMap,
 }
 
 impl ActiveUserProcess {
@@ -19,6 +24,47 @@ impl ActiveUserProcess {
             service_id,
             principal_id,
             program_digest,
+            copy_map: UserCopyMap::new(),
+        }
+    }
+
+    const fn from_copy_map(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        copy_map: UserCopyMap,
+    ) -> Self {
+        Self {
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map,
+        }
+    }
+
+    pub fn from_validated_launch(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        image: &user_elf::UserElfImage,
+        stack: user_stacks::UserStackRegion,
+        bootstrap_user_ptr: u64,
+    ) -> Result<Self, UserCopyError> {
+        Ok(Self::from_copy_map(
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map_from_validated_launch(image, stack, bootstrap_user_ptr)?,
+        ))
+    }
+
+    #[cfg(test)]
+    pub const fn with_copy_map(self, copy_map: UserCopyMap) -> Self {
+        Self {
+            service_id: self.service_id,
+            principal_id: self.principal_id,
+            program_digest: self.program_digest,
+            copy_map,
         }
     }
 
@@ -33,11 +79,42 @@ impl ActiveUserProcess {
     pub const fn program_digest(self) -> u64 {
         self.program_digest
     }
+
+    pub const fn copy_map(self) -> UserCopyMap {
+        self.copy_map
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProcessContextError {
     NoActiveProcess,
+}
+
+pub fn copy_map_from_validated_launch(
+    image: &user_elf::UserElfImage,
+    stack: user_stacks::UserStackRegion,
+    bootstrap_user_ptr: u64,
+) -> Result<UserCopyMap, UserCopyError> {
+    let mut map = UserCopyMap::new();
+    let mut index = 0usize;
+    while index < image.segment_count() {
+        let segment = image.segment(index).ok_or(UserCopyError::OutOfRange)?;
+        map.add_mapping(
+            segment.page_start(),
+            segment.page_len(),
+            true,
+            segment.writable(),
+        )?;
+        index += 1;
+    }
+    map.add_mapping(stack.stack_start, stack.stack_len, true, true)?;
+    map.add_mapping(
+        bootstrap_user_ptr,
+        size_of::<BootstrapCapabilityBlock>() as u64,
+        true,
+        false,
+    )?;
+    Ok(map)
 }
 
 struct ActiveProcessStorage(UnsafeCell<Option<ActiveUserProcess>>);
@@ -94,6 +171,7 @@ mod tests {
     use super::*;
     use crate::service_identity::ServiceIdentityTable;
     use crate::tasks::TaskId;
+    use crate::user_copy::{UserCopyAccess, UserCopyError};
     use pythos_shared::user_program_manifest::{INTRUDER_PRINCIPAL_ID, SHELL_PRINCIPAL_ID};
 
     #[test]
@@ -114,5 +192,96 @@ mod tests {
             current_caller_for_test().unwrap().principal_id(),
             INTRUDER_PRINCIPAL_ID
         );
+    }
+
+    #[test]
+    fn launch_copy_map_retains_elf_stack_and_bootstrap_permissions() {
+        let image = user_elf::validate(&minimal_user_elf()).unwrap();
+        let stack = user_stacks::UserStackRegion {
+            guard_start: 0x0070_0000,
+            stack_start: 0x0070_1000,
+            stack_len: 0x1000,
+        };
+        let bootstrap = 0x0080_0000;
+
+        let map = copy_map_from_validated_launch(&image, stack, bootstrap).unwrap();
+
+        assert!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert!(
+            map.validate_range(0x0040_1000, 4, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(stack.stack_start, 32, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(
+                bootstrap,
+                size_of::<BootstrapCapabilityBlock>() as u64,
+                UserCopyAccess::Read,
+            )
+            .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(bootstrap, 8, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert_eq!(
+            map.validate_range(0xFFFF_FFFF_8000_0000, 8, UserCopyAccess::Read),
+            Err(UserCopyError::OutOfRange)
+        );
+    }
+
+    fn minimal_user_elf() -> [u8; 8196] {
+        let mut elf = [0u8; 8196];
+        write_elf_header(&mut elf, 2, 0x0040_0000);
+        write_phdr(&mut elf, 0, 0x5, 0x1000, 0x0040_0000, 2, 2);
+        write_phdr(&mut elf, 1, 0x6, 0x2000, 0x0040_1000, 4, 16);
+        elf[0x1000..0x1002].copy_from_slice(b"\x90\xc3");
+        elf[0x2000..0x2004].copy_from_slice(b"DATA");
+        elf
+    }
+
+    fn write_elf_header(elf: &mut [u8], phnum: u16, entry: u64) {
+        elf[0..4].copy_from_slice(b"\x7fELF");
+        elf[4] = 2;
+        elf[5] = 1;
+        elf[6] = 1;
+        elf[16..18].copy_from_slice(&2u16.to_le_bytes());
+        elf[18..20].copy_from_slice(&0x3Eu16.to_le_bytes());
+        elf[20..24].copy_from_slice(&1u32.to_le_bytes());
+        elf[24..32].copy_from_slice(&entry.to_le_bytes());
+        elf[32..40].copy_from_slice(&64u64.to_le_bytes());
+        elf[52..54].copy_from_slice(&64u16.to_le_bytes());
+        elf[54..56].copy_from_slice(&56u16.to_le_bytes());
+        elf[56..58].copy_from_slice(&phnum.to_le_bytes());
+    }
+
+    fn write_phdr(
+        elf: &mut [u8],
+        index: usize,
+        flags: u32,
+        offset: u64,
+        vaddr: u64,
+        filesz: u64,
+        memsz: u64,
+    ) {
+        let entry = 64 + index * 56;
+        elf[entry..entry + 4].copy_from_slice(&1u32.to_le_bytes());
+        elf[entry + 4..entry + 8].copy_from_slice(&flags.to_le_bytes());
+        elf[entry + 8..entry + 16].copy_from_slice(&offset.to_le_bytes());
+        elf[entry + 16..entry + 24].copy_from_slice(&vaddr.to_le_bytes());
+        elf[entry + 24..entry + 32].copy_from_slice(&vaddr.to_le_bytes());
+        elf[entry + 32..entry + 40].copy_from_slice(&filesz.to_le_bytes());
+        elf[entry + 40..entry + 48].copy_from_slice(&memsz.to_le_bytes());
+        elf[entry + 48..entry + 56].copy_from_slice(&4096u64.to_le_bytes());
     }
 }

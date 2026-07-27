@@ -1,6 +1,6 @@
 #![cfg_attr(test, allow(dead_code))]
 
-const MAX_USER_COPY_MAPPINGS: usize = 8;
+const MAX_USER_COPY_MAPPINGS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserCopyAccess {

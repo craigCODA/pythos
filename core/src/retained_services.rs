@@ -142,16 +142,38 @@ fn reset_for_test() {
 }
 
 #[cfg(test)]
+pub(crate) struct RetainedServiceTestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for RetainedServiceTestGuard {
+    fn drop(&mut self) {
+        reset_for_test();
+    }
+}
+
+#[cfg(test)]
+static TEST_SERVICE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn initialize_object_service_for_test(
+    service: ObjectService,
+) -> RetainedServiceTestGuard {
+    let lock = TEST_SERVICE_LOCK.lock().unwrap();
+    reset_for_test();
+    initialize_object_service(service).unwrap();
+    RetainedServiceTestGuard { _lock: lock }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::shell_objects::ObjectKind;
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn with_object_service_requires_initialization() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = TEST_SERVICE_LOCK.lock().unwrap();
         reset_for_test();
 
         assert_eq!(
@@ -162,9 +184,7 @@ mod tests {
 
     #[test]
     fn retained_object_service_mutation_survives_between_borrows() {
-        let _guard = TEST_LOCK.lock().unwrap();
-        reset_for_test();
-        initialize_object_service(ObjectService::new_for_test()).unwrap();
+        let _guard = initialize_object_service_for_test(ObjectService::new_for_test());
 
         let created_id = with_object_service(|service| {
             let shell = service.test_shell_caller();
