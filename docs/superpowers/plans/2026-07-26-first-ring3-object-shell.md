@@ -74,6 +74,32 @@
 
 ### Task 1: Record ADR 0052 And Normal/Verify Boot Split Test
 
+**Status: COMPLETE (2026-07-26).** Implemented on branch `object-shell` with two
+adaptations against the real codebase that this plan's example code did not
+anticipate:
+
+- **Address-space construction order.** `UserAddressSpace::build()`'s
+  `PageTableBuilder` writes fresh page-table frames through raw physical
+  addresses, which only work while the loader's broad low-memory identity map
+  is still active. `KernelAddressSpace::activate()` removes that map by design
+  (the Phase 1.5 identity-map-removal invariant), so building the user address
+  space *after* activating the kernel one faults. Fixed by building both
+  address spaces first, then activating only the kernel one — matching the
+  verify path's existing order in `pythcore_entry`. `initialize_normal_substrate`
+  therefore does this in one step (not two separate helpers as first sketched)
+  and emits both `MEMORY_VM_READY` and `RING3_READY` together.
+- **`run-qemu.py` exit codes.** `--expect-outcome timeout` still exits with the
+  outcome's dedicated code (22, `SCRIPT_EXIT_CODES["timeout"]`), never 0, even
+  on an exact match. `scripts/test-normal-fast-boot.py` asserts `expected=22`,
+  not `expected=0`.
+- Also fixed in passing: `cargo test -p pythos-core --bin pythcore` was broken
+  (missing a diverging tail under `cfg(test)` once `qemu_exit::success()` became
+  feature-gated in the earlier vertical-loop Slice 1) — now compiles and passes
+  228 tests.
+- `AGENTS.md` has no literal "writable milestone tree" boundary line to edit (it
+  is stale re: current branch state); added the ADR 0051/0052 `user/shell`
+  carve-out near the standing rules instead of the assumed line.
+
 **Files:**
 - Create: `docs/decisions/0052-object-shell-service-abi.md`
 - Create: `scripts/test-normal-fast-boot.py`
@@ -88,7 +114,7 @@
 - Consumes: existing `pythcore_entry`, existing proof sequence, `scripts/run-qemu.py --serial-log`.
 - Produces: `syscall::initialize()`, `normal_init::initialize_normal_substrate(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> Result<NormalBootSubstrate, NormalInitError>`, `normal_boot::run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> !`, marker `PYTHOS:CORE:NORMAL_BOOT:FAST_PATH`, marker `PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY`, marker `PYTHOS:CORE:NORMAL_SERVICES_READY`.
 
-- [ ] **Step 1: Write ADR 0052**
+- [x] **Step 1: Write ADR 0052**
 
 Create `docs/decisions/0052-object-shell-service-abi.md`:
 
@@ -221,7 +247,7 @@ Object persistence uses the retained Phase 10 object path, not a shell-private
 sector format.
 ```
 
-- [ ] **Step 2: Write the failing normal-fast-boot test**
+- [x] **Step 2: Write the failing normal-fast-boot test**
 
 Create `scripts/test-normal-fast-boot.py`:
 
@@ -309,7 +335,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 3: Run the failing normal-fast-boot test**
+- [x] **Step 3: Run the failing normal-fast-boot test**
 
 Run:
 
@@ -319,7 +345,7 @@ python scripts\test-normal-fast-boot.py
 
 Expected: FAIL because normal boot still reaches the existing event loop only after proof markers.
 
-- [ ] **Step 4: Split boot paths without changing proof behavior**
+- [x] **Step 4: Split boot paths without changing proof behavior**
 
 In `core/src/main.rs`, move the existing post-initialization proof sequence into:
 
@@ -462,7 +488,7 @@ pub fn run(
 
 The real service initialization and shell launch replace the temporary loop in later tasks.
 
-- [ ] **Step 5: Update active agent boundary**
+- [x] **Step 5: Update active agent boundary**
 
 Because the live `AGENTS.md` scope boundary still lists only
 `boot/core/shared/scripts/tests/docs` and forbids ring-3 applications, update
@@ -474,7 +500,7 @@ The ADR 0051 first-ring3-object-shell slice may additionally create
 applications, package management, networking, AI, or universal-device work.
 ```
 
-- [ ] **Step 6: Verify both boot modes**
+- [x] **Step 6: Verify both boot modes**
 
 Run:
 
@@ -490,7 +516,7 @@ NORMAL_FAST_BOOT_TEST_OK
 BOOT_TEST_OK
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add docs\decisions\0052-object-shell-service-abi.md scripts\test-normal-fast-boot.py core\src\main.rs core\src\normal_init.rs core\src\normal_boot.rs core\src\syscall.rs AGENTS.md

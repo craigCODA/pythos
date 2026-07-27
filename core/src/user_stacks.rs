@@ -41,7 +41,10 @@ unsafe impl Sync for UserStackPool {}
 
 static USER_STACK_POOL: UserStackPool = UserStackPool(UnsafeCell::new([0; USER_STACK_POOL_SIZE]));
 
-pub fn run_self_test() -> Result<(), UserStackError> {
+/// Validate the guarded user-stack pool's layout (alignment, guard-page
+/// placement, no overlap). Production setup, reusable by both the verification
+/// proof and normal boot (ADR 0052); performs no fault-inducing self-test.
+pub fn initialize() -> Result<(), UserStackError> {
     let regions = regions();
     for region in regions {
         if !is_page_aligned(region.guard_start) || !is_page_aligned(region.stack_start) {
@@ -58,6 +61,10 @@ pub fn run_self_test() -> Result<(), UserStackError> {
         return Err(UserStackError::Overlap);
     }
     Ok(())
+}
+
+pub fn run_self_test() -> Result<(), UserStackError> {
+    initialize()
 }
 
 pub fn regions() -> [UserStackRegion; USER_STACK_COUNT] {

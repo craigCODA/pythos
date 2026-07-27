@@ -27,6 +27,11 @@ Do not claim full security where only logical isolation exists.
 
 AI remains outside the trusted core.
 
+ADR 0051/0052 additionally authorize creating `user/shell` and `user/probes`
+for the first ring-3 object/capability shell slice only. This does not
+authorize general ring-3 applications, package management, networking, AI, or
+universal-device work.
+
 ## Active Milestone
 
 The active branch of work is `milestone/phase8-real-hardware-isolation`.

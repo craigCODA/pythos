@@ -195,9 +195,16 @@ unsafe extern "C" {
     fn syscall_entry_abi();
 }
 
+/// Program the `syscall`/`sysret` MSRs. Production setup, reusable by both the
+/// verification proof and normal boot (ADR 0052); performs no self-test.
+#[cfg(not(test))]
+pub fn initialize() {
+    configure_gate();
+}
+
 #[cfg(not(test))]
 pub fn run_self_test() -> Result<(), SyscallError> {
-    configure_gate();
+    initialize();
     serial::write_line("PYTHOS:CORE:SYSCALL:MSRS_READY");
     EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
     SYSCALL_RETURNED.store(false, Ordering::SeqCst);

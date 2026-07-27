@@ -25,6 +25,10 @@ mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
 mod memory;
+#[cfg(not(feature = "verify"))]
+mod normal_boot;
+#[cfg(not(feature = "verify"))]
+mod normal_init;
 mod object_browser;
 mod object_relationships;
 mod permission_validation;
@@ -132,7 +136,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_IDT);
     serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
 
-    #[cfg(not(test))]
+    // ADR 0052: the full proof sequence below is verification-only; normal
+    // boot branches away before it, near the end of this function.
+    #[cfg(all(not(test), feature = "verify"))]
     {
         if !architecture::x86_64::exceptions::verify_entry_hardening() {
             serial::write_line("PYTHOS:PANIC");
@@ -1444,7 +1450,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY");
         serial::write_line("PYTHOS:CORE:PHASE_10_COMPLETE");
+
+        serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
+        serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
+        qemu_exit::success();
     }
+
+    // ADR 0052: normal boot skips the verification proof sequence above
+    // entirely and constructs only the production substrate, then stays
+    // alive — the pivot from "proofs that terminate" to "a system that runs".
+    #[cfg(all(not(test), not(feature = "verify")))]
+    normal_boot::run(boot_info, &mut physical_memory);
 
     #[cfg(test)]
     {
@@ -1452,29 +1468,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
-    }
-    serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
-    serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
-
-    // ADR 0049: in `verify` builds the proof sequence exits deterministically for
-    // the boot-acceptance oracle. A normal build stays alive in a persistent
-    // event loop instead of exiting — the pivot from "proofs that terminate" to
-    // "a system that runs".
-    #[cfg(feature = "verify")]
-    qemu_exit::success();
-
-    #[cfg(not(feature = "verify"))]
-    normal_event_loop();
-}
-
-/// Persistent event loop for a normal (non-verification) boot. PythCore stays
-/// running instead of exiting; later slices dispatch input, scheduling, and the
-/// shell from here.
-#[cfg(all(not(test), not(feature = "verify")))]
-fn normal_event_loop() -> ! {
-    serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
-    loop {
-        core::hint::spin_loop();
+        loop {
+            core::hint::spin_loop();
+        }
     }
 }
 
