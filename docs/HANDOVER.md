@@ -7,6 +7,20 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## Branch `object-shell` (2026-07-27, unmerged)
+
+ADR 0051/0052's first ring-3 object shell (`shell.elf`) is fully implemented
+and verified on branch `object-shell`, not yet merged to `main`. All 12 tasks
+of `docs/superpowers/plans/2026-07-26-first-ring3-object-shell.md` are
+complete, including reboot-durable object-service persistence and Task 11
+stack-guard-page hardening. That plan document is the authoritative record —
+see its Task 9-12 status notes for exact architecture, protocol, and
+verification detail. Verify with `python scripts\test-object-shell.py`,
+`python scripts\test-normal-fast-boot.py`, `python scripts\test-boot.py
+--slice milestone-1`, `python scripts\test-com2-shell-transport.py`, and
+`python scripts\test-persistent-storage.py`. Do not merge or build on this
+branch without re-reading that plan document's Task 12 section first.
+
 ## Real-Hardware Boot Status (2026-07-25)
 
 PythOS now boots on real UEFI hardware, not only QEMU. A laptop boots a USB all

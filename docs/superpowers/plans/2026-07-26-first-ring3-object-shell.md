@@ -2614,7 +2614,7 @@ git commit -m "feat(shell): launch persistent shell process"
 
 ---
 
-### Task 9: System Reboot And Acceptance Harness
+### Task 9: System Reboot And Acceptance Harness — COMPLETE (`4f05900`)
 
 **Files:**
 - Modify: `core/src/qemu_exit.rs`
@@ -2859,7 +2859,7 @@ No architectural issue surfaced; the object-service/storage contracts were untou
 
 ---
 
-### Task 10: End-To-End Typed Object Shell Flow
+### Task 10: End-To-End Typed Object Shell Flow — COMPLETE (`ba95f5f` formatting/ABI + `a105467` root-cause fix + `0f9869b` persistence wiring)
 
 **Files:**
 - Modify: `core/src/object_service.rs`
@@ -3000,9 +3000,9 @@ git commit -m "feat(shell): complete typed object shell flow"
 
 ---
 
-### Task 11: Adversarial Caller And Fault Tests
+### Task 11: Adversarial Caller And Fault Tests — COMPLETE, DIFFERENT SHAPE THAN SKETCHED (`c89f830` stack hardening + `90d9286` stress/adversarial coverage; see status note)
 
-**Files:**
+**Files (as sketched — see status note for what was actually built):**
 - Modify: `scripts/test-object-shell.py`
 - Modify: `scripts/build-image.py`
 - Modify: `scripts/build-iso.py`
@@ -3020,7 +3020,7 @@ git commit -m "feat(shell): complete typed object shell flow"
 - Consumes: named intruder program, current caller context, typed object syscall.
 - Produces: marker `PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED`, marker `PYTHOS:SHELL:FAULT_TERMINATED`.
 
-- [ ] **Step 1: Add intruder execution to test harness**
+- [x] **Step 1: Add intruder execution to test harness** (not built this way — no separate `intruder.elf`/control-sector mechanism exists; see status note)
 
 Extend `scripts/test-object-shell.py` with a control-sector writer:
 
@@ -3049,7 +3049,7 @@ makes the same
 asserts denial. Clear sector 95 after reading the mode so the next boot returns
 to the normal shell path.
 
-- [ ] **Step 2: Add intruder marker assertions**
+- [x] **Step 2: Add intruder marker assertions** (superseded by the actual adversarial coverage in `90d9286`; see status note)
 
 The harness must require:
 
@@ -3064,7 +3064,7 @@ The harness must reject:
 PYTHOS:SHELL:OBJECT_CREATED_BY_INTRUDER
 ```
 
-- [ ] **Step 3: Add concrete adversarial probe ELFs**
+- [x] **Step 3: Add concrete adversarial probe ELFs** (not built — no `user/probes/` crates exist; see status note)
 
 Create `user/probes/intruder/src/main.rs` as a `no_std`, `no_main` program that
 imports `pythos_shared::object_shell_abi`, builds an `ObjectShellRequest` for
@@ -3121,7 +3121,7 @@ builds a separate test image that packages the fault body under the unique
 trusted name `shell.elf` with `SHELL_PRINCIPAL_ID`. Do not package both the real
 shell and a second fault program with the shell principal into the same bundle.
 
-- [ ] **Step 4: Add persistent shell fault probe**
+- [x] **Step 4: Add persistent shell fault probe** (not built; see status note)
 
 Mode `2` boots the fault-test image where `shell.elf` contains the
 invalid-instruction body, so the loader-validated shell principal is still
@@ -3133,100 +3133,128 @@ PYTHOS:SHELL:FAULT_TERMINATED
 PYTHOS:CORE:CRASH:PEER_ALIVE
 ```
 
-- [ ] **Step 5: Run adversarial acceptance**
+- [x] **Step 5: Run adversarial acceptance** (actual commands/markers below — see status note)
 
-Run:
+- [x] **Step 6: Commit** (`c89f830`, `90d9286` — see status note)
 
-```powershell
-python scripts\build-user-probes.py
-python scripts\test-object-shell.py
-python scripts\test-boot.py
-```
+**Status note (actual implementation — diverged from this task's original sketch):**
 
-Expected:
+The plan above envisioned a separate untrusted `intruder.elf`/`fault-shell.elf` probe pair, a shell-control sector, and `user/probes/`. That was not built. Instead, driven by the user's explicit Task 11 priorities after Task 10 landed, the actual work was:
 
-```text
-OBJECT_SHELL_TEST_OK
-BOOT_TEST_OK
-```
+1. **Guard the syscall kernel stack (`c89f830`).** `a105467` (Task 10) had stopped the observed overflow by growing `syscall_kernel_stack` 64 KiB → 256 KiB, but left no deterministic detection if that headroom is ever exceeded again. `c89f830` adds a real, unmapped 4 KiB guard page on each side of the stack — its own linker-script output section (`.syscall_stack` in `core/linker.ld`), deliberately excluded from `map_kernel_segments`'s mapping loop (`core/src/memory/virtual.rs`) in every page table PythCore builds — plus a dedicated 16 KiB IST1 fault-delivery stack (`core/src/architecture/x86_64/tss.rs`) wired to IDT vectors 8 (#DF) and 14 (#PF) (`core/src/architecture/x86_64/idt.rs`), so a guard-page fault is delivered on a known-good stack instead of whatever the (possibly just-overflowed) syscall stack's current RSP points at. A verify-boot probe, `prove_syscall_stack_guard_pages_unmapped` (`core/src/memory/virtual.rs`), confirms both guard pages are genuinely unmapped in the live page tables. `retained_services::persist_object_service()` also gained a `running_on_syscall_kernel_stack()` check (via `syscall::kernel_stack_bounds()`) that refuses to run anywhere but the now-hardened syscall stack — closing the flagged-but-unmeasured risk that `normal_boot.rs`'s main boot stack showed a similar-looking hard reset in one earlier bisection attempt (see Task 10's status notes). It currently returns `RetainedServiceError::UnmeasuredStackContext` in that case; `persist_object_service()` is not actually called from `normal_boot.rs` today, so this is a guard against future misuse, not a live-blocked path.
 
-- [ ] **Step 6: Commit**
+2. **Stress and adversarial coverage (`90d9286`)**, extending the live COM2 acceptance flow inside the same one-boot Task 10 sequence rather than building separate untrusted probe binaries:
+   - Object-creation stress to capacity: the shell's storage quota and the dynamic-object table (`MAX_DYNAMIC_OBJECTS` = `MAX_QUERY_RESULTS + 1` = 9, one slot already held by the checkpoint-restored/seed state) are exhausted with 8 shell-created notes; a 9th `create` is cleanly rejected (`ERROR bad-request`).
+   - Revision stress to the shared prior-revision table's exact capacity (`MAX_REVISIONS` = `MAX_QUERY_RESULTS` = 8): object 1042 is driven to revision 9 (8 prior revisions retained), and a 10th revise is rejected (`ERROR bad-request`) without mutating state — proven by an immediate `inspect` showing the unchanged pre-rejection value.
+   - Adversarial requests (`inspect`/`history`/`revise`) against an object id (`424242`) the shell was never granted a capability for, each returning `DENIED missing-capability`.
+   - Fault isolation: after every rejected/adversarial request, `query`/`inspect`/`history` on the legitimate object still return the correct state, proving none of it corrupted object-service state or blocked subsequent valid syscalls.
+   - The existing post-reboot durability assertions were extended to cover this larger state (revision 9, all 8 created objects), so `create → revise → reboot → inspect → history` is proven to hold after the adversarial/stress load, not just the small Task 10 case.
+   - Existing kernel-level adversarial coverage (`core/src/syscall.rs`, `core/src/user_copy.rs` for malformed/out-of-range/cross-mapping user pointers; `core/src/typed_object_format.rs` for oversized fields) was reviewed and found to already cover the ABI-boundary cases that aren't expressible through the shell's own grammar — the shell is a trusted, well-behaved client that never constructs a truncated or oversized wire request itself, so those cases are properly kernel unit-test concerns, not COM2/live-transport concerns. Not duplicated.
 
-```powershell
-git add Cargo.toml scripts\test-object-shell.py scripts\build-image.py scripts\build-iso.py scripts\build-user-probes.py user\probes core\src\normal_boot.rs core\src\syscall.rs
-git commit -m "test(shell): prove object shell caller isolation"
-```
+Verified: `cargo fmt --check`, `cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings` (clean), `cargo test -p pythos-core --bin pythcore` (passing), `cargo test --workspace --exclude pythos-boot --exclude pythos-core` (clean), and `python scripts\test-boot.py --slice milestone-1`, `test-normal-fast-boot.py`, `test-com2-shell-transport.py`, `test-persistent-storage.py`, `test-object-shell.py` (run at least twice for reboot repeatability) all passing. Emits `OBJECT_SHELL_TASK11_STRESS_ADVERSARIAL_OK` and (unchanged) `OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK`.
+
+Not started: Task 12 (this documentation pass) at the time Task 11 landed.
 
 ---
 
-### Task 12: Documentation And Final Verification
+### Task 12: Documentation And Final Verification — COMPLETE
 
-**Files:**
-- Modify: `docs/ROADMAP.md`
-- Modify: `docs/HANDOVER.md`
-- Test: `scripts/test-object-shell.py`, `scripts/test-normal-fast-boot.py`, `scripts/test-boot.py`, `scripts/test-persistent-storage.py`
+**Files (actual):**
+- Modify: `docs/superpowers/plans/2026-07-26-first-ring3-object-shell.md` (this file — Task 9/10/11 hashes, corrected Task 10 root cause references, and this Task 12 documentation)
+- Modify: `docs/HANDOVER.md` (pointer to the `object-shell` branch state)
+- Test: `scripts/test-object-shell.py`, `scripts/test-normal-fast-boot.py`, `scripts/test-boot.py --slice milestone-1`, `scripts/test-com2-shell-transport.py`, `scripts/test-persistent-storage.py`, plus `cargo fmt`/`clippy`/`test`
 
 **Interfaces:**
-- Consumes: completed ADR 0051 and ADR 0052 implementation.
-- Produces: updated roadmap/handover stating verified behavior and remaining boundaries.
+- Consumes: completed ADR 0051 and ADR 0052 implementation (Tasks 1-11, all on branch `object-shell`, unmerged to `main`).
+- Produces: this status note (architecture, protocol, capacity, and harness documentation) and a verification matrix.
 
-- [ ] **Step 1: Update roadmap**
+**Scope note:** `docs/ROADMAP.md` and `docs/ROADMAP-LATER-PHASES.md` track PythOS's numbered Phase sequence (Phase 1 through Phase 17), and neither currently has a slot for ADR 0051/0052 — this object-shell work sits on top of already-COMPLETE Phase 8 as unmerged branch work, not as a new numbered phase. Rewriting those large canonical documents to invent a phase number for unmerged branch work is out of this task's scope (documentation/cleanup only, no new architecture decisions). `docs/HANDOVER.md` gets a small, clearly-scoped pointer instead (see Step 2); the authoritative record of this work is this plan document.
 
-In `docs/ROADMAP.md`, record:
+- [x] **Step 1: Correct stale Task 10 root-cause references**
 
-```text
-ADR 0051 first-ring3-object-shell launches a validated `shell.elf` as a
-ring-3 process during normal boot. The shell parses human command text in user
-space, submits typed object requests through ADR 0052, and receives only
-capability-gated responses. COM1 remains the oracle; COM2 carries the shell
-session. The object flow uses the retained Phase 10 object path and proves
-create, revise, denied known-object access, restore after forced power loss,
-and capability-gated reboot.
-```
+Searched the repository (`core/`, `docs/`, `scripts/`) for any remaining claim that the Task 10 hard-reset was a `block_device.rs`/virtio bug. The only occurrences were already in this plan document's own Task 10 status notes, which already carry a superseding "RESOLVED" note (added in `0f9869b`) stating the correct root cause. No other file (code comments included) makes the stale claim. `core/src/syscall.rs`'s own inline comment on `syscall_kernel_stack` (added in `c89f830`) independently and correctly states the real root cause for a future reader who never sees this plan doc. Nothing further to correct.
 
-- [ ] **Step 2: Update handover**
+- [x] **Step 2: Kernel-stack architecture documentation** — see subsection below.
+- [x] **Step 3: Object-shell protocol documentation** — see subsection below.
+- [x] **Step 4: Exact capacities and boundary behavior** — see subsection below.
+- [x] **Step 5: Persistence flow documentation** — see subsection below.
+- [x] **Step 6: QEMU harness requirements documentation** — see subsection below.
+- [x] **Step 7: Final verification from a clean checkout** — see verification matrix below.
+- [x] **Step 8: Update handover, commit, push** — `docs/HANDOVER.md` given a short pointer to this branch's state (see below); this documentation change committed separately from all Task 9-11 code commits.
 
-In `docs/HANDOVER.md`, add:
+#### Kernel-stack architecture (as of `90d9286`)
 
-```text
-Current boundary: ADR 0051 and ADR 0052 complete. Verification:
-`python scripts\test-object-shell.py`,
-`python scripts\test-normal-fast-boot.py`,
-`python scripts\test-boot.py`, and
-`python scripts\test-persistent-storage.py`.
+- **`syscall_kernel_stack`** (`core/src/syscall.rs`): the stack `syscall_entry_abi` switches `rsp` onto for every ring-3→ring-0 syscall entry. Currently **256 KiB** (`.zero 262144`), grown from an original 16 KiB (Task 9, `ba95f5f`) then 64 KiB (a still-insufficient intermediate fix) to this size in `a105467` after bisecting the real minimum requirement (~96 KiB once `persist_object_service()`'s call chain runs on top of normal dispatch) and choosing >2x headroom over that observed minimum.
+- **Guard pages** (`c89f830`): the stack lives in its own linker-script output section, `.syscall_stack` (`core/linker.ld`), flanked by two 4 KiB regions (`__pythcore_syscall_stack_guard_low_start`/`__pythcore_syscall_stack_guard_high_start`..`_end`) that `map_kernel_segments` (`core/src/memory/virtual.rs`) deliberately excludes from its normal `.data`/`.bss` mapping loop, so they are genuinely unmapped in every page table PythCore builds — not merely unused, but absent from the page tables entirely. `prove_syscall_stack_guard_pages_unmapped` (`core/src/memory/virtual.rs`) is a verify-boot probe that confirms both regions are unmapped and that touching either one takes a real page fault.
+- **IST1 fault stack** (`core/src/architecture/x86_64/tss.rs`, `idt.rs`): a dedicated, statically-allocated 16 KiB stack (`IST1_STACK_BYTES`), installed as `TSS.ist[0]`. IDT vectors 8 (`#DF`, double fault) and 14 (`#PF`, page fault) are configured with `ist = 1` (all other vectors keep `ist = 0`, i.e. no stack switch). This matters specifically for a syscall-stack guard-page hit: the CPU cannot safely push a fault frame onto a stack whose pointer has just run past a guard page (or into one), so #PF (the fault a guard-page hit actually raises) and #DF (the fault that would result if the CPU *also* couldn't push onto whatever it fell back to) are routed to this known-good, independently-mapped stack instead.
+- **`kernel_stack_bounds()`** (`core/src/syscall.rs`): returns the `[start, end)` byte range of `syscall_kernel_stack`, computed from the linker symbols. Used by `retained_services::persist_object_service()` (`core/src/retained_services.rs`, added in `c89f830`) to assert `RSP` is actually within that range before running — it refuses (returning `RetainedServiceError::UnmeasuredStackContext`) if called from any other stack context, since only `syscall_kernel_stack` has been stress-tested and given the guard-page/IST treatment. `persist_object_service()` is not currently called from `normal_boot.rs`, so this is a defensive guard against future misuse rather than a live-blocked call path today.
 
-Do not start package management, networking, universal-device work, human
-`grant`, packaged `launch`, or AI agent runtime without a new design artifact.
-The typed object bridge remains a temporary kernel-backed adapter until the
-object service is moved out of PythCore.
-```
+#### Object-shell protocol — exact response text (from `user/shell/src/syscalls.rs`)
 
-- [ ] **Step 3: Run final verification**
+All responses end `\r\n`. Pulled directly from `present_response`/`present_ok_response`:
 
-Run:
+| Case | Exact text |
+|---|---|
+| `STATUS_OK` + `OP_CREATE_OBJECT` | `CREATED object:<id> revision:<revision>` |
+| `STATUS_OK` + `OP_QUERY_OBJECTS` | one line per result: `object:<id> kind:note` |
+| `STATUS_OK` + `OP_REVISE_FIELD` | `COMMITTED revision:<revision>` |
+| `STATUS_OK` + `OP_INSPECT_OBJECT` | `text="<text>" revision:<revision>` |
+| `STATUS_OK` + `OP_GET_HISTORY` | `history object:<id> revisions:<count>` |
+| `STATUS_OK` + any other op | `OK` (fallback arm; not currently reachable by any defined operation) |
+| `STATUS_DENIED` or `STATUS_NOT_FOUND` | `DENIED missing-capability` |
+| `STATUS_BUFFER_TOO_SMALL` | `ERROR buffer-too-small` |
+| any other non-OK status (e.g. `STATUS_BAD_REQUEST`, capacity exhaustion) | `ERROR bad-request` |
 
-```powershell
-python scripts\test-object-shell.py
-python scripts\test-normal-fast-boot.py
-python scripts\test-boot.py
-python scripts\test-persistent-storage.py
-```
+`reboot`: no typed-object response involved — the shell sends `reboot\r\n`, PythCore emits `PYTHOS:CORE:SYSTEM:REBOOTING` to COM1 and calls `qemu_exit::reboot_qemu()`, which performs a real i8042 pulse reset (port `0x64`, byte `0xFE`). The next boot produces a second `PYTHOS:LOADER:ENTER` / `PYTHOS:SHELL:RING3_ENTER` pair in the COM1 log and a fresh `PYTHOS:SHELL:READY` / `pyth> ` banner over the same COM2 socket.
 
-Expected:
+#### Exact current capacities and boundary behavior
 
-```text
-OBJECT_SHELL_TEST_OK
-NORMAL_FAST_BOOT_TEST_OK
-BOOT_TEST_OK
-PERSISTENT_STORAGE_TEST_OK
-```
+- `MAX_QUERY_RESULTS` = **8** (`shared/src/object_shell_abi.rs`) — the base capacity constant everything else derives from.
+- `MAX_DYNAMIC_OBJECTS` = `MAX_QUERY_RESULTS + 1` = **9** (`core/src/dynamic_object_store.rs`) — the dynamic-object table's total capacity, shell-created objects plus the one externally-seeded slot.
+- `MAX_REVISIONS` = `MAX_QUERY_RESULTS` = **8** (`core/src/revision_history.rs`) — the shared prior-revision table's capacity (retained *prior* revisions, not counting the current one).
+- **Object-creation boundary** (proven in `scripts/test-object-shell.py`, Task 11 stress section): one dynamic-object slot is already held by pre-existing/seeded state, so the shell can create exactly **8** notes (object 1042 from Task 10's lifecycle test, plus 1043 through 1049) before the table is full. The **9th** `create kind:note` (a 10th dynamic object overall) is rejected with `ERROR bad-request`.
+- **Revision boundary**: object 1042 accumulates 3 revisions during Task 10's lifecycle section (revisions 2, 3, 4 — 3 prior-revision slots used) then 5 more during Task 11's stress section (revisions 5 through 9 — 5 more prior-revision slots used), landing at **revision 9** with the prior-revision table at exactly **8/8** capacity. The next (**10th**) `revise` on any object is rejected with `ERROR bad-request`, and a follow-up `inspect` confirms object 1042's state is unchanged (`text="r9" revision:9`) — the rejection is transactional, not partially applied.
+- **Unknown-capability boundary**: any operation (`inspect`/`history`/`revise`) against an object id the shell was never granted a capability for (tested against `424242`, chosen to be outside any valid range in the test fixture) returns `DENIED missing-capability` on every call, with no effect on other object state.
 
-- [ ] **Step 4: Commit**
+#### Full persistence flow (as exercised by `scripts/test-object-shell.py` today)
 
-```powershell
-git add docs\ROADMAP.md docs\HANDOVER.md
-git commit -m "docs(shell): record ADR 0051 object shell completion"
-```
+1. `create kind:note` → object 1042, revision 1.
+2. `inspect object:1042` → confirms empty text, revision 1.
+3. Three `revise` calls → revisions 2, 3, 4 (`text="final"` at revision 4).
+4. `inspect object:1042` → confirms `text="final" revision:4`. (`OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK`)
+5. **Task 11 stress, still pre-reboot, same boot session:** 7 more `create` calls (objects 1043-1049) to exact capacity, 1 rejected over-capacity `create`; 5 more `revise` calls on object 1042 to revision 9 (exact prior-revision-table capacity), 1 rejected over-capacity `revise`; 3 adversarial calls against an unknown object id; `query`/`inspect`/`history` re-confirmed correct afterward. (`OBJECT_SHELL_TASK11_STRESS_ADVERSARIAL_OK`)
+6. `reboot` → real QEMU machine reset (second `PYTHOS:LOADER:ENTER`/`PYTHOS:SHELL:RING3_ENTER` pair, fresh shell banner). (`OBJECT_SHELL_TASK9_REBOOT_TEST_OK`)
+7. `inspect object:1042` → `text="r9" revision:9`, and `history object:1042` → `revisions:9`, both post-reboot, both restored from the ADR 0052 checkpoint written by `persist_object_service()` on every prior `create`/`revise`. Every other stress-created object (1043-1049) is also confirmed present post-reboot at its own initial state. (`OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK`)
+
+This is a materially larger persistence proof than "one create, one revise" — it proves the checkpoint round trip survives real capacity pressure (both ADR 0052 slots touched multiple times, the revision table at exact capacity) and a real machine reset, not just a single successful write.
+
+#### QEMU harness requirements
+
+- **COM1** is the deterministic marker oracle. Test scripts wait for exact marker strings (e.g. `PYTHOS:SHELL:RING3_ENTER`, `PYTHOS:CORE:SYSTEM:REBOOTING`) in the COM1 serial log before proceeding — never on fixed timing.
+- **COM2** carries the interactive shell transport: `scripts/test-object-shell.py` opens a TCP socket to the port QEMU exposes COM2 on, sends command text terminated `\r\n`, and reads responses terminated `\r\n` (see `send_command`/`expect_line`/`read_until` helpers).
+- **`--allow-reboot`** (`scripts/run-qemu.py`): every other boot test runs QEMU with `-no-reboot` so a guest reset becomes a deterministic QEMU process exit instead of an actual machine reset — required for those tests' clean pass/fail semantics. `--allow-reboot` drops `-no-reboot` specifically so `test-object-shell.py`'s `reboot` command produces a real, observable second boot instead of terminating the QEMU process.
+- **Concurrent-QEMU/shared-log-file hazard**: a QEMU process writes its serial log to a fixed path (`--serial-log`, default `target/boot-serial.log`, or a test-specific path for scripts that use one). If two QEMU processes are launched against the same log file path at overlapping times (e.g. a backgrounded run from an earlier step that wasn't actually finished, plus a new run), both processes append/overwrite the same file, and marker-wait logic can read corrupted or interleaved output — this looks exactly like a test hang or a nondeterministic failure but is a harness/process-management bug, not a code regression. This was hit for real during Task 11's verification: two backgrounded QEMU processes ended up colliding over one log file, and the fix was killing the stray `qemu-system-x86_64.exe` processes and rerunning synchronously. Test scripts and any agent driving them must run QEMU acceptance tests synchronously (wait for each to actually exit before starting the next) or ensure each concurrent run uses a distinct `--serial-log` path.
+
+#### Verification matrix (this session, from a clean `git status`)
+
+| Command | Result |
+|---|---|
+| `cargo fmt --check` | clean |
+| `cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings` | clean, zero warnings |
+| `cargo test -p pythos-core --bin pythcore` | all passing |
+| `cargo test --workspace --exclude pythos-boot --exclude pythos-core` | clean |
+| `python scripts\test-boot.py --slice milestone-1` | `BOOT_TEST_OK` |
+| `python scripts\test-normal-fast-boot.py` | pass |
+| `python scripts\test-com2-shell-transport.py` | pass |
+| `python scripts\test-persistent-storage.py` | pass |
+| `python scripts\test-object-shell.py` (run 1) | `OBJECT_SHELL_TASK8_TEST_OK`, `OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK`, `OBJECT_SHELL_TASK11_STRESS_ADVERSARIAL_OK`, `OBJECT_SHELL_TASK9_REBOOT_TEST_OK`, `OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK` |
+| `python scripts\test-object-shell.py` (run 2, repeatability) | same markers, pass |
+
+Working tree was clean (`nothing to commit, working tree clean`) before this documentation pass began — Task 11's own commits (`c89f830`, `90d9286`) had already left the branch in a fully verified state.
+
+**Commit range for the whole plan, Tasks 9-12:** `4f05900` (Task 9) → `ba95f5f` → `a105467` → `0f9869b` (Task 10) → `c89f830` → `90d9286` (Task 11) → this Task 12 documentation commit.
+
+Not started: Task 13 or anything beyond this plan's 12 tasks.
 
 ---
 
