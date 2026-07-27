@@ -5,6 +5,9 @@ pub const INIT_BUNDLE_HEADER_LEN: u32 = 32;
 pub const RECORD_ENTRY_LEN: usize = 32;
 pub const TYPE_RUNTIME_PAYLOAD: u32 = 0x0000_0001;
 pub const TYPE_USER_ELF: u32 = 0x0000_0002;
+/// ADR 0051/0052: a named user-program manifest record (see
+/// `crate::user_program_manifest`), distinct from the ordinal `TYPE_USER_ELF`.
+pub const TYPE_NAMED_USER_ELF: u32 = 0x0000_0003;
 const HEADER_RESERVED_OFFSET: usize = 26;
 const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
@@ -16,6 +19,7 @@ const MAX_RECORDS: usize = 8;
 pub enum RecordType {
     RuntimePayload,
     UserElf,
+    NamedUserElf,
 }
 
 impl RecordType {
@@ -23,6 +27,7 @@ impl RecordType {
         match value {
             TYPE_RUNTIME_PAYLOAD => Some(Self::RuntimePayload),
             TYPE_USER_ELF => Some(Self::UserElf),
+            TYPE_NAMED_USER_ELF => Some(Self::NamedUserElf),
             _ => None,
         }
     }
@@ -272,6 +277,24 @@ mod tests {
             parsed.record(RecordType::RuntimePayload).unwrap().bytes(),
             b"runtime"
         );
+        assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
+    }
+
+    #[test]
+    fn named_user_elf_record_is_addressable_alongside_existing_types() {
+        let bundle = build_bundle(&[
+            (TYPE_RUNTIME_PAYLOAD, b"runtime"),
+            (TYPE_USER_ELF, b"elf"),
+            (TYPE_NAMED_USER_ELF, b"named-manifest"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(
+            parsed.record(RecordType::NamedUserElf).unwrap().bytes(),
+            b"named-manifest"
+        );
+        // Existing ordinal lookups are unaffected by the new record type.
         assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
     }
 

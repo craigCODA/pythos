@@ -797,6 +797,21 @@ git commit -m "feat(shell): initialize COM2 transport"
 
 ### Task 3: Shared Typed Shell ABI And Named User Program Manifest
 
+**Status: COMPLETE (2026-07-26).** Implemented as specified; verified the
+`#[repr(C)]` byte layouts by hand before coding (80/56/16/168 bytes for
+`ObjectShellRequest`/`Response`/`ObjectListEntry`/`BootstrapCapabilityBlock`,
+accounting for u64/`PackedCapability` alignment padding after the six leading
+`u16` fields) — all matched the plan's asserted sizes exactly. One judgment
+call: the plan's `UserProgramManifestError` enum has no dedicated
+"nonzero reserved field" variant (unlike `init_bundle.rs`'s
+`NonZeroReserved`), but the project's own written principle is to reject
+nonzero reserved fields rather than silently ignore them. Reused
+`UnsupportedVersion` for that case (a nonzero reserved field is a
+forward-compatibility signal — an unknown, newer format) rather than
+inventing an unauthorized new variant. Added a `NamedUserElf` round-trip test
+to `init_bundle.rs` (not in the plan's text) since existing tests only cover
+the two pre-existing record types.
+
 **Files:**
 - Create: `shared/src/object_shell_abi.rs`
 - Create: `shared/src/user_program_manifest.rs`
@@ -808,7 +823,7 @@ git commit -m "feat(shell): initialize COM2 transport"
 - Consumes: existing `TYPE_USER_ELF` ordinal records.
 - Produces: `ObjectShellRequest`, `ObjectShellResponse`, `ObjectListEntry`, `BootstrapCapabilityBlock`, `PackedCapability`, `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest<'a>`.
 
-- [ ] **Step 1: Write ABI tests**
+- [x] **Step 1: Write ABI tests**
 
 In `shared/src/object_shell_abi.rs`, define tests first:
 
@@ -842,7 +857,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Implement shared ABI**
+- [x] **Step 2: Implement shared ABI**
 
 Create:
 
@@ -958,7 +973,7 @@ pub struct ObjectShellResponse {
 }
 ```
 
-- [ ] **Step 3: Write named manifest tests**
+- [x] **Step 3: Write named manifest tests**
 
 In `shared/src/user_program_manifest.rs`, add:
 
@@ -987,7 +1002,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 4: Implement named user-program manifest**
+- [x] **Step 4: Implement named user-program manifest**
 
 Create:
 
@@ -1022,7 +1037,7 @@ pub struct NamedUserProgramManifest<'a> {
 
 Use a deterministic FNV-1a 64-bit `digest64(bytes: &[u8]) -> u64`; document that it is an integrity binding for the trusted boot bundle, not a cryptographic signature.
 
-- [ ] **Step 5: Extend INIT bundle compatibly**
+- [x] **Step 5: Extend INIT bundle compatibly**
 
 In `shared/src/init_bundle.rs`, add:
 
@@ -1038,7 +1053,7 @@ NamedUserElf,
 
 Do not change `INIT_BUNDLE_MAJOR`, `INIT_BUNDLE_MINOR`, `TYPE_USER_ELF`, ordinal lookup, record header length, or existing tests.
 
-- [ ] **Step 6: Run shared tests**
+- [x] **Step 6: Run shared tests**
 
 Run:
 
@@ -1048,7 +1063,7 @@ cargo test -p pythos-shared object_shell_abi user_program_manifest init_bundle
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add shared\src\lib.rs shared\src\object_shell_abi.rs shared\src\user_program_manifest.rs shared\src\init_bundle.rs
