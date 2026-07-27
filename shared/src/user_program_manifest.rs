@@ -129,7 +129,10 @@ pub fn validate_named_user_program(
         return Err(UserProgramManifestError::BadMagic);
     }
     let major = u16::from_le_bytes([bytes[8], bytes[9]]);
-    if major != NAMED_USER_PROGRAM_MAJOR {
+    let minor = u16::from_le_bytes([bytes[10], bytes[11]]);
+    // Exact match for this first version of the ABI: simplest correct policy,
+    // and there is no defined meaning yet for "newer/older but compatible".
+    if major != NAMED_USER_PROGRAM_MAJOR || minor != NAMED_USER_PROGRAM_MINOR {
         return Err(UserProgramManifestError::UnsupportedVersion);
     }
     let name_len = u16::from_le_bytes([bytes[12], bytes[13]]) as usize;
@@ -202,6 +205,17 @@ mod tests {
         assert_eq!(
             encode_named_user_program(&mut bytes, &long_name, 1, b"elf"),
             Err(UserProgramManifestError::NameTooLong)
+        );
+    }
+
+    #[test]
+    fn mismatched_minor_version_is_rejected() {
+        let mut bytes = [0u8; 96];
+        let len = encode_named_user_program(&mut bytes, b"shell.elf", 1, b"elf").unwrap();
+        bytes[10..12].copy_from_slice(&(NAMED_USER_PROGRAM_MINOR + 1).to_le_bytes());
+        assert_eq!(
+            validate_named_user_program(&bytes[..len]),
+            Err(UserProgramManifestError::UnsupportedVersion)
         );
     }
 

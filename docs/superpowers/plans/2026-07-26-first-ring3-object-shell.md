@@ -812,6 +812,18 @@ inventing an unauthorized new variant. Added a `NamedUserElf` round-trip test
 to `init_bundle.rs` (not in the plan's text) since existing tests only cover
 the two pre-existing record types.
 
+**Follow-up hardening (2026-07-26, review pass):**
+
+- The manifest `minor` version was encoded but never checked. Now requires an
+  exact `major`/`minor` match (simplest correct policy for a first ABI
+  version; no "newer but compatible" semantics are defined yet).
+- Size-only assertions can't catch a field reordering that preserves total
+  size (e.g. swapping two same-sized fields). Added `core::mem::offset_of!`
+  and `align_of` assertions for every field of `ObjectShellRequest`,
+  `ObjectShellResponse`, `ObjectListEntry`, and `BootstrapCapabilityBlock` —
+  all matched the hand-computed layout from Task 3's original implementation
+  exactly (41 shared-crate tests now, up from 36).
+
 **Files:**
 - Create: `shared/src/object_shell_abi.rs`
 - Create: `shared/src/user_program_manifest.rs`

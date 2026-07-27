@@ -149,4 +149,87 @@ mod tests {
         assert_eq!(packed.slot(), 7);
         assert_eq!(packed.generation(), 9);
     }
+
+    // Field reordering can preserve total size while silently breaking the
+    // syscall ABI (e.g. swapping two same-sized fields, or one that happens
+    // to close a padding gap exactly). Pin every field's offset, not just the
+    // struct's total size, plus alignment.
+    #[test]
+    fn request_field_offsets_and_alignment_are_stable() {
+        assert_eq!(core::mem::align_of::<ObjectShellRequest>(), 8);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, abi_major), 0);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, abi_minor), 2);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, operation), 4);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, object_kind), 6);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, field_id), 8);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, reserved0), 10);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, authority), 16);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, object_id), 24);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, input_ptr), 32);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, input_len), 40);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, output_ptr), 48);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, output_len), 56);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, reserved1), 64);
+        assert_eq!(core::mem::offset_of!(ObjectShellRequest, reserved2), 72);
+    }
+
+    #[test]
+    fn response_field_offsets_and_alignment_are_stable() {
+        assert_eq!(core::mem::align_of::<ObjectShellResponse>(), 8);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, status), 0);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, reserved0), 2);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, object_kind), 4);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, field_id), 6);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, object_id), 8);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, revision), 16);
+        assert_eq!(
+            core::mem::offset_of!(ObjectShellResponse, revision_count),
+            24
+        );
+        assert_eq!(
+            core::mem::offset_of!(ObjectShellResponse, bytes_written),
+            32
+        );
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, capability), 40);
+        assert_eq!(core::mem::offset_of!(ObjectShellResponse, reserved1), 48);
+    }
+
+    #[test]
+    fn object_list_entry_field_offsets_and_alignment_are_stable() {
+        assert_eq!(core::mem::align_of::<ObjectListEntry>(), 8);
+        assert_eq!(core::mem::offset_of!(ObjectListEntry, object_id), 0);
+        assert_eq!(core::mem::offset_of!(ObjectListEntry, capability), 8);
+    }
+
+    #[test]
+    fn bootstrap_block_field_offsets_and_alignment_are_stable() {
+        assert_eq!(core::mem::align_of::<BootstrapCapabilityBlock>(), 8);
+        assert_eq!(core::mem::offset_of!(BootstrapCapabilityBlock, magic), 0);
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, abi_major),
+            8
+        );
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, abi_minor),
+            10
+        );
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, object_count),
+            12
+        );
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, reserved0),
+            14
+        );
+        assert_eq!(core::mem::offset_of!(BootstrapCapabilityBlock, console), 16);
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, workspace),
+            24
+        );
+        assert_eq!(
+            core::mem::offset_of!(BootstrapCapabilityBlock, system_control),
+            32
+        );
+        assert_eq!(core::mem::offset_of!(BootstrapCapabilityBlock, objects), 40);
+    }
 }
