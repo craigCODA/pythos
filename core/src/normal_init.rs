@@ -8,10 +8,15 @@
 
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
+use crate::memory::r#virtual::KernelAddressSpace;
 use crate::{architecture, kernel_stacks, serial, syscall, tasks, user_stacks};
 use pythos_shared::boot_protocol::PythBootInfo;
 
 pub struct NormalBootSubstrate {
+    /// The active kernel-owned address space normal boot is running under.
+    /// Retained (not just its `root_table_phys`) so later normal-boot code can
+    /// query or validate it, e.g. via `KernelAddressSpace::validate_active`.
+    pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
 }
 
@@ -38,12 +43,19 @@ pub fn initialize_normal_substrate(
     // its own fresh page-table frames. The verify path relies on the same
     // ordering (see `pythcore_entry`): build kernel + user address spaces,
     // then activate only the kernel one.
-    let kernel_address_space =
-        crate::memory::r#virtual::KernelAddressSpace::build(physical_memory, boot_info, None)
-            .map_err(|_| NormalInitError::Memory)?;
-    let _user_address_space =
+    let kernel_address_space = KernelAddressSpace::build(physical_memory, boot_info, None)
+        .map_err(|_| NormalInitError::Memory)?;
+    // This is a proof-only construction (no shell ELF yet); reclaim its
+    // allocated page-table frames immediately rather than leaking them for the
+    // life of normal boot. The real shell address space (Task 8) is a
+    // separate, retained `UserAddressSpace` built via `build_with_user_elf`
+    // before kernel activation — see the Task 8 ordering note in the plan.
+    let proof_user_address_space =
         crate::memory::r#virtual::UserAddressSpace::build(physical_memory, boot_info)
             .map_err(|_| NormalInitError::Ring3)?;
+    proof_user_address_space
+        .reclaim(physical_memory)
+        .map_err(|_| NormalInitError::Ring3)?;
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -81,7 +93,10 @@ pub fn initialize_normal_substrate(
     let block_device = block_device::select_device().map_err(|_| NormalInitError::BlockDevice)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY");
 
-    Ok(NormalBootSubstrate { block_device })
+    Ok(NormalBootSubstrate {
+        kernel_address_space,
+        block_device,
+    })
 }
 
 #[cfg(not(test))]

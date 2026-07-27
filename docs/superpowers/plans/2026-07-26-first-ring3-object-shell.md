@@ -2317,6 +2317,22 @@ git commit -m "feat(shell): gate typed syscalls by current caller"
 
 ### Task 8: Persistent Shell Launch And Fault Outcome
 
+**Ordering constraint added during Task 1 review (2026-07-26):** the shell's
+`UserAddressSpace` (built via `build_with_user_elf`) **must** be constructed —
+and its read-only `BootstrapCapabilityBlock` mapping prepared — *before* the
+normal-boot kernel address space activates, not at this task's point in the
+sequence. `PageTableBuilder`'s raw-physical-address page-table writes require
+the loader's broad low-memory identity map, which
+`KernelAddressSpace::activate()` removes by design (the Phase 1.5
+identity-map-removal invariant, `core/src/normal_init.rs`). Building it here —
+long after Task 1's kernel activation — reproduces the exact page fault Task 1
+hit and fixed for the proof-only `UserAddressSpace::build()` call. When
+implementing this task, move shell address-space construction into the same
+early phase as `normal_init::initialize_normal_substrate` (alongside the
+kernel and proof user address spaces), retain the built (but not yet activated)
+shell `UserAddressSpace` through to this task's launch step, and activate it
+only when actually entering ring 3.
+
 **Files:**
 - Modify: `core/src/user_mode.rs`
 - Modify: `core/src/normal_boot.rs`

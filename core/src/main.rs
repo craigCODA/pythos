@@ -25,9 +25,9 @@ mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
 mod memory;
-#[cfg(not(feature = "verify"))]
+#[cfg(all(not(test), not(feature = "verify")))]
 mod normal_boot;
-#[cfg(not(feature = "verify"))]
+#[cfg(all(not(test), not(feature = "verify")))]
 mod normal_init;
 mod object_browser;
 mod object_relationships;

@@ -19,6 +19,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             qemu_exit::panic();
         }
     };
+    let _ = &substrate.kernel_address_space;
     let _ = substrate.block_device;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
     serial::write_line("PYTHOS:CORE:NORMAL_SERVICES_READY");
