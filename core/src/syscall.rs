@@ -648,17 +648,16 @@ fn dispatch_object_request_with_raw_buffers(
         .map_err(SyscallError::from)?
     };
 
-    // NOTE: durable mutations (ADR 0052) are meant to persist here via
-    // `retained_services::persist_object_service()` so a capability-gated
-    // `reboot` syscall (Task 9) restores exactly this state. That call is
-    // deliberately NOT wired in yet: exercising it exposed a block-device
-    // driver defect (see the Task 10 status note in the plan doc) where a
-    // second `object_service_checkpoint` read/write cycle within the same
-    // boot session hard-resets the machine, with no panic or crash marker.
-    // The first-ever use of the write path is safe; only a second use
-    // within one session (i.e. this call, once boot's own restore already
-    // ran) triggers it. Root-cause and fix belongs in `block_device.rs`'s
-    // queue reinitialization, not here.
+    // ADR 0052: durable mutations persist here so a capability-gated `reboot`
+    // syscall (Task 9) restores exactly this state. See the syscall_kernel_stack
+    // comment above `syscall_entry_abi` for why this needed a larger kernel
+    // stack before it could be wired in safely.
+    #[cfg(not(test))]
+    if response.status == STATUS_OK
+        && matches!(request.operation, OP_CREATE_OBJECT | OP_REVISE_FIELD)
+    {
+        retained_services::persist_object_service().map_err(SyscallError::from)?;
+    }
 
     Ok(response)
 }

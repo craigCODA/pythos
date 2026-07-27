@@ -2,14 +2,9 @@
 """Task 8/9/10 acceptance test: persistent ring-3 shell launch, a
 repeatable capability-gated `reboot` that actually resets the machine, and
 the typed object lifecycle (create/inspect/revise/history) with exact
-response text asserted per operation.
-
-Does NOT yet assert that object state survives `reboot` - persistence-on-
-write is implemented (`retained_services::persist_object_service`) but not
-wired into the live syscall path, because exercising it exposed a
-block-device driver defect (a second `object_service_checkpoint`
-read/write cycle within one boot session hard-resets the machine). See the
-Task 10 status note in the plan doc."""
+response text asserted per operation, including durability: object state
+created and revised before `reboot` is still present (inspect/history)
+after the machine actually resets and the shell comes back up."""
 
 from __future__ import annotations
 
@@ -221,6 +216,25 @@ def main() -> int:
                 b"history object:1042 revisions:2\r\n",
                 "history before reboot",
             )
+            # Two more revise cycles (generations 3 and 4) push persistence
+            # through both ADR 0052 checkpoint slots twice each - regression
+            # coverage for the block-device stack-overflow bug where only
+            # repeated persist cycles within one boot reproduced.
+            expect_line(
+                send_command(sock, b'revise object:1042 text="hello again"'),
+                b"COMMITTED revision:3\r\n",
+                "second revise",
+            )
+            expect_line(
+                send_command(sock, b'revise object:1042 text="final"'),
+                b"COMMITTED revision:4\r\n",
+                "third revise",
+            )
+            expect_line(
+                send_command(sock, b"inspect object:1042"),
+                b'text="final" revision:4\r\n',
+                "inspect after repeated revises, before reboot",
+            )
             print("OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK")
 
             # Task 9: `reboot` must actually reset the machine (a second real
@@ -236,6 +250,22 @@ def main() -> int:
                     f"missing post-reboot shell ready banner: {second_banner!r}"
                 )
             print("OBJECT_SHELL_TASK9_REBOOT_TEST_OK")
+
+            # Task 10 durability: the object created and revised before
+            # `reboot` must still be there after the machine actually
+            # resets, restored from the ADR 0052 checkpoint written by
+            # `retained_services::persist_object_service` on create/revise.
+            expect_line(
+                send_command(sock, b"inspect object:1042"),
+                b'text="final" revision:4\r\n',
+                "inspect after reboot",
+            )
+            expect_line(
+                send_command(sock, b"history object:1042"),
+                b"history object:1042 revisions:4\r\n",
+                "history after reboot",
+            )
+            print("OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK")
         return 0
     finally:
         terminate_process_tree(process)
