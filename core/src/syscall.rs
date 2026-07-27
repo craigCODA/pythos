@@ -9,17 +9,40 @@ use crate::capabilities::{
     CapabilityError, CapabilityHandle, CapabilityTable, ResourceId, RightsMask,
 };
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::object_service::{ObjectService, ObjectServiceError};
 use crate::permission_validation::{self, PermissionError};
+use crate::process_context::{self, ActiveUserProcess, ProcessContextError};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::retained_services::{self, RetainedServiceError};
 #[cfg(not(test))]
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::system_api::{SystemApiError, SystemApiHost};
 use crate::tasks::TaskId;
 use crate::user_mode;
 use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 #[cfg(not(test))]
 use core::arch::{asm, global_asm};
+use core::cell::UnsafeCell;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use core::mem::{align_of, size_of};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use pythos_shared::object_shell_abi::{
+    FIELD_TEXT, MAX_QUERY_RESULTS, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR,
+    OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT, OP_QUERY_OBJECTS,
+    OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest, ObjectShellResponse, STATUS_BAD_REQUEST,
+    STATUS_BUFFER_TOO_SMALL, STATUS_DENIED, STATUS_NOT_FOUND, STATUS_OK,
+};
+use pythos_shared::object_shell_abi::{
+    NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
+    SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
+};
 
 pub const SYSCALL_ABI_MAJOR: u16 = 1;
 pub const SYSCALL_ABI_MINOR: u16 = 0;
@@ -27,7 +50,6 @@ pub const SYSCALL_ABI_INFO: u64 = 0x5059_0000;
 pub const SYSCALL_SYSTEM_LOG_PROOF: u64 = 0x5059_0001;
 
 const SYSCALL_ABI_INFO_MAGIC: u64 = 0x5059_0000_0000;
-const SYSCALL_OK: u64 = 0x5059_004F;
 const SYSCALL_ERROR_UNSUPPORTED_NUMBER: u64 = 0xBAD0_0001;
 const SYSCALL_ERROR_DISPATCH: u64 = 0xBAD0_0002;
 const SYSCALL_ERROR_UNEXPECTED: u64 = 0xBAD0_0003;
@@ -43,6 +65,8 @@ const SYSCALL_RFLAGS_MASK: u64 = RFLAGS_INTERRUPT_ENABLE | RFLAGS_DIRECTION;
 
 const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
 const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
+const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00);
+const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
 const SYSCALL_MESSAGE_TYPE: u16 = 0x88;
 const SYSCALL_PAYLOAD: [u8; 4] = [0x53, 0x43, 0x41, 0x4C];
 const BOUNDARY_MESSAGE_TYPE: u16 = 0x89;
@@ -53,12 +77,64 @@ static EXPECTED_SYSCALL: AtomicBool = AtomicBool::new(false);
 static SYSCALL_RETURNED: AtomicBool = AtomicBool::new(false);
 static SYSCALL_LAST_RESULT: AtomicU64 = AtomicU64::new(0);
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SyscallArgs {
+    pub number: u64,
+    pub arg0: u64,
+    pub arg1: u64,
+    pub arg2: u64,
+    pub arg3: u64,
+    pub arg4: u64,
+}
+
+impl SyscallArgs {
+    const fn for_number(number: u64) -> Self {
+        Self {
+            number,
+            arg0: 0,
+            arg1: 0,
+            arg2: 0,
+            arg3: 0,
+            arg4: 0,
+        }
+    }
+}
+
+struct SyscallCapabilityStorage(UnsafeCell<CapabilityTable>);
+
+// SAFETY:
+// 1. Invariant: ADR 0051 normal boot executes one active user process on one
+//    CPU; syscall capability mutations are non-reentrant in this slice.
+// 2. Established by: the current QEMU target is single-core and Task 7 only
+//    grants console/system-control capabilities during shell bootstrap or
+//    controlled tests before using them.
+// 3. Lifetime: the capability table is static kernel-owned storage for the
+//    full boot.
+// 4. Pointer ownership: with_syscall_capabilities lends one mutable borrow for
+//    one short grant/validate operation and never stores that borrow.
+// 5. Alignment: UnsafeCell<CapabilityTable> preserves CapabilityTable alignment.
+// 6. Mapped length: exactly one CapabilityTable value is accessed.
+// 7. Concurrency: SMP and concurrent syscalls are outside ADR 0051; future SMP
+//    work must replace this storage with scheduler-owned synchronization.
+// 8. Violation: concurrent mutation could corrupt slots or validate authority
+//    against the wrong holder.
+unsafe impl Sync for SyscallCapabilityStorage {}
+
+static SYSCALL_CAPABILITIES: SyscallCapabilityStorage =
+    SyscallCapabilityStorage(UnsafeCell::new(CapabilityTable::new()));
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyscallError {
     UnsupportedNumber,
     Capability(CapabilityError),
     Ipc(IpcError),
     Permission(PermissionError),
+    ProcessContext(ProcessContextError),
+    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    ObjectService(ObjectServiceError),
+    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    RetainedService(RetainedServiceError),
     System(SystemApiError),
     UnexpectedSyscall,
     UserMode(user_mode::UserModeError),
@@ -84,6 +160,10 @@ pub struct GeneralSyscallAbiProof {
 enum SyscallDispatchKind {
     AbiInfo,
     SystemLogProof,
+    ConsoleReadByte,
+    ConsoleWriteByte,
+    ObjectRequest,
+    SystemReboot,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,6 +172,7 @@ struct SyscallEntry {
     name: &'static str,
     introduced_major: u16,
     introduced_minor: u16,
+    proof_only: bool,
     dispatch_kind: SyscallDispatchKind,
 }
 
@@ -108,6 +189,7 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         name: "SYSCALL_ABI_INFO",
         introduced_major: 1,
         introduced_minor: 0,
+        proof_only: false,
         dispatch_kind: SyscallDispatchKind::AbiInfo,
     },
     SyscallEntry {
@@ -115,7 +197,40 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         name: "SYSCALL_SYSTEM_LOG_PROOF",
         introduced_major: 1,
         introduced_minor: 0,
+        proof_only: true,
         dispatch_kind: SyscallDispatchKind::SystemLogProof,
+    },
+    SyscallEntry {
+        number: SYSCALL_CONSOLE_READ_BYTE,
+        name: "SYSCALL_CONSOLE_READ_BYTE",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::ConsoleReadByte,
+    },
+    SyscallEntry {
+        number: SYSCALL_CONSOLE_WRITE_BYTE,
+        name: "SYSCALL_CONSOLE_WRITE_BYTE",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::ConsoleWriteByte,
+    },
+    SyscallEntry {
+        number: SYSCALL_OBJECT_REQUEST,
+        name: "SYSCALL_OBJECT_REQUEST",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::ObjectRequest,
+    },
+    SyscallEntry {
+        number: SYSCALL_SYSTEM_REBOOT,
+        name: "SYSCALL_SYSTEM_REBOOT",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::SystemReboot,
     },
 ];
 
@@ -134,6 +249,26 @@ impl From<IpcError> for SyscallError {
 impl From<PermissionError> for SyscallError {
     fn from(error: PermissionError) -> Self {
         Self::Permission(error)
+    }
+}
+
+impl From<ProcessContextError> for SyscallError {
+    fn from(error: ProcessContextError) -> Self {
+        Self::ProcessContext(error)
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+impl From<ObjectServiceError> for SyscallError {
+    fn from(error: ObjectServiceError) -> Self {
+        Self::ObjectService(error)
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+impl From<RetainedServiceError> for SyscallError {
+    fn from(error: RetainedServiceError) -> Self {
+        Self::RetainedService(error)
     }
 }
 
@@ -175,6 +310,11 @@ global_asm!(
         push r14
         push r15
         cld
+        mov r9, r8
+        mov r8, r10
+        mov rcx, rdx
+        mov rdx, rsi
+        mov rsi, rdi
         mov rdi, rax
         call syscall_dispatch_abi
         pop r15
@@ -222,11 +362,25 @@ pub fn run_self_test() -> Result<(), SyscallError> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn syscall_dispatch_abi(number: u64) -> u64 {
+pub extern "C" fn syscall_dispatch_abi(
+    number: u64,
+    arg0: u64,
+    arg1: u64,
+    arg2: u64,
+    arg3: u64,
+    arg4: u64,
+) -> u64 {
     #[cfg(not(test))]
     serial::write_line("PYTHOS:CORE:SYSCALL:ENTER");
 
-    let result = dispatch(number);
+    let result = dispatch(SyscallArgs {
+        number,
+        arg0,
+        arg1,
+        arg2,
+        arg3,
+        arg4,
+    });
     let code = match result {
         Ok(code) => code,
         Err(SyscallError::UnsupportedNumber) => SYSCALL_ERROR_UNSUPPORTED_NUMBER,
@@ -241,11 +395,11 @@ pub extern "C" fn syscall_dispatch_abi(number: u64) -> u64 {
     code
 }
 
-fn dispatch(number: u64) -> Result<u64, SyscallError> {
-    if !EXPECTED_SYSCALL.swap(false, Ordering::SeqCst) {
+fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let entry = lookup_syscall(args.number).ok_or(SyscallError::UnsupportedNumber)?;
+    if entry.proof_only && !EXPECTED_SYSCALL.swap(false, Ordering::SeqCst) {
         return Err(SyscallError::UnexpectedSyscall);
     }
-    let entry = lookup_syscall(number).ok_or(SyscallError::UnsupportedNumber)?;
 
     match entry.dispatch_kind {
         SyscallDispatchKind::AbiInfo => Ok(abi_info_result()),
@@ -259,6 +413,10 @@ fn dispatch(number: u64) -> Result<u64, SyscallError> {
             serial::write_line("PYTHOS:CORE:SYSCALL:SYSTEM_LOG");
             Ok(SYSCALL_OK)
         }
+        SyscallDispatchKind::ConsoleReadByte => dispatch_console_read(args),
+        SyscallDispatchKind::ConsoleWriteByte => dispatch_console_write(args),
+        SyscallDispatchKind::ObjectRequest => dispatch_object_request(args),
+        SyscallDispatchKind::SystemReboot => dispatch_system_reboot(args),
     }
 }
 
@@ -293,6 +451,492 @@ fn validate_syscall_table(table: &[SyscallEntry]) -> Result<(), SyscallTableErro
     }
 
     Ok(())
+}
+
+fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R {
+    // SAFETY:
+    // 1. Invariant: ADR 0051 normal boot handles one syscall at a time on one
+    //    CPU, so no concurrent mutable borrow of this table exists.
+    // 2. Established by: persistent shell launch remains single-process and
+    //    SMP is explicitly outside this slice.
+    // 3. Lifetime: the mutable borrow is confined to this function call and
+    //    never stored.
+    // 4. Pointer ownership: SYSCALL_CAPABILITIES owns the static table.
+    // 5. Alignment: UnsafeCell<CapabilityTable> preserves table alignment.
+    // 6. Mapped length: exactly one CapabilityTable value is accessed.
+    // 7. Concurrency: tests that reset/grant this table serialize themselves;
+    //    production is single-core before future SMP work.
+    // 8. Violation: reentrant mutation could corrupt authority slots.
+    unsafe { f(&mut *SYSCALL_CAPABILITIES.0.get()) }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+pub fn grant_console_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    let handle = with_syscall_capabilities(|table| {
+        table.grant(
+            process.service_id(),
+            CONSOLE_COM2_RESOURCE,
+            RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+        )
+    })?;
+    Ok(pack_syscall_capability(handle))
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+pub fn grant_system_control_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    let handle = with_syscall_capabilities(|table| {
+        table.grant(
+            process.service_id(),
+            SYSTEM_CONTROL_RESOURCE,
+            RightsMask::new(RightsMask::WRITE),
+        )
+    })?;
+    Ok(pack_syscall_capability(handle))
+}
+
+fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    validate_syscall_capability(
+        caller,
+        PackedCapability::from_raw(args.arg0),
+        CONSOLE_COM2_RESOURCE,
+        RightsMask::new(RightsMask::READ),
+    )?;
+    #[cfg(not(test))]
+    {
+        Ok(serial::try_read_byte_com2().map_or(NO_BYTE, u64::from))
+    }
+    #[cfg(test)]
+    {
+        Ok(NO_BYTE)
+    }
+}
+
+fn dispatch_console_write(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    dispatch_console_write_for_caller(caller, PackedCapability::from_raw(args.arg0), args.arg1)
+}
+
+fn dispatch_console_write_for_caller(
+    caller: ActiveUserProcess,
+    capability: PackedCapability,
+    byte: u64,
+) -> Result<u64, SyscallError> {
+    if byte > u64::from(u8::MAX) {
+        return Err(SyscallError::BadResult);
+    }
+    validate_syscall_capability(
+        caller,
+        capability,
+        CONSOLE_COM2_RESOURCE,
+        RightsMask::new(RightsMask::WRITE),
+    )?;
+    #[cfg(not(test))]
+    serial::write_byte_com2(byte as u8);
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    if args.arg1 != size_of::<ObjectShellRequest>() as u64
+        || args.arg3 != size_of::<ObjectShellResponse>() as u64
+        || args.arg4 != 0
+        || !is_aligned(args.arg0, align_of::<ObjectShellRequest>())
+        || !is_aligned(args.arg2, align_of::<ObjectShellResponse>())
+    {
+        return Err(SyscallError::BadResult);
+    }
+    let request_ptr = args.arg0 as *const ObjectShellRequest;
+    let response_ptr = args.arg2 as *mut ObjectShellResponse;
+    if request_ptr.is_null() || response_ptr.is_null() {
+        return Err(SyscallError::BadResult);
+    }
+    // SAFETY:
+    // 1. Invariant: `request_ptr` names a live, readable
+    //    ObjectShellRequest supplied by the active user process for this
+    //    syscall; `response_ptr` names a live, writable ObjectShellResponse.
+    // 2. Established by: Task 7's fixed ABI length/alignment/null checks above
+    //    and the ADR 0051 launch contract that maps these shell buffers in the
+    //    active user address space. Full address-space map lookup lands with
+    //    the shell execution slice.
+    // 3. Lifetime: both buffers remain valid only for this syscall; neither
+    //    pointer is retained after returning.
+    // 4. Pointer ownership: the user process owns the buffers, PythCore only
+    //    copies in/out.
+    // 5. Alignment: checked against repr(C) alignment before dereference.
+    // 6. Mapped length: checked against the exact ABI struct sizes.
+    // 7. Concurrency: ADR 0051 shell is single-threaded and one syscall is
+    //    handled at a time.
+    // 8. Violation: a forged mapping could fault or corrupt user memory; Task 9
+    //    retains fault containment and the upcoming launch slice supplies the
+    //    scheduler-owned mapping source.
+    let request = unsafe { request_ptr.read() };
+    let response = dispatch_object_request_with_raw_buffers(caller, request)?;
+    // SAFETY: see the invariant block above; this is the matching copy-out to
+    // the already length/alignment/null-validated response pointer.
+    unsafe {
+        response_ptr.write(response);
+    }
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(all(not(test), feature = "verify"))]
+fn dispatch_object_request(_args: SyscallArgs) -> Result<u64, SyscallError> {
+    Err(SyscallError::BadResult)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_object_request_with_raw_buffers(
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+) -> Result<ObjectShellResponse, SyscallError> {
+    if !valid_object_request_header(&request) {
+        return Ok(bad_request_response());
+    }
+    let input = if request.operation == OP_REVISE_FIELD {
+        checked_request_input(&request)?
+    } else {
+        &[]
+    };
+    retained_services::with_object_service(|service| {
+        if request.operation == OP_QUERY_OBJECTS {
+            let output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
+            if request.output_len < output_len
+                || !is_aligned(request.output_ptr, align_of::<ObjectListEntry>())
+            {
+                return buffer_too_small_response();
+            }
+            let output_ptr = request.output_ptr as *mut ObjectListEntry;
+            if output_ptr.is_null() {
+                return buffer_too_small_response();
+            }
+            // SAFETY:
+            // 1. Invariant: query output points at a writable array of
+            //    MAX_QUERY_RESULTS ObjectListEntry values in the caller's
+            //    address space.
+            // 2. Established by: fixed Task 7 ABI requires `output_len` at
+            //    least the full array size and natural ObjectListEntry
+            //    alignment; the shell supplies this buffer immediately before
+            //    invoking SYSCALL_OBJECT_REQUEST.
+            // 3. Lifetime: the slice is used only inside this syscall.
+            // 4. Pointer ownership: user space owns the memory; PythCore writes
+            //    bounded result entries and does not retain the pointer.
+            // 5. Alignment: checked above.
+            // 6. Mapped length: checked above against the full fixed array.
+            // 7. Concurrency: shell is single-threaded in ADR 0051.
+            // 8. Violation: a forged output mapping could fault; the future
+            //    launch path supplies the authoritative user mapping.
+            let output = unsafe { slice::from_raw_parts_mut(output_ptr, MAX_QUERY_RESULTS) };
+            dispatch_object_request_to_service(service, caller, request, input, output)
+        } else {
+            dispatch_object_request_to_service(service, caller, request, input, &mut [])
+        }
+    })
+    .map_err(SyscallError::from)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn checked_request_input(request: &ObjectShellRequest) -> Result<&[u8], SyscallError> {
+    if request.input_len == 0 {
+        return Ok(&[]);
+    }
+    if request.input_len > 16 || request.input_ptr == 0 {
+        return Err(SyscallError::BadResult);
+    }
+    // SAFETY:
+    // 1. Invariant: non-empty request input points at at most 16 readable bytes
+    //    in the active shell process.
+    // 2. Established by: Task 7 caps input_len at one TypedObjectField payload
+    //    and rejects a null pointer before slicing.
+    // 3. Lifetime: the returned slice is consumed during the current syscall
+    //    and never stored.
+    // 4. Pointer ownership: user space owns the input bytes; PythCore reads
+    //    them only for typed object mutation.
+    // 5. Alignment: byte slices require no stricter alignment than 1.
+    // 6. Mapped length: bounded to 16 bytes by the check above.
+    // 7. Concurrency: shell is single-threaded in ADR 0051.
+    // 8. Violation: a forged input mapping could fault; the upcoming launch
+    //    slice provides scheduler-owned user mapping validation.
+    Ok(
+        unsafe {
+            slice::from_raw_parts(request.input_ptr as *const u8, request.input_len as usize)
+        },
+    )
+}
+
+fn dispatch_system_reboot(args: SyscallArgs) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    dispatch_system_reboot_for_caller(caller, PackedCapability::from_raw(args.arg0))
+}
+
+fn dispatch_system_reboot_for_caller(
+    caller: ActiveUserProcess,
+    capability: PackedCapability,
+) -> Result<u64, SyscallError> {
+    validate_syscall_capability(
+        caller,
+        capability,
+        SYSTEM_CONTROL_RESOURCE,
+        RightsMask::new(RightsMask::WRITE),
+    )?;
+    #[cfg(not(test))]
+    {
+        serial::write_line("PYTHOS:SHELL:REBOOT_REQUESTED");
+        serial::write_line("PYTHOS:CORE:SYSTEM:REBOOTING");
+    }
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_object_request_to_service(
+    service: &mut ObjectService,
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    input: &[u8],
+    output: &mut [ObjectListEntry],
+) -> ObjectShellResponse {
+    if !valid_object_request_header(&request) {
+        return bad_request_response();
+    }
+
+    match request.operation {
+        OP_CREATE_OBJECT => match request_object_kind(request.object_kind)
+            .and_then(|kind| service.create_object(caller, request.authority, kind))
+        {
+            Ok(created) => ObjectShellResponse {
+                status: STATUS_OK,
+                object_kind: request.object_kind,
+                object_id: created.object_id.raw(),
+                revision: created.revision,
+                capability: created.object_capability,
+                ..empty_response()
+            },
+            Err(error) => error_response(error),
+        },
+        OP_QUERY_OBJECTS => {
+            if output.len() < MAX_QUERY_RESULTS {
+                return buffer_too_small_response();
+            }
+            match request_object_kind(request.object_kind)
+                .and_then(|kind| service.query_objects(caller, request.authority, kind))
+            {
+                Ok(entries) => {
+                    let mut count = 0usize;
+                    while count < MAX_QUERY_RESULTS && entries[count].object_id != 0 {
+                        output[count] = entries[count];
+                        count += 1;
+                    }
+                    ObjectShellResponse {
+                        status: STATUS_OK,
+                        object_kind: request.object_kind,
+                        bytes_written: (count * size_of::<ObjectListEntry>()) as u64,
+                        ..empty_response()
+                    }
+                }
+                Err(error) => error_response(error),
+            }
+        }
+        OP_INSPECT_OBJECT => match service.inspect_object(
+            caller,
+            request.authority,
+            ObjectId::new(request.object_id),
+        ) {
+            Ok(inspection) => ObjectShellResponse {
+                status: STATUS_OK,
+                object_kind: OBJECT_KIND_NOTE,
+                field_id: FIELD_TEXT,
+                object_id: request.object_id,
+                revision: inspection.revision,
+                ..empty_response()
+            },
+            Err(error) => error_response(error),
+        },
+        OP_REVISE_FIELD => match service.revise_field(
+            caller,
+            request.authority,
+            ObjectId::new(request.object_id),
+            request.field_id,
+            input,
+        ) {
+            Ok(revision) => ObjectShellResponse {
+                status: STATUS_OK,
+                field_id: request.field_id,
+                object_id: request.object_id,
+                revision,
+                ..empty_response()
+            },
+            Err(error) => error_response(error),
+        },
+        OP_GET_HISTORY => {
+            match service.history(caller, request.authority, ObjectId::new(request.object_id)) {
+                Ok(revision_count) => ObjectShellResponse {
+                    status: STATUS_OK,
+                    object_id: request.object_id,
+                    revision_count,
+                    ..empty_response()
+                },
+                Err(error) => error_response(error),
+            }
+        }
+        _ => bad_request_response(),
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn valid_object_request_header(request: &ObjectShellRequest) -> bool {
+    request.abi_major == OBJECT_SHELL_ABI_MAJOR
+        && request.abi_minor == OBJECT_SHELL_ABI_MINOR
+        && request.reserved0 == 0
+        && request.reserved1 == 0
+        && request.reserved2 == 0
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn request_object_kind(kind: u16) -> Result<ObjectKind, ObjectServiceError> {
+    if kind == OBJECT_KIND_NOTE {
+        Ok(ObjectKind::Note)
+    } else {
+        Err(ObjectServiceError::UnsupportedKind)
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
+    let status = match error {
+        ObjectServiceError::Denied => {
+            #[cfg(not(test))]
+            serial::write_line("PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED");
+            STATUS_DENIED
+        }
+        ObjectServiceError::NotFound => STATUS_NOT_FOUND,
+        _ => STATUS_BAD_REQUEST,
+    };
+    ObjectShellResponse {
+        status,
+        ..empty_response()
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn empty_response() -> ObjectShellResponse {
+    ObjectShellResponse {
+        status: STATUS_BAD_REQUEST,
+        reserved0: 0,
+        object_kind: 0,
+        field_id: 0,
+        object_id: 0,
+        revision: 0,
+        revision_count: 0,
+        bytes_written: 0,
+        capability: PackedCapability::from_raw(0),
+        reserved1: 0,
+    }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn bad_request_response() -> ObjectShellResponse {
+    empty_response()
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn buffer_too_small_response() -> ObjectShellResponse {
+    ObjectShellResponse {
+        status: STATUS_BUFFER_TOO_SMALL,
+        reserved0: 0,
+        object_kind: 0,
+        field_id: 0,
+        object_id: 0,
+        revision: 0,
+        revision_count: 0,
+        bytes_written: 0,
+        capability: PackedCapability::from_raw(0),
+        reserved1: 0,
+    }
+}
+
+fn validate_syscall_capability(
+    caller: ActiveUserProcess,
+    capability: PackedCapability,
+    resource: ResourceId,
+    rights: RightsMask,
+) -> Result<(), SyscallError> {
+    with_syscall_capabilities(|table| {
+        table.validate(
+            caller.service_id(),
+            unpack_syscall_capability(capability),
+            resource,
+            rights,
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn pack_syscall_capability(handle: CapabilityHandle) -> PackedCapability {
+    PackedCapability::from_parts(handle.slot(), handle.generation())
+}
+
+const fn unpack_syscall_capability(capability: PackedCapability) -> CapabilityHandle {
+    CapabilityHandle::from_parts(capability.slot(), capability.generation())
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn is_aligned(ptr: u64, alignment: usize) -> bool {
+    ptr != 0 && ptr.is_multiple_of(alignment as u64)
+}
+
+#[cfg(test)]
+fn reset_syscall_capabilities_for_test() {
+    with_syscall_capabilities(|table| {
+        *table = CapabilityTable::new();
+    });
+}
+
+#[cfg(test)]
+fn grant_console_capability_for_test(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    grant_console_capability(process)
+}
+
+#[cfg(test)]
+fn grant_system_control_capability_for_test(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    grant_system_control_capability(process)
+}
+
+#[cfg(test)]
+fn dispatch_console_write_for_test(
+    caller: ActiveUserProcess,
+    capability: PackedCapability,
+    byte: u8,
+) -> Result<u64, SyscallError> {
+    dispatch_console_write_for_caller(caller, capability, u64::from(byte))
+}
+
+#[cfg(test)]
+fn dispatch_system_reboot_for_test(
+    caller: ActiveUserProcess,
+    capability: PackedCapability,
+) -> Result<u64, SyscallError> {
+    dispatch_system_reboot_for_caller(caller, capability)
+}
+
+#[cfg(test)]
+fn dispatch_object_request_for_test(
+    service: &mut ObjectService,
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    input: &[u8],
+    output: &mut [ObjectListEntry],
+) -> ObjectShellResponse {
+    dispatch_object_request_to_service(service, caller, request, input, output)
 }
 
 fn run_capability_gated_ipc_bridge() -> Result<(), SyscallError> {
@@ -415,18 +1059,19 @@ pub fn run_general_abi_self_test() -> Result<GeneralSyscallAbiProof, SyscallErro
         return Err(SyscallError::BadResult);
     }
 
-    EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-    if dispatch(SYSCALL_ABI_INFO)? != abi_info_result() {
+    EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
+    if dispatch(SyscallArgs::for_number(SYSCALL_ABI_INFO))? != abi_info_result() {
         return Err(SyscallError::BadResult);
     }
 
     EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-    if dispatch(SYSCALL_SYSTEM_LOG_PROOF)? != SYSCALL_OK {
+    if dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF))? != SYSCALL_OK {
         return Err(SyscallError::BadResult);
     }
 
     EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-    let unknown_denied = dispatch(0x5059_FFFF) == Err(SyscallError::UnsupportedNumber);
+    let unknown_denied =
+        dispatch(SyscallArgs::for_number(0x5059_FFFF)) == Err(SyscallError::UnsupportedNumber);
     if !unknown_denied {
         return Err(SyscallError::BadResult);
     }
@@ -535,6 +1180,12 @@ fn write_msr(msr: u32, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object_service::ObjectService;
+    use crate::shell_objects::ObjectKind;
+    use pythos_shared::object_shell_abi::{
+        OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT,
+        OP_QUERY_OBJECTS, ObjectListEntry, ObjectShellRequest, STATUS_DENIED, STATUS_OK,
+    };
 
     #[test]
     fn syscall_star_value_selects_kernel_and_ring3_segments() {
@@ -577,28 +1228,44 @@ mod tests {
     }
 
     #[test]
+    fn abi_info_dispatch_does_not_require_proof_expectation() {
+        EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
+
+        assert_eq!(
+            dispatch(SyscallArgs::for_number(SYSCALL_ABI_INFO)),
+            Ok(abi_info_result())
+        );
+    }
+
+    #[test]
     fn abi_info_dispatch_returns_version_metadata() {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-        assert_eq!(dispatch(SYSCALL_ABI_INFO), Ok(abi_info_result()));
+        assert_eq!(
+            dispatch(SyscallArgs::for_number(SYSCALL_ABI_INFO)),
+            Ok(abi_info_result())
+        );
     }
 
     #[test]
     fn unknown_syscall_number_is_denied_by_registry() {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-        assert_eq!(dispatch(0x5059_FFFF), Err(SyscallError::UnsupportedNumber));
+        assert_eq!(
+            dispatch(SyscallArgs::for_number(0x5059_FFFF)),
+            Err(SyscallError::UnsupportedNumber)
+        );
     }
 
     #[test]
     fn dispatch_rejects_unexpected_or_unknown_syscalls() {
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
         assert_eq!(
-            dispatch(SYSCALL_SYSTEM_LOG_PROOF),
+            dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF)),
             Err(SyscallError::UnexpectedSyscall)
         );
 
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(
-            dispatch(SYSCALL_SYSTEM_LOG_PROOF + 1),
+            dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF + 1)),
             Err(SyscallError::UnsupportedNumber)
         );
     }
@@ -606,7 +1273,122 @@ mod tests {
     #[test]
     fn dispatch_system_log_proof_uses_capability_and_log_surfaces() {
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
-        assert_eq!(dispatch(SYSCALL_SYSTEM_LOG_PROOF), Ok(SYSCALL_OK));
+        assert_eq!(
+            dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF)),
+            Ok(SYSCALL_OK)
+        );
+    }
+
+    #[test]
+    fn console_write_requires_console_capability_from_current_caller() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let intruder = service.test_intruder_caller();
+        reset_syscall_capabilities_for_test();
+        let console = grant_console_capability_for_test(shell).unwrap();
+
+        assert_eq!(
+            dispatch_console_write_for_test(shell, console, b'x'),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(
+            dispatch_console_write_for_test(intruder, console, b'x'),
+            Err(SyscallError::Capability(CapabilityError::WrongHolder))
+        );
+    }
+
+    #[test]
+    fn object_request_denies_intruder_without_borrowing_shell_authority() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let intruder = service.test_intruder_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let request = ObjectShellRequest {
+            abi_major: OBJECT_SHELL_ABI_MAJOR,
+            abi_minor: OBJECT_SHELL_ABI_MINOR,
+            operation: OP_CREATE_OBJECT,
+            object_kind: OBJECT_KIND_NOTE,
+            field_id: 0,
+            reserved0: 0,
+            authority: workspace,
+            object_id: 0,
+            input_ptr: 0,
+            input_len: 0,
+            output_ptr: 0,
+            output_len: 0,
+            reserved1: 0,
+            reserved2: 0,
+        };
+
+        let response =
+            dispatch_object_request_for_test(&mut service, intruder, request, &[], &mut []);
+
+        assert_eq!(response.status, STATUS_DENIED);
+        assert_eq!(
+            service
+                .query_objects(shell, workspace, ObjectKind::Note)
+                .unwrap()
+                .iter()
+                .filter(|entry| entry.object_id != 0)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn object_query_writes_entries_to_the_request_output_buffer() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+        let request = ObjectShellRequest {
+            abi_major: OBJECT_SHELL_ABI_MAJOR,
+            abi_minor: OBJECT_SHELL_ABI_MINOR,
+            operation: OP_QUERY_OBJECTS,
+            object_kind: OBJECT_KIND_NOTE,
+            field_id: 0,
+            reserved0: 0,
+            authority: workspace,
+            object_id: 0,
+            input_ptr: 0,
+            input_len: 0,
+            output_ptr: 0,
+            output_len: core::mem::size_of::<[ObjectListEntry; 8]>() as u64,
+            reserved1: 0,
+            reserved2: 0,
+        };
+        let mut output = [ObjectListEntry {
+            object_id: 0,
+            capability: pythos_shared::object_shell_abi::PackedCapability::from_raw(0),
+        }; 8];
+
+        let response =
+            dispatch_object_request_for_test(&mut service, shell, request, &[], &mut output);
+
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.bytes_written, 16);
+        assert_eq!(output[0].object_id, created.object_id.raw());
+        assert_ne!(output[0].capability.raw(), 0);
+    }
+
+    #[test]
+    fn system_reboot_requires_system_control_capability_from_current_caller() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let intruder = service.test_intruder_caller();
+        reset_syscall_capabilities_for_test();
+        let system_control = grant_system_control_capability_for_test(shell).unwrap();
+
+        assert_eq!(
+            dispatch_system_reboot_for_test(shell, system_control),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(
+            dispatch_system_reboot_for_test(intruder, system_control),
+            Err(SyscallError::Capability(CapabilityError::WrongHolder))
+        );
     }
 
     #[test]
