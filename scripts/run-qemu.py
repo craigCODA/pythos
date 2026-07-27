@@ -193,6 +193,13 @@ def main() -> int:
     )
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
     parser.add_argument("--kill-after-marker")
+    parser.add_argument(
+        "--allow-reboot",
+        action="store_true",
+        help="drop -no-reboot so a guest-triggered reset (e.g. i8042 pulse "
+        "reset) actually restarts the VM instead of QEMU exiting; only the "
+        "reboot acceptance test opts into this",
+    )
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
@@ -219,11 +226,12 @@ def main() -> int:
         f"file:{args.serial_log}",
         "-display",
         args.display,
-        "-no-reboot",
         "-no-shutdown",
         "-device",
         "isa-debug-exit,iobase=0x501,iosize=0x04",
     ]
+    if not args.allow_reboot:
+        command.append("-no-reboot")
     if args.shell_port is not None:
         # QEMU assigns successive -serial flags to COM1, COM2, ... in order;
         # this becomes COM2, the interactive object-shell transport (ADR 0052).

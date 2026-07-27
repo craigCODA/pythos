@@ -736,7 +736,9 @@ fn dispatch_system_reboot_for_caller(
     {
         serial::write_line("PYTHOS:SHELL:REBOOT_REQUESTED");
         serial::write_line("PYTHOS:CORE:SYSTEM:REBOOTING");
+        crate::qemu_exit::reboot_qemu()
     }
+    #[cfg(test)]
     Ok(SYSCALL_OK)
 }
 

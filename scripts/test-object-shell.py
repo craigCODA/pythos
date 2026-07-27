@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""Task 8 acceptance test for persistent ring-3 shell launch."""
+"""Task 8/9 acceptance test: persistent ring-3 shell launch, plus a
+repeatable, capability-gated `reboot` that actually resets the machine."""
 
 from __future__ import annotations
 
@@ -40,6 +41,20 @@ def wait_for_file_marker(path: Path, marker: str, timeout: float) -> str:
                 return text
         time.sleep(0.1)
     raise AssertionError(f"missing marker {marker}")
+
+
+def wait_for_marker_count(path: Path, marker: str, count: int, timeout: float) -> str:
+    deadline = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if text.count(marker) >= count:
+                return text
+        time.sleep(0.1)
+    raise AssertionError(
+        f"expected {marker!r} at least {count} time(s); saw {text.count(marker)}"
+    )
 
 
 def connect_shell(timeout: float) -> socket.socket:
@@ -125,7 +140,8 @@ def main() -> int:
             "--shell-port",
             str(SHELL_PORT),
             "--timeout",
-            "60",
+            "90",
+            "--allow-reboot",
             "--expect-outcome",
             "timeout",
         ],
@@ -149,7 +165,21 @@ def main() -> int:
             help_output = read_until(sock, b"reboot\r\npyth> ", 10)
             if b"query kind:note" not in help_output:
                 raise AssertionError(f"missing help output: {help_output!r}")
-        print("OBJECT_SHELL_TASK8_TEST_OK")
+            print("OBJECT_SHELL_TASK8_TEST_OK")
+
+            # Task 9: `reboot` must actually reset the machine (a second real
+            # boot, not a stub that only prints markers) and the shell must
+            # come back up cleanly, proving the reset path is repeatable.
+            sock.sendall(b"reboot\r\n")
+            wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:SYSTEM:REBOOTING", 10)
+            wait_for_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
+            wait_for_marker_count(SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 2, 30)
+            second_banner = read_until(sock, b"pyth> ", 30)
+            if b"PYTHOS:SHELL:READY" not in second_banner:
+                raise AssertionError(
+                    f"missing post-reboot shell ready banner: {second_banner!r}"
+                )
+        print("OBJECT_SHELL_TASK9_REBOOT_TEST_OK")
         return 0
     finally:
         terminate_process_tree(process)

@@ -2626,7 +2626,7 @@ git commit -m "feat(shell): launch persistent shell process"
 - Consumes: `SYSCALL_SYSTEM_REBOOT`, COM2 transport.
 - Produces: `system_reboot_qemu() -> !`, forced power-loss test path, actual reboot test path.
 
-- [ ] **Step 1: Add QEMU reset helper**
+- [x] **Step 1: Add QEMU reset helper**
 
 In `core/src/qemu_exit.rs`, add:
 
@@ -2652,7 +2652,7 @@ pub fn reboot_qemu() -> ! {
 }
 ```
 
-- [ ] **Step 2: Write object-shell acceptance test**
+- [x] **Step 2: Write object-shell acceptance test** (scoped to reboot repeatability; see status note below — the full create/revise/query/history two-phase flow is Task 10's deliverable)
 
 Create `scripts/test-object-shell.py` with two phases:
 
@@ -2840,22 +2840,22 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 3: Run the failing acceptance test**
+- [x] **Step 3: Run the acceptance test** — passes (reboot phase added to the existing Task 8 `scripts/test-object-shell.py` rather than replacing it; see status note).
 
-Run:
+- [x] **Step 4: Commit**
 
-```powershell
-python scripts\test-object-shell.py
-```
+**Status note (actual implementation):**
+`scripts/test-object-shell.py` already existed from Tasks 5-8 (a narrower Task-8-scoped test proving ring-3 launch + `help` over COM2). Rather than overwrite it with the plan's speculative two-phase object-flow test — which the plan's own text says is "Expected: FAIL until Task 10 completes response text, persistence, and actual reboot behavior" — Task 9 extends that existing file with a reboot phase only, per the user's explicit instruction to keep Task 9 isolated to "the reboot path and acceptance harness." The full create/revise/query/history/restore round trip remains Task 10's job.
 
-Expected: FAIL until Task 10 completes response text, persistence, and actual reboot behavior.
+What changed:
+- `core/src/qemu_exit.rs`: added `reboot_qemu() -> !` (`#[cfg(not(test))]`), matching this step's design — writes `0xFE` to port `0x64` (i8042 pulse reset), then spins.
+- `core/src/syscall.rs`: `dispatch_system_reboot_for_caller` now calls `qemu_exit::reboot_qemu()` after emitting the existing markers, for non-test builds; the `#[cfg(test)]` branch still returns `Ok(SYSCALL_OK)` so the existing capability-gating unit test (`system_reboot_requires_system_control_capability_from_current_caller`) is unaffected.
+- `scripts/run-qemu.py`: added `--allow-reboot` (opt-in; default behavior unchanged) to drop `-no-reboot`, since QEMU's `-no-reboot` flag (present for deterministic exit on all other boot tests) would otherwise turn the guest's reset request into a QEMU process exit instead of an actual reboot.
+- `scripts/test-object-shell.py`: after the existing Task 8 `help` assertions, sends `reboot`, waits for `PYTHOS:CORE:SYSTEM:REBOOTING`, then waits for a **second** `PYTHOS:LOADER:ENTER` and a **second** `PYTHOS:SHELL:RING3_ENTER` in the COM1 log, then reads a second `PYTHOS:SHELL:READY` / `pyth> ` banner over the same COM2 socket — proving the reboot is a real, observable, full machine reset (not just a marker print) and that the shell comes back up cleanly afterward. Verified repeatable across multiple independent runs. Emits `OBJECT_SHELL_TASK9_REBOOT_TEST_OK`.
 
-- [ ] **Step 4: Commit**
+Verification run for this task: `cargo fmt --check`, `cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings` (clean), `cargo test -p pythos-core --bin pythcore` (273 passed), `cargo test --workspace --exclude pythos-boot --exclude pythos-core` (clean), `python scripts/test-boot.py --slice milestone-1` (`BOOT_TEST_OK`, run twice), `python scripts/test-normal-fast-boot.py`, `python scripts/test-com2-shell-transport.py`, `python scripts/test-object-shell.py` (run twice, both `OBJECT_SHELL_TASK9_REBOOT_TEST_OK`).
 
-```powershell
-git add core\src\qemu_exit.rs core\src\syscall.rs scripts\test-object-shell.py
-git commit -m "test(shell): add object shell reboot acceptance"
-```
+No architectural issue surfaced; the object-service/storage contracts were untouched.
 
 ---
 
