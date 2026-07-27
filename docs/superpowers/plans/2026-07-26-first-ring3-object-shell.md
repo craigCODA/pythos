@@ -1518,6 +1518,12 @@ git commit -m "feat(shell): build real ring-3 command shell"
 
 ### Task 5: Named Program Packaging And Loader-Validated Principal Binding
 
+**Status: COMPLETE (2026-07-26).** Implemented in commits `19476ee` (bind
+shell principal to named ELF manifest) and `471c157` (verify user shell
+before packaging). Independently verified (not authored by this session):
+`cargo test -p pythos-core` and the full boot/shell test suite pass; the
+package step now runs `verify-user-elf.py` before embedding `shell.elf`.
+
 **Files:**
 - Modify: `scripts/build-image.py`
 - Modify: `scripts/build-iso.py`
@@ -1530,7 +1536,7 @@ git commit -m "feat(shell): build real ring-3 command shell"
 - Consumes: `TYPE_NAMED_USER_ELF`, `NamedUserProgramManifest`, `SHELL_PRINCIPAL_ID`.
 - Produces: `runtime_loader::load_named_user_program(boot_info: &PythBootInfo, name: &[u8]) -> Result<NamedUserProgramManifest<'_>, RuntimeLoadError>`, `process_context::ActiveUserProcess`.
 
-- [ ] **Step 1: Write runtime-loader named-program tests**
+- [x] **Step 1: Write runtime-loader named-program tests**
 
 In `core/src/runtime_loader.rs`, add:
 
@@ -1581,7 +1587,7 @@ fn named_user_program_loader_rejects_duplicate_shell_name() {
 }
 ```
 
-- [ ] **Step 2: Implement named-program loader**
+- [x] **Step 2: Implement named-program loader**
 
 In `core/src/runtime_loader.rs`, add:
 
@@ -1626,7 +1632,7 @@ The FNV digest remains an integrity check inside the trusted bundle, not proof
 that a program is entitled to choose its own principal. Preserve
 `load_user_elf_payload_at` and all ordinal user ELF tests.
 
-- [ ] **Step 3: Package named shell program**
+- [x] **Step 3: Package named shell program**
 
 In `scripts/build-image.py` and `scripts/build-iso.py`, add `build_named_user_program(name, principal_id, elf)` mirroring `shared/src/user_program_manifest.rs`.
 
@@ -1640,7 +1646,7 @@ Do not remove the existing ordinal `INIT_BUNDLE_USER_ELF_TYPE` records. The
 intruder probe is packaged later in Task 11 after its concrete source and build
 script exist.
 
-- [ ] **Step 4: Write process-context tests**
+- [x] **Step 4: Write process-context tests**
 
 Create `core/src/process_context.rs` with:
 
@@ -1675,7 +1681,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 5: Implement active caller tracking**
+- [x] **Step 5: Implement active caller tracking**
 
 Implement:
 
@@ -1703,7 +1709,7 @@ If a `static mut` or `UnsafeCell` holds the active process, document this invari
 // 8. Violation: concurrent mutation would allow wrong-caller authority checks.
 ```
 
-- [ ] **Step 6: Run tests**
+- [x] **Step 6: Run tests**
 
 Run:
 
@@ -1720,7 +1726,7 @@ Expected:
 USER_ELF_VERIFY_OK
 ```
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```powershell
 git add scripts\build-image.py scripts\build-iso.py core\src\runtime_loader.rs core\src\process_context.rs core\src\main.rs
@@ -1730,6 +1736,18 @@ git commit -m "feat(shell): bind shell principal to named ELF manifest"
 ---
 
 ### Task 6: Promote Phase 10 Object Store Into Retained Service
+
+**Status: COMPLETE (2026-07-26).** Implemented in commits `839df0a` (promote
+store for normal shell service) and `661a02e` (harden task 6 service
+invariants). Independently verified: `cargo test -p pythos-core` passes
+(273 tests, including new `object_service::tests::*`). One gap fixed by this
+session: several newly-added items (`dynamic_object_store.rs`,
+`object_relationships.rs`, `revision_history.rs`, `storage_allocator.rs`,
+`capabilities.rs`, `service_identity.rs`) were unused and therefore
+clippy-dead under `--features verify` (only the normal-boot object-service
+path calls them) — added the same `#![cfg_attr(feature = "verify",
+allow(dead_code))]` module-level pattern used for `serial.rs`'s COM2 items in
+Task 2, restoring a clean `cargo clippy --features verify -- -D warnings`.
 
 **Files:**
 - Modify: `core/src/dynamic_object_store.rs`
@@ -1747,7 +1765,7 @@ git commit -m "feat(shell): bind shell principal to named ELF manifest"
 - Consumes: `DynamicObjectStore`, `BlockAllocator`, `StorageQuotaTable`, `RevisionHistory`, `TypedObjectRecord`.
 - Produces: `ObjectService::restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError>`, `ObjectService::create_object`, `ObjectService::query_objects`, `ObjectService::inspect_object`, `ObjectService::revise_field`, `ObjectService::history`, `retained_services::initialize_object_service`, `retained_services::with_object_service`.
 
-- [ ] **Step 1: Add note kind test**
+- [x] **Step 1: Add note kind test**
 
 In `core/src/typed_object_format.rs`:
 
@@ -1764,7 +1782,7 @@ fn note_kind_round_trips_with_stable_code() {
 }
 ```
 
-- [ ] **Step 2: Add `ObjectKind::Note`**
+- [x] **Step 2: Add `ObjectKind::Note`**
 
 In `core/src/shell_objects.rs`, add:
 
@@ -1774,7 +1792,7 @@ Note,
 
 In `core/src/typed_object_format.rs`, encode `ObjectKind::Note` as `10` and decode `10` as `ObjectKind::Note`.
 
-- [ ] **Step 3: Expose dynamic object lookup and iteration**
+- [x] **Step 3: Expose dynamic object lookup and iteration**
 
 In `core/src/dynamic_object_store.rs`, add tests:
 
@@ -1815,7 +1833,7 @@ pub fn restore_from_records(
 range, every occupied extent bit is present in `bitmap`, no two object extents
 overlap, and no set bitmap bit lacks a corresponding restored extent.
 
-- [ ] **Step 4: Add durable workspace membership relationships**
+- [x] **Step 4: Add durable workspace membership relationships**
 
 In `core/src/object_relationships.rs`, extend `RelationshipKind`:
 
@@ -1872,7 +1890,7 @@ The shell workspace is represented by stable object id
 `EXTERNAL_WORKSPACE_OBJECT_ID`. Object-service `query` reconstructs authority
 from `BelongsTo` relationships, not from object-id ranges or record order.
 
-- [ ] **Step 5: Define two-slot object-service checkpoint helpers**
+- [x] **Step 5: Define two-slot object-service checkpoint helpers**
 
 Create `core/src/object_service_checkpoint.rs` for the ADR 0052 durable layout.
 Do not encode this state into one 512-byte sector.
@@ -1969,7 +1987,7 @@ object records, extent records, workspace relationship records, and revision
 records. The restored dynamic store must preserve each object's allocated
 extent. Keep existing Phase 10 self-tests producing their markers.
 
-- [ ] **Step 6: Add object service tests**
+- [x] **Step 6: Add object service tests**
 
 Create `core/src/object_service.rs` with:
 
@@ -2073,7 +2091,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 7: Implement object service**
+- [x] **Step 7: Implement object service**
 
 `ObjectService` must contain:
 
@@ -2154,7 +2172,7 @@ Persist/restore use the ADR 0052 two-slot multi-sector ObjectServiceSnapshot che
 Runtime CapabilityHandle values are never serialized.
 ```
 
-- [ ] **Step 8: Add retained service owner**
+- [x] **Step 8: Add retained service owner**
 
 Create `core/src/retained_services.rs`:
 
@@ -2189,7 +2207,7 @@ Document the unsafe invariant at the only raw access point:
 If the shell terminates or faults, the retained service remains initialized and
 PythCore enters the normal idle loop without restarting the shell.
 
-- [ ] **Step 9: Run focused tests**
+- [x] **Step 9: Run focused tests**
 
 Run:
 
@@ -2204,7 +2222,7 @@ Expected:
 PERSISTENT_STORAGE_TEST_OK
 ```
 
-- [ ] **Step 10: Commit**
+- [x] **Step 10: Commit**
 
 ```powershell
 git add core\src\dynamic_object_store.rs core\src\object_service_checkpoint.rs core\src\retained_services.rs core\src\object_relationships.rs core\src\revision_history.rs core\src\typed_object_format.rs core\src\shell_objects.rs core\src\object_service.rs core\src\main.rs
@@ -2214,6 +2232,15 @@ git commit -m "feat(objects): promote Phase 10 store for normal services"
 ---
 
 ### Task 7: Caller-Derived Typed Syscalls
+
+**Status: COMPLETE (2026-07-26).** Implemented in commits `4047a09` (gate
+typed syscalls by current caller) and `5ce3888` (validate object syscall user
+buffers) — this is what closed the gap Task 4 flagged: the kernel-side
+`syscall_entry_abi` trampoline previously forwarded only the syscall number,
+discarding any other arguments. Independently verified: `cargo test
+-p pythos-core` passes, and `process_context.rs`/`user_mode.rs`'s new
+persistent-launch items needed the same `--features verify` dead-code
+allowance as Task 6 (see above) since they are normal-boot-only.
 
 **Files:**
 - Modify: `core/src/syscall.rs`
@@ -2227,7 +2254,7 @@ git commit -m "feat(objects): promote Phase 10 store for normal services"
 - Consumes: `ObjectShellRequest`, `ObjectShellResponse`, `ObjectService`, `ActiveUserProcess`.
 - Produces: console syscalls, object request syscall, system reboot syscall, caller-derived denial marker `PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED`.
 
-- [ ] **Step 1: Write syscall caller-denial tests**
+- [x] **Step 1: Write syscall caller-denial tests**
 
 In `core/src/syscall.rs`, add:
 
@@ -2279,7 +2306,7 @@ fn console_write_requires_console_capability_from_current_caller() {
 }
 ```
 
-- [ ] **Step 2: Capture syscall arguments**
+- [x] **Step 2: Capture syscall arguments**
 
 Change syscall entry assembly to pass `rax`, `rdi`, `rsi`, `rdx`, `r10`, and `r8` into `syscall_dispatch_abi`:
 
@@ -2307,7 +2334,7 @@ pub struct SyscallArgs {
 }
 ```
 
-- [ ] **Step 3: Separate proof-only syscall expectation from normal syscalls**
+- [x] **Step 3: Separate proof-only syscall expectation from normal syscalls**
 
 Keep `EXPECTED_SYSCALL` around the existing Phase 8 proof syscall. Add:
 
@@ -2323,7 +2350,7 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
 
 Set `proof_only: true` for `SYSCALL_SYSTEM_LOG_PROOF` and `proof_only: false` for console/object/system-control calls.
 
-- [ ] **Step 4: Implement capability-gated console syscalls**
+- [x] **Step 4: Implement capability-gated console syscalls**
 
 In `core/src/capabilities.rs`, add:
 
@@ -2355,7 +2382,7 @@ console_capabilities.validate(caller.service_id(), handle, CONSOLE_COM2_RESOURCE
 
 Use `RightsMask::WRITE` for write. Only after validation may PythCore read or write COM2.
 
-- [ ] **Step 5: Implement typed object request syscall**
+- [x] **Step 5: Implement typed object request syscall**
 
 `SYSCALL_OBJECT_REQUEST` arguments:
 
@@ -2399,7 +2426,7 @@ and then separately mutate another service instance from syscalls.
 
 PythCore must not inspect command strings such as `create kind:note`.
 
-- [ ] **Step 6: Implement capability-gated reboot syscall**
+- [x] **Step 6: Implement capability-gated reboot syscall**
 
 `SYSCALL_SYSTEM_REBOOT` takes `arg0` as the caller's system-control capability. Validate `SYSTEM_CONTROL_RESOURCE` with `RightsMask::WRITE`, emit:
 
@@ -2410,7 +2437,7 @@ PYTHOS:CORE:SYSTEM:REBOOTING
 
 Then call the QEMU reset helper added in Task 9.
 
-- [ ] **Step 7: Run tests**
+- [x] **Step 7: Run tests**
 
 Run:
 
@@ -2425,7 +2452,7 @@ Expected:
 BOOT_TEST_OK
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add core\src\syscall.rs core\src\process_context.rs core\src\object_service.rs core\src\normal_boot.rs core\src\retained_services.rs
@@ -2435,6 +2462,16 @@ git commit -m "feat(shell): gate typed syscalls by current caller"
 ---
 
 ### Task 8: Persistent Shell Launch And Fault Outcome
+
+**Status: COMPLETE (2026-07-26).** Implemented in commit `2d6d62b` (launch
+persistent ring3 shell), honoring the ordering constraint below (the
+`UserAddressSpace` was built before kernel activation, matching Task 1's
+finding). Independently verified end-to-end, not just unit tests: normal boot
+reaches `PYTHOS:SHELL:RING3_ENTER`; `test-com2-shell-transport.py` connects
+over the real COM2 TCP socket and gets `help` output back
+(`COM2_TRANSPORT_TEST_OK`); `test-object-shell.py` passes
+(`OBJECT_SHELL_TASK8_TEST_OK`); the full milestone-1 verify boot and
+normal-fast-boot tests remain green.
 
 **Ordering constraint added during Task 1 review (2026-07-26):** the shell's
 `UserAddressSpace` (built via `build_with_user_elf`) **must** be constructed —
@@ -2463,7 +2500,7 @@ only when actually entering ring 3.
 - Consumes: named shell manifest, retained `ObjectService`, `ActiveUserProcess`, COM2, typed syscalls.
 - Produces: marker `PYTHOS:SHELL:RING3_ENTER`, marker `PYTHOS:SHELL:FAULT_TERMINATED`, `BootstrapCapabilityBlock`, `user_mode::enter_persistent_user_process(process, entry, user_stack_top, bootstrap_user_ptr) -> !`.
 
-- [ ] **Step 1: Write persistent fault policy test**
+- [x] **Step 1: Write persistent fault policy test**
 
 In `core/src/user_mode.rs`, add a pure policy test:
 
@@ -2482,7 +2519,7 @@ fn persistent_user_fault_terminates_faulting_service() {
 }
 ```
 
-- [ ] **Step 2: Add persistent ring-3 entry**
+- [x] **Step 2: Add persistent ring-3 entry**
 
 In `core/src/user_mode.rs`, add:
 
@@ -2511,7 +2548,7 @@ Document the unsafe invariant before `ring3_enter_forever_abi`, including that
 guarded user stack, and `bootstrap_user_ptr` is a user-readable,
 kernel-owned/read-only mapping containing a valid `BootstrapCapabilityBlock`.
 
-- [ ] **Step 3: Define fault handling outcome**
+- [x] **Step 3: Define fault handling outcome**
 
 For a persistent shell fault, emit:
 
@@ -2529,7 +2566,7 @@ normal idle loop with retained services still initialized. Do not use the
 controlled breakpoint recovery path from the proof-only user-mode tests as the
 persistent-shell success path.
 
-- [ ] **Step 4: Launch shell in normal boot**
+- [x] **Step 4: Launch shell in normal boot**
 
 In `core/src/normal_boot.rs`, after object service initialization:
 
@@ -2557,7 +2594,7 @@ read-only in the shell address space and kernel-owned in PythCore. The shell's
 `syscalls::bootstrap_capabilities(bootstrap_ptr)` reads this block; it must not
 synthesize capabilities from constants.
 
-- [ ] **Step 5: Run focused tests**
+- [x] **Step 5: Run focused tests**
 
 Run:
 
@@ -2568,7 +2605,7 @@ python scripts\test-object-shell.py
 
 Expected before Task 10: FAIL after `PYTHOS:SHELL:READY` if object responses are not fully wired. COM1 must contain `PYTHOS:SHELL:RING3_ENTER`.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```powershell
 git add core\src\user_mode.rs core\src\normal_boot.rs core\src\user_elf.rs core\src\runtime_loader.rs

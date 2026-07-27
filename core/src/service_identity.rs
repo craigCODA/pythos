@@ -1,5 +1,9 @@
 //! Kernel-assigned service identities for Phase 3.
 #![cfg_attr(test, allow(dead_code))]
+// Some items are only used by the normal-boot object-service/syscall path (a
+// `verify`-excluded set of modules), so they are legitimately unused under
+// `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::tasks::{MAX_TASKS, TaskId};
 

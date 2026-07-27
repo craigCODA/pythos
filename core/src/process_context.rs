@@ -1,6 +1,10 @@
 //! Active ring-3 process identity for syscall authorization.
 
 #![cfg_attr(test, allow(dead_code))]
+// This whole module is only used by the normal-boot persistent-launch path (a
+// `verify`-excluded set of modules), so it is legitimately unused under
+// `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 use core::cell::UnsafeCell;
 use core::mem::size_of;

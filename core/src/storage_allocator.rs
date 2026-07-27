@@ -1,5 +1,9 @@
 //! Phase 10 journaled free-space bitmap allocator.
 #![cfg_attr(test, allow(dead_code))]
+// Some items are only used by the normal-boot object-service checkpoint path
+// (a `verify`-excluded set of modules), so they are legitimately unused under
+// `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::block_device::BlockDeviceInfo;
 #[cfg(not(test))]

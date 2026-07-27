@@ -1,5 +1,9 @@
 //! Fixed revision history for ADR 0022 typed object records.
 #![cfg_attr(test, allow(dead_code))]
+// Some items are only used by the normal-boot object-service path (a
+// `verify`-excluded set of modules), so they are legitimately unused under
+// `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 #[cfg(not(test))]
 use crate::serial;
@@ -244,10 +248,10 @@ impl<const CURRENT_CAPACITY: usize, const REVISION_CAPACITY: usize>
         }
         let mut revision_index = 0;
         while revision_index < REVISION_CAPACITY {
-            if let Some(record) = revisions[revision_index] {
-                if restored.current_index(record.object_id()).is_none() {
-                    return Err(RevisionHistoryError::UnknownObject);
-                }
+            if let Some(record) = revisions[revision_index]
+                && restored.current_index(record.object_id()).is_none()
+            {
+                return Err(RevisionHistoryError::UnknownObject);
             }
             revision_index += 1;
         }

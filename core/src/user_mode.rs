@@ -3,6 +3,10 @@
 //! This is not the syscall ABI. It is a one-shot proof that PythCore can enter
 //! CPL3 code, take a user-originated trap, and resume kernel execution.
 #![cfg_attr(test, allow(dead_code, unused_imports))]
+// The persistent ring-3 launch/fault items are only used by the normal-boot
+// persistent-launch path (a `verify`-excluded set of modules), so they are
+// legitimately unused under `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::{
     architecture::x86_64::gdt, process_context, process_context::ActiveUserProcess, user_stacks,

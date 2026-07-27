@@ -1,4 +1,8 @@
 //! PythCore-owned kernel page tables.
+// Some items (the shell's bootstrap-mapped user address-space builder) are
+// only used by the normal-boot persistent-launch path (a `verify`-excluded
+// set of modules), so they are legitimately unused under `--features verify`.
+#![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::architecture::x86_64::exceptions;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
