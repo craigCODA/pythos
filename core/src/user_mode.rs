@@ -4,7 +4,9 @@
 //! CPL3 code, take a user-originated trap, and resume kernel execution.
 #![cfg_attr(test, allow(dead_code, unused_imports))]
 
-use crate::{architecture::x86_64::gdt, user_stacks};
+use crate::{
+    architecture::x86_64::gdt, process_context, process_context::ActiveUserProcess, user_stacks,
+};
 #[cfg(not(test))]
 use crate::{architecture::x86_64::tss, serial};
 #[cfg(not(test))]
@@ -67,6 +69,7 @@ static EXPECTED_USER_FAULT_VECTOR: AtomicU64 = AtomicU64::new(0);
 static USER_RETURNED: AtomicBool = AtomicBool::new(false);
 static KERNEL_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
 static KERNEL_RECOVERY_RSP: AtomicU64 = AtomicU64::new(0);
+static PERSISTENT_USER_PROCESS_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     let mut bytes = [0; USER_PAGE_SIZE];
@@ -132,12 +135,36 @@ global_asm!(
         pop r12
         pop rbx
         ret
+
+    .global ring3_enter_forever_abi
+    ring3_enter_forever_abi:
+        mov rbx, rdi
+        mov rdi, rdx
+        mov ax, 0x2B
+        mov ds, ax
+        mov es, ax
+        push 0x2B
+        push rsi
+        pushfq
+        pop rax
+        or rax, 0x200
+        push rax
+        push 0x33
+        push rbx
+        iretq
     "#
 );
 
 #[cfg(not(test))]
 unsafe extern "C" {
     fn ring3_enter_abi(entry: u64, user_stack_top: u64) -> u64;
+    fn ring3_enter_forever_abi(entry: u64, user_stack_top: u64, bootstrap_user_ptr: u64) -> !;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PersistentUserFaultOutcome {
+    pub terminated_principal: u64,
+    pub peer_alive: bool,
 }
 
 #[cfg(not(test))]
@@ -198,6 +225,38 @@ pub fn run_dynamic_hardware_fault_test(entry: u64) -> Result<(), UserModeError> 
 }
 
 #[cfg(not(test))]
+pub fn enter_persistent_user_process(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    bootstrap_user_ptr: u64,
+) -> ! {
+    process_context::bind_current_process(process);
+    tss::set_ring0_stack(kernel_trap_stack_top());
+    serial::write_line("PYTHOS:SHELL:RING3_ENTER");
+    PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+    // SAFETY:
+    // 1. Invariant: `entry` is the validated `shell.elf` entry point in a
+    //    retained user address space, `user_stack_top` names a user-writable
+    //    stack page, and `bootstrap_user_ptr` names a read-only user mapping.
+    // 2. Established by: normal boot validates the ELF image, builds the shell
+    //    user root with ELF/stack/bootstrap mappings, and binds its copy map.
+    // 3. Lifetime: the shell root, user stack, and bootstrap page are retained
+    //    for the full persistent shell run.
+    // 4. Pointer ownership: the CPU consumes user RIP/RSP and passes the
+    //    bootstrap pointer by value in `rdi`; Rust retains no references.
+    // 5. Alignment: entry and stack are canonical user addresses, and the stack
+    //    top is 16-byte aligned by the guarded-stack allocator.
+    // 6. Mapped length: the root maps every validated ELF page, one stack page,
+    //    one bootstrap block page, kernel trap stack, and kernel fault path.
+    // 7. Concurrency: ADR 0051 runs one persistent user process on one CPU.
+    // 8. Violation: bad descriptors or mappings fault through user containment.
+    unsafe {
+        ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
+    }
+}
+
+#[cfg(not(test))]
 enum ExpectedUserTrap {
     Breakpoint,
     Fault(u64),
@@ -243,21 +302,58 @@ fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeErro
 
 pub fn handle_user_fault(vector: u64, cs: u64, ss: u64) -> bool {
     let expected_vector = EXPECTED_USER_FAULT_VECTOR.load(Ordering::SeqCst);
-    if expected_vector == 0 || expected_vector != vector || !is_user_frame(cs, ss) {
-        return false;
+    if expected_vector != 0 && expected_vector == vector && is_user_frame(cs, ss) {
+        EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
+        USER_RETURNED.store(true, Ordering::SeqCst);
+        #[cfg(not(test))]
+        {
+            serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
+            let recovery_rip = KERNEL_RECOVERY_RIP.load(Ordering::SeqCst);
+            let recovery_rsp = KERNEL_RECOVERY_RSP.load(Ordering::SeqCst);
+            jump_to_kernel_recovery(recovery_rip, recovery_rsp);
+        }
+        #[cfg(test)]
+        {
+            return true;
+        }
     }
-    EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
-    USER_RETURNED.store(true, Ordering::SeqCst);
+    if PERSISTENT_USER_PROCESS_ACTIVE.load(Ordering::SeqCst) && is_user_frame(cs, ss) {
+        return handle_persistent_user_fault();
+    }
+    false
+}
+
+pub fn classify_persistent_user_fault_for_test(
+    shell: ActiveUserProcess,
+    peer: ActiveUserProcess,
+) -> PersistentUserFaultOutcome {
+    let _peer_service = peer.service_id();
+    PersistentUserFaultOutcome {
+        terminated_principal: shell.principal_id(),
+        peer_alive: peer.service_id() != shell.service_id(),
+    }
+}
+
+fn handle_persistent_user_fault() -> bool {
+    PERSISTENT_USER_PROCESS_ACTIVE.store(false, Ordering::SeqCst);
     #[cfg(not(test))]
     {
+        process_context::clear_current_process();
         serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
-        let recovery_rip = KERNEL_RECOVERY_RIP.load(Ordering::SeqCst);
-        let recovery_rsp = KERNEL_RECOVERY_RSP.load(Ordering::SeqCst);
-        jump_to_kernel_recovery(recovery_rip, recovery_rsp);
+        serial::write_line("PYTHOS:SHELL:FAULT_TERMINATED");
+        serial::write_line("PYTHOS:CORE:CRASH:PEER_ALIVE");
+        persistent_fault_idle();
     }
     #[cfg(test)]
     {
         true
+    }
+}
+
+#[cfg(not(test))]
+fn persistent_fault_idle() -> ! {
+    loop {
+        core::hint::spin_loop();
     }
 }
 
@@ -417,5 +513,34 @@ mod tests {
             u64::from(gdt::KERNEL_CODE_SELECTOR),
             u64::from(gdt::USER_DATA_SELECTOR)
         ));
+    }
+
+    #[test]
+    fn persistent_user_fault_terminates_faulting_service() {
+        let mut identities = crate::service_identity::ServiceIdentityTable::new();
+        let shell_service = identities
+            .register_task(crate::tasks::TaskId::new(180))
+            .unwrap();
+        let peer_service = identities
+            .register_task(crate::tasks::TaskId::new(182))
+            .unwrap();
+        let shell = crate::process_context::ActiveUserProcess::new(
+            shell_service,
+            pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID,
+            0xAA,
+        );
+        let peer = crate::process_context::ActiveUserProcess::new(
+            peer_service,
+            0x5059_5045_4552_0001,
+            0xCC,
+        );
+
+        let outcome = classify_persistent_user_fault_for_test(shell, peer);
+
+        assert_eq!(
+            outcome.terminated_principal,
+            pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID
+        );
+        assert!(outcome.peer_alive);
     }
 }

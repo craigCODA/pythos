@@ -408,6 +408,14 @@ impl ObjectService {
         Ok(current.revision())
     }
 
+    pub const fn shell_caller(&self) -> ActiveUserProcess {
+        self.shell_caller
+    }
+
+    pub const fn shell_workspace_capability(&self) -> PackedCapability {
+        self.shell_workspace_capability
+    }
+
     fn new_seeded() -> Result<Self, ObjectServiceError> {
         let mut service = Self {
             objects: DynamicObjectStore::new(
@@ -606,7 +614,7 @@ impl ObjectService {
     }
 
     pub fn test_shell_caller(&self) -> ActiveUserProcess {
-        self.shell_caller
+        self.shell_caller()
     }
 
     pub fn test_intruder_caller(&self) -> ActiveUserProcess {
@@ -614,7 +622,7 @@ impl ObjectService {
     }
 
     pub fn test_shell_workspace_capability(&self) -> PackedCapability {
-        self.shell_workspace_capability
+        self.shell_workspace_capability()
     }
 
     pub fn object_exists_for_test(&self, object_id: ObjectId) -> bool {

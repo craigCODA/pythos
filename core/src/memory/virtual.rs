@@ -124,6 +124,7 @@ impl KernelAddressSpace {
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
         hda_mmio: Option<(u64, u64, u64)>,
+        shell_bootstrap_frame: Option<u64>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
@@ -160,6 +161,9 @@ impl KernelAddressSpace {
         // kernel device window so the audio driver can reach its registers.
         if let Some((phys, virt, len)) = hda_mmio {
             tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
+        }
+        if let Some(frame) = shell_bootstrap_frame {
+            tables.map_physical_range(frame, frame, PAGE_SIZE, PTE_WRITE | PTE_NO_EXECUTE)?;
         }
         tables.map_allocated_table_frames()?;
 
@@ -291,6 +295,33 @@ impl UserAddressSpace {
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, None)
+    }
+
+    pub fn build_with_user_elf_and_bootstrap(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+        bootstrap_user_ptr: u64,
+        bootstrap_physical: u64,
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        Self::build_with_user_elf_inner(
+            allocator,
+            boot_info,
+            image,
+            elf_bytes,
+            Some((bootstrap_user_ptr, bootstrap_physical)),
+        )
+    }
+
+    fn build_with_user_elf_inner(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+        bootstrap_mapping: Option<(u64, u64)>,
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         let mut user_elf_frames = [0u64; MAX_USER_ELF_FRAMES];
         let mut user_elf_frame_count = 0usize;
@@ -309,6 +340,19 @@ impl UserAddressSpace {
                 &mut user_elf_frame_count,
             )?;
             segment_index += 1;
+        }
+        if let Some((bootstrap_user_ptr, bootstrap_physical)) = bootstrap_mapping {
+            remember_user_payload_frame(
+                bootstrap_physical,
+                &mut user_elf_frames,
+                &mut user_elf_frame_count,
+            )?;
+            tables.map_user_physical_range(
+                bootstrap_user_ptr,
+                bootstrap_physical,
+                PAGE_SIZE,
+                PTE_NO_EXECUTE,
+            )?;
         }
 
         tables.map_allocated_table_frames()?;
@@ -380,6 +424,14 @@ impl UserAddressSpace {
             self.root_table_phys,
             symbol_addr(&raw const __pythcore_data_start),
         )? {
+            return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
+    pub fn validate_user_bootstrap_mapping(&self, bootstrap_user_ptr: u64) -> Result<(), VmError> {
+        let entry = user_leaf_entry_from_root(self.root_table_phys, bootstrap_user_ptr)?;
+        if entry & PTE_WRITE != 0 || entry & PTE_NO_EXECUTE == 0 {
             return Err(VmError::UserAccessViolation);
         }
         Ok(())
@@ -707,13 +759,9 @@ fn map_user_elf_segment(
     let page_len = segment.page_len();
     let mut page_offset = 0u64;
     while page_offset < page_len {
-        if *user_elf_frame_count >= MAX_USER_ELF_FRAMES {
-            return Err(VmError::UserElfTooLarge);
-        }
         let physical = tables.allocator.allocate_zeroed_page()?;
         copy_user_elf_page(elf_bytes, segment, page_offset, physical)?;
-        user_elf_frames[*user_elf_frame_count] = physical;
-        *user_elf_frame_count += 1;
+        remember_user_payload_frame(physical, user_elf_frames, user_elf_frame_count)?;
 
         let flags = user_elf_page_flags(segment);
         tables.map_user_physical_range(
@@ -729,6 +777,19 @@ fn map_user_elf_segment(
             .checked_add(PAGE_SIZE)
             .ok_or(VmError::RangeOverflow)?;
     }
+    Ok(())
+}
+
+fn remember_user_payload_frame(
+    physical: u64,
+    user_elf_frames: &mut [u64; MAX_USER_ELF_FRAMES],
+    user_elf_frame_count: &mut usize,
+) -> Result<(), VmError> {
+    if *user_elf_frame_count >= MAX_USER_ELF_FRAMES {
+        return Err(VmError::UserElfTooLarge);
+    }
+    user_elf_frames[*user_elf_frame_count] = physical;
+    *user_elf_frame_count += 1;
     Ok(())
 }
 
@@ -957,6 +1018,26 @@ fn user_can_access_from_root(root_table_phys: u64, virt: u64) -> Result<bool, Vm
     }
     let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
     Ok(present_user(pte))
+}
+
+fn user_leaf_entry_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmError> {
+    let pml4e = read_entry(root_table_phys, table_index(virt, 39));
+    if !present_user(pml4e) {
+        return Err(VmError::UserAccessViolation);
+    }
+    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    if !present_user(pdpte) || pdpte & PTE_HUGE != 0 {
+        return Err(VmError::UserAccessViolation);
+    }
+    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    if !present_user(pde) || pde & PTE_HUGE != 0 {
+        return Err(VmError::UserAccessViolation);
+    }
+    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
+    if !present_user(pte) {
+        return Err(VmError::UserAccessViolation);
+    }
+    Ok(pte)
 }
 
 fn present_user(entry: u64) -> bool {

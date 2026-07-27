@@ -381,9 +381,6 @@ pub extern "C" fn syscall_dispatch_abi(
     arg3: u64,
     arg4: u64,
 ) -> u64 {
-    #[cfg(not(test))]
-    serial::write_line("PYTHOS:CORE:SYSCALL:ENTER");
-
     let result = dispatch(SyscallArgs {
         number,
         arg0,
@@ -401,8 +398,6 @@ pub extern "C" fn syscall_dispatch_abi(
     SYSCALL_LAST_RESULT.store(code, Ordering::SeqCst);
     SYSCALL_RETURNED.store(true, Ordering::SeqCst);
 
-    #[cfg(not(test))]
-    serial::write_line("PYTHOS:CORE:SYSCALL:RETURN");
     code
 }
 
@@ -415,6 +410,9 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
     match entry.dispatch_kind {
         SyscallDispatchKind::AbiInfo => Ok(abi_info_result()),
         SyscallDispatchKind::SystemLogProof => {
+            #[cfg(not(test))]
+            serial::write_line("PYTHOS:CORE:SYSCALL:ENTER");
+
             run_capability_gated_ipc_bridge()?;
             #[cfg(not(test))]
             serial::write_line("PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK");
@@ -422,6 +420,8 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
             run_system_log_bridge()?;
             #[cfg(not(test))]
             serial::write_line("PYTHOS:CORE:SYSCALL:SYSTEM_LOG");
+            #[cfg(not(test))]
+            serial::write_line("PYTHOS:CORE:SYSCALL:RETURN");
             Ok(SYSCALL_OK)
         }
         SyscallDispatchKind::ConsoleReadByte => dispatch_console_read(args),
@@ -1237,6 +1237,8 @@ mod tests {
         ObjectShellResponse, STATUS_DENIED, STATUS_OK,
     };
 
+    static EXPECTED_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn syscall_star_value_selects_kernel_and_ring3_segments() {
         assert_eq!(
@@ -1279,6 +1281,7 @@ mod tests {
 
     #[test]
     fn abi_info_dispatch_does_not_require_proof_expectation() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
 
         assert_eq!(
@@ -1289,6 +1292,7 @@ mod tests {
 
     #[test]
     fn abi_info_dispatch_returns_version_metadata() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(
             dispatch(SyscallArgs::for_number(SYSCALL_ABI_INFO)),
@@ -1298,6 +1302,7 @@ mod tests {
 
     #[test]
     fn unknown_syscall_number_is_denied_by_registry() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(
             dispatch(SyscallArgs::for_number(0x5059_FFFF)),
@@ -1307,6 +1312,7 @@ mod tests {
 
     #[test]
     fn dispatch_rejects_unexpected_or_unknown_syscalls() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
         assert_eq!(
             dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF)),
@@ -1322,6 +1328,7 @@ mod tests {
 
     #[test]
     fn dispatch_system_log_proof_uses_capability_and_log_surfaces() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(true, Ordering::SeqCst);
         assert_eq!(
             dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF)),
@@ -1657,6 +1664,7 @@ mod tests {
 
     #[test]
     fn general_abi_self_test_proves_version_known_dispatch_and_unknown_denial() {
+        let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         let proof = run_general_abi_self_test().unwrap();
 
         assert!(proof.versioned);

@@ -169,6 +169,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             &mut physical_memory,
             boot_info,
             hda_mmio,
+            None,
         ) {
             Ok(address_space) => address_space,
             Err(_) => {

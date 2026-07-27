@@ -156,6 +156,24 @@ pub fn current_caller() -> Result<ActiveUserProcess, ProcessContextError> {
     unsafe { (*CURRENT_PROCESS.0.get()).ok_or(ProcessContextError::NoActiveProcess) }
 }
 
+pub fn clear_current_process() {
+    // SAFETY:
+    // 1. Invariant: ADR 0051 runs one active ring-3 process at a time on one CPU.
+    // 2. Established by: persistent shell launch binds exactly one current
+    //    process, and fault containment clears that binding before idling.
+    // 3. Lifetime: clearing the copied process value ends only the static
+    //    current-context record; it does not drop scheduler-owned state.
+    // 4. Pointer ownership: no borrowed process-table references escape this
+    //    storage, and the old value is copied data.
+    // 5. Alignment: `UnsafeCell<Option<ActiveUserProcess>>` preserves alignment.
+    // 6. Mapped length: exactly one process context cell is accessed.
+    // 7. Concurrency: SMP is out of scope for ADR 0051.
+    // 8. Violation: concurrent clear/bind could remove the wrong caller.
+    unsafe {
+        *CURRENT_PROCESS.0.get() = None;
+    }
+}
+
 #[cfg(test)]
 fn set_current_for_test(process: ActiveUserProcess) {
     bind_current_process(process);

@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""COM2 transport smoke test for the normal shell path."""
+"""Task 8 acceptance test for persistent ring-3 shell launch."""
 
 from __future__ import annotations
 
@@ -13,8 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
-SERIAL_LOG = TARGET / "com2-transport-com1.log"
-SHELL_PORT = 4582
+SERIAL_LOG = TARGET / "object-shell-com1.log"
+SHELL_PORT = 4583
 
 
 def run(command: list[str]) -> None:
@@ -42,6 +42,18 @@ def wait_for_file_marker(path: Path, marker: str, timeout: float) -> str:
     raise AssertionError(f"missing marker {marker}")
 
 
+def connect_shell(timeout: float) -> socket.socket:
+    deadline = time.monotonic() + timeout
+    last_error: OSError | None = None
+    while time.monotonic() < deadline:
+        try:
+            return socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=1)
+        except OSError as error:
+            last_error = error
+            time.sleep(0.1)
+    raise AssertionError(f"could not connect to COM2 shell: {last_error}")
+
+
 def read_until(sock: socket.socket, needle: bytes, timeout: float) -> bytes:
     deadline = time.monotonic() + timeout
     buffer = bytearray()
@@ -59,18 +71,6 @@ def read_until(sock: socket.socket, needle: bytes, timeout: float) -> bytes:
     raise AssertionError(f"timed out waiting for {needle!r}; received {bytes(buffer)!r}")
 
 
-def connect_shell(timeout: float) -> socket.socket:
-    deadline = time.monotonic() + timeout
-    last_error: OSError | None = None
-    while time.monotonic() < deadline:
-        try:
-            return socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=1)
-        except OSError as error:
-            last_error = error
-            time.sleep(0.1)
-    raise AssertionError(f"could not connect to COM2 shell: {last_error}")
-
-
 def build_verified_user_shell() -> None:
     run([sys.executable, "scripts/build-user-shell.py"])
     run([sys.executable, "scripts/verify-user-elf.py"])
@@ -83,19 +83,36 @@ def build_boot_image() -> None:
     run([sys.executable, "scripts/build-image.py"])
 
 
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if sys.platform != "win32":
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.kill()
+        process.wait(timeout=5)
+
+
 def main() -> int:
     build_boot_image()
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
-    # stdout is discarded (not piped): run-qemu.py mostly prints only at exit,
-    # but nothing drains a PIPE while we poll below, and Windows can deadlock
-    # a child on a full pipe buffer. We only need the COM1 log file and the
-    # COM2 socket, not this process's stdout.
-    #
-    # start_new_session=True (POSIX only; harmless no-op-ish on Windows, but
-    # we use taskkill there anyway) puts run-qemu.py and everything it spawns
-    # in a new process group, so cleanup can signal the whole group instead of
-    # just the direct child.
     popen_kwargs: dict[str, object] = {}
     if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
@@ -132,38 +149,10 @@ def main() -> int:
             help_output = read_until(sock, b"reboot\r\npyth> ", 10)
             if b"query kind:note" not in help_output:
                 raise AssertionError(f"missing help output: {help_output!r}")
-        print("COM2_TRANSPORT_TEST_OK")
+        print("OBJECT_SHELL_TASK8_TEST_OK")
         return 0
     finally:
-        # On Windows, Popen.terminate()/kill() only signal the direct child
-        # (this run-qemu.py Python process); TerminateProcess bypasses its own
-        # `finally` cleanup, so its qemu-system-x86_64.exe grandchild is
-        # orphaned rather than reaped. Kill the whole process tree instead:
-        # taskkill /T on Windows, the process group (via start_new_session
-        # above) on POSIX.
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-        else:
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            if sys.platform != "win32":
-                try:
-                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-            else:
-                process.kill()
-            process.wait(timeout=5)
+        terminate_process_tree(process)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,9 @@
 //! Ring-3 syscall wrappers for the object shell (ADR 0051/0052).
 //!
-//! These wrappers follow the standard x86-64 `syscall` calling convention
+//! These wrappers follow PythCore's x86-64 `syscall` calling convention
 //! (number in `rax`; args in `rdi`, `rsi`, `rdx`, `r10`, `r8`; result in
-//! `rax`). PythCore's current syscall trampoline (`core/src/syscall.rs`) only
-//! forwards the syscall number to its dispatcher; multi-argument dispatch is
-//! Task 7's job. This module is correct against the intended ABI and links
-//! cleanly, but nothing here executes until Task 8's persistent launch.
+//! `rax`). PythCore's syscall entry consumes all five argument registers and
+//! does not preserve them, so `syscall5` declares those registers clobbered.
 
 use crate::capability_map::CapabilityMap;
 use core::arch::asm;
@@ -114,8 +112,9 @@ unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5
     // 7. Concurrency: this shell is single-threaded (ADR 0051); no concurrent
     //    syscall from another thread of this process.
     // 8. Violation: the x86-64 `syscall` instruction unconditionally
-    //    overwrites `rcx` (old RIP) and `r11` (old RFLAGS) as part of its ISA
-    //    behavior, which is why they are declared clobbered below rather than
+    //    overwrites `rcx` (old RIP) and `r11` (old RFLAGS), and PythCore's
+    //    syscall entry consumes `rdi`/`rsi`/`rdx`/`r10`/`r8`/`r9` while
+    //    dispatching. All are therefore declared clobbered rather than
     //    assumed preserved. PythCore also reads and writes caller-supplied
     //    buffers during the call, so this is not marked `nomem`: the compiler
     //    must not reorder, cache, or eliminate memory accesses to those
@@ -126,11 +125,12 @@ unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5
         asm!(
             "syscall",
             inout("rax") number => result,
-            in("rdi") arg1,
-            in("rsi") arg2,
-            in("rdx") arg3,
-            in("r10") arg4,
-            in("r8") arg5,
+            inout("rdi") arg1 => _,
+            inout("rsi") arg2 => _,
+            inout("rdx") arg3 => _,
+            inout("r10") arg4 => _,
+            inout("r8") arg5 => _,
+            lateout("r9") _,
             lateout("rcx") _,
             lateout("r11") _,
             options(nostack),

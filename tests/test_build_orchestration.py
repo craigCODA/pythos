@@ -93,6 +93,15 @@ class BuildOrchestrationTest(unittest.TestCase):
 
         self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
 
+    def test_object_shell_prepares_verified_shell_before_packaging(self) -> None:
+        module = load_script("test-object-shell.py")
+        calls: list[list[object]] = []
+        module.run = calls.append
+
+        module.build_boot_image()
+
+        self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
+
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 

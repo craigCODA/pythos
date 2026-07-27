@@ -8,9 +8,14 @@
 
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
-use crate::memory::r#virtual::KernelAddressSpace;
-use crate::{architecture, kernel_stacks, serial, syscall, tasks, user_stacks};
+use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
+use crate::{
+    architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
+};
 use pythos_shared::boot_protocol::PythBootInfo;
+use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
+
+pub const SHELL_BOOTSTRAP_USER_PTR: u64 = 0x0000_0000_7000_0000;
 
 pub struct NormalBootSubstrate {
     /// The active kernel-owned address space normal boot is running under.
@@ -18,6 +23,46 @@ pub struct NormalBootSubstrate {
     /// query or validate it, e.g. via `KernelAddressSpace::validate_active`.
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
+    pub shell_launch: PreparedShellLaunch,
+}
+
+pub struct PreparedShellLaunch {
+    pub address_space: RetainedUserAddressSpace,
+    pub image: user_elf::UserElfImage,
+    pub entry: u64,
+    pub principal_id: u64,
+    pub program_digest: u64,
+    pub bootstrap_user_ptr: u64,
+    bootstrap_kernel_ptr: u64,
+    pub stack_region: user_stacks::UserStackRegion,
+}
+
+impl PreparedShellLaunch {
+    pub const fn bootstrap_kernel_ptr(&self) -> u64 {
+        self.bootstrap_kernel_ptr
+    }
+
+    pub const fn user_stack_top(&self) -> u64 {
+        self.stack_region.stack_start + self.stack_region.stack_len - 16
+    }
+
+    pub fn write_bootstrap_block(&self, block: &BootstrapCapabilityBlock) {
+        // SAFETY:
+        // 1. Invariant: `bootstrap_kernel_ptr` is the supervisor-writable
+        //    mapping of the shell bootstrap frame in the active kernel root.
+        // 2. Established by: `KernelAddressSpace::build` maps the allocated
+        //    bootstrap frame before normal boot activates that root.
+        // 3. Lifetime: the frame is retained for the shell process lifetime.
+        // 4. Pointer ownership: PythCore exclusively initializes this block
+        //    before entering the shell; the shell sees only a read-only alias.
+        // 5. Alignment: the frame is 4 KiB aligned and the block is 8-byte aligned.
+        // 6. Mapped length: one 4 KiB frame contains the 168-byte bootstrap block.
+        // 7. Concurrency: single-core normal boot, before user shell execution.
+        // 8. Violation: a bad mapping faults before `PYTHOS:SHELL:RING3_ENTER`.
+        unsafe {
+            (self.bootstrap_kernel_ptr as *mut BootstrapCapabilityBlock).write(*block);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -28,6 +73,9 @@ pub enum NormalInitError {
     Ring3,
     UserStacks,
     BlockDevice,
+    ShellProgram,
+    ShellAddressSpace,
+    ShellBootstrap,
 }
 
 #[cfg(not(test))]
@@ -43,19 +91,47 @@ pub fn initialize_normal_substrate(
     // its own fresh page-table frames. The verify path relies on the same
     // ordering (see `pythcore_entry`): build kernel + user address spaces,
     // then activate only the kernel one.
-    let kernel_address_space = KernelAddressSpace::build(physical_memory, boot_info, None)
-        .map_err(|_| NormalInitError::Memory)?;
-    // This is a proof-only construction (no shell ELF yet); reclaim its
-    // allocated page-table frames immediately rather than leaking them for the
-    // life of normal boot. The real shell address space (Task 8) is a
-    // separate, retained `UserAddressSpace` built via `build_with_user_elf`
-    // before kernel activation — see the Task 8 ordering note in the plan.
-    let proof_user_address_space =
-        crate::memory::r#virtual::UserAddressSpace::build(physical_memory, boot_info)
-            .map_err(|_| NormalInitError::Ring3)?;
-    proof_user_address_space
-        .reclaim(physical_memory)
-        .map_err(|_| NormalInitError::Ring3)?;
+    let shell_manifest = runtime_loader::load_named_user_program(boot_info, b"shell.elf")
+        .map_err(|_| NormalInitError::ShellProgram)?;
+    let shell_image =
+        user_elf::validate(shell_manifest.elf()).map_err(|_| NormalInitError::ShellProgram)?;
+    let bootstrap_frame = physical_memory
+        .allocate_zeroed_page()
+        .map_err(|_| NormalInitError::ShellBootstrap)?;
+    let kernel_address_space =
+        KernelAddressSpace::build(physical_memory, boot_info, None, Some(bootstrap_frame))
+            .map_err(|_| NormalInitError::Memory)?;
+    let (shell_address_space, loaded_shell) = UserAddressSpace::build_with_user_elf_and_bootstrap(
+        physical_memory,
+        boot_info,
+        &shell_image,
+        shell_manifest.elf(),
+        SHELL_BOOTSTRAP_USER_PTR,
+        bootstrap_frame,
+    )
+    .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    if loaded_shell.entry() != shell_image.entry()
+        || loaded_shell.segment_count() != shell_image.segment_count()
+        || !loaded_shell.bss_zeroed()
+    {
+        return Err(NormalInitError::ShellAddressSpace);
+    }
+    shell_address_space
+        .validate_user_elf_entry(shell_image.entry())
+        .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    shell_address_space
+        .validate_user_bootstrap_mapping(SHELL_BOOTSTRAP_USER_PTR)
+        .map_err(|_| NormalInitError::ShellBootstrap)?;
+    let shell_launch = PreparedShellLaunch {
+        address_space: shell_address_space.retain_for_boot(),
+        image: shell_image,
+        entry: shell_image.entry(),
+        principal_id: shell_manifest.principal_id(),
+        program_digest: shell_manifest.elf_digest(),
+        bootstrap_user_ptr: SHELL_BOOTSTRAP_USER_PTR,
+        bootstrap_kernel_ptr: bootstrap_frame,
+        stack_region: user_stacks::regions()[0],
+    };
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -96,6 +172,7 @@ pub fn initialize_normal_substrate(
     Ok(NormalBootSubstrate {
         kernel_address_space,
         block_device,
+        shell_launch,
     })
 }
 
