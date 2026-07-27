@@ -550,6 +550,25 @@ adaptations:
   `DEVNULL` (removing an unrelated pipe-buffer deadlock risk too) and using
   `taskkill /F /T /PID <pid>` on Windows to kill the whole process tree.
 
+**Follow-up corrections (2026-07-26, review pass):**
+
+- **Baud divisor bug:** `uart_init_sequence` wrote DLL `0x03` (divisor 3 =
+  38400 baud) while the doc comment claimed divisor 1 (115200 baud). Fixed to
+  write `0x01`, actually getting 115200 baud as documented.
+- **The smoke test didn't prove COM2 data path works** — it only checked that
+  `COM2_READY` appeared and that a byte could be *sent*, never that PythCore
+  could read or write one. It would have passed even with broken/missing UART
+  reads. Added a temporary non-blocking echo to `normal_boot`'s idle loop
+  (`try_read_byte_com2` → `write_byte_com2`, to be replaced by the real shell
+  loop in Task 8) and strengthened the test to send a byte and assert the
+  exact byte echoes back.
+- **The orphan-process fix was Windows-only.** On POSIX, bare
+  `process.terminate()` still only kills `run-qemu.py`, not its QEMU child.
+  Fixed by launching with `start_new_session=True` and killing the whole
+  process group via `os.killpg` on POSIX (Windows keeps `taskkill /F /T`).
+- **`outb`'s SAFETY comment was stale**, still claiming callers only pass COM1
+  ports even though COM2 now calls it. Corrected to name both ports.
+
 **Files:**
 - Modify: `core/src/serial.rs`
 - Modify: `core/src/normal_boot.rs`

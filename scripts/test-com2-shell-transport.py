@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import socket
 import subprocess
 import sys
@@ -50,6 +52,14 @@ def main() -> int:
     # but nothing drains a PIPE while we poll below, and Windows can deadlock
     # a child on a full pipe buffer. We only need the COM1 log file and the
     # COM2 socket, not this process's stdout.
+    #
+    # start_new_session=True (POSIX only; harmless no-op-ish on Windows, but
+    # we use taskkill there anyway) puts run-qemu.py and everything it spawns
+    # in a new process group, so cleanup can signal the whole group instead of
+    # just the direct child.
+    popen_kwargs: dict[str, object] = {}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
     process = subprocess.Popen(
         [
             sys.executable,
@@ -67,18 +77,29 @@ def main() -> int:
         text=True,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
+        **popen_kwargs,
     )
     try:
         wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 20)
         with socket.create_connection(("127.0.0.1", SHELL_PORT), timeout=5) as sock:
-            sock.sendall(b"\n")
+            # Prove COM2 actually reads and writes, not just that init_com2()
+            # ran: normal_boot's idle loop echoes every byte it reads back
+            # (Task 2 temporary proof; Task 8 replaces it with the real shell).
+            probe = b"X"
+            sock.sendall(probe)
+            sock.settimeout(5)
+            echoed = sock.recv(1)
+            if echoed != probe:
+                raise AssertionError(f"COM2 echo mismatch: sent {probe!r}, got {echoed!r}")
         print("COM2_TRANSPORT_TEST_OK")
         return 0
     finally:
         # On Windows, Popen.terminate()/kill() only signal the direct child
         # (this run-qemu.py Python process); TerminateProcess bypasses its own
         # `finally` cleanup, so its qemu-system-x86_64.exe grandchild is
-        # orphaned rather than reaped. Kill the whole process tree instead.
+        # orphaned rather than reaped. Kill the whole process tree instead:
+        # taskkill /T on Windows, the process group (via start_new_session
+        # above) on POSIX.
         if sys.platform == "win32":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(process.pid)],
@@ -87,11 +108,20 @@ def main() -> int:
                 check=False,
             )
         else:
-            process.terminate()
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            process.kill()
+            if sys.platform != "win32":
+                try:
+                    os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            else:
+                process.kill()
             process.wait(timeout=5)
 
 

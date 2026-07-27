@@ -44,7 +44,7 @@ pub const fn uart_init_sequence(base: u16) -> [UartWrite; 7] {
     [
         UartWrite::new(base + 1, 0x00),
         UartWrite::new(base + 3, 0x80),
-        UartWrite::new(base, 0x03),
+        UartWrite::new(base, 0x01),
         UartWrite::new(base + 1, 0x00),
         UartWrite::new(base + 3, 0x03),
         UartWrite::new(base + 2, 0xC7),
@@ -115,8 +115,9 @@ fn write_byte(byte: u8) {
 fn outb(port: u16, value: u8) {
     // SAFETY:
     // 1. Invariant: `port` names an x86 I/O port and `value` is the byte to write.
-    // 2. Established by: callers only pass COM1 UART port constants, and the
-    //    loader initialized COM1 before handoff per the kernel entry contract.
+    // 2. Established by: callers only pass COM1/COM2 UART port constants; the
+    //    loader initialized COM1 before handoff, and `init_com2` configures
+    //    COM2 itself before any other COM2 port write.
     // 3. Lifetime: valid for this single `out` instruction.
     // 4. Pointer ownership: no memory pointers are used.
     // 5. Alignment: not applicable to port I/O.
@@ -166,7 +167,7 @@ mod tests {
         assert_eq!(line_status_port(COM2_BASE), 0x2FD);
         assert_eq!(sequence[0], UartWrite::new(COM2_BASE + 1, 0x00));
         assert_eq!(sequence[1], UartWrite::new(COM2_BASE + 3, 0x80));
-        assert_eq!(sequence[2], UartWrite::new(COM2_BASE, 0x03));
+        assert_eq!(sequence[2], UartWrite::new(COM2_BASE, 0x01));
         assert_eq!(sequence[3], UartWrite::new(COM2_BASE + 1, 0x00));
         assert_eq!(sequence[4], UartWrite::new(COM2_BASE + 3, 0x03));
         assert_eq!(sequence[5], UartWrite::new(COM2_BASE + 2, 0xC7));

@@ -30,6 +30,12 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     serial::write_line("PYTHOS:CORE:NORMAL_SERVICES_READY");
     serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
     loop {
+        // Temporary COM2 echo (Task 2 proof that reads/writes actually work,
+        // not just that init_com2() ran). Task 8 replaces this with the real
+        // shell command loop.
+        if let Some(byte) = serial::try_read_byte_com2() {
+            serial::write_byte_com2(byte);
+        }
         core::hint::spin_loop();
     }
 }
