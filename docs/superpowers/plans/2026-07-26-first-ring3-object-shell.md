@@ -1086,6 +1086,56 @@ git commit -m "feat(shell): define typed object shell ABI"
 
 ### Task 4: Build And Verify Real `shell.elf`
 
+**Status: COMPLETE (2026-07-26).** This is the first *real, compiled* ELF this
+project has ever validated — the existing adversarial-probe ELFs
+(`scripts/build-image.py::build_user_elf_payload`) are hand-crafted byte
+arrays, not `rustc`+`lld` output. Several real, non-obvious issues surfaced
+that the plan's text didn't anticipate:
+
+- **Linker script.** Used the project's own *proven* explicit-`PHDRS` pattern
+  from `core/linker.ld` (declaring `text`/`rodata`/`data` `PT_LOAD` headers by
+  name) instead of the plan's plain `SECTIONS`-only script. Real linkers
+  commonly add `PT_GNU_STACK`/`PT_NOTE` beyond `PT_LOAD`, which would have
+  failed strict verification; explicit `PHDRS` suppressed them and the very
+  first build passed cleanly.
+- **`.cargo/config.toml` conflict.** The workspace already sets
+  `[target.x86_64-unknown-none] rustflags = ["-Tcore/linker.ld", ...]`
+  globally, which would apply to `user/shell` too. Confirmed Cargo's own
+  precedence rules: the `RUSTFLAGS` env var (which `build-user-shell.py` sets)
+  fully *replaces* — does not merge with — `target.<triple>.rustflags`, so
+  this is safe as written.
+- **ELF verification: real parser, not `readelf`.** This Windows host has no
+  `readelf` at all, and its text output is fragile to regex against besides.
+  `scripts/verify-user-elf.py` is a self-contained ELF64 header/program-header
+  parser (stdlib only) implementing the full reviewer checklist (ELF64
+  x86-64, `ET_EXEC` only, no `PT_INTERP`/`PT_DYNAMIC`, entry inside an
+  executable `PT_LOAD`, every segment in the permitted user range, no W^X,
+  page-aligned/non-overlapping ranges) — mirroring
+  `core/src/user_elf.rs::validate()`'s exact constants and checks, so a
+  Python pass here is strong (not proof-level) evidence the same bytes will
+  pass the real Rust loader-side validator later.
+- **The kernel-side syscall trampoline only forwards the syscall *number*
+  today.** `core/src/syscall.rs`'s `syscall_entry_abi` overwrites `rdi` with
+  `rax` before calling `syscall_dispatch_abi(number)` — there is no
+  multi-argument dispatch yet. Per this task's own scope (it validates a
+  ring-3 ELF; it does not execute the boundary — that's Task 8), `syscalls.rs`
+  is written correctly against the *intended* standard `syscall` ABI
+  (`rax`/`rdi`/`rsi`/`rdx`/`r10`/`r8`) and links cleanly, but nothing in it
+  can actually execute until Task 7 extends the kernel-side dispatch.
+- **Two `unsafe`/lint fixes applied per review guardrails:** the
+  bootstrap-pointer dereference (`bootstrap_capabilities`) has its own
+  complete invariant, separate from `syscall5`'s; `syscall5` declares `rcx`
+  and `r11` clobbered (the `syscall` instruction unconditionally overwrites
+  them) and is not marked `nomem` (PythCore reads/writes caller buffers).
+- **Two build-config bugs fixed**, both matching patterns `core/src/main.rs`
+  already established: (a) `cargo test` builds this crate for the *host*
+  target, where an unconditional `#![no_main]` + `_start` conflicts with
+  MSVC's linker (`LNK1561: entry point must be defined`) — fixed with the
+  same `cfg_attr(not(test), no_std/no_main)` gating `core/src/main.rs` uses;
+  (b) `_start` took a raw pointer without being marked `unsafe`
+  (clippy `not_unsafe_ptr_arg_deref`) — fixed to `pub unsafe extern "C" fn`,
+  matching `pythcore_entry`'s exact signature shape.
+
 **Files:**
 - Modify: `Cargo.toml`
 - Create: `user/shell/Cargo.toml`
@@ -1103,7 +1153,7 @@ git commit -m "feat(shell): define typed object shell ABI"
 - Consumes: `pythos_shared::object_shell_abi`.
 - Produces: `target/x86_64-unknown-none/debug/pythos-user-shell`, shell parser `parse_command(line: &[u8]) -> Result<Command, CommandError>`.
 
-- [ ] **Step 1: Add user shell crate**
+- [x] **Step 1: Add user shell crate**
 
 Update root `Cargo.toml` members:
 
@@ -1139,7 +1189,7 @@ name = "pythos_user_shell"
 path = "src/lib.rs"
 ```
 
-- [ ] **Step 2: Write command parser tests in user space**
+- [x] **Step 2: Write command parser tests in user space**
 
 Create `user/shell/src/commands.rs`:
 
@@ -1212,7 +1262,7 @@ mod tests {
 }
 ```
 
-- [ ] **Step 3: Implement parser and shell presentation**
+- [x] **Step 3: Implement parser and shell presentation**
 
 Implement `parse_command` so every supported human command becomes a `Command` variant. `help` is handled entirely in user space and does not call the object bridge. The parser sets `request.authority = PackedCapability::from_raw(0)`; `run_line` fills the workspace or per-object capability after consulting the shell capability map.
 
@@ -1316,7 +1366,7 @@ still sends the typed request with a zero authority handle only to receive and
 present the expected `DENIED missing-capability`; it must not substitute the
 workspace capability for per-object operations.
 
-- [ ] **Step 4: Add syscall wrappers with documented unsafe assembly**
+- [x] **Step 4: Add syscall wrappers with documented unsafe assembly**
 
 In `user/shell/src/syscalls.rs`, implement `syscall5` with this invariant immediately before the unsafe block:
 
@@ -1343,7 +1393,7 @@ MAX_SHELL_OBJECT_CAPS`, then copies the block into a stack value. The pointer is
 read-only user memory supplied in `rdi` by the PythCore launch ABI; the shell
 must not fabricate bootstrap capabilities if validation fails.
 
-- [ ] **Step 5: Add shell linker and build script**
+- [x] **Step 5: Add shell linker and build script**
 
 Create `user/shell/linker.ld`:
 
@@ -1397,7 +1447,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 6: Add readelf verification script**
+- [x] **Step 6: Add readelf verification script**
 
 Create `scripts/verify-user-elf.py`:
 
@@ -1441,7 +1491,7 @@ if __name__ == "__main__":
     raise SystemExit(main())
 ```
 
-- [ ] **Step 7: Run shell tests and verification**
+- [x] **Step 7: Run shell tests and verification**
 
 Run:
 
@@ -1457,7 +1507,7 @@ Expected:
 USER_ELF_VERIFY_OK
 ```
 
-- [ ] **Step 8: Commit**
+- [x] **Step 8: Commit**
 
 ```powershell
 git add Cargo.toml user\shell scripts\build-user-shell.py scripts\verify-user-elf.py

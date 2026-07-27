@@ -4,6 +4,7 @@ members = [
     "boot",
     "core",
     "shared",
+    "user/shell",
 ]
 
 [workspace.package]
