@@ -2,15 +2,20 @@
 
 #![cfg_attr(test, allow(dead_code))]
 
-use pythos_shared::{boot_protocol::PythBootInfo, init_bundle, init_pak, runtime_payload};
+use pythos_shared::{
+    boot_protocol::PythBootInfo, init_bundle, init_pak, runtime_payload, user_program_manifest,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeLoadError {
     BadInitPak,
     BadInitBundle,
     BadRuntimePayload,
+    BadUserElfPayload,
     MissingRuntimePayload,
     MissingUserElfPayload,
+    DuplicateProgramName,
+    DuplicateProgramPrincipal,
 }
 
 pub fn load_init_payload(
@@ -53,6 +58,15 @@ pub fn load_user_elf_payload_at(
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
+pub fn load_named_user_program<'a>(
+    boot_info: &'a PythBootInfo,
+    name: &[u8],
+) -> Result<user_program_manifest::NamedUserProgramManifest<'a>, RuntimeLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_named_user_program_payload_bytes(bytes, name)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn validate_user_elf_payload_bytes(bytes: &[u8]) -> Result<&[u8], RuntimeLoadError> {
     validate_user_elf_payload_at_bytes(bytes, 0)
 }
@@ -67,6 +81,89 @@ pub fn validate_user_elf_payload_at_bytes(
         .record_at(init_bundle::RecordType::UserElf, ordinal)
         .ok_or(RuntimeLoadError::MissingUserElfPayload)?;
     Ok(record.bytes())
+}
+
+pub fn validate_named_user_program_payload_bytes<'a>(
+    bytes: &'a [u8],
+    name: &[u8],
+) -> Result<user_program_manifest::NamedUserProgramManifest<'a>, RuntimeLoadError> {
+    let payload = init_pak_payload(bytes)?;
+    let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
+    let mut policy = NamedProgramPolicy::empty();
+    let mut selected = None;
+    let mut index = 0usize;
+    while let Some(record) = bundle.record_at(init_bundle::RecordType::NamedUserElf, index) {
+        let manifest = user_program_manifest::validate_named_user_program(record.bytes())
+            .map_err(|_| RuntimeLoadError::BadUserElfPayload)?;
+        policy.observe(manifest)?;
+        if manifest.name() == name {
+            selected = Some(manifest);
+        }
+        index += 1;
+    }
+    let manifest = selected.ok_or(RuntimeLoadError::MissingUserElfPayload)?;
+    enforce_kernel_identity_policy(manifest)?;
+    Ok(manifest)
+}
+
+const MAX_NAMED_PROGRAM_RECORDS: usize = 8;
+const SHELL_PROGRAM_NAME: &[u8] = b"shell.elf";
+
+struct NamedProgramPolicy<'a> {
+    names: [Option<&'a [u8]>; MAX_NAMED_PROGRAM_RECORDS],
+    principals: [Option<u64>; MAX_NAMED_PROGRAM_RECORDS],
+    count: usize,
+}
+
+impl<'a> NamedProgramPolicy<'a> {
+    const fn empty() -> Self {
+        Self {
+            names: [None; MAX_NAMED_PROGRAM_RECORDS],
+            principals: [None; MAX_NAMED_PROGRAM_RECORDS],
+            count: 0,
+        }
+    }
+
+    fn observe(
+        &mut self,
+        manifest: user_program_manifest::NamedUserProgramManifest<'a>,
+    ) -> Result<(), RuntimeLoadError> {
+        if manifest.name() != SHELL_PROGRAM_NAME
+            && manifest.principal_id() == user_program_manifest::SHELL_PRINCIPAL_ID
+        {
+            return Err(RuntimeLoadError::DuplicateProgramPrincipal);
+        }
+
+        let mut index = 0usize;
+        while index < self.count {
+            if self.names[index] == Some(manifest.name()) {
+                return Err(RuntimeLoadError::DuplicateProgramName);
+            }
+            if self.principals[index] == Some(manifest.principal_id()) {
+                return Err(RuntimeLoadError::DuplicateProgramPrincipal);
+            }
+            index += 1;
+        }
+
+        if self.count >= MAX_NAMED_PROGRAM_RECORDS {
+            return Err(RuntimeLoadError::BadInitBundle);
+        }
+        self.names[self.count] = Some(manifest.name());
+        self.principals[self.count] = Some(manifest.principal_id());
+        self.count += 1;
+        Ok(())
+    }
+}
+
+fn enforce_kernel_identity_policy(
+    manifest: user_program_manifest::NamedUserProgramManifest<'_>,
+) -> Result<(), RuntimeLoadError> {
+    if manifest.name() == SHELL_PROGRAM_NAME
+        && manifest.principal_id() != user_program_manifest::SHELL_PRINCIPAL_ID
+    {
+        return Err(RuntimeLoadError::BadUserElfPayload);
+    }
+    Ok(())
 }
 
 fn init_pak_payload(bytes: &[u8]) -> Result<&[u8], RuntimeLoadError> {
@@ -111,6 +208,7 @@ fn init_bundle_bytes(boot_info: &PythBootInfo) -> Result<&[u8], RuntimeLoadError
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pythos_shared::user_program_manifest::{self, INTRUDER_PRINCIPAL_ID, SHELL_PRINCIPAL_ID};
     use std::vec::Vec;
 
     const HELLO_SERVICE: &[u8] = b"class HelloService(Service):\n    async def start(self):\n        system.log(\"PythOS [HISS] We Are Woken\")\n        self.ready()\n";
@@ -165,6 +263,19 @@ mod tests {
             bytes.extend_from_slice(payload);
             cursor += payload.len();
         }
+        bytes
+    }
+
+    fn build_named_user_program(name: &[u8], principal_id: u64, elf: &[u8]) -> Vec<u8> {
+        let mut bytes =
+            vec![
+                0u8;
+                user_program_manifest::NAMED_USER_PROGRAM_HEADER_LEN + name.len() + elf.len()
+            ];
+        let len =
+            user_program_manifest::encode_named_user_program(&mut bytes, name, principal_id, elf)
+                .unwrap();
+        bytes.truncate(len);
         bytes
     }
 
@@ -237,6 +348,75 @@ mod tests {
         assert_eq!(
             validate_user_elf_payload_at_bytes(&bundle, 2),
             Err(RuntimeLoadError::MissingUserElfPayload)
+        );
+    }
+
+    #[test]
+    fn named_user_program_loader_binds_shell_identity_to_manifest() {
+        let runtime_payload = build_runtime_payload(HELLO_SERVICE);
+        let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_RUNTIME_PAYLOAD,
+                runtime_payload.as_slice(),
+            ),
+            (
+                pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+                shell.as_slice(),
+            ),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        let loaded = validate_named_user_program_payload_bytes(&bundle, b"shell.elf").unwrap();
+
+        assert_eq!(loaded.name(), b"shell.elf");
+        assert_eq!(loaded.principal_id(), SHELL_PRINCIPAL_ID);
+        assert_eq!(loaded.elf(), b"\x7FELFpayload");
+    }
+
+    #[test]
+    fn named_user_program_loader_rejects_duplicate_shell_principal_claim() {
+        let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+        let impostor =
+            build_named_user_program(b"other.elf", SHELL_PRINCIPAL_ID, b"\x7FELFimpostor");
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+                shell.as_slice(),
+            ),
+            (
+                pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+                impostor.as_slice(),
+            ),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
+            Err(RuntimeLoadError::DuplicateProgramPrincipal)
+        );
+    }
+
+    #[test]
+    fn named_user_program_loader_rejects_duplicate_shell_name() {
+        let shell = build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, b"\x7FELFpayload");
+        let duplicate =
+            build_named_user_program(b"shell.elf", INTRUDER_PRINCIPAL_ID, b"\x7FELFother");
+        let inner = build_inner_bundle(&[
+            (
+                pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+                shell.as_slice(),
+            ),
+            (
+                pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+                duplicate.as_slice(),
+            ),
+        ]);
+        let bundle = build_init_pak(&inner);
+
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
+            Err(RuntimeLoadError::DuplicateProgramName)
         );
     }
 

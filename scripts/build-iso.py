@@ -11,6 +11,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 BOOT_EFI = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
 PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
+SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
 DEFAULT_OUTPUT = ROOT / "target" / "pythos.iso"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -21,6 +22,11 @@ INIT_BUNDLE_HEADER_LEN = 32
 INIT_BUNDLE_RECORD_LEN = 32
 INIT_BUNDLE_RUNTIME_TYPE = 0x0000_0001
 INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
+INIT_BUNDLE_NAMED_USER_ELF_TYPE = 0x0000_0003
+NAMED_USER_PROGRAM_MAGIC = b"PYUPGM01"
+NAMED_USER_PROGRAM_HEADER_LEN = 40
+MAX_NAMED_PROGRAM_NAME_LEN = 32
+SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -103,6 +109,31 @@ def build_init_bundle(records: list[tuple[int, bytes]]) -> bytes:
     return bytes(header) + bytes(table) + bytes(payloads)
 
 
+def digest64(payload: bytes) -> int:
+    value = 0xCBF2_9CE4_8422_2325
+    for byte in payload:
+        value ^= byte
+        value = (value * 0x0000_0100_0000_01B3) & 0xFFFF_FFFF_FFFF_FFFF
+    return value
+
+
+def build_named_user_program(name: bytes, principal_id: int, elf: bytes) -> bytes:
+    if len(name) > MAX_NAMED_PROGRAM_NAME_LEN:
+        raise ValueError("named user program name is too long")
+    if len(elf) > 0xFFFF_FFFF:
+        raise ValueError("named user program ELF is too large")
+
+    header = bytearray(NAMED_USER_PROGRAM_HEADER_LEN)
+    header[0:8] = NAMED_USER_PROGRAM_MAGIC
+    header[8:10] = (1).to_bytes(2, "little")
+    header[10:12] = (0).to_bytes(2, "little")
+    header[12:14] = len(name).to_bytes(2, "little")
+    header[16:24] = principal_id.to_bytes(8, "little")
+    header[24:32] = digest64(elf).to_bytes(8, "little")
+    header[32:36] = len(elf).to_bytes(4, "little")
+    return bytes(header) + name + elf
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -140,25 +171,34 @@ def build_user_elf_payload(text: bytes) -> bytes:
     return bytes(elf)
 
 
-INIT_PAK = build_init_pak(
-    build_init_bundle(
-        [
-            (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
-            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
-            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
-            (
-                INIT_BUNDLE_USER_ELF_TYPE,
-                build_user_elf_payload(
-                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+def build_default_init_pak() -> bytes:
+    if not SHELL_ELF.exists():
+        raise SystemExit(f"missing shell ELF: {SHELL_ELF}")
+    return build_init_pak(
+        build_init_bundle(
+            [
+                (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
+                (
+                    INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    build_named_user_program(
+                        b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
+                    ),
                 ),
-            ),
-            (
-                INIT_BUNDLE_USER_ELF_TYPE,
-                build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
-            ),
-        ]
+                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
+                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
+                (
+                    INIT_BUNDLE_USER_ELF_TYPE,
+                    build_user_elf_payload(
+                        b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_USER_ELF_TYPE,
+                    build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+                ),
+            ]
+        )
     )
-)
 
 
 def build_font_psf() -> bytes:
@@ -215,7 +255,7 @@ def pythos_boot_files(loader: Path, kernel: Path) -> dict[str, bytes]:
         "EFI/BOOT/BOOTX64.EFI": loader.read_bytes(),
         "PYTHOS/PYTHCORE.ELF": kernel.read_bytes(),
         "PYTHOS/BOOT.CFG": b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
-        "PYTHOS/INIT.PAK": INIT_PAK,
+        "PYTHOS/INIT.PAK": build_default_init_pak(),
         "PYTHOS/FONT.PSF": build_font_psf(),
     }
 

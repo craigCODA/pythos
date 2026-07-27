@@ -34,6 +34,7 @@ mod object_relationships;
 mod permission_validation;
 mod persistent_objects;
 mod process;
+mod process_context;
 mod process_launch;
 mod process_model;
 mod qemu_exit;
