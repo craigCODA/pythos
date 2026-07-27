@@ -1682,6 +1682,32 @@ def run(command: list[str]) -> None:
     subprocess.run(command, cwd=ROOT, check=True)
 
 
+def build_verified_user_shell() -> None:
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+
+
+def build_boot_artifacts(media: str) -> None:
+    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "pythos-core",
+            "--target",
+            "x86_64-unknown-none",
+            "--features",
+            "verify",
+        ]
+    )
+    build_verified_user_shell()
+    if media == "iso":
+        run([sys.executable, "scripts/build-iso.py", "--output", str(ISO_IMAGE)])
+    else:
+        run([sys.executable, "scripts/build-image.py"])
+
+
 def default_qemu_timeout() -> float | None:
     value = os.environ.get("PYTHOS_TEST_BOOT_TIMEOUT")
     return float(value) if value else None
@@ -1713,21 +1739,8 @@ def main() -> int:
     args = parser.parse_args()
     timeout_args = qemu_timeout_args(args.timeout)
 
-    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(
-        [
-            "cargo",
-            "build",
-            "-p",
-            "pythos-core",
-            "--target",
-            "x86_64-unknown-none",
-            "--features",
-            "verify",
-        ]
-    )
+    build_boot_artifacts(args.media)
     if args.media == "iso":
-        run([sys.executable, "scripts/build-iso.py", "--output", str(ISO_IMAGE)])
         run(
             [
                 sys.executable,
@@ -1743,7 +1756,6 @@ def main() -> int:
             + (["--no-audio-device"] if args.no_audio_device else [])
         )
     else:
-        run([sys.executable, "scripts/build-image.py"])
         run(
             [
                 sys.executable,

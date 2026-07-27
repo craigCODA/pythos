@@ -42,10 +42,20 @@ def wait_for_file_marker(path: Path, marker: str, timeout: float) -> str:
     raise AssertionError(f"missing marker {marker}")
 
 
-def main() -> int:
+def build_verified_user_shell() -> None:
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+
+
+def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    build_verified_user_shell()
     run([sys.executable, "scripts/build-image.py"])
+
+
+def main() -> int:
+    build_boot_image()
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
     # stdout is discarded (not piped): run-qemu.py mostly prints only at exit,

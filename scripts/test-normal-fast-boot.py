@@ -27,10 +27,20 @@ def run(command: list[str], expected: int = 0) -> str:
     return result.stdout
 
 
-def main() -> int:
+def build_verified_user_shell() -> None:
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+
+
+def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    build_verified_user_shell()
     run([sys.executable, "scripts/build-image.py"])
+
+
+def main() -> int:
+    build_boot_image()
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
     # run-qemu.py always exits with the outcome's dedicated code (see

@@ -54,6 +54,11 @@ def run(command: list[str], expected_returncode: int = 0) -> str:
     return result.stdout
 
 
+def build_verified_user_shell() -> None:
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+
+
 def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(
@@ -68,6 +73,7 @@ def build_boot_image() -> None:
             "verify",
         ]
     )
+    build_verified_user_shell()
     run([sys.executable, "scripts/build-image.py"])
 
 
