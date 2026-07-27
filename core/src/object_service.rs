@@ -378,11 +378,14 @@ impl ObjectService {
             next_revision as u16,
             value,
         )?)?;
-        self.objects.replace_object(revised)?;
-        let timestamp = self.take_timestamp();
-        let revision = self
-            .revisions
-            .update_object(revised, timestamp, caller.service_id())?;
+        let mut staged_objects = self.objects;
+        let mut staged_revisions = self.revisions;
+        staged_objects.replace_object(revised)?;
+        let timestamp = self.next_timestamp_ticks;
+        let revision = staged_revisions.update_object(revised, timestamp, caller.service_id())?;
+        self.objects = staged_objects;
+        self.revisions = staged_revisions;
+        self.next_timestamp_ticks = self.next_timestamp_ticks.wrapping_add(1);
         Ok(revision)
     }
 
@@ -616,6 +619,10 @@ impl ObjectService {
 
     pub fn object_exists_for_test(&self, object_id: ObjectId) -> bool {
         self.objects.object(object_id).is_some()
+    }
+
+    pub fn dynamic_object_for_test(&self, object_id: ObjectId) -> Option<TypedObjectRecord> {
+        self.objects.object(object_id)
     }
 
     pub fn object_outside_shell_workspace_for_test(&self, object_id: ObjectId) -> bool {
@@ -926,5 +933,73 @@ mod tests {
             service.inspect_object(shell, created.object_capability, ObjectId::new(1042)),
             Err(ObjectServiceError::Denied)
         );
+    }
+
+    #[test]
+    fn repeated_queries_reuse_existing_object_capabilities() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        for _ in 0..MAX_QUERY_RESULTS {
+            service
+                .create_object(shell, workspace, ObjectKind::Note)
+                .unwrap();
+        }
+
+        let mut expected = None;
+        for _ in 0..6 {
+            let results = service
+                .query_objects(shell, workspace, ObjectKind::Note)
+                .unwrap();
+            assert_eq!(
+                results.iter().filter(|entry| entry.object_id != 0).count(),
+                MAX_QUERY_RESULTS
+            );
+            if let Some(previous) = expected {
+                assert_eq!(results, previous);
+            }
+            expected = Some(results);
+        }
+    }
+
+    #[test]
+    fn failed_revision_update_does_not_mutate_dynamic_object() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let created = service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+
+        for revision in 0..MAX_QUERY_RESULTS {
+            let text = [b'a' + revision as u8];
+            service
+                .revise_field(
+                    shell,
+                    created.object_capability,
+                    created.object_id,
+                    TEXT_FIELD_ID,
+                    &text,
+                )
+                .unwrap();
+        }
+        let before = service.dynamic_object_for_test(created.object_id).unwrap();
+
+        assert_eq!(
+            service.revise_field(
+                shell,
+                created.object_capability,
+                created.object_id,
+                TEXT_FIELD_ID,
+                b"overflow",
+            ),
+            Err(ObjectServiceError::Revision(
+                RevisionHistoryError::RevisionTableFull
+            ))
+        );
+
+        let after = service.dynamic_object_for_test(created.object_id).unwrap();
+        assert_eq!(after, before);
     }
 }

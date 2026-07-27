@@ -329,7 +329,9 @@ fn read_committed_slot_snapshot_into(
 }
 
 fn slot_probe_is_committed(header: &[u8; SECTOR_SIZE], commit: &[u8; SECTOR_SIZE]) -> bool {
-    header[0..8] == CHECKPOINT_MAGIC && commit[0..8] == COMMIT_MAGIC
+    header[0..8] == CHECKPOINT_MAGIC
+        && commit[0..8] == COMMIT_MAGIC
+        && read_u64(header, 24) == read_u64(commit, 8)
 }
 
 fn read_slot_image(
@@ -362,7 +364,13 @@ fn write_slot_image(
     slot: CheckpointSlot,
     image: &ObjectServiceSlotImage,
 ) -> Result<(), GeneralStoragePersistenceError> {
-    let mut index = 0;
+    block_device::write_sector(
+        device,
+        sector_for_image_index(slot, COMMIT_IMAGE_INDEX),
+        &[0; SECTOR_SIZE],
+    )?;
+
+    let mut index = OBJECT_IMAGE_INDEX;
     while index < COMMIT_IMAGE_INDEX {
         block_device::write_sector(
             device,
@@ -371,6 +379,11 @@ fn write_slot_image(
         )?;
         index += 1;
     }
+    block_device::write_sector(
+        device,
+        sector_for_image_index(slot, HEADER_IMAGE_INDEX),
+        &image.sectors[HEADER_IMAGE_INDEX],
+    )?;
     block_device::write_sector(
         device,
         sector_for_image_index(slot, COMMIT_IMAGE_INDEX),
@@ -472,8 +485,10 @@ fn decode_slot(
         return Err(GeneralStoragePersistenceError::TornWrite);
     }
     let header = decode_header(&image.sectors[HEADER_IMAGE_INDEX])?;
+    let commit_generation = read_u64(&image.sectors[COMMIT_IMAGE_INDEX], 8);
     let expected_layout = slot_layout(slot_from_code(header.slot)?);
-    if header.object_table_sector != expected_layout.object_table_sector
+    if header.generation != commit_generation
+        || header.object_table_sector != expected_layout.object_table_sector
         || header.relationship_table_sector != expected_layout.relationship_table_sector
         || header.revision_table_sector != expected_layout.revision_table_sector
         || header.commit_sector != expected_layout.commit_sector
@@ -1136,6 +1151,31 @@ mod tests {
             .unwrap();
 
         assert_eq!(recovered.generation, 3);
+        assert_eq!(
+            recovered.objects[0].unwrap().object.object_id(),
+            ObjectId::new(1042)
+        );
+    }
+
+    #[test]
+    fn reused_slot_torn_rewrite_with_old_commit_marker_is_rejected() {
+        let committed = encode_slot_for_test(
+            CheckpointSlot::A,
+            &snapshot(5, 1042, SHELL_WORKSPACE_OBJECT_ID),
+            true,
+        );
+        let mut torn_reuse = encode_slot_for_test(
+            CheckpointSlot::A,
+            &snapshot(7, 1043, SHELL_WORKSPACE_OBJECT_ID),
+            false,
+        );
+        torn_reuse.sectors[COMMIT_IMAGE_INDEX] = committed.sectors[COMMIT_IMAGE_INDEX];
+
+        let recovered = recover_from_slot_images_for_test(&torn_reuse, &committed)
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(recovered.generation, 5);
         assert_eq!(
             recovered.objects[0].unwrap().object.object_id(),
             ObjectId::new(1042)

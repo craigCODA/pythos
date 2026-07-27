@@ -102,9 +102,13 @@ service-specific relationship and revision-history bounds: the relationship
 object index keeps those nine dynamic objects plus two workspace roots, while
 legacy Phase 7 verification stores keep their smaller stack-friendly defaults.
 
-Updates write the inactive slot completely, write that slot's commit marker
-last, verify the slot, and then treat the highest valid committed generation as
-current. Recovery selects the highest valid committed generation. The checksum
+Updates first invalidate the inactive slot's commit sector, then write content
+sectors, then write the header sector, then write that slot's commit marker
+last. The commit sector carries the same generation as the header, and recovery
+accepts a slot only when header and commit generations match. After the final
+commit write, PythCore verifies the slot and then treats the highest valid
+committed generation as current. Recovery selects the highest valid committed
+generation. The checksum
 covers header metadata, object records, extent records, workspace
 relationships, and revision records. The checkpoint preserves each object's
 allocated extent and does not serialize runtime capability handles. Restored

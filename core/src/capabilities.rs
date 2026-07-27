@@ -86,6 +86,24 @@ impl CapabilityTable {
         resource: ResourceId,
         rights: RightsMask,
     ) -> Result<CapabilityHandle, CapabilityError> {
+        if let Some((slot, entry)) = self.entries.iter().enumerate().find_map(|(slot, entry)| {
+            entry.and_then(|entry| {
+                if entry.state == CapabilityState::Active
+                    && entry.holder == holder
+                    && entry.resource == resource
+                    && entry.rights == rights
+                {
+                    Some((slot, entry))
+                } else {
+                    None
+                }
+            })
+        }) {
+            return Ok(CapabilityHandle {
+                slot: slot as u32,
+                generation: entry.generation,
+            });
+        }
         let slot = self
             .entries
             .iter()
@@ -342,6 +360,31 @@ mod tests {
                 RightsMask::new(RightsMask::READ)
             ),
             Err(CapabilityError::InvalidHandle)
+        );
+    }
+
+    #[test]
+    fn grant_reuses_existing_holder_resource_rights_entry() {
+        let mut identities = ServiceIdentityTable::new();
+        let holder = identities.register_task(TaskId::new(34)).unwrap();
+        let mut table = CapabilityTable::new();
+
+        let first = table
+            .grant(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)
+            .unwrap();
+        let second = table
+            .grant(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)
+            .unwrap();
+
+        assert_eq!(second, first);
+        assert_eq!(
+            table.validate(
+                holder,
+                second,
+                PROOF_RESOURCE_ID,
+                RightsMask::new(RightsMask::WRITE)
+            ),
+            Ok(())
         );
     }
 }
