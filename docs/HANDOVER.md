@@ -21,6 +21,46 @@ verification detail. Verify with `python scripts\test-object-shell.py`,
 `python scripts\test-persistent-storage.py`. Do not merge or build on this
 branch without re-reading that plan document's Task 12 section first.
 
+## Interactive Object-Shell Launcher (2026-07-28, branch `object-shell`)
+
+ADR 0053 (see `docs/decisions/0053-interactive-object-shell-launcher.md`)
+closes the interactive-input gate ADR 0047 deferred. Normal boot now: plays
+the existing boot cinematic + AC97 audio, renders an "Enter Shell" tile with
+a real mouse cursor, and blocks until a real (or QMP-injected) left click
+lands on that tile before launching `shell.elf` — same shell, same
+persistence, same everything already verified in Tasks 1-12, just with the
+front door open. QEMU-only in scope: real hardware still can't run this
+branch at all (see the Real-Hardware Boot Status section below — that gap is
+unrelated to input and unaffected by this work).
+
+New: `core/src/ps2.rs` (real PS/2 keyboard/mouse controller driver — the
+first code in this tree touching real input hardware), `core/src/
+launcher_screen.rs` (kernel-mode click-to-launch poll loop, runs strictly
+before the existing one-shot ring-3 entry), `fill_rect`/cursor-sprite
+primitives in `core/src/framebuffer.rs`, `scripts/launcher_click.py` (shared
+QMP-injection helper), `scripts/test-normal-boot-interactive.py` (proves the
+real IRQ1/IRQ12 hardware path fires, not just synthetic decode bytes).
+
+To watch and click it yourself:
+```powershell
+python scripts\build-image.py
+python scripts\run-qemu.py --display gtk --audio-backend dsound --serial-log target\manual-full-boot.log --timeout 120 --expect-outcome timeout
+```
+Watch the cinematic play with audio, then move the mouse and click "Enter
+Shell" — QEMU's GTK window captures host input when focused.
+
+Verify with everything in the section above, plus
+`python scripts\test-normal-boot-interactive.py`. `test-normal-fast-boot.py`,
+`test-com2-shell-transport.py`, and `test-object-shell.py` all now inject a
+real click via `scripts/launcher_click.py` before waiting for the shell to
+come up (`test-object-shell.py`'s reboot test injects it twice — once per
+boot). `test-boot.py` and `test-persistent-storage.py` are unaffected
+(verify-feature builds compile `normal_boot` out entirely).
+
+Out of scope, unchanged: real-hardware (USB HID) input, HDA-in-normal-boot
+(AC97 is the committed baseline), and the separate real-hardware
+block-storage gap.
+
 ## Real-Hardware Boot Status (2026-07-25)
 
 PythOS now boots on real UEFI hardware, not only QEMU. A laptop boots a USB all
