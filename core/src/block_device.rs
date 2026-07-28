@@ -85,7 +85,13 @@ pub enum BlockDeviceError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct BlockDeviceInfo {
+pub enum BlockDeviceInfo {
+    Virtio(VirtioBlockDevice),
+    Ahci(AhciBlockDevice),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VirtioBlockDevice {
     bus: u8,
     device: u8,
     function: u8,
@@ -94,25 +100,43 @@ pub struct BlockDeviceInfo {
     queue_size: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AhciBlockDevice {
+    bus: u8,
+    device: u8,
+    function: u8,
+    mmio_base: u64,
+    port_index: u8,
+    capacity_sectors: u64,
+}
+
 impl BlockDeviceInfo {
     pub const fn capacity_sectors(self) -> u64 {
-        self.capacity_sectors
+        match self {
+            Self::Virtio(device) => device.capacity_sectors,
+            Self::Ahci(device) => device.capacity_sectors,
+        }
     }
 
     pub const fn queue_size(self) -> u16 {
-        self.queue_size
+        match self {
+            Self::Virtio(device) => device.queue_size,
+            // AHCI has no virtqueue. Keep this nonzero so the existing storage
+            // service liveness check remains meaningful across backends.
+            Self::Ahci(_) => 1,
+        }
     }
 
     #[cfg(test)]
     pub const fn new_for_test(capacity_sectors: u64, queue_size: u16) -> Self {
-        Self {
+        Self::Virtio(VirtioBlockDevice {
             bus: 0,
             device: 6,
             function: 0,
             io_base: 0xC000,
             capacity_sectors,
             queue_size,
-        }
+        })
     }
 }
 
@@ -129,9 +153,20 @@ struct PciFunction {
 }
 
 pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
-    let device = scan_primary_bus()?;
-    serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
-    Ok(device)
+    match scan_primary_bus_for_virtio() {
+        Ok(device) => {
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO");
+            Ok(device)
+        }
+        Err(BlockDeviceError::DeviceAbsent) => {
+            let device = scan_primary_bus_for_ahci()?;
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI");
+            Ok(device)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 pub fn read_sector(
@@ -158,23 +193,28 @@ fn execute_sector_request(
     write: bool,
     bytes: &mut [u8; SECTOR_SIZE],
 ) -> Result<(), BlockDeviceError> {
-    if sector >= device.capacity_sectors {
-        return Err(BlockDeviceError::RequestFailed);
+    match device {
+        BlockDeviceInfo::Virtio(virtio) => {
+            if sector >= virtio.capacity_sectors {
+                return Err(BlockDeviceError::RequestFailed);
+            }
+            let queue_size = virtio.queue_size;
+            if queue_size == 0 || queue_size > MAX_QUEUE_SIZE {
+                return Err(BlockDeviceError::InvalidQueue);
+            }
+            initialize_queue(virtio, queue_size)?;
+            prepare_request(sector, write, bytes)?;
+            submit_request(virtio, queue_size, write)?;
+            if !write {
+                copy_from_request_buffer(bytes)?;
+            }
+            Ok(())
+        }
+        BlockDeviceInfo::Ahci(_) => Err(BlockDeviceError::DeviceAbsent),
     }
-    let queue_size = device.queue_size;
-    if queue_size == 0 || queue_size > MAX_QUEUE_SIZE {
-        return Err(BlockDeviceError::InvalidQueue);
-    }
-    initialize_queue(device, queue_size)?;
-    prepare_request(sector, write, bytes)?;
-    submit_request(device, queue_size, write)?;
-    if !write {
-        copy_from_request_buffer(bytes)?;
-    }
-    Ok(())
 }
 
-fn initialize_queue(device: BlockDeviceInfo, queue_size: u16) -> Result<(), BlockDeviceError> {
+fn initialize_queue(device: VirtioBlockDevice, queue_size: u16) -> Result<(), BlockDeviceError> {
     let queue_phys = dma_physical(queue_ptr() as u64)?;
     if !queue_phys.is_multiple_of(4096) {
         return Err(BlockDeviceError::DmaAddress);
@@ -235,7 +275,7 @@ fn prepare_request(
 }
 
 fn submit_request(
-    device: BlockDeviceInfo,
+    device: VirtioBlockDevice,
     queue_size: u16,
     write: bool,
 ) -> Result<(), BlockDeviceError> {
@@ -291,7 +331,7 @@ fn submit_request(
     Err(BlockDeviceError::Timeout)
 }
 
-fn scan_primary_bus() -> Result<BlockDeviceInfo, BlockDeviceError> {
+fn scan_primary_bus_for_virtio() -> Result<BlockDeviceInfo, BlockDeviceError> {
     for device in 0..PCI_DEVICE_COUNT {
         for function in 0..PCI_FUNCTION_COUNT {
             let candidate = read_function(PCI_BUS, device, function);
@@ -304,13 +344,19 @@ fn scan_primary_bus() -> Result<BlockDeviceInfo, BlockDeviceError> {
             enable_io_bus_master(candidate)?;
             block_device.capacity_sectors = read_capacity_sectors(block_device.io_base)?;
             block_device.queue_size = read_queue_size(block_device.io_base)?;
-            return Ok(block_device);
+            return Ok(BlockDeviceInfo::Virtio(block_device));
         }
     }
     Err(BlockDeviceError::DeviceAbsent)
 }
 
-fn classify_virtio_blk(function: PciFunction) -> Result<Option<BlockDeviceInfo>, BlockDeviceError> {
+fn scan_primary_bus_for_ahci() -> Result<BlockDeviceInfo, BlockDeviceError> {
+    Err(BlockDeviceError::DeviceAbsent)
+}
+
+fn classify_virtio_blk(
+    function: PciFunction,
+) -> Result<Option<VirtioBlockDevice>, BlockDeviceError> {
     if vendor(function.vendor_device) != VIRTIO_VENDOR_ID
         || device_id(function.vendor_device) != VIRTIO_LEGACY_BLOCK_DEVICE_ID
     {
@@ -321,7 +367,7 @@ fn classify_virtio_blk(function: PciFunction) -> Result<Option<BlockDeviceInfo>,
         return Err(BlockDeviceError::InvalidBar);
     };
 
-    Ok(Some(BlockDeviceInfo {
+    Ok(Some(VirtioBlockDevice {
         bus: function.bus,
         device: function.device,
         function: function.function,
@@ -801,7 +847,7 @@ mod tests {
 
         assert_eq!(
             classify_virtio_blk(function),
-            Ok(Some(BlockDeviceInfo {
+            Ok(Some(VirtioBlockDevice {
                 bus: 0,
                 device: 6,
                 function: 0,
@@ -901,6 +947,35 @@ mod tests {
 
         assert!(is_ahci_controller(&function));
         assert_eq!(ahci_mmio_base(&function), None);
+    }
+
+    #[test]
+    fn block_device_info_dispatches_accessors_per_backend() {
+        let virtio = BlockDeviceInfo::Virtio(VirtioBlockDevice {
+            bus: 0,
+            device: 6,
+            function: 0,
+            io_base: 0xC000,
+            capacity_sectors: 64,
+            queue_size: 128,
+        });
+        let ahci = BlockDeviceInfo::Ahci(AhciBlockDevice {
+            bus: 0,
+            device: 31,
+            function: 2,
+            mmio_base: 0xFEBF_0000,
+            port_index: 0,
+            capacity_sectors: 128,
+        });
+
+        assert_eq!(virtio.capacity_sectors(), 64);
+        assert_eq!(virtio.queue_size(), 128);
+        assert_eq!(ahci.capacity_sectors(), 128);
+        assert_eq!(ahci.queue_size(), 1);
+        assert!(matches!(
+            BlockDeviceInfo::new_for_test(16, 8),
+            BlockDeviceInfo::Virtio(_)
+        ));
     }
 
     #[test]
