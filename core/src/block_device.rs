@@ -14,9 +14,14 @@ const PCI_DEVICE_COUNT: u8 = 32;
 const PCI_FUNCTION_COUNT: u8 = 8;
 const PCI_VENDOR_INVALID: u16 = 0xFFFF;
 const PCI_COMMAND_OFFSET: u8 = 0x04;
+const PCI_CLASS_REVISION_OFFSET: u8 = 0x08;
 const PCI_BAR0_OFFSET: u8 = 0x10;
+const PCI_BAR5_OFFSET: u8 = 0x24;
 const PCI_COMMAND_IO_SPACE: u16 = 1 << 0;
 const PCI_COMMAND_BUS_MASTER: u16 = 1 << 2;
+const PCI_CLASS_MASS_STORAGE: u8 = 0x01;
+const PCI_SUBCLASS_SATA: u8 = 0x06;
+const PCI_PROG_IF_AHCI: u8 = 0x01;
 const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
 const VIRTIO_LEGACY_BLOCK_DEVICE_ID: u16 = 0x1001;
 const VIRTIO_QUEUE_SELECT_OFFSET: u16 = 0x0E;
@@ -42,6 +47,7 @@ const REQUEST_HEADER_BYTES: usize = 16;
 const REQUEST_STATUS_OFFSET: usize = 16;
 const REQUEST_DATA_OFFSET: usize = 512;
 const REQUEST_POLL_LIMIT: usize = 1_000_000;
+const MEMORY_BAR_MASK: u32 = !0xF;
 
 pub const SECTOR_SIZE: usize = 512;
 
@@ -117,7 +123,9 @@ struct PciFunction {
     function: u8,
     vendor_device: u32,
     command_status: u32,
+    class_revision: u32,
     bar0: u32,
+    bar5: u32,
 }
 
 pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
@@ -546,7 +554,9 @@ fn read_function(bus: u8, device: u8, function: u8) -> PciFunction {
         function,
         vendor_device: read_config_u32(bus, device, function, 0x00),
         command_status: read_config_u32(bus, device, function, PCI_COMMAND_OFFSET),
+        class_revision: read_config_u32(bus, device, function, PCI_CLASS_REVISION_OFFSET),
         bar0: read_config_u32(bus, device, function, PCI_BAR0_OFFSET),
+        bar5: read_config_u32(bus, device, function, PCI_BAR5_OFFSET),
     }
 }
 
@@ -556,6 +566,35 @@ fn vendor(vendor_device: u32) -> u16 {
 
 fn device_id(vendor_device: u32) -> u16 {
     (vendor_device >> 16) as u16
+}
+
+fn class_code(class_revision: u32) -> u8 {
+    (class_revision >> 24) as u8
+}
+
+fn subclass(class_revision: u32) -> u8 {
+    (class_revision >> 16) as u8
+}
+
+fn prog_if(class_revision: u32) -> u8 {
+    (class_revision >> 8) as u8
+}
+
+fn is_ahci_controller(function: &PciFunction) -> bool {
+    class_code(function.class_revision) == PCI_CLASS_MASS_STORAGE
+        && subclass(function.class_revision) == PCI_SUBCLASS_SATA
+        && prog_if(function.class_revision) == PCI_PROG_IF_AHCI
+}
+
+fn ahci_mmio_base(function: &PciFunction) -> Option<u64> {
+    if function.bar5 & IO_BAR_FLAG != 0 {
+        return None;
+    }
+    let base = function.bar5 & MEMORY_BAR_MASK;
+    if base == 0 {
+        return None;
+    }
+    Some(u64::from(base))
 }
 
 fn io_bar_base(bar: u32) -> Option<u16> {
@@ -755,7 +794,9 @@ mod tests {
             function: 0,
             vendor_device: 0x1001_1AF4,
             command_status: 0,
+            class_revision: 0,
             bar0: 0xC001,
+            bar5: 0,
         };
 
         assert_eq!(
@@ -779,7 +820,9 @@ mod tests {
             function: 0,
             vendor_device: 0x2415_8086,
             command_status: 0,
+            class_revision: 0,
             bar0: 0x1001,
+            bar5: 0,
         };
 
         assert_eq!(classify_virtio_blk(function), Ok(None));
@@ -793,13 +836,71 @@ mod tests {
             function: 0,
             vendor_device: 0x1001_1AF4,
             command_status: 0,
+            class_revision: 0,
             bar0: 0xC000,
+            bar5: 0,
         };
 
         assert_eq!(
             classify_virtio_blk(function),
             Err(BlockDeviceError::InvalidBar)
         );
+    }
+
+    #[test]
+    fn classifies_ahci_controller_by_class_subclass_prog_if_and_bar5() {
+        let function = PciFunction {
+            bus: 0,
+            device: 31,
+            function: 2,
+            vendor_device: 0x2922_8086,
+            command_status: 0,
+            class_revision: 0x0106_0100,
+            bar0: 0xDEAD_C000,
+            bar5: 0xFEBF_0008,
+        };
+
+        assert_eq!(class_code(function.class_revision), 0x01);
+        assert_eq!(subclass(function.class_revision), 0x06);
+        assert_eq!(prog_if(function.class_revision), 0x01);
+        assert!(is_ahci_controller(&function));
+        assert_eq!(ahci_mmio_base(&function), Some(0xFEBF_0000));
+    }
+
+    #[test]
+    fn ignores_non_ahci_mass_storage_functions() {
+        let function = PciFunction {
+            bus: 0,
+            device: 31,
+            function: 1,
+            vendor_device: 0x7010_8086,
+            command_status: 0,
+            class_revision: 0x0101_8000,
+            bar0: 0,
+            bar5: 0xFEBF_0000,
+        };
+
+        assert_eq!(class_code(function.class_revision), 0x01);
+        assert_eq!(subclass(function.class_revision), 0x01);
+        assert_eq!(prog_if(function.class_revision), 0x80);
+        assert!(!is_ahci_controller(&function));
+    }
+
+    #[test]
+    fn rejects_io_space_bar5_for_ahci() {
+        let function = PciFunction {
+            bus: 0,
+            device: 31,
+            function: 2,
+            vendor_device: 0x2922_8086,
+            command_status: 0,
+            class_revision: 0x0106_0100,
+            bar0: 0,
+            bar5: 0xC001,
+        };
+
+        assert!(is_ahci_controller(&function));
+        assert_eq!(ahci_mmio_base(&function), None);
     }
 
     #[test]
