@@ -22,6 +22,11 @@ const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITE: u64 = 1 << 1;
 const PTE_USER: u64 = 1 << 2;
 const PTE_HUGE: u64 = 1 << 7;
+/// PCD: disables caching for this page. Device MMIO registers must never be
+/// cached: an AHCI/NVMe-class controller's registers reflect live hardware
+/// state, and a cached read/write can silently observe or leave behind a
+/// stale value instead of the real one.
+const PTE_CACHE_DISABLE: u64 = 1 << 4;
 const PTE_NO_EXECUTE: u64 = 1 << 63;
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 const OFFSET_4K_MASK: u64 = 0xFFF;
@@ -160,6 +165,7 @@ impl KernelAddressSpace {
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
         hda_mmio: Option<(u64, u64, u64)>,
+        ahci_mmio: Option<(u64, u64, u64)>,
         shell_bootstrap_frame: Option<u64>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
@@ -195,8 +201,22 @@ impl KernelAddressSpace {
         )?;
         // ADR 0048: map the runtime-discovered HDA controller MMIO into the
         // kernel device window so the audio driver can reach its registers.
+        // Note: this HDA mapping predates PTE_CACHE_DISABLE and has the same
+        // latent cacheable-MMIO gap the AHCI mapping below fixes; left as-is,
+        // out of scope for ADR 0054 (see that ADR's follow-up risk note).
         if let Some((phys, virt, len)) = hda_mmio {
             tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
+        }
+        // ADR 0054: map the runtime-discovered AHCI controller's ABAR into the
+        // kernel device window, uncacheable: device registers reflect live
+        // hardware state and must never be served from a stale cache line.
+        if let Some((phys, virt, len)) = ahci_mmio {
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
         }
         if let Some(frame) = shell_bootstrap_frame {
             tables.map_physical_range(frame, frame, PAGE_SIZE, PTE_WRITE | PTE_NO_EXECUTE)?;
@@ -1248,3 +1268,27 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
         .checked_sub(symbol_addr(start))
         .ok_or(VmError::RangeOverflow)
 }
+
+// This module has no `cargo test` surface at all: `memory/mod.rs` declares
+// `pub mod r#virtual;` as `#[cfg(not(test))]`, so nothing in this file is
+// even compiled under `cargo test` (a `#[cfg(test)] mod tests` block here
+// would silently never run). `read_entry`/`write_entry`/`translate_active`
+// also dereference raw physical addresses and read the live CR3 register,
+// which only make sense running as the real kernel; every existing
+// correctness proof for this file's mappings (e.g.
+// `prove_syscall_stack_guard_pages_unmapped`) is a QEMU boot-marker proof,
+// not a unit test. `PTE_CACHE_DISABLE`'s bit value and its composition with
+// the existing flags is instead checked at compile time below, which *does*
+// run whenever this module is built (i.e. every non-test build); the
+// mapping's actual effect on real AHCI hardware is proven functionally by
+// Task E's QEMU integration test.
+const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
+const _: () = {
+    let flags = PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE;
+    assert!(flags & PTE_WRITE == PTE_WRITE);
+    assert!(flags & PTE_NO_EXECUTE == PTE_NO_EXECUTE);
+    assert!(flags & PTE_CACHE_DISABLE == PTE_CACHE_DISABLE);
+    assert!(flags & PTE_PRESENT == 0);
+    assert!(flags & PTE_USER == 0);
+    assert!(flags & PTE_HUGE == 0);
+};

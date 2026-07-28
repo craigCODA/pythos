@@ -98,9 +98,14 @@ pub fn initialize_normal_substrate(
     let bootstrap_frame = physical_memory
         .allocate_zeroed_page()
         .map_err(|_| NormalInitError::ShellBootstrap)?;
-    let kernel_address_space =
-        KernelAddressSpace::build(physical_memory, boot_info, None, Some(bootstrap_frame))
-            .map_err(|_| NormalInitError::Memory)?;
+    let kernel_address_space = KernelAddressSpace::build(
+        physical_memory,
+        boot_info,
+        None,
+        None,
+        Some(bootstrap_frame),
+    )
+    .map_err(|_| NormalInitError::Memory)?;
     let (shell_address_space, loaded_shell) = UserAddressSpace::build_with_user_elf_and_bootstrap(
         physical_memory,
         boot_info,
