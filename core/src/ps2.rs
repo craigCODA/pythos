@@ -92,8 +92,28 @@ pub fn initialize() -> Result<(), Ps2Error> {
     if read_data_blocking()? != MOUSE_ACK {
         return Err(Ps2Error::MouseAckTimeout);
     }
+    // Defensive: discard anything already sitting in the output buffer
+    // before enabling IRQs, in case any stray byte is present at this point.
+    // Verified live against QEMU that this alone does not guarantee a clean
+    // start — one extra byte (matching the ack just read above) was still
+    // observed arriving via the *first* post-unmask interrupt in testing.
+    // That's tolerated rather than chased further: `MouseAssembler::feed`
+    // only re-validates 3-byte alignment while in its `Byte0` state, so one
+    // stray leading byte costs at most one dropped/misread packet before it
+    // naturally resynchronizes (confirmed live: the very next byte that
+    // fails the byte-0 "always 1" bit check is dropped, realigning the
+    // stream within a few bytes).
+    flush_output_buffer();
 
     interrupts::unmask_irq(1).map_err(|_| Ps2Error::Irq)?;
+    // IRQ12 lives on the slave PIC; the slave's interrupts only ever reach
+    // the CPU through the master PIC's cascade line, IRQ2. Without also
+    // unmasking IRQ2 here, the mouse's IRQ12 would never fire even though
+    // `unmask_irq(12)` itself succeeds - a genuinely easy-to-miss PIC wiring
+    // detail. Found via live QMP-injected mouse input against QEMU during
+    // Task D: injected motion/click events had zero effect until this line
+    // was added.
+    interrupts::unmask_irq(2).map_err(|_| Ps2Error::Irq)?;
     interrupts::unmask_irq(12).map_err(|_| Ps2Error::Irq)?;
     Ok(())
 }

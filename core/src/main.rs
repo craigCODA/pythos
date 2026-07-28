@@ -24,6 +24,7 @@ mod input_events;
 mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
+mod launcher_screen;
 mod memory;
 #[cfg(all(not(test), not(feature = "verify")))]
 mod normal_boot;
