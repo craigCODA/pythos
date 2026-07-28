@@ -192,6 +192,21 @@ def main() -> int:
         help="add a second serial backend (COM2) as a TCP server on this port",
     )
     parser.add_argument("--storage-image", type=Path, default=DEFAULT_STORAGE_IMAGE)
+    parser.add_argument(
+        "--no-virtio-blk",
+        action="store_true",
+        help="do not attach the default legacy virtio-blk storage device",
+    )
+    parser.add_argument(
+        "--ahci",
+        action="store_true",
+        help="attach a polling-test SATA disk behind an explicit AHCI controller",
+    )
+    parser.add_argument(
+        "--ahci-storage-image",
+        type=Path,
+        help="storage image for --ahci; defaults to --storage-image when omitted",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -206,6 +221,8 @@ def main() -> int:
     ovmf = find_ovmf(args.ovmf_code)
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
+    if args.ahci_storage_image and not args.ahci:
+        raise SystemExit("--ahci-storage-image requires --ahci")
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
@@ -280,13 +297,28 @@ def main() -> int:
             "-device",
             "ide-hd,drive=pythos_esp,bootindex=1",
         ]
-    ensure_storage_image(args.storage_image)
-    command += [
-        "-drive",
-        f"if=none,id=pythos_store,format=raw,cache=writethrough,file={args.storage_image}",
-        "-device",
-        "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
-    ]
+    if args.ahci:
+        ahci_storage_image = args.ahci_storage_image or args.storage_image
+        ensure_storage_image(ahci_storage_image)
+        command += [
+            "-device",
+            "ich9-ahci,id=pythos_ahci,bus=pcie.0,addr=0x5",
+            "-drive",
+            (
+                "if=none,id=pythos_ahci_store,format=raw,cache=writethrough,"
+                f"file={ahci_storage_image}"
+            ),
+            "-device",
+            "ide-hd,drive=pythos_ahci_store,bus=pythos_ahci.0,bootindex=-1",
+        ]
+    if not args.no_virtio_blk:
+        ensure_storage_image(args.storage_image)
+        command += [
+            "-drive",
+            f"if=none,id=pythos_store,format=raw,cache=writethrough,file={args.storage_image}",
+            "-device",
+            "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
+        ]
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
     command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
