@@ -14,6 +14,30 @@ use pythos_shared::boot_protocol::{
 const BYTES_PER_PIXEL: u64 = 4;
 const GLYPH_WIDTH: u64 = 8;
 
+/// ADR 0053 mouse cursor sprite: an 8-wide, 12-tall arrow bitmap, one row per
+/// byte (same one-pixel-per-bit convention as `font::glyph`'s 8x8 glyphs).
+#[cfg_attr(not(test), allow(dead_code))]
+const CURSOR_SPRITE: [u8; 12] = [
+    0b1000_0000,
+    0b1100_0000,
+    0b1110_0000,
+    0b1111_0000,
+    0b1111_1000,
+    0b1111_1100,
+    0b1111_1110,
+    0b1111_0000,
+    0b1101_1000,
+    0b1000_1100,
+    0b0000_1100,
+    0b0000_0110,
+];
+#[cfg_attr(not(test), allow(dead_code))]
+const CURSOR_COLOR: Rgb = Rgb {
+    red: 255,
+    green: 255,
+    blue: 255,
+};
+
 const BACKGROUND: Rgb = Rgb {
     red: 12,
     green: 16,
@@ -209,6 +233,69 @@ pub fn render_boot_screen(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
     surface.draw_text(48, 48, 4, "PythOS", TITLE)?;
     surface.draw_text(48, 128, 2, "PythCore owns execution.", BODY)?;
     surface.draw_text(48, 160, 2, "UEFI boot services released.", BODY)?;
+    Ok(())
+}
+
+// ADR 0053's launcher screen is only reachable from `normal_boot.rs`, which
+// is compiled out entirely under `--features verify` (see `main.rs`'s
+// `mod normal_boot` gate) — so clippy's verify-feature build sees these items
+// as genuinely unused. `render_boot_screen` just above uses the same
+// `not(test)`-broad allow for the same reason.
+/// ADR 0053 interactive launcher tile geometry. Fixed pixel constants (not
+/// derived from a specific resolution) so `launcher_screen.rs`'s click
+/// hit-test can import these exact values rather than duplicating them.
+#[cfg_attr(not(test), allow(dead_code))]
+pub const LAUNCHER_TILE_X: u64 = 200;
+#[cfg_attr(not(test), allow(dead_code))]
+pub const LAUNCHER_TILE_Y: u64 = 350;
+#[cfg_attr(not(test), allow(dead_code))]
+pub const LAUNCHER_TILE_WIDTH: u64 = 320;
+#[cfg_attr(not(test), allow(dead_code))]
+pub const LAUNCHER_TILE_HEIGHT: u64 = 56;
+
+#[cfg_attr(not(test), allow(dead_code))]
+const LAUNCHER_TILE_COLOR: Rgb = Rgb {
+    red: 40,
+    green: 60,
+    blue: 90,
+};
+#[cfg_attr(not(test), allow(dead_code))]
+const LAUNCHER_TILE_LABEL_COLOR: Rgb = Rgb {
+    red: 225,
+    green: 230,
+    blue: 240,
+};
+
+/// Render the interactive launcher screen (ADR 0053): the "Enter Object
+/// Shell" tile and the mouse cursor, drawn over whatever is already on
+/// screen (the cinematic's settled final frame). Does not clear the
+/// background — repeated calls (e.g. on every mouse-move event) only need to
+/// redraw the cursor's old and new positions in practice, but this first cut
+/// redraws the whole tile+cursor each call for simplicity.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn render_launcher_screen(
+    framebuffer: &PythFramebufferInfo,
+    cursor_x: u64,
+    cursor_y: u64,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    surface.fill_rect(
+        LAUNCHER_TILE_X,
+        LAUNCHER_TILE_Y,
+        LAUNCHER_TILE_WIDTH,
+        LAUNCHER_TILE_HEIGHT,
+        LAUNCHER_TILE_COLOR,
+    );
+    // `font::glyph` only covers a curated subset of characters (no 'j', 'g',
+    // 'm', etc.), so the label is restricted to what it actually supports.
+    surface.draw_text(
+        LAUNCHER_TILE_X + 24,
+        LAUNCHER_TILE_Y + 20,
+        2,
+        "Enter Shell",
+        LAUNCHER_TILE_LABEL_COLOR,
+    )?;
+    surface.draw_cursor_sprite(cursor_x, cursor_y);
     Ok(())
 }
 
@@ -550,6 +637,47 @@ impl Surface {
         }
     }
 
+    /// Fill an `width` x `height` rectangle at `(x, y)` with `color`. Bounds
+    /// are enforced per-pixel by `put_pixel`, so a rect that extends past the
+    /// surface edge is silently clamped rather than wrapping or panicking.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn fill_rect(&self, x: u64, y: u64, width: u64, height: u64, color: Rgb) {
+        let value = (self.encode)(&self.info, color);
+        for dy in 0..height {
+            let Some(py) = y.checked_add(dy) else {
+                return;
+            };
+            for dx in 0..width {
+                let Some(px) = x.checked_add(dx) else {
+                    return;
+                };
+                self.put_pixel(px, py, value);
+            }
+        }
+    }
+
+    /// Blit the fixed cursor-arrow sprite at `(x, y)` (its top-left corner).
+    /// Only set bits are painted — unset bits are transparent, leaving
+    /// whatever was already drawn underneath.
+    #[cfg_attr(not(test), allow(dead_code))]
+    fn draw_cursor_sprite(&self, x: u64, y: u64) {
+        let value = (self.encode)(&self.info, CURSOR_COLOR);
+        for (row, bits) in CURSOR_SPRITE.iter().enumerate() {
+            for column in 0..GLYPH_WIDTH {
+                if bits & (0x80 >> column) == 0 {
+                    continue;
+                }
+                let Some(px) = x.checked_add(column) else {
+                    continue;
+                };
+                let Some(py) = y.checked_add(row as u64) else {
+                    continue;
+                };
+                self.put_pixel(px, py, value);
+            }
+        }
+    }
+
     fn put_pixel(&self, x: u64, y: u64, value: u32) {
         if x >= self.width || y >= self.height {
             return;
@@ -614,4 +742,118 @@ fn place_component(component: u8, mask: u32) -> u32 {
     }
     let shift = mask.trailing_zeros();
     (u32::from(component) << shift) & mask
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A real, host-allocated backing buffer, so `Surface`'s unsafe
+    /// `write_volatile`/`read_volatile` calls hit valid memory instead of an
+    /// arbitrary fake address (unlike `PythFramebufferInfo`'s other test
+    /// helpers elsewhere in the tree, which only exercise `validate()` and
+    /// never actually dereference `mapped_virtual_base`).
+    fn test_framebuffer(width: u32, height: u32) -> (Vec<u32>, PythFramebufferInfo) {
+        let len = (width as usize) * (height as usize);
+        let mut buffer = vec![0u32; len];
+        let info = PythFramebufferInfo {
+            physical_base: 0x1000_0000,
+            mapped_virtual_base: buffer.as_mut_ptr() as u64,
+            byte_length: (len as u64) * BYTES_PER_PIXEL,
+            width,
+            height,
+            pixels_per_scanline: width,
+            pixel_format: PIXEL_FORMAT_RGB_RESERVED_8BIT,
+            red_mask: 0,
+            green_mask: 0,
+            blue_mask: 0,
+            reserved_mask: 0,
+        };
+        (buffer, info)
+    }
+
+    fn pixel_set(buffer: &[u32], width: u32, x: u64, y: u64) -> bool {
+        buffer[(y * u64::from(width) + x) as usize] != 0
+    }
+
+    #[test]
+    fn fill_rect_writes_exactly_the_requested_span() {
+        let (buffer, info) = test_framebuffer(20, 20);
+        let surface = Surface::new(&info).unwrap();
+        surface.fill_rect(2, 3, 4, 5, TITLE);
+
+        for y in 0..20u64 {
+            for x in 0..20u64 {
+                let inside = (2..6).contains(&x) && (3..8).contains(&y);
+                assert_eq!(
+                    pixel_set(&buffer, 20, x, y),
+                    inside,
+                    "pixel ({x},{y}) set-state didn't match expected rect membership"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn fill_rect_at_origin_touches_only_origin_span() {
+        let (buffer, info) = test_framebuffer(10, 10);
+        let surface = Surface::new(&info).unwrap();
+        surface.fill_rect(0, 0, 3, 2, TITLE);
+
+        assert!(pixel_set(&buffer, 10, 0, 0));
+        assert!(pixel_set(&buffer, 10, 2, 1));
+        assert!(!pixel_set(&buffer, 10, 3, 0));
+        assert!(!pixel_set(&buffer, 10, 0, 2));
+    }
+
+    #[test]
+    fn fill_rect_clamps_to_surface_bounds_without_panicking() {
+        let (buffer, info) = test_framebuffer(10, 10);
+        let surface = Surface::new(&info).unwrap();
+        // Rect nominally extends to x=18..28, y=8..12 - well past the 10x10
+        // surface on both edges. Must not panic and must only touch the
+        // in-bounds portion.
+        surface.fill_rect(8, 8, 10, 4, TITLE);
+
+        assert!(pixel_set(&buffer, 10, 8, 8));
+        assert!(pixel_set(&buffer, 10, 9, 9));
+    }
+
+    #[test]
+    fn draw_cursor_sprite_writes_exactly_the_bitmap_bits() {
+        let (buffer, info) = test_framebuffer(16, 16);
+        let surface = Surface::new(&info).unwrap();
+        surface.draw_cursor_sprite(0, 0);
+
+        let mut expected = 0usize;
+        for (row, bits) in CURSOR_SPRITE.iter().enumerate() {
+            for column in 0..8u64 {
+                let set = bits & (0x80 >> column) != 0;
+                assert_eq!(
+                    pixel_set(&buffer, 16, column, row as u64),
+                    set,
+                    "cursor pixel ({column},{row}) didn't match the sprite bitmap"
+                );
+                if set {
+                    expected += 1;
+                }
+            }
+        }
+        let actual = buffer.iter().filter(|&&p| p != 0).count();
+        assert_eq!(
+            actual, expected,
+            "unexpected pixels painted outside the sprite bitmap"
+        );
+    }
+
+    #[test]
+    fn render_launcher_screen_draws_tile_and_cursor() {
+        let (buffer, info) = test_framebuffer(800, 600);
+        render_launcher_screen(&info, 10, 10).unwrap();
+
+        // Tile background corner should be painted.
+        assert!(pixel_set(&buffer, 800, LAUNCHER_TILE_X, LAUNCHER_TILE_Y));
+        // Cursor sprite's top-left pixel should be painted.
+        assert!(pixel_set(&buffer, 800, 10, 10));
+    }
 }

@@ -7,8 +7,8 @@
 
 use crate::memory::physical::PhysicalMemory;
 use crate::{
-    audio, boot_assets, cinematic_boot, normal_init, process_context::ActiveUserProcess,
-    qemu_exit, retained_services, serial,
+    audio, boot_assets, cinematic_boot, framebuffer, normal_init,
+    process_context::ActiveUserProcess, qemu_exit, retained_services, serial,
 };
 use crate::{shell_objects::ObjectKind, syscall, user_mode};
 use pythos_shared::boot_protocol::{PythBootInfo, PythFramebufferInfo};
@@ -40,6 +40,16 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     if play_boot_cinematic_and_audio(&boot_info.framebuffer).is_err() {
         serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SKIPPED");
     }
+
+    // ADR 0053, Task B: render the static launcher tile only for now — no
+    // input is wired up yet (Task C/D), so boot falls straight through to
+    // shell launch unchanged rather than actually blocking on a click that
+    // nothing can yet deliver. Task D replaces this fall-through with the
+    // real interactive click-to-launch loop. Rendering failure (e.g. an
+    // invalid framebuffer format) is soft-skipped for the same reason
+    // audio/visual failure is: it must not prevent reaching the shell.
+    let _ = framebuffer::render_launcher_screen(&boot_info.framebuffer, 0, 0);
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY");
 
     let shell_process = match build_shell_process(&substrate.shell_launch) {
         Ok(process) => process,
