@@ -53,7 +53,7 @@ def main() -> int:
             "--serial-log",
             str(SERIAL_LOG),
             "--timeout",
-            "20",
+            "30",
             "--expect-outcome",
             "timeout",
         ],
@@ -70,6 +70,18 @@ def main() -> int:
         "PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY",
         "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
         "PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY",
+        # ADR 0053: cinematic + AC97 audio now play before shell launch. The
+        # `Absent`/`Silent` device variants make this chain succeed even in
+        # headless CI with no audio device attached, so these are safe to
+        # require unconditionally (see `audio.rs`'s graceful-fallback path).
+        "PYTHOS:CORE:NORMAL_BOOT:AUDIO_DEVICE_SELECTION_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:AUDIO_DRIVER_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:AUDIO_BUFFERS_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:PCM_PLAYBACK_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:AUDIO_MIXING_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:BOOT_ASSETS_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SYNC_READY",
+        "PYTHOS:CORE:NORMAL_BOOT:GRACEFUL_AUDIO_FALLBACK_READY",
         "PYTHOS:CORE:NORMAL_SERVICES_READY",
         "PYTHOS:CORE:NORMAL_BOOT_ALIVE",
     ]

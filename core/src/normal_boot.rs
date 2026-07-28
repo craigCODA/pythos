@@ -7,10 +7,11 @@
 
 use crate::memory::physical::PhysicalMemory;
 use crate::{
-    normal_init, process_context::ActiveUserProcess, qemu_exit, retained_services, serial,
+    audio, boot_assets, cinematic_boot, normal_init, process_context::ActiveUserProcess,
+    qemu_exit, retained_services, serial,
 };
 use crate::{shell_objects::ObjectKind, syscall, user_mode};
-use pythos_shared::boot_protocol::PythBootInfo;
+use pythos_shared::boot_protocol::{PythBootInfo, PythFramebufferInfo};
 use pythos_shared::object_shell_abi::{
     BootstrapCapabilityBlock, MAX_SHELL_OBJECT_CAPS, OBJECT_SHELL_ABI_MAJOR,
     OBJECT_SHELL_ABI_MINOR, ObjectListEntry, SHELL_BOOTSTRAP_MAGIC,
@@ -35,6 +36,10 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 
     serial::init_com2();
     serial::write_line("PYTHOS:CORE:COM2_READY");
+
+    if play_boot_cinematic_and_audio(&boot_info.framebuffer).is_err() {
+        serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SKIPPED");
+    }
 
     let shell_process = match build_shell_process(&substrate.shell_launch) {
         Ok(process) => process,
@@ -78,6 +83,46 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         substrate.shell_launch.user_stack_top(),
         substrate.shell_launch.bootstrap_user_ptr,
     );
+}
+
+/// Play the boot cinematic and AC97 audio (ADR 0053), reusing the verify
+/// path's exact call order (`main.rs`'s Phase 6 sequence) and marker names.
+/// Unlike the verify path's fail-fast proof harness, failures here are
+/// soft-skipped: a machine with no audio device is a legitimate QEMU
+/// configuration and must not block reaching the shell.
+//
+// TODO(stretch, HDA): normal boot only wires the AC97 pipeline. HDA needs its
+// MMIO window mapped into the kernel address space via
+// `KernelAddressSpace::build`'s `hda_mmio` parameter, which
+// `normal_init.rs::initialize_normal_substrate` currently hardcodes to
+// `None`. Reintroducing HDA here means mirroring `main.rs:164-168` (probe
+// before `KernelAddressSpace::build`) and `main.rs:525-543` (init/enumerate/
+// start after activation) into `normal_init.rs`/`normal_boot.rs`.
+// Deliberately distinct marker names from the verify path's Phase 6 sequence
+// (`AUDIO_DEVICE_SELECTION_READY` etc. in `main.rs`): `test-normal-fast-boot.py`
+// already asserts those exact verify-only names never appear in a normal
+// boot's serial log, as the oracle proving the two boot paths stay distinct.
+// Reusing them here would both break that assertion and make normal-boot and
+// verify-boot output indistinguishable in a shared log.
+#[cfg(not(test))]
+fn play_boot_cinematic_and_audio(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
+    let audio_device = audio::select_device().map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_DEVICE_SELECTION_READY");
+    let audio_driver = audio::initialize_driver(audio_device).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_DRIVER_READY");
+    let audio_buffers = audio::initialize_buffers(audio_driver).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_BUFFERS_READY");
+    let pcm_playback = audio::play_fixed_pcm(audio_driver, audio_buffers).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:PCM_PLAYBACK_READY");
+    audio::mix_boot_audio(audio_driver, audio_buffers, pcm_playback).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_MIXING_READY");
+    let assets = boot_assets::load_assets().map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:BOOT_ASSETS_READY");
+    cinematic_boot::run_synced_sequence(assets, framebuffer).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SYNC_READY");
+    audio::complete_graceful_fallback(audio_device).map_err(|_| ())?;
+    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:GRACEFUL_AUDIO_FALLBACK_READY");
+    Ok(())
 }
 
 #[cfg(not(test))]
