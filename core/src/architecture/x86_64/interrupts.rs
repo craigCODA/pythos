@@ -5,7 +5,14 @@ use core::arch::asm;
 
 use crate::architecture::x86_64::timer;
 #[cfg(not(test))]
+use crate::ps2;
+#[cfg(not(test))]
 use crate::scheduler;
+
+/// IRQ1 (keyboard) after PIC remap, per `vector_for_irq`.
+const VECTOR_IRQ1_KEYBOARD: u64 = PIC_MASTER_OFFSET as u64 + 1;
+/// IRQ12 (mouse) after PIC remap, per `vector_for_irq`.
+const VECTOR_IRQ12_MOUSE: u64 = PIC_SLAVE_OFFSET as u64 + (12 - 8);
 
 #[cfg(not(test))]
 use core::arch::global_asm;
@@ -222,6 +229,16 @@ pub extern "C" fn external_interrupt_handler(frame: &mut InterruptFrame) {
             send_eoi(frame.vector as u8);
             #[cfg(not(test))]
             scheduler::handle_timer_preemption();
+            return;
+        } else if frame.vector == VECTOR_IRQ1_KEYBOARD {
+            #[cfg(not(test))]
+            ps2::handle_keyboard_interrupt();
+            send_eoi(frame.vector as u8);
+            return;
+        } else if frame.vector == VECTOR_IRQ12_MOUSE {
+            #[cfg(not(test))]
+            ps2::handle_mouse_interrupt();
+            send_eoi(frame.vector as u8);
             return;
         }
         send_eoi(frame.vector as u8);

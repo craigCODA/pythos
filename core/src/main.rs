@@ -41,6 +41,7 @@ mod process;
 mod process_context;
 mod process_launch;
 mod process_model;
+mod ps2;
 mod qemu_exit;
 mod resource_quotas;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]

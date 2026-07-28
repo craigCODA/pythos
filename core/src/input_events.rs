@@ -39,7 +39,14 @@ pub enum InputSource {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputEventKind {
     KeyDown(KeyCode),
-    PointerDelta { dx: i8, dy: i8 },
+    PointerDelta {
+        dx: i8,
+        dy: i8,
+    },
+    /// A left mouse button state transition (ADR 0053).
+    PointerButton {
+        left: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -85,6 +92,10 @@ pub fn normalize(raw: RawInputEvent) -> Result<InputEvent, InputEventError> {
         RawInputEvent::MouseMoved { dx, dy } => Ok(InputEvent {
             source: InputSource::Mouse,
             kind: InputEventKind::PointerDelta { dx, dy },
+        }),
+        RawInputEvent::MouseButton { left } => Ok(InputEvent {
+            source: InputSource::Mouse,
+            kind: InputEventKind::PointerButton { left },
         }),
     }
 }
