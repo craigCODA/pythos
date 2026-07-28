@@ -56,6 +56,12 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   - **AMD ACP / I2S** (laptop speakers) is parked: not emulated in our QEMU
     harness, machine-specific, historically very hard. Investigation only, and
     only after HDA works.
+- **Storage:** ADR 0054 adds a QEMU-verified polling AHCI backend, selected only
+  when legacy virtio-blk is absent. It is the tractable SATA path to validate
+  on physical hardware next, but a passing QEMU AHCI boot is not yet a claim
+  that the laptop's physical storage controller is supported. NVMe, partition
+  discovery, filesystems, interrupt-driven storage, and DMA isolation remain
+  later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

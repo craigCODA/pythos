@@ -18,8 +18,10 @@ see its Task 9-12 status notes for exact architecture, protocol, and
 verification detail. Verify with `python scripts\test-object-shell.py`,
 `python scripts\test-normal-fast-boot.py`, `python scripts\test-boot.py
 --slice milestone-1`, `python scripts\test-com2-shell-transport.py`, and
-`python scripts\test-persistent-storage.py`. Do not merge or build on this
-branch without re-reading that plan document's Task 12 section first.
+`python scripts\test-persistent-storage.py`. For the ADR 0054 AHCI backend
+extension, also run `python scripts\test-ahci-block-device.py`. Do not merge or
+build on this branch without re-reading that plan document's Task 12 section
+first.
 
 ## Interactive Object-Shell Launcher (2026-07-28, branch `object-shell`)
 
@@ -29,9 +31,10 @@ the existing boot cinematic + AC97 audio, renders an "Enter Shell" tile with
 a real mouse cursor, and blocks until a real (or QMP-injected) left click
 lands on that tile before launching `shell.elf` — same shell, same
 persistence, same everything already verified in Tasks 1-12, just with the
-front door open. QEMU-only in scope: real hardware still can't run this
-branch at all (see the Real-Hardware Boot Status section below — that gap is
-unrelated to input and unaffected by this work).
+front door open. QEMU-only in scope for input: when ADR 0053 was accepted,
+real hardware still could not run this branch because of a separate
+block-storage gap. ADR 0054 later partially closed the storage side of that
+gap for QEMU AHCI, but physical SATA hardware validation remains separate.
 
 New: `core/src/ps2.rs` (real PS/2 keyboard/mouse controller driver — the
 first code in this tree touching real input hardware), `core/src/
@@ -57,9 +60,38 @@ come up (`test-object-shell.py`'s reboot test injects it twice — once per
 boot). `test-boot.py` and `test-persistent-storage.py` are unaffected
 (verify-feature builds compile `normal_boot` out entirely).
 
-Out of scope, unchanged: real-hardware (USB HID) input, HDA-in-normal-boot
-(AC97 is the committed baseline), and the separate real-hardware
-block-storage gap.
+Out of scope, unchanged: real-hardware (USB HID) input and HDA-in-normal-boot
+(AC97 is the committed baseline). Physical SATA validation, NVMe, filesystems,
+and partition discovery remain later work.
+
+## Polling AHCI Storage Backend (2026-07-28, branch `object-shell`)
+
+ADR 0054 (see `docs/decisions/0054-polling-ahci-block-backend.md`) adds a
+second block backend behind the existing sector API. Default QEMU boots still
+select legacy `virtio-blk`; AHCI is selected only when virtio is absent.
+PythCore now discovers an AHCI controller by PCI class/subclass/prog-if, maps
+BAR5/ABAR into a fixed uncacheable kernel MMIO window before the VM switch, and
+uses one polling command slot for single-sector ATA `READ DMA EXT` /
+`WRITE DMA EXT` requests. The legacy `PYTHOS:CORE:BLOCK:DEVICE_SELECTED`
+marker remains, with backend-specific `_VIRTIO` / `_AHCI` markers added.
+
+Verify AHCI specifically with:
+
+```powershell
+python scripts\test-ahci-block-device.py
+```
+
+That test boots with `--no-virtio-blk --ahci`, uses a separate
+`target\ahci-store.img`, asserts `PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI`,
+runs the Phase 7-10 storage proofs to `PYTHOS:CORE:MILESTONE_1_COMPLETE`, then
+boots the same image a second time to prove persisted object/general-storage
+state is restored over AHCI. The runner support is in `scripts/run-qemu.py` via
+`--ahci`, `--ahci-storage-image`, and `--no-virtio-blk`.
+
+Still out of scope: NVMe, interrupt-driven storage, MSI/MSI-X, Local
+APIC/IOAPIC, multi-bus PCI enumeration, filesystems, partition discovery,
+hotplug, IOMMU/DMA isolation, package management, networking, updates, SMP,
+and AI.
 
 ## Real-Hardware Boot Status (2026-07-25)
 
@@ -660,6 +692,7 @@ Test and harness code:
 ```text
 .github/workflows/qemu-acceptance.yml
 scripts/run-qemu.py
+scripts/test-ahci-block-device.py
 scripts/test-boot.py
 scripts/test-persistent-storage.py
 tests/boot_core_handoff.py
@@ -693,6 +726,10 @@ docs/decisions/0033-phase-8-memory-quotas.md
 docs/decisions/0034-phase-8-cpu-quotas.md
 docs/decisions/0035-phase-8-crash-containment.md
 docs/decisions/0036-phase-8-capability-boundary.md
+docs/decisions/0051-first-ring3-object-shell.md
+docs/decisions/0052-object-shell-service-abi.md
+docs/decisions/0053-interactive-object-shell-launcher.md
+docs/decisions/0054-polling-ahci-block-backend.md
 ```
 
 Boot artifacts:

@@ -107,6 +107,10 @@ hardware I/O.
   storage (no AHCI/NVMe driver), which already blocks this whole branch from
   running on real hardware regardless of input.
 
+2026-07-28 note: ADR 0054 later adds a QEMU-verified polling AHCI backend.
+The real-hardware storage warning above was true when this ADR was accepted;
+physical SATA validation, NVMe, partitions, and filesystems remain later work.
+
 ## Alternatives Considered
 
 - **Skip the interactive stage; just play cinematic + audio then launch
