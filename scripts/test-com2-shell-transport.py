@@ -11,6 +11,8 @@ import sys
 import time
 from pathlib import Path
 
+import launcher_click
+
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "com2-transport-com1.log"
@@ -124,6 +126,10 @@ def main() -> int:
         # normal boot can reach shell entry faster than the log poll interval.
         with connect_shell(30) as sock:
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 30)
+            # ADR 0053: normal boot now blocks on a real click before
+            # launching the shell - inject one over QMP.
+            wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY", 30)
+            launcher_click.click_launcher_tile()
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 30)
             initial = read_until(sock, b"pyth> ", 10)
             if b"PYTHOS:SHELL:READY" not in initial:

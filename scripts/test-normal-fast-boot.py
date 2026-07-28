@@ -3,13 +3,55 @@
 
 from __future__ import annotations
 
+import os
+import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+import launcher_click
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "normal-fast-boot-com1.log"
+
+
+def wait_for_file_marker(path: Path, marker: str, timeout: float) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.exists():
+            text = path.read_text(encoding="utf-8", errors="replace")
+            if marker in text:
+                return text
+        time.sleep(0.1)
+    raise AssertionError(f"missing marker {marker}")
+
+
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        if sys.platform != "win32":
+            try:
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+        else:
+            process.kill()
+        process.wait(timeout=5)
 
 
 def run(command: list[str], expected: int = 0) -> str:
@@ -43,10 +85,16 @@ def main() -> int:
     build_boot_image()
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
-    # run-qemu.py always exits with the outcome's dedicated code (see
-    # SCRIPT_EXIT_CODES in scripts/run-qemu.py), even on an exact
-    # --expect-outcome match; "timeout" is 22, not 0.
-    run(
+    # ADR 0053: normal boot now blocks in the interactive launcher until a
+    # real click lands on the "Enter Shell" tile, so this can no longer be a
+    # single blocking `run()` call - launch run-qemu.py as a background
+    # process, poll the serial log for readiness, inject a click over QMP,
+    # then let it run to its own declared --timeout (the shell sits at its
+    # prompt afterward, so "timeout" remains the correct expected outcome).
+    popen_kwargs: dict[str, object] = {}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
+    process = subprocess.Popen(
         [
             sys.executable,
             "scripts/run-qemu.py",
@@ -57,8 +105,23 @@ def main() -> int:
             "--expect-outcome",
             "timeout",
         ],
-        expected=22,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **popen_kwargs,
     )
+    try:
+        wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY", 30)
+        launcher_click.click_launcher_tile()
+        # run-qemu.py always exits with the outcome's dedicated code (see
+        # SCRIPT_EXIT_CODES in scripts/run-qemu.py), even on an exact
+        # --expect-outcome match; "timeout" is 22, not 0.
+        returncode = process.wait(timeout=40)
+        if returncode != 22:
+            raise AssertionError(f"run-qemu.py returned {returncode}, expected 22")
+    finally:
+        terminate_process_tree(process)
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
     required = [
         "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",

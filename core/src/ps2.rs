@@ -17,7 +17,7 @@
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use crate::architecture::x86_64::interrupts;
 use crate::input_drivers::{RawInputEvent, mouse_byte0_is_valid, scancode_to_keycode};
@@ -124,6 +124,14 @@ pub fn initialize() -> Result<(), Ps2Error> {
 /// driver only tracks key-down) are silently dropped rather than queued.
 #[cfg(not(test))]
 pub fn handle_keyboard_interrupt() {
+    // First-fire-only marker (guarded so it doesn't spam COM1 on every
+    // keystroke): proves the real hardware IRQ1 path actually fired, as
+    // opposed to `input_drivers.rs`'s self-test, which only feeds synthetic
+    // bytes directly into decode logic. See `scripts/test-normal-boot-
+    // interactive.py` for the QMP-injection proof that exercises this.
+    if !KEYBOARD_IRQ_FIRED.swap(true, Ordering::SeqCst) {
+        crate::serial::write_line("PYTHOS:CORE:PS2:KEYBOARD_IRQ_FIRED");
+    }
     let scancode = inb(PS2_DATA_PORT);
     if let Some(key) = scancode_to_keycode(scancode) {
         QUEUE.push(RawInputEvent::KeyPressed { scancode, key });
@@ -134,9 +142,18 @@ pub fn handle_keyboard_interrupt() {
 /// the 3-byte mouse packet assembler.
 #[cfg(not(test))]
 pub fn handle_mouse_interrupt() {
+    // First-fire-only marker; see `handle_keyboard_interrupt`'s comment.
+    if !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
+        crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
+    }
     let byte = inb(PS2_DATA_PORT);
     MOUSE_ASSEMBLER.feed(byte);
 }
+
+#[cfg(not(test))]
+static KEYBOARD_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
+#[cfg(not(test))]
+static MOUSE_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
 
 /// Drain one queued input event, if any. Called from normal (non-interrupt)
 /// context — `launcher_screen.rs`'s poll loop (ADR 0053, Task D).
