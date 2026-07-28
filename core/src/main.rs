@@ -168,12 +168,22 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         let hda_controller = audio::probe_hda();
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
+        // ADR 0054: discover an AHCI controller before the VM switch for the
+        // same reason; the polling driver uses a fixed kernel virtual window.
+        let ahci_controller = block_device::probe_ahci();
+        let ahci_mmio = ahci_controller.map(|c| {
+            (
+                c.mmio_base,
+                block_device::AHCI_MMIO_VIRT,
+                block_device::AHCI_MMIO_LEN,
+            )
+        });
 
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
             hda_mmio,
-            None,
+            ahci_mmio,
             None,
         ) {
             Ok(address_space) => address_space,

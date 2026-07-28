@@ -98,11 +98,19 @@ pub fn initialize_normal_substrate(
     let bootstrap_frame = physical_memory
         .allocate_zeroed_page()
         .map_err(|_| NormalInitError::ShellBootstrap)?;
+    let ahci_controller = block_device::probe_ahci();
+    let ahci_mmio = ahci_controller.map(|c| {
+        (
+            c.mmio_base,
+            block_device::AHCI_MMIO_VIRT,
+            block_device::AHCI_MMIO_LEN,
+        )
+    });
     let kernel_address_space = KernelAddressSpace::build(
         physical_memory,
         boot_info,
         None,
-        None,
+        ahci_mmio,
         Some(bootstrap_frame),
     )
     .map_err(|_| NormalInitError::Memory)?;
