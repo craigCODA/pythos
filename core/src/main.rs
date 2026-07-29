@@ -1,5 +1,12 @@
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(not(test), no_std)]
+// The hardware-probe feature intentionally exits after early PCI inventory.
+// Most of PythCore remains in the crate but is unreachable in that diagnostic
+// image, so suppress unused warnings only for that non-test build.
+#![cfg_attr(all(not(test), feature = "hardware-probe"), allow(unused))]
+
+#[cfg(all(feature = "verify", feature = "hardware-probe"))]
+compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
 
 mod architecture;
 mod audio;
@@ -19,6 +26,8 @@ mod font;
 mod font_system;
 mod framebuffer;
 mod general_storage_persistence;
+#[cfg(all(not(test), feature = "hardware-probe"))]
+mod hardware_probe_boot;
 mod input_drivers;
 mod input_events;
 mod interpreter;
@@ -26,9 +35,9 @@ mod ipc_channels;
 mod kernel_stacks;
 mod launcher_screen;
 mod memory;
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_init;
 mod object_browser;
 mod object_relationships;
@@ -62,6 +71,7 @@ mod storage_adversarial;
 mod storage_allocator;
 mod storage_concurrency;
 mod storage_journal;
+mod storage_probe;
 mod storage_quotas;
 mod storage_service;
 mod syscall;
@@ -146,6 +156,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     serial::write_line("PYTHOS:CORE:IDT_READY");
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_IDT);
     serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
+
+    #[cfg(all(not(test), feature = "hardware-probe"))]
+    hardware_probe_boot::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
     // boot branches away before it, near the end of this function.
@@ -1487,7 +1500,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     // ADR 0052: normal boot skips the verification proof sequence above
     // entirely and constructs only the production substrate, then stays
     // alive — the pivot from "proofs that terminate" to "a system that runs".
-    #[cfg(all(not(test), not(feature = "verify")))]
+    #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
     normal_boot::run(boot_info, &mut physical_memory);
 
     #[cfg(test)]
@@ -1502,7 +1515,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "verify"))]
 fn build_dynamic_elf_address_space(
     physical_memory: &mut memory::physical::PhysicalMemory,
     boot_info: &PythBootInfo,

@@ -10,6 +10,8 @@
 //! own kernel address space both place the framebuffer at), not the physical
 //! base.
 
+#![cfg_attr(all(not(test), feature = "verify"), allow(dead_code))]
+
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 const PIXEL_RGB: u32 = 0;
@@ -65,6 +67,7 @@ pub fn liveness_paint() {
         // 7. Concurrency: single-core, interrupts disabled, no other writers.
         // 8. Violation: if the framebuffer mapping were absent this write would
         //    fault — which is itself the diagnostic signal (screen stays magenta).
+        // SAFETY: full framebuffer-liveness invariant is documented above.
         unsafe {
             (address as *mut u32).write_volatile(WHITE);
         }
@@ -77,6 +80,10 @@ pub const COLOR_BOOTINFO: (u8, u8, u8) = (0, 200, 0); // green: boot info valid
 pub const COLOR_MEMORY: (u8, u8, u8) = (255, 140, 0); // orange: physical memory ready
 pub const COLOR_IDT: (u8, u8, u8) = (230, 230, 230); // white: GDT + IDT installed
 pub const COLOR_KERNEL_ADDR: (u8, u8, u8) = (60, 60, 60); // dark gray: survived kernel CR3 switch
+pub const COLOR_HARDWARE_PROBE_ENTER: (u8, u8, u8) = (80, 0, 120); // violet: hardware probe entered
+pub const COLOR_HARDWARE_PROBE_EMMC_FOUND: (u8, u8, u8) = (0, 255, 120); // green: SDHCI/eMMC candidate found
+pub const COLOR_HARDWARE_PROBE_OTHER_STORAGE_FOUND: (u8, u8, u8) = (0, 90, 255); // blue: storage found, not eMMC
+pub const COLOR_HARDWARE_PROBE_NO_STORAGE: (u8, u8, u8) = (255, 0, 0); // red: no storage controller found
 
 /// Fill the whole framebuffer with `color`, writing through the virtual mapping.
 pub fn fill(framebuffer: &PythFramebufferInfo, color: (u8, u8, u8)) {
@@ -120,6 +127,7 @@ pub fn fill(framebuffer: &PythFramebufferInfo, color: (u8, u8, u8)) {
             // 7. Concurrency: single-core, interrupts disabled, no other writers.
             // 8. Violation: an out-of-range write could corrupt adjacent device
             //    memory; the bounds check prevents it.
+            // SAFETY: full bounded-framebuffer-write invariant is documented above.
             unsafe {
                 (address as *mut u32).write_volatile(pixel);
             }

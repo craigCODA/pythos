@@ -58,10 +58,11 @@ def classify_qemu_exit(
     returncode: int | None,
     serial: str,
     timed_out: bool = False,
+    success_marker: str = SUCCESS_MARKER,
 ) -> QemuOutcome:
     if any(marker in serial for marker in PANIC_MARKERS):
         return QemuOutcome.PANIC
-    if SUCCESS_MARKER in serial:
+    if success_marker in serial:
         return QemuOutcome.SUCCESS
     if returncode == debug_exit_status("success"):
         return QemuOutcome.SUCCESS
@@ -173,6 +174,11 @@ def main() -> int:
     parser.add_argument("--ovmf-code")
     parser.add_argument("--screendump", type=Path)
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
+    parser.add_argument(
+        "--success-marker",
+        default=SUCCESS_MARKER,
+        help="serial marker that lets the runner classify the boot as success",
+    )
     parser.add_argument("--no-audio-device", action="store_true")
     parser.add_argument("--audio-wav", type=Path)
     parser.add_argument("--hda", action="store_true", help="add an Intel HDA controller")
@@ -342,7 +348,7 @@ def main() -> int:
                 terminal_outcome = None
                 if any(marker in serial for marker in PANIC_MARKERS):
                     terminal_outcome = QemuOutcome.PANIC
-                elif SUCCESS_MARKER in serial:
+                elif args.success_marker in serial:
                     terminal_outcome = QemuOutcome.SUCCESS
                 if terminal_outcome is not None:
                     if screendump_pending:
@@ -376,7 +382,12 @@ def main() -> int:
 
     serial = read_serial_log(args.serial_log)
     print(serial)
-    outcome = classify_qemu_exit(process.returncode, serial, timed_out)
+    outcome = classify_qemu_exit(
+        process.returncode,
+        serial,
+        timed_out,
+        success_marker=args.success_marker,
+    )
     print(f"QEMU_OUTCOME {outcome.value}")
     if args.expect_outcome and outcome.value != args.expect_outcome:
         print(

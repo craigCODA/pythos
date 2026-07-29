@@ -45,6 +45,18 @@ class QemuExitTest(unittest.TestCase):
             run_qemu.QemuOutcome.SUCCESS,
         )
 
+    def test_custom_success_marker_decodes_to_success_after_qmp_quit(self) -> None:
+        run_qemu = load_run_qemu_module()
+
+        self.assertEqual(
+            run_qemu.classify_qemu_exit(
+                0,
+                "PYTHOS:CORE:HARDWARE_PROBE_READY\n",
+                success_marker="PYTHOS:CORE:HARDWARE_PROBE_READY",
+            ),
+            run_qemu.QemuOutcome.SUCCESS,
+        )
+
     def test_panic_marker_overrides_timeout_classification(self) -> None:
         run_qemu = load_run_qemu_module()
 

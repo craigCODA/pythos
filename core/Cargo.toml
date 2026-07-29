@@ -11,6 +11,9 @@ rust-version.workspace = true
 # and exit via QEMU isa-debug-exit. Without it (the default), a normal boot
 # enters a persistent event loop instead of exiting (ADR 0049).
 verify = []
+# `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
+# PCI config space for storage-controller identity and then halts.
+hardware-probe = []
 
 [dependencies]
 pythos-shared = { path = "../shared" }
@@ -18,4 +21,3 @@ pythos-shared = { path = "../shared" }
 [[bin]]
 name = "pythcore"
 path = "src/main.rs"
-
