@@ -63,9 +63,18 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   PCI function at BDF `01:00.0`, vendor/device `1217:8620`,
   class/subclass/programming-interface `08/05/01`, BAR0
   `0x00000000E3B01000`, BAR5 `0x0000000000000000`. ADR 0057 adds only a
-  read-only BAR0 register snapshot for this controller; SDHCI initialization,
-  eMMC command sequencing, partition discovery, filesystems,
-  interrupt-driven storage, and DMA isolation remain later work.
+  read-only BAR0 register snapshot for this controller. A 2026-07-30
+  no-serial framebuffer boot reached `sdhci regs`, preserved `no disk writes`,
+  and read:
+  - `PRESENT_STATE` (`BAR0+0x24`) = `0x01FF00F0`
+  - `CAPABILITIES_LOW` (`BAR0+0x40`) = `0x25FCC8BF`
+  - `CAPABILITIES_HIGH` (`BAR0+0x44`) = `0x00002077`
+  - `MAX_CURRENT_CAPABILITIES` (`BAR0+0x48`) = `0x005800C8`
+  - `SLOT_INTERRUPT_STATUS/HOST_CONTROLLER_VERSION` (`BAR0+0xFC`) =
+    `0x06030000`
+  This proves physical BAR0 register visibility on that laptop, not media
+  access. SDHCI initialization, eMMC command sequencing, partition discovery,
+  filesystems, interrupt-driven storage, and DMA isolation remain later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
