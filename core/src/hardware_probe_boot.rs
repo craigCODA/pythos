@@ -20,6 +20,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     let mut sdhci_init = None;
     let mut emmc_identification = None;
     let mut emmc_read = None;
+    let mut emmc_read_error = None;
     if let Some(controller) = selected_sdhci {
         match sdhci_probe::snapshot_controller(controller) {
             Ok(snapshot) => {
@@ -48,6 +49,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
                                     }
                                     Err(error) => {
                                         emit_emmc_read_error(error);
+                                        emmc_read_error = Some(error);
                                     }
                                 }
                             }
@@ -86,6 +88,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
         sdhci_init,
         emmc_identification,
         emmc_read,
+        emmc_read_error,
     )
     .is_ok()
     {

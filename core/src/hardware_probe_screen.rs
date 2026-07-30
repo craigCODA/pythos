@@ -7,7 +7,8 @@
 #[cfg(feature = "hardware-probe")]
 use crate::framebuffer;
 use crate::sdhci_probe::{
-    EmmcIdentificationReport, EmmcReadBlockReport, SdhciInitializationReport, SdhciRegisterSnapshot,
+    EmmcIdentificationReport, EmmcReadBlockError, EmmcReadBlockReport, SdhciInitializationReport,
+    SdhciRegisterSnapshot,
 };
 use crate::storage_probe::{
     MemoryBar, StorageController, StorageControllerKind, StorageProbeReport,
@@ -100,21 +101,21 @@ pub fn build_screen_with_sdhci_snapshot(
     report: &StorageProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, sdhci_snapshot, None, None, None)
+    build_screen_with_sdhci_state(report, sdhci_snapshot, None, None, None, None)
 }
 
 pub fn build_screen_with_sdhci_init(
     report: &StorageProbeReport,
     sdhci_init: Option<SdhciInitializationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, sdhci_init, None, None)
+    build_screen_with_sdhci_state(report, None, sdhci_init, None, None, None)
 }
 
 pub fn build_screen_with_emmc_identification(
     report: &StorageProbeReport,
     emmc_identification: Option<EmmcIdentificationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, None, emmc_identification, None)
+    build_screen_with_sdhci_state(report, None, None, emmc_identification, None, None)
 }
 
 pub fn build_screen_with_emmc_read(
@@ -122,7 +123,22 @@ pub fn build_screen_with_emmc_read(
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, None, emmc_identification, emmc_read)
+    build_screen_with_sdhci_state(report, None, None, emmc_identification, emmc_read, None)
+}
+
+pub fn build_screen_with_emmc_read_error(
+    report: &StorageProbeReport,
+    emmc_identification: Option<EmmcIdentificationReport>,
+    emmc_read_error: Option<EmmcReadBlockError>,
+) -> ProbeScreen {
+    build_screen_with_sdhci_state(
+        report,
+        None,
+        None,
+        emmc_identification,
+        None,
+        emmc_read_error,
+    )
 }
 
 fn build_screen_with_sdhci_state(
@@ -131,6 +147,7 @@ fn build_screen_with_sdhci_state(
     sdhci_init: Option<SdhciInitializationReport>,
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
+    emmc_read_error: Option<EmmcReadBlockError>,
 ) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
@@ -162,10 +179,20 @@ fn build_screen_with_sdhci_state(
             } else {
                 None
             };
+            let selected_emmc_read_error =
+                if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+                    emmc_read_error
+                } else {
+                    None
+                };
             if controller.kind == StorageControllerKind::SdhciEmmcCandidate
                 && selected_emmc_read.is_some()
             {
                 push_text(&mut screen, "emmc read");
+            } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate
+                && selected_emmc_read_error.is_some()
+            {
+                push_text(&mut screen, "emmc read err");
             } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate
                 && selected_emmc_identification.is_some()
             {
@@ -196,6 +223,15 @@ fn build_screen_with_sdhci_state(
                     push_u32(&mut screen, "ocr ", 0);
                 }
                 push_emmc_read(&mut screen, read);
+            } else if let Some(read_error) = selected_emmc_read_error {
+                if let Some(identification) = selected_emmc_identification {
+                    push_bar_base(&mut screen, "bar0 ", identification.bar0_base);
+                    push_u32(&mut screen, "ocr ", identification.ocr);
+                } else {
+                    push_bar(&mut screen, "bar0 ", controller.bar0);
+                    push_u32(&mut screen, "ocr ", 0);
+                }
+                push_u32(&mut screen, "err ", read_error.screen_code());
             } else if let Some(identification) = selected_emmc_identification {
                 push_bar_base(&mut screen, "bar0 ", identification.bar0_base);
                 push_emmc_identification(&mut screen, identification);
@@ -228,6 +264,7 @@ pub fn render(
     sdhci_init: Option<SdhciInitializationReport>,
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
+    emmc_read_error: Option<EmmcReadBlockError>,
 ) -> Result<(), ()> {
     let screen = build_screen_with_sdhci_state(
         report,
@@ -235,6 +272,7 @@ pub fn render(
         sdhci_init,
         emmc_identification,
         emmc_read,
+        emmc_read_error,
     );
     let mut lines = [""; PROBE_SCREEN_MAX_LINES];
     let mut index = 0;
@@ -634,5 +672,36 @@ mod tests {
         assert_eq!(screen.line(10), Some("first 03020100"));
         assert_eq!(screen.line(11), Some("csum 0000FF00"));
         assert_eq!(screen.line(12), Some("bytes 000001FE"));
+    }
+
+    #[test]
+    fn formats_emmc_read_error_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+        let identification = EmmcIdentificationReport {
+            bar0_base: 0x0000_0000_E8B0_1000,
+            ocr: 0xC0FF_8000,
+            relative_card_address: 1,
+            cid: [0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_F001],
+            csd: [0x1234_5678, 0x9ABC_DEF0, 0x0BAD_C0DE, 0xCAFE_BABE],
+            final_normal_interrupt_status: 0,
+            final_error_interrupt_status: 0,
+        };
+
+        let screen = build_screen_with_emmc_read_error(
+            &report,
+            Some(identification),
+            Some(EmmcReadBlockError::BufferReadReadyTimeout),
+        );
+
+        assert_eq!(screen.line(1), Some("emmc read err"));
+        assert_eq!(screen.line(7), Some("bar0 00000000E8B01000"));
+        assert_eq!(screen.line(8), Some("ocr C0FF8000"));
+        assert_eq!(screen.line(9), Some("err 00000005"));
     }
 }

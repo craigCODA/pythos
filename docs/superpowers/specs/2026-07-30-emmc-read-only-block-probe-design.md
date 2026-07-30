@@ -97,6 +97,20 @@ On failure, the probe emits a typed
 `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:*` line and still emits
 `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`.
 
+For no-serial physical targets, the framebuffer panel title changes to
+`emmc read err` and includes `err <code>` after the BAR0/OCR lines. The stable
+screen codes are:
+
+```text
+1 SDHCI probe failure
+2 register I/O failure
+3 command-path failure
+4 data-inhibit timeout
+5 buffer-read-ready timeout
+6 transfer-complete timeout
+7 data-transfer error status
+```
+
 ## QEMU Oracle
 
 The hardware-probe acceptance test creates a disposable QEMU eMMC image whose

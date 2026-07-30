@@ -116,7 +116,8 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   This proves the QEMU SDHCI/eMMC PIO read path for one sector. It does not yet
   prove the physical O2 Micro `1217:8620` eMMC data path; the next real laptop
   boot should show either `emmc read` with `lba0`/`first`/`csum`/`bytes`, or a
-  typed `EMMC_READ_ERROR:*` marker on serial-capable targets.
+  no-serial `emmc read err` screen with a numeric `err` code. Serial-capable
+  targets also emit a typed `EMMC_READ_ERROR:*` marker.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

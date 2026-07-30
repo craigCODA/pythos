@@ -239,6 +239,18 @@ impl EmmcReadBlockError {
             }
         }
     }
+
+    pub const fn screen_code(self) -> u32 {
+        match self {
+            Self::Probe(_) => 1,
+            Self::RegisterIo(_) => 2,
+            Self::Command(_) => 3,
+            Self::DataInhibitTimeout => 4,
+            Self::BufferReadReadyTimeout => 5,
+            Self::TransferCompleteTimeout => 6,
+            Self::DataTransferError { .. } => 7,
+        }
+    }
 }
 
 impl From<SdhciProbeError> for EmmcReadBlockError {
