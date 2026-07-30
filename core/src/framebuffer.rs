@@ -53,6 +53,21 @@ const BODY: Rgb = Rgb {
     green: 230,
     blue: 240,
 };
+const PROBE_PANEL_BACKGROUND: Rgb = Rgb {
+    red: 4,
+    green: 12,
+    blue: 10,
+};
+const PROBE_PANEL_TITLE: Rgb = Rgb {
+    red: 80,
+    green: 255,
+    blue: 150,
+};
+const PROBE_PANEL_BODY: Rgb = Rgb {
+    red: 230,
+    green: 245,
+    blue: 235,
+};
 // Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
 // is a dark vertical gradient through these stops so the wake text and sigil
 // read against a cinematic backdrop rather than a flat fill.
@@ -296,6 +311,31 @@ pub fn render_launcher_screen(
         LAUNCHER_TILE_LABEL_COLOR,
     )?;
     surface.draw_cursor_sprite(cursor_x, cursor_y);
+    Ok(())
+}
+
+/// Render fixed hardware-probe identity lines for machines without serial
+/// capture. This is deliberately a text panel only; the storage probe has
+/// already completed and no storage hardware is touched here.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn render_hardware_probe_lines(
+    framebuffer: &PythFramebufferInfo,
+    lines: &[&str],
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    surface.clear(PROBE_PANEL_BACKGROUND);
+
+    let mut y = 32;
+    for (index, line) in lines.iter().enumerate() {
+        let (scale, color, step) = if index == 0 {
+            (3, PROBE_PANEL_TITLE, 48)
+        } else {
+            (2, PROBE_PANEL_BODY, 28)
+        };
+        surface.draw_text(32, y, scale, line, color)?;
+        y = y.saturating_add(step);
+    }
+
     Ok(())
 }
 
@@ -855,5 +895,13 @@ mod tests {
         assert!(pixel_set(&buffer, 800, LAUNCHER_TILE_X, LAUNCHER_TILE_Y));
         // Cursor sprite's top-left pixel should be painted.
         assert!(pixel_set(&buffer, 800, 10, 10));
+    }
+
+    #[test]
+    fn render_hardware_probe_lines_draws_title_and_detail_text() {
+        let (buffer, info) = test_framebuffer(800, 600);
+        render_hardware_probe_lines(&info, &["PythOS", "sdhci emmc"]).unwrap();
+
+        assert!(buffer.iter().any(|&pixel| pixel != 0));
     }
 }

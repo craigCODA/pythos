@@ -5,7 +5,7 @@
 //! target disk is never read, written, reset, or selected as an object store.
 
 use crate::memory::physical::PhysicalMemory;
-use crate::{fb_debug, serial, storage_probe};
+use crate::{fb_debug, hardware_probe_screen, serial, storage_probe};
 use pythos_shared::boot_protocol::PythBootInfo;
 
 pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemory) -> ! {
@@ -27,6 +27,11 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
         };
 
     fb_debug::fill(&boot_info.framebuffer, final_color);
+    if hardware_probe_screen::render(&boot_info.framebuffer, &report).is_ok() {
+        serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_READY");
+    } else {
+        serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_FAILED");
+    }
     serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES");
     serial::write_line("PYTHOS:CORE:HARDWARE_PROBE_READY");
 

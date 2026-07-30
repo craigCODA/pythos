@@ -28,6 +28,8 @@ mod framebuffer;
 mod general_storage_persistence;
 #[cfg(all(not(test), feature = "hardware-probe"))]
 mod hardware_probe_boot;
+#[cfg(any(test, feature = "hardware-probe"))]
+mod hardware_probe_screen;
 mod input_drivers;
 mod input_events;
 mod interpreter;
