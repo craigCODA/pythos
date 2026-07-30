@@ -280,13 +280,15 @@ fn emit_emmc_error(error: sdhci_probe::EmmcIdentificationError) {
 fn emit_emmc_read_error(error: sdhci_probe::EmmcReadBlockError) {
     serial::write_line(error.marker());
     match error {
-        sdhci_probe::EmmcReadBlockError::Command(
-            sdhci_probe::EmmcIdentificationError::CommandError {
-                command_index,
-                normal_interrupt_status,
-                error_interrupt_status,
-            },
-        ) => {
+        sdhci_probe::EmmcReadBlockError::Command {
+            command_index,
+            error:
+                sdhci_probe::EmmcIdentificationError::CommandError {
+                    normal_interrupt_status,
+                    error_interrupt_status,
+                    ..
+                },
+        } => {
             serial::write_hex_u64(
                 "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:COMMAND_INDEX=",
                 u64::from(command_index),
@@ -298,6 +300,12 @@ fn emit_emmc_read_error(error: sdhci_probe::EmmcReadBlockError) {
             serial::write_hex_u64(
                 "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:ERROR_INTERRUPT_STATUS=",
                 u64::from(error_interrupt_status),
+            );
+        }
+        sdhci_probe::EmmcReadBlockError::Command { command_index, .. } => {
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:COMMAND_INDEX=",
+                u64::from(command_index),
             );
         }
         sdhci_probe::EmmcReadBlockError::DataTransferError {

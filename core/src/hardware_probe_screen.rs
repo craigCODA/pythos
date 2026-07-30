@@ -232,6 +232,15 @@ fn build_screen_with_sdhci_state(
                     push_u32(&mut screen, "ocr ", 0);
                 }
                 push_u32(&mut screen, "err ", read_error.screen_code());
+                if let Some(command_index) = read_error.screen_command_index() {
+                    push_u8(&mut screen, "cmd ", command_index);
+                }
+                if let Some(normal_interrupt_status) = read_error.screen_normal_interrupt_status() {
+                    push_u16(&mut screen, "norm ", normal_interrupt_status);
+                }
+                if let Some(error_interrupt_status) = read_error.screen_error_interrupt_status() {
+                    push_u16(&mut screen, "eint ", error_interrupt_status);
+                }
             } else if let Some(identification) = selected_emmc_identification {
                 push_bar_base(&mut screen, "bar0 ", identification.bar0_base);
                 push_emmc_identification(&mut screen, identification);
@@ -703,5 +712,41 @@ mod tests {
         assert_eq!(screen.line(7), Some("bar0 00000000E8B01000"));
         assert_eq!(screen.line(8), Some("ocr C0FF8000"));
         assert_eq!(screen.line(9), Some("err 00000005"));
+    }
+
+    #[test]
+    fn formats_emmc_read_command_error_details_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+        let identification = EmmcIdentificationReport {
+            bar0_base: 0x0000_0000_E8B0_1000,
+            ocr: 0xC0FF_8000,
+            relative_card_address: 1,
+            cid: [0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_F001],
+            csd: [0x1234_5678, 0x9ABC_DEF0, 0x0BAD_C0DE, 0xCAFE_BABE],
+            final_normal_interrupt_status: 0,
+            final_error_interrupt_status: 0,
+        };
+        let error = EmmcReadBlockError::Command {
+            command_index: 17,
+            error: crate::sdhci_probe::EmmcIdentificationError::CommandError {
+                command_index: 17,
+                normal_interrupt_status: 0x8001,
+                error_interrupt_status: 0x0004,
+            },
+        };
+
+        let screen = build_screen_with_emmc_read_error(&report, Some(identification), Some(error));
+
+        assert_eq!(screen.line(1), Some("emmc read err"));
+        assert_eq!(screen.line(9), Some("err 00000003"));
+        assert_eq!(screen.line(10), Some("cmd 11"));
+        assert_eq!(screen.line(11), Some("norm 8001"));
+        assert_eq!(screen.line(12), Some("eint 0004"));
     }
 }

@@ -111,6 +111,19 @@ screen codes are:
 7 data-transfer error status
 ```
 
+For command-path failures, the no-serial screen additionally reports:
+
+```text
+cmd <2 hex digits>
+norm <4 hex digits>
+eint <4 hex digits>
+```
+
+`cmd` is the failed SDHCI command index. `norm` and `eint` are the normal and
+error interrupt-status values when the controller raised a command error. If
+the failure is a timeout before status bits are available, only `cmd` may be
+present.
+
 ## QEMU Oracle
 
 The hardware-probe acceptance test creates a disposable QEMU eMMC image whose

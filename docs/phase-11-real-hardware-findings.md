@@ -114,10 +114,14 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   - `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ONLY_BLOCK_READY`
   - `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`
   This proves the QEMU SDHCI/eMMC PIO read path for one sector. It does not yet
-  prove the physical O2 Micro `1217:8620` eMMC data path; the next real laptop
-  boot should show either `emmc read` with `lba0`/`first`/`csum`/`bytes`, or a
-  no-serial `emmc read err` screen with a numeric `err` code. Serial-capable
-  targets also emit a typed `EMMC_READ_ERROR:*` marker.
+  prove the physical O2 Micro `1217:8620` eMMC data path. A 2026-07-30
+  no-serial framebuffer boot of commit `c418320` reached the physical eMMC
+  read path after OCR `0xC0FF8080` and showed `emmc read err` with
+  `err 00000003`. That means a command-path failure during the read-only
+  sequence, not a media write. The `c418320` screen did not identify whether
+  `CMD7`, `CMD16`, or `CMD17` failed, so the follow-up diagnostic build adds
+  no-serial `cmd`, `norm`, and `eint` fields for command-path failures while
+  preserving `NO_DISK_WRITES`.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

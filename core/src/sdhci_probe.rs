@@ -195,7 +195,10 @@ impl From<SdhciInitializationError> for EmmcIdentificationError {
 pub enum EmmcReadBlockError {
     Probe(SdhciProbeError),
     RegisterIo(SdhciInitializationError),
-    Command(EmmcIdentificationError),
+    Command {
+        command_index: u8,
+        error: EmmcIdentificationError,
+    },
     DataInhibitTimeout,
     BufferReadReadyTimeout,
     TransferCompleteTimeout,
@@ -210,7 +213,7 @@ impl EmmcReadBlockError {
         match self {
             Self::Probe(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:SDHCI_PROBE",
             Self::RegisterIo(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:REGISTER_IO",
-            Self::Command(error) => match error {
+            Self::Command { error, .. } => match error {
                 EmmcIdentificationError::CommandInhibitTimeout => {
                     "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:COMMAND_INHIBIT_TIMEOUT"
                 }
@@ -244,11 +247,54 @@ impl EmmcReadBlockError {
         match self {
             Self::Probe(_) => 1,
             Self::RegisterIo(_) => 2,
-            Self::Command(_) => 3,
+            Self::Command { .. } => 3,
             Self::DataInhibitTimeout => 4,
             Self::BufferReadReadyTimeout => 5,
             Self::TransferCompleteTimeout => 6,
             Self::DataTransferError { .. } => 7,
+        }
+    }
+
+    pub const fn screen_command_index(self) -> Option<u8> {
+        match self {
+            Self::Command { command_index, .. } => Some(command_index),
+            _ => None,
+        }
+    }
+
+    pub const fn screen_normal_interrupt_status(self) -> Option<u16> {
+        match self {
+            Self::Command {
+                error:
+                    EmmcIdentificationError::CommandError {
+                        normal_interrupt_status,
+                        ..
+                    },
+                ..
+            }
+            | Self::DataTransferError {
+                normal_interrupt_status,
+                ..
+            } => Some(normal_interrupt_status),
+            _ => None,
+        }
+    }
+
+    pub const fn screen_error_interrupt_status(self) -> Option<u16> {
+        match self {
+            Self::Command {
+                error:
+                    EmmcIdentificationError::CommandError {
+                        error_interrupt_status,
+                        ..
+                    },
+                ..
+            }
+            | Self::DataTransferError {
+                error_interrupt_status,
+                ..
+            } => Some(error_interrupt_status),
+            _ => None,
         }
     }
 }
@@ -262,12 +308,6 @@ impl From<SdhciProbeError> for EmmcReadBlockError {
 impl From<SdhciInitializationError> for EmmcReadBlockError {
     fn from(error: SdhciInitializationError) -> Self {
         Self::RegisterIo(error)
-    }
-}
-
-impl From<EmmcIdentificationError> for EmmcReadBlockError {
-    fn from(error: EmmcIdentificationError) -> Self {
-        Self::Command(error)
     }
 }
 
@@ -548,7 +588,7 @@ pub fn read_emmc_lba0_with_io(
 ) -> Result<EmmcReadBlockReport, EmmcReadBlockError> {
     enable_read_status_reporting(io)?;
 
-    let _select_status = expect_short_response(issue_command(
+    let _select_status = issue_read_short_command(
         io,
         SdhciCommand::new(
             7,
@@ -557,10 +597,10 @@ pub fn read_emmc_lba0_with_io(
             true,
             true,
         ),
-    )?)?;
+    )?;
     wait_data_not_inhibited(io)?;
 
-    let _block_len_status = expect_short_response(issue_command(
+    let _block_len_status = issue_read_short_command(
         io,
         SdhciCommand::new(
             16,
@@ -569,7 +609,7 @@ pub fn read_emmc_lba0_with_io(
             true,
             true,
         ),
-    )?)?;
+    )?;
 
     wait_data_not_inhibited(io)?;
     io.write_u16(SDHCI_BLOCK_SIZE_OFFSET, EMMC_READ_BLOCK_LEN)?;
@@ -579,7 +619,7 @@ pub fn read_emmc_lba0_with_io(
         SDHCI_TRANSFER_MODE_READ_DIRECTION,
     )?;
 
-    let _read_status = expect_short_response(issue_command(
+    let _read_status = issue_read_short_command(
         io,
         SdhciCommand::with_data(
             17,
@@ -588,7 +628,7 @@ pub fn read_emmc_lba0_with_io(
             true,
             true,
         ),
-    )?)?;
+    )?;
 
     wait_buffer_read_ready(io)?;
 
@@ -659,6 +699,21 @@ fn enable_read_status_reporting(io: &mut impl SdhciRegisterIo) -> Result<(), Emm
         SDHCI_ERROR_INTERRUPT_ALL,
     )?;
     Ok(())
+}
+
+fn issue_read_short_command(
+    io: &mut impl SdhciRegisterIo,
+    command: SdhciCommand,
+) -> Result<u32, EmmcReadBlockError> {
+    let command_index = command.index;
+    let response = issue_command(io, command).map_err(|error| EmmcReadBlockError::Command {
+        command_index,
+        error,
+    })?;
+    expect_short_response(response).map_err(|error| EmmcReadBlockError::Command {
+        command_index,
+        error,
+    })
 }
 
 pub fn identification_clock_control(capabilities_low: u32) -> Result<u16, EmmcIdentificationError> {
@@ -1507,6 +1562,29 @@ mod tests {
     }
 
     #[test]
+    fn command_failures_keep_read_command_index_and_status() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        io.seed_read_block_pattern();
+        io.error_on_command_index = Some(17);
+        io.command_error_normal_status =
+            SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE | SDHCI_NORMAL_INTERRUPT_ERROR;
+        io.command_error_status = 0x0004;
+
+        assert_eq!(
+            read_emmc_lba0_with_io(&mut io),
+            Err(EmmcReadBlockError::Command {
+                command_index: 17,
+                error: EmmcIdentificationError::CommandError {
+                    command_index: 17,
+                    normal_interrupt_status: SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE
+                        | SDHCI_NORMAL_INTERRUPT_ERROR,
+                    error_interrupt_status: 0x0004,
+                },
+            })
+        );
+    }
+
+    #[test]
     fn cmd1_busy_polling_has_typed_timeout() {
         let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
         io.cmd1_ready_after_attempts = EMMC_OCR_ATTEMPT_LIMIT + 1;
@@ -1590,6 +1668,9 @@ mod tests {
         read_word_index: usize,
         suppress_buffer_read_ready: bool,
         suppress_transfer_complete: bool,
+        error_on_command_index: Option<u8>,
+        command_error_normal_status: u16,
+        command_error_status: u16,
         command_indices: [u8; EMMC_OCR_ATTEMPT_LIMIT + 8],
         command_count: usize,
         cmd1_attempts: usize,
@@ -1622,6 +1703,9 @@ mod tests {
                 read_word_index: 0,
                 suppress_buffer_read_ready: false,
                 suppress_transfer_complete: false,
+                error_on_command_index: None,
+                command_error_normal_status: SDHCI_NORMAL_INTERRUPT_ERROR,
+                command_error_status: 1,
                 command_indices: [0; EMMC_OCR_ATTEMPT_LIMIT + 8],
                 command_count: 0,
                 cmd1_attempts: 0,
@@ -1658,6 +1742,11 @@ mod tests {
             self.command_count += 1;
             self.normal_interrupt_status = SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE;
             self.error_interrupt_status = 0;
+            if self.error_on_command_index == Some(command_index) {
+                self.normal_interrupt_status = self.command_error_normal_status;
+                self.error_interrupt_status = self.command_error_status;
+                return;
+            }
             self.response = match command_index {
                 1 => {
                     self.cmd1_attempts += 1;
