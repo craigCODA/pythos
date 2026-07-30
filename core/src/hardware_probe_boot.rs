@@ -17,6 +17,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     let selected_sdhci = select_sdhci_controller(&report);
     let mut sdhci_snapshot = None;
     let mut sdhci_init = None;
+    let mut emmc_identification = None;
     if let Some(controller) = selected_sdhci {
         match sdhci_probe::snapshot_controller(controller) {
             Ok(snapshot) => {
@@ -28,6 +29,18 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
                         emit_sdhci_init(init);
                         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT_READY");
                         sdhci_init = Some(init);
+                        match sdhci_probe::identify_emmc_controller(controller) {
+                            Ok(identification) => {
+                                emit_emmc_identification(identification);
+                                serial::write_line(
+                                    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_IDENTIFICATION_READY",
+                                );
+                                emmc_identification = Some(identification);
+                            }
+                            Err(error) => {
+                                emit_emmc_error(error);
+                            }
+                        }
                     }
                     Err(error) => {
                         serial::write_line(error.marker());
@@ -52,8 +65,14 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
         };
 
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    if hardware_probe_screen::render(&boot_info.framebuffer, &report, sdhci_snapshot, sdhci_init)
-        .is_ok()
+    if hardware_probe_screen::render(
+        &boot_info.framebuffer,
+        &report,
+        sdhci_snapshot,
+        sdhci_init,
+        emmc_identification,
+    )
+    .is_ok()
     {
         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_READY");
     } else {
@@ -133,4 +152,78 @@ fn emit_sdhci_init(init: sdhci_probe::SdhciInitializationReport) {
         "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:ERROR_INTERRUPT_STATUS=",
         u64::from(init.error_interrupt_status),
     );
+}
+
+fn emit_emmc_identification(identification: sdhci_probe::EmmcIdentificationReport) {
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:OCR=",
+        u64::from(identification.ocr),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:RCA=",
+        u64::from(identification.relative_card_address),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CID0=",
+        u64::from(identification.cid[0]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CID1=",
+        u64::from(identification.cid[1]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CID2=",
+        u64::from(identification.cid[2]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CID3=",
+        u64::from(identification.cid[3]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CSD0=",
+        u64::from(identification.csd[0]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CSD1=",
+        u64::from(identification.csd[1]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CSD2=",
+        u64::from(identification.csd[2]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CSD3=",
+        u64::from(identification.csd[3]),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:FINAL_NORMAL_INTERRUPT_STATUS=",
+        u64::from(identification.final_normal_interrupt_status),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC:FINAL_ERROR_INTERRUPT_STATUS=",
+        u64::from(identification.final_error_interrupt_status),
+    );
+}
+
+fn emit_emmc_error(error: sdhci_probe::EmmcIdentificationError) {
+    serial::write_line(error.marker());
+    if let sdhci_probe::EmmcIdentificationError::CommandError {
+        command_index,
+        normal_interrupt_status,
+        error_interrupt_status,
+    } = error
+    {
+        serial::write_hex_u64(
+            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:COMMAND_INDEX=",
+            u64::from(command_index),
+        );
+        serial::write_hex_u64(
+            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:NORMAL_INTERRUPT_STATUS=",
+            u64::from(normal_interrupt_status),
+        );
+        serial::write_hex_u64(
+            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:ERROR_INTERRUPT_STATUS=",
+            u64::from(error_interrupt_status),
+        );
+    }
 }

@@ -88,9 +88,15 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   - interrupt status = `0x00000000`
   This proves the physical SDHCI controller accepted the bounded reset,
   internal-clock, and bus-power initialization sequence from ADR 0058. It does
-  not prove eMMC media support. eMMC command sequencing, card/device
-  identification, partition discovery, filesystems, interrupt-driven storage,
-  and DMA isolation remain later work.
+  not prove eMMC media support.
+  ADR 0059 adds a bounded eMMC identification probe after initialization. A
+  2026-07-30 QEMU acceptance boot with `sdhci-pci` plus an attached `emmc`
+  device emitted OCR/RCA/CID/CSD markers and
+  `PYTHOS:CORE:HARDWARE_PROBE:EMMC_IDENTIFICATION_READY`, while preserving
+  `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`. This proves the command-path
+  sequence in QEMU only; the physical laptop has not yet run this slice.
+  Partition discovery, filesystems, interrupt-driven storage, block reads,
+  block writes, and DMA isolation remain later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

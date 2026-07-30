@@ -6,7 +6,9 @@
 
 #[cfg(feature = "hardware-probe")]
 use crate::framebuffer;
-use crate::sdhci_probe::{SdhciInitializationReport, SdhciRegisterSnapshot};
+use crate::sdhci_probe::{
+    EmmcIdentificationReport, SdhciInitializationReport, SdhciRegisterSnapshot,
+};
 use crate::storage_probe::{
     MemoryBar, StorageController, StorageControllerKind, StorageProbeReport,
 };
@@ -98,20 +100,28 @@ pub fn build_screen_with_sdhci_snapshot(
     report: &StorageProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, sdhci_snapshot, None)
+    build_screen_with_sdhci_state(report, sdhci_snapshot, None, None)
 }
 
 pub fn build_screen_with_sdhci_init(
     report: &StorageProbeReport,
     sdhci_init: Option<SdhciInitializationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, sdhci_init)
+    build_screen_with_sdhci_state(report, None, sdhci_init, None)
+}
+
+pub fn build_screen_with_emmc_identification(
+    report: &StorageProbeReport,
+    emmc_identification: Option<EmmcIdentificationReport>,
+) -> ProbeScreen {
+    build_screen_with_sdhci_state(report, None, None, emmc_identification)
 }
 
 fn build_screen_with_sdhci_state(
     report: &StorageProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
     sdhci_init: Option<SdhciInitializationReport>,
+    emmc_identification: Option<EmmcIdentificationReport>,
 ) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
@@ -131,7 +141,17 @@ fn build_screen_with_sdhci_state(
                 } else {
                     None
                 };
+            let selected_emmc_identification =
+                if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+                    emmc_identification
+                } else {
+                    None
+                };
             if controller.kind == StorageControllerKind::SdhciEmmcCandidate
+                && selected_emmc_identification.is_some()
+            {
+                push_text(&mut screen, "emmc id");
+            } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate
                 && selected_sdhci_init.is_some()
             {
                 push_text(&mut screen, "sdhci init");
@@ -149,7 +169,10 @@ fn build_screen_with_sdhci_state(
             push_bdf(&mut screen, controller);
             push_vid_did(&mut screen, controller);
             push_class(&mut screen, controller);
-            if let Some(init) = selected_sdhci_init {
+            if let Some(identification) = selected_emmc_identification {
+                push_bar_base(&mut screen, "bar0 ", identification.bar0_base);
+                push_emmc_identification(&mut screen, identification);
+            } else if let Some(init) = selected_sdhci_init {
                 push_bar_base(&mut screen, "bar0 ", init.bar0_base);
                 push_sdhci_init(&mut screen, init);
             } else if let Some(snapshot) = selected_sdhci_snapshot {
@@ -176,8 +199,10 @@ pub fn render(
     report: &StorageProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
     sdhci_init: Option<SdhciInitializationReport>,
+    emmc_identification: Option<EmmcIdentificationReport>,
 ) -> Result<(), ()> {
-    let screen = build_screen_with_sdhci_state(report, sdhci_snapshot, sdhci_init);
+    let screen =
+        build_screen_with_sdhci_state(report, sdhci_snapshot, sdhci_init, emmc_identification);
     let mut lines = [""; PROBE_SCREEN_MAX_LINES];
     let mut index = 0;
     while index < screen.line_count() {
@@ -280,6 +305,14 @@ fn push_sdhci_init(screen: &mut ProbeScreen, init: SdhciInitializationReport) {
         "ints ",
         (u32::from(init.normal_interrupt_status) << 16) | u32::from(init.error_interrupt_status),
     );
+}
+
+fn push_emmc_identification(screen: &mut ProbeScreen, identification: EmmcIdentificationReport) {
+    push_u32(screen, "ocr ", identification.ocr);
+    push_u16(screen, "rca ", identification.relative_card_address);
+    push_u32(screen, "cid0 ", identification.cid[0]);
+    push_u32(screen, "cid1 ", identification.cid[1]);
+    push_u32(screen, "csd0 ", identification.csd[0]);
 }
 
 fn push_u8(screen: &mut ProbeScreen, label: &str, value: u8) {
@@ -453,5 +486,35 @@ mod tests {
         assert_eq!(screen.line(10), Some("power 0F"));
         assert_eq!(screen.line(11), Some("state 01FF00F0"));
         assert_eq!(screen.line(12), Some("ints 00000000"));
+    }
+
+    #[test]
+    fn formats_emmc_identification_report_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+        let identification = EmmcIdentificationReport {
+            bar0_base: 0x0000_0000_E8B0_1000,
+            ocr: 0xC0FF_8000,
+            relative_card_address: 1,
+            cid: [0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_F001],
+            csd: [0x1234_5678, 0x9ABC_DEF0, 0x0BAD_C0DE, 0xCAFE_BABE],
+            final_normal_interrupt_status: 0,
+            final_error_interrupt_status: 0,
+        };
+
+        let screen = build_screen_with_emmc_identification(&report, Some(identification));
+
+        assert_eq!(screen.line(1), Some("emmc id"));
+        assert_eq!(screen.line(7), Some("bar0 00000000E8B01000"));
+        assert_eq!(screen.line(8), Some("ocr C0FF8000"));
+        assert_eq!(screen.line(9), Some("rca 0001"));
+        assert_eq!(screen.line(10), Some("cid0 11223344"));
+        assert_eq!(screen.line(11), Some("cid1 55667788"));
+        assert_eq!(screen.line(12), Some("csd0 12345678"));
     }
 }

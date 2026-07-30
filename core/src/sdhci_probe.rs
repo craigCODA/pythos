@@ -3,8 +3,9 @@
 //! This module is not a block driver. The snapshot path validates an
 //! already-discovered SDHCI PCI function and reads a fixed set of
 //! host-controller registers. The initialization path performs only host reset,
-//! internal clock enable, and bus-power selection. It never writes command,
-//! argument, transfer, data, DMA, ADMA, or block-count registers.
+//! internal clock enable, and bus-power selection. The identification path may
+//! write command-path and interrupt-status registers, but it never writes
+//! transfer, data, DMA, ADMA, or block-count registers.
 
 use crate::storage_probe::{MemoryBar, StorageController, StorageControllerKind};
 
@@ -15,6 +16,9 @@ pub const SDHCI_ARGUMENT_OFFSET: u64 = 0x08;
 pub const SDHCI_TRANSFER_MODE_OFFSET: u64 = 0x0C;
 pub const SDHCI_COMMAND_OFFSET: u64 = 0x0E;
 pub const SDHCI_RESPONSE_OFFSET: u64 = 0x10;
+pub const SDHCI_RESPONSE_1_OFFSET: u64 = 0x14;
+pub const SDHCI_RESPONSE_2_OFFSET: u64 = 0x18;
+pub const SDHCI_RESPONSE_3_OFFSET: u64 = 0x1C;
 pub const SDHCI_BUFFER_DATA_PORT_OFFSET: u64 = 0x20;
 pub const SDHCI_PRESENT_STATE_OFFSET: u64 = 0x24;
 pub const SDHCI_POWER_CONTROL_OFFSET: u64 = 0x29;
@@ -22,6 +26,8 @@ pub const SDHCI_CLOCK_CONTROL_OFFSET: u64 = 0x2C;
 pub const SDHCI_SOFTWARE_RESET_OFFSET: u64 = 0x2F;
 pub const SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET: u64 = 0x30;
 pub const SDHCI_ERROR_INTERRUPT_STATUS_OFFSET: u64 = 0x32;
+pub const SDHCI_NORMAL_INTERRUPT_STATUS_ENABLE_OFFSET: u64 = 0x34;
+pub const SDHCI_ERROR_INTERRUPT_STATUS_ENABLE_OFFSET: u64 = 0x36;
 pub const SDHCI_CAPABILITIES_LOW_OFFSET: u64 = 0x40;
 pub const SDHCI_CAPABILITIES_HIGH_OFFSET: u64 = 0x44;
 pub const SDHCI_MAX_CURRENT_CAPABILITIES_OFFSET: u64 = 0x48;
@@ -40,13 +46,31 @@ pub const SDHCI_POWER_VOLTAGE_18: u8 = 0x0A;
 
 pub const SDHCI_CLOCK_INTERNAL_ENABLE: u16 = 1 << 0;
 pub const SDHCI_CLOCK_INTERNAL_STABLE: u16 = 1 << 1;
+pub const SDHCI_CLOCK_SD_ENABLE: u16 = 1 << 2;
+
+pub const SDHCI_PRESENT_STATE_COMMAND_INHIBIT: u32 = 1 << 0;
+pub const SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE: u16 = 1 << 0;
+pub const SDHCI_NORMAL_INTERRUPT_ERROR: u16 = 1 << 15;
+pub const SDHCI_ERROR_INTERRUPT_ALL: u16 = 0xFFFF;
+
+pub const SDHCI_COMMAND_RESPONSE_LONG: u16 = 0x0001;
+pub const SDHCI_COMMAND_RESPONSE_SHORT: u16 = 0x0002;
+pub const SDHCI_COMMAND_CRC_CHECK: u16 = 0x0008;
+pub const SDHCI_COMMAND_INDEX_CHECK: u16 = 0x0010;
+pub const SDHCI_COMMAND_DATA_PRESENT: u16 = 0x0020;
 
 pub const SDHCI_SOFTWARE_RESET_ALL: u8 = 1 << 0;
 pub const SDHCI_INIT_POLL_LIMIT: usize = 100_000;
+pub const SDHCI_COMMAND_POLL_LIMIT: usize = 100_000;
+pub const EMMC_OCR_ATTEMPT_LIMIT: usize = 1024;
+pub const EMMC_OCR_IDENTIFICATION_ARG: u32 = 0x40FF_8000;
+pub const EMMC_OCR_BUSY: u32 = 1 << 31;
+pub const EMMC_IDENTIFICATION_RCA: u16 = 1;
 
 const ONE_GIB: u64 = 1024 * 1024 * 1024;
 const LOADER_IDENTITY_LOWER_BOUND: u64 = 0x0020_0000;
 const LOADER_IDENTITY_UPPER_BOUND_EXCLUSIVE: u64 = 512 * ONE_GIB;
+const SDHCI_IDENTIFICATION_CLOCK_HZ: u32 = 400_000;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SdhciProbeError {
@@ -105,6 +129,59 @@ impl From<SdhciProbeError> for SdhciInitializationError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmmcIdentificationError {
+    Probe(SdhciProbeError),
+    RegisterIo(SdhciInitializationError),
+    BaseClockUnavailable,
+    ClockStableTimeout,
+    CommandInhibitTimeout,
+    CommandCompleteTimeout,
+    CommandError {
+        command_index: u8,
+        normal_interrupt_status: u16,
+        error_interrupt_status: u16,
+    },
+    CardBusyTimeout,
+    UnexpectedResponse,
+}
+
+impl EmmcIdentificationError {
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Probe(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:SDHCI_PROBE",
+            Self::RegisterIo(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:REGISTER_IO",
+            Self::BaseClockUnavailable => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:BASE_CLOCK_UNAVAILABLE"
+            }
+            Self::ClockStableTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:CLOCK_STABLE_TIMEOUT"
+            }
+            Self::CommandInhibitTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:COMMAND_INHIBIT_TIMEOUT"
+            }
+            Self::CommandCompleteTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:COMMAND_COMPLETE_TIMEOUT"
+            }
+            Self::CommandError { .. } => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:COMMAND_ERROR",
+            Self::CardBusyTimeout => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:CARD_BUSY_TIMEOUT",
+            Self::UnexpectedResponse => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:UNEXPECTED_RESPONSE",
+        }
+    }
+}
+
+impl From<SdhciProbeError> for EmmcIdentificationError {
+    fn from(error: SdhciProbeError) -> Self {
+        Self::Probe(error)
+    }
+}
+
+impl From<SdhciInitializationError> for EmmcIdentificationError {
+    fn from(error: SdhciInitializationError) -> Self {
+        Self::RegisterIo(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SdhciRegisterWindow {
     bar0_base: u64,
     length: u64,
@@ -142,12 +219,31 @@ pub struct SdhciInitializationReport {
     pub error_interrupt_status: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmmcIdentificationReport {
+    pub bar0_base: u64,
+    pub ocr: u32,
+    pub relative_card_address: u16,
+    pub cid: [u32; 4],
+    pub csd: [u32; 4],
+    pub final_normal_interrupt_status: u16,
+    pub final_error_interrupt_status: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SdhciResponseKind {
+    None,
+    Short,
+    Long,
+}
+
 pub trait SdhciRegisterIo {
     fn read_u8(&mut self, offset: u64) -> Result<u8, SdhciInitializationError>;
     fn read_u16(&mut self, offset: u64) -> Result<u16, SdhciInitializationError>;
     fn read_u32(&mut self, offset: u64) -> Result<u32, SdhciInitializationError>;
     fn write_u8(&mut self, offset: u64, value: u8) -> Result<(), SdhciInitializationError>;
     fn write_u16(&mut self, offset: u64, value: u16) -> Result<(), SdhciInitializationError>;
+    fn write_u32(&mut self, offset: u64, value: u32) -> Result<(), SdhciInitializationError>;
 }
 
 #[cfg_attr(test, allow(dead_code))]
@@ -169,6 +265,19 @@ pub fn initialize_controller(
         mapped_base: window.bar0_base(),
     };
     let mut report = initialize_with_io(&mut io)?;
+    report.bar0_base = window.bar0_base();
+    Ok(report)
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn identify_emmc_controller(
+    controller: StorageController,
+) -> Result<EmmcIdentificationReport, EmmcIdentificationError> {
+    let window = prepare_register_window(controller)?;
+    let mut io = SdhciMmioWindow {
+        mapped_base: window.bar0_base(),
+    };
+    let mut report = identify_emmc_with_io(&mut io)?;
     report.bar0_base = window.bar0_base();
     Ok(report)
 }
@@ -248,6 +357,295 @@ pub const fn select_power_control_value(
         Ok(SDHCI_POWER_BUS_ON | SDHCI_POWER_VOLTAGE_18)
     } else {
         Err(SdhciInitializationError::UnsupportedVoltage)
+    }
+}
+
+pub fn identify_emmc_with_io(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<EmmcIdentificationReport, EmmcIdentificationError> {
+    enable_identification_status_reporting(io)?;
+    enable_identification_clock(io)?;
+
+    expect_no_response(issue_command(
+        io,
+        SdhciCommand::new(0, 0, SdhciResponseKind::None, false, false),
+    )?)?;
+
+    let mut ocr = 0;
+    for _ in 0..EMMC_OCR_ATTEMPT_LIMIT {
+        ocr = expect_short_response(issue_command(
+            io,
+            SdhciCommand::new(
+                1,
+                EMMC_OCR_IDENTIFICATION_ARG,
+                SdhciResponseKind::Short,
+                false,
+                false,
+            ),
+        )?)?;
+        if ocr & EMMC_OCR_BUSY != 0 {
+            break;
+        }
+    }
+    if ocr & EMMC_OCR_BUSY == 0 {
+        return Err(EmmcIdentificationError::CardBusyTimeout);
+    }
+
+    let cid = expect_long_response(issue_command(
+        io,
+        SdhciCommand::new(2, 0, SdhciResponseKind::Long, true, false),
+    )?)?;
+    let _status = expect_short_response(issue_command(
+        io,
+        SdhciCommand::new(
+            3,
+            u32::from(EMMC_IDENTIFICATION_RCA) << 16,
+            SdhciResponseKind::Short,
+            true,
+            true,
+        ),
+    )?)?;
+    let csd = expect_long_response(issue_command(
+        io,
+        SdhciCommand::new(
+            9,
+            u32::from(EMMC_IDENTIFICATION_RCA) << 16,
+            SdhciResponseKind::Long,
+            true,
+            false,
+        ),
+    )?)?;
+
+    Ok(EmmcIdentificationReport {
+        bar0_base: 0,
+        ocr,
+        relative_card_address: EMMC_IDENTIFICATION_RCA,
+        cid,
+        csd,
+        final_normal_interrupt_status: io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?,
+        final_error_interrupt_status: io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?,
+    })
+}
+
+fn enable_identification_status_reporting(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<(), EmmcIdentificationError> {
+    io.write_u16(
+        SDHCI_NORMAL_INTERRUPT_STATUS_ENABLE_OFFSET,
+        SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE | SDHCI_NORMAL_INTERRUPT_ERROR,
+    )?;
+    io.write_u16(
+        SDHCI_ERROR_INTERRUPT_STATUS_ENABLE_OFFSET,
+        SDHCI_ERROR_INTERRUPT_ALL,
+    )?;
+    Ok(())
+}
+
+pub fn identification_clock_control(capabilities_low: u32) -> Result<u16, EmmcIdentificationError> {
+    let base_clock_mhz = (capabilities_low >> 8) & 0xFF;
+    if base_clock_mhz == 0 {
+        return Err(EmmcIdentificationError::BaseClockUnavailable);
+    }
+
+    let base_clock_hz = base_clock_mhz * 1_000_000;
+    let mut divisor = 2;
+    while divisor < 1024 && base_clock_hz / divisor > SDHCI_IDENTIFICATION_CLOCK_HZ {
+        divisor *= 2;
+    }
+    let encoded_divisor = (divisor / 2) as u16;
+    Ok(SDHCI_CLOCK_INTERNAL_ENABLE
+        | ((encoded_divisor & 0x00FF) << 8)
+        | ((encoded_divisor & 0x0300) >> 2))
+}
+
+pub const fn sdhci_command_word(
+    command_index: u8,
+    response: SdhciResponseKind,
+    check_crc: bool,
+    check_index: bool,
+) -> u16 {
+    let response_bits = match response {
+        SdhciResponseKind::None => 0,
+        SdhciResponseKind::Short => SDHCI_COMMAND_RESPONSE_SHORT,
+        SdhciResponseKind::Long => SDHCI_COMMAND_RESPONSE_LONG,
+    };
+    let crc_bits = if check_crc {
+        SDHCI_COMMAND_CRC_CHECK
+    } else {
+        0
+    };
+    let index_bits = if check_index {
+        SDHCI_COMMAND_INDEX_CHECK
+    } else {
+        0
+    };
+    ((command_index as u16) << 8) | response_bits | crc_bits | index_bits
+}
+
+fn enable_identification_clock(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<(), EmmcIdentificationError> {
+    let capabilities_low = io.read_u32(SDHCI_CAPABILITIES_LOW_OFFSET)?;
+    let requested_clock = identification_clock_control(capabilities_low)?;
+    io.write_u16(SDHCI_CLOCK_CONTROL_OFFSET, requested_clock)?;
+
+    let mut clock_control = requested_clock;
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        clock_control = io.read_u16(SDHCI_CLOCK_CONTROL_OFFSET)?;
+        if clock_control & SDHCI_CLOCK_INTERNAL_STABLE != 0 {
+            break;
+        }
+    }
+    if clock_control & SDHCI_CLOCK_INTERNAL_STABLE == 0 {
+        return Err(EmmcIdentificationError::ClockStableTimeout);
+    }
+
+    io.write_u16(
+        SDHCI_CLOCK_CONTROL_OFFSET,
+        clock_control | SDHCI_CLOCK_SD_ENABLE,
+    )?;
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+struct SdhciCommand {
+    index: u8,
+    argument: u32,
+    response: SdhciResponseKind,
+    check_crc: bool,
+    check_index: bool,
+}
+
+impl SdhciCommand {
+    const fn new(
+        index: u8,
+        argument: u32,
+        response: SdhciResponseKind,
+        check_crc: bool,
+        check_index: bool,
+    ) -> Self {
+        Self {
+            index,
+            argument,
+            response,
+            check_crc,
+            check_index,
+        }
+    }
+
+    const fn word(self) -> u16 {
+        sdhci_command_word(self.index, self.response, self.check_crc, self.check_index)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SdhciCommandResponse {
+    None,
+    Short(u32),
+    Long([u32; 4]),
+}
+
+fn issue_command(
+    io: &mut impl SdhciRegisterIo,
+    command: SdhciCommand,
+) -> Result<SdhciCommandResponse, EmmcIdentificationError> {
+    wait_command_not_inhibited(io)?;
+    clear_interrupt_status(io)?;
+    io.write_u32(SDHCI_ARGUMENT_OFFSET, command.argument)?;
+    io.write_u16(SDHCI_COMMAND_OFFSET, command.word())?;
+    wait_command_complete(io, command.index)?;
+
+    let response = match command.response {
+        SdhciResponseKind::None => SdhciCommandResponse::None,
+        SdhciResponseKind::Short => {
+            SdhciCommandResponse::Short(io.read_u32(SDHCI_RESPONSE_OFFSET)?)
+        }
+        SdhciResponseKind::Long => SdhciCommandResponse::Long(read_long_response(io)?),
+    };
+    io.write_u16(
+        SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET,
+        SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE,
+    )?;
+    Ok(response)
+}
+
+fn wait_command_not_inhibited(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<(), EmmcIdentificationError> {
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        if io.read_u32(SDHCI_PRESENT_STATE_OFFSET)? & SDHCI_PRESENT_STATE_COMMAND_INHIBIT == 0 {
+            return Ok(());
+        }
+    }
+    Err(EmmcIdentificationError::CommandInhibitTimeout)
+}
+
+fn clear_interrupt_status(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcIdentificationError> {
+    io.write_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET, 0xFFFF)?;
+    io.write_u16(
+        SDHCI_ERROR_INTERRUPT_STATUS_OFFSET,
+        SDHCI_ERROR_INTERRUPT_ALL,
+    )?;
+    Ok(())
+}
+
+fn wait_command_complete(
+    io: &mut impl SdhciRegisterIo,
+    command_index: u8,
+) -> Result<(), EmmcIdentificationError> {
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        let normal_interrupt_status = io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?;
+        let error_interrupt_status = io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?;
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_ERROR != 0
+            || error_interrupt_status != 0
+        {
+            io.write_u16(
+                SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET,
+                normal_interrupt_status,
+            )?;
+            io.write_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET, error_interrupt_status)?;
+            return Err(EmmcIdentificationError::CommandError {
+                command_index,
+                normal_interrupt_status,
+                error_interrupt_status,
+            });
+        }
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE != 0 {
+            return Ok(());
+        }
+    }
+    Err(EmmcIdentificationError::CommandCompleteTimeout)
+}
+
+fn read_long_response(io: &mut impl SdhciRegisterIo) -> Result<[u32; 4], EmmcIdentificationError> {
+    Ok([
+        io.read_u32(SDHCI_RESPONSE_OFFSET)?,
+        io.read_u32(SDHCI_RESPONSE_1_OFFSET)?,
+        io.read_u32(SDHCI_RESPONSE_2_OFFSET)?,
+        io.read_u32(SDHCI_RESPONSE_3_OFFSET)?,
+    ])
+}
+
+fn expect_no_response(response: SdhciCommandResponse) -> Result<(), EmmcIdentificationError> {
+    match response {
+        SdhciCommandResponse::None => Ok(()),
+        _ => Err(EmmcIdentificationError::UnexpectedResponse),
+    }
+}
+
+fn expect_short_response(response: SdhciCommandResponse) -> Result<u32, EmmcIdentificationError> {
+    match response {
+        SdhciCommandResponse::Short(value) => Ok(value),
+        _ => Err(EmmcIdentificationError::UnexpectedResponse),
+    }
+}
+
+fn expect_long_response(
+    response: SdhciCommandResponse,
+) -> Result<[u32; 4], EmmcIdentificationError> {
+    match response {
+        SdhciCommandResponse::Long(value) => Ok(value),
+        _ => Err(EmmcIdentificationError::UnexpectedResponse),
     }
 }
 
@@ -384,6 +782,31 @@ impl SdhciRegisterIo for SdhciMmioWindow {
         //    register; typed PCI/BAR filtering narrows the write surface.
         // SAFETY: the detailed invariant above applies to this volatile word write.
         unsafe { core::ptr::write_volatile(address as *mut u16, value) };
+        Ok(())
+    }
+
+    fn write_u32(&mut self, offset: u64, value: u32) -> Result<(), SdhciInitializationError> {
+        let address = mmio_address(self.mapped_base, offset, 4)?;
+        // SAFETY:
+        // 1. Invariant: `address` is a 32-bit SDHCI command-path register
+        //    inside BAR0, currently used only for the command argument during
+        //    the identification-only eMMC probe.
+        // 2. Established by: callers use fixed offsets checked by
+        //    `mmio_address`; data, DMA, ADMA, transfer-mode, block-size, and
+        //    block-count registers are not passed by the identification path.
+        // 3. Lifetime: the loader identity mapping remains valid until the
+        //    halt-only hardware-probe path stops.
+        // 4. Pointer ownership: volatile write targets device-owned MMIO, not
+        //    Rust-owned memory.
+        // 5. Alignment: the command argument register is 32-bit aligned.
+        // 6. Mapped length: `offset + 4 <= SDHCI_REGISTER_WINDOW_LEN`.
+        // 7. Concurrency: boot is single-core and SDHCI interrupts, DMA, and
+        //    data transfers remain disabled.
+        // 8. Violation: invalid firmware enumeration could fault or program
+        //    the wrong register; typed PCI/BAR filtering narrows the write
+        //    surface before MMIO access.
+        // SAFETY: the detailed invariant above applies to this volatile dword write.
+        unsafe { core::ptr::write_volatile(address as *mut u32, value) };
         Ok(())
     }
 }
@@ -571,8 +994,8 @@ mod tests {
             SDHCI_POWER_BUS_ON | SDHCI_POWER_VOLTAGE_33
         );
         assert_eq!(
-            io.writes,
-            [
+            &io.writes[..io.write_count],
+            &[
                 FakeWrite::U8(SDHCI_SOFTWARE_RESET_OFFSET, SDHCI_SOFTWARE_RESET_ALL),
                 FakeWrite::U16(SDHCI_CLOCK_CONTROL_OFFSET, SDHCI_CLOCK_INTERNAL_ENABLE),
                 FakeWrite::U8(
@@ -581,7 +1004,12 @@ mod tests {
                 ),
             ]
         );
-        assert!(io.writes.iter().all(|write| !write.touches_media_path()));
+        assert!(
+            io.writes
+                .iter()
+                .take(io.write_count)
+                .all(|write| !write.touches_media_path())
+        );
     }
 
     #[test]
@@ -601,16 +1029,103 @@ mod tests {
         );
     }
 
+    #[test]
+    fn encodes_identification_commands_without_data_present() {
+        assert_eq!(
+            sdhci_command_word(0, SdhciResponseKind::None, false, false),
+            0x0000
+        );
+        assert_eq!(
+            sdhci_command_word(1, SdhciResponseKind::Short, false, false),
+            0x0102
+        );
+        assert_eq!(
+            sdhci_command_word(2, SdhciResponseKind::Long, true, false),
+            0x0209
+        );
+        assert_eq!(
+            sdhci_command_word(3, SdhciResponseKind::Short, true, true),
+            0x031A
+        );
+        assert_eq!(
+            sdhci_command_word(9, SdhciResponseKind::Long, true, false),
+            0x0909
+        );
+        assert_eq!(
+            sdhci_command_word(9, SdhciResponseKind::Long, true, false)
+                & SDHCI_COMMAND_DATA_PRESENT,
+            0
+        );
+    }
+
+    #[test]
+    fn selects_conservative_identification_clock_from_capabilities() {
+        assert_eq!(
+            identification_clock_control((200u32) << 8),
+            Ok(SDHCI_CLOCK_INTERNAL_ENABLE | 0x0040)
+        );
+        assert_eq!(
+            identification_clock_control((52u32) << 8),
+            Ok(SDHCI_CLOCK_INTERNAL_ENABLE | 0x8000)
+        );
+        assert_eq!(
+            identification_clock_control(0),
+            Err(EmmcIdentificationError::BaseClockUnavailable)
+        );
+    }
+
+    #[test]
+    fn identifies_emmc_without_touching_block_data_registers() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        io.cmd1_ready_after_attempts = 1;
+
+        let report = identify_emmc_with_io(&mut io).unwrap();
+
+        assert_eq!(report.ocr, EMMC_OCR_BUSY | EMMC_OCR_IDENTIFICATION_ARG);
+        assert_eq!(report.relative_card_address, EMMC_IDENTIFICATION_RCA);
+        assert_eq!(report.cid, FakeSdhciIo::CID_RESPONSE);
+        assert_eq!(report.csd, FakeSdhciIo::CSD_RESPONSE);
+        assert_eq!(io.command_indices(), &[0, 1, 2, 3, 9]);
+        assert!(io.writes.iter().take(io.write_count).any(|write| *write
+            == FakeWrite::U16(
+                SDHCI_NORMAL_INTERRUPT_STATUS_ENABLE_OFFSET,
+                SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE | SDHCI_NORMAL_INTERRUPT_ERROR,
+            )));
+        assert!(io.writes.iter().take(io.write_count).any(|write| *write
+            == FakeWrite::U16(
+                SDHCI_ERROR_INTERRUPT_STATUS_ENABLE_OFFSET,
+                SDHCI_ERROR_INTERRUPT_ALL,
+            )));
+        assert!(
+            io.writes
+                .iter()
+                .take(io.write_count)
+                .all(|write| !write.touches_block_data_path())
+        );
+    }
+
+    #[test]
+    fn cmd1_busy_polling_has_typed_timeout() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        io.cmd1_ready_after_attempts = EMMC_OCR_ATTEMPT_LIMIT + 1;
+
+        assert_eq!(
+            identify_emmc_with_io(&mut io),
+            Err(EmmcIdentificationError::CardBusyTimeout)
+        );
+    }
+
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     enum FakeWrite {
         U8(u64, u8),
         U16(u64, u16),
+        U32(u64, u32),
     }
 
     impl FakeWrite {
         fn touches_media_path(self) -> bool {
             let offset = match self {
-                Self::U8(offset, _) | Self::U16(offset, _) => offset,
+                Self::U8(offset, _) | Self::U16(offset, _) | Self::U32(offset, _) => offset,
             };
             matches!(
                 offset,
@@ -625,36 +1140,106 @@ mod tests {
                     | SDHCI_ADMA_SYSTEM_ADDRESS_OFFSET
             )
         }
+
+        fn touches_block_data_path(self) -> bool {
+            let offset = match self {
+                Self::U8(offset, _) | Self::U16(offset, _) | Self::U32(offset, _) => offset,
+            };
+            matches!(
+                offset,
+                SDHCI_TRANSFER_MODE_OFFSET
+                    | SDHCI_BUFFER_DATA_PORT_OFFSET
+                    | SDHCI_BLOCK_SIZE_OFFSET
+                    | SDHCI_BLOCK_COUNT_OFFSET
+                    | SDHCI_DMA_ADDRESS_OFFSET
+                    | SDHCI_ADMA_SYSTEM_ADDRESS_OFFSET
+            )
+        }
     }
+
+    const MAX_FAKE_WRITES: usize = 8192;
 
     struct FakeSdhciIo {
         capabilities_low: u32,
         reset_control: u8,
         clock_control: u16,
         power_control: u8,
+        present_state: u32,
+        normal_interrupt_status: u16,
+        error_interrupt_status: u16,
+        response: [u32; 4],
+        last_argument: u32,
+        command_indices: [u8; EMMC_OCR_ATTEMPT_LIMIT + 4],
+        command_count: usize,
+        cmd1_attempts: usize,
+        cmd1_ready_after_attempts: usize,
         reset_reads_before_clear: usize,
         clock_reads_before_stable: usize,
-        writes: [FakeWrite; 3],
+        writes: [FakeWrite; MAX_FAKE_WRITES],
         write_count: usize,
     }
 
     impl FakeSdhciIo {
+        const CID_RESPONSE: [u32; 4] = [0x1122_3344, 0x5566_7788, 0x99AA_BBCC, 0xDDEE_F001];
+        const CSD_RESPONSE: [u32; 4] = [0x1234_5678, 0x9ABC_DEF0, 0x0BAD_C0DE, 0xCAFE_BABE];
+
         fn new(capabilities_low: u32) -> Self {
             Self {
                 capabilities_low,
                 reset_control: 0,
                 clock_control: 0,
                 power_control: 0,
+                present_state: 0,
+                normal_interrupt_status: 0,
+                error_interrupt_status: 0,
+                response: [0; 4],
+                last_argument: 0,
+                command_indices: [0; EMMC_OCR_ATTEMPT_LIMIT + 4],
+                command_count: 0,
+                cmd1_attempts: 0,
+                cmd1_ready_after_attempts: 1,
                 reset_reads_before_clear: 0,
                 clock_reads_before_stable: 0,
-                writes: [FakeWrite::U8(0, 0); 3],
+                writes: [FakeWrite::U8(0, 0); MAX_FAKE_WRITES],
                 write_count: 0,
             }
         }
 
         fn push_write(&mut self, write: FakeWrite) {
+            assert!(self.write_count < self.writes.len());
             self.writes[self.write_count] = write;
             self.write_count += 1;
+        }
+
+        fn command_indices(&self) -> &[u8] {
+            &self.command_indices[..self.command_count]
+        }
+
+        fn record_command(&mut self, command_word: u16) {
+            let command_index = ((command_word >> 8) & 0x3F) as u8;
+            assert!(self.command_count < self.command_indices.len());
+            self.command_indices[self.command_count] = command_index;
+            self.command_count += 1;
+            self.normal_interrupt_status = SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE;
+            self.error_interrupt_status = 0;
+            self.response = match command_index {
+                1 => {
+                    self.cmd1_attempts += 1;
+                    let ready_bit = if self.cmd1_attempts >= self.cmd1_ready_after_attempts {
+                        EMMC_OCR_BUSY
+                    } else {
+                        0
+                    };
+                    [ready_bit | EMMC_OCR_IDENTIFICATION_ARG, 0, 0, 0]
+                }
+                2 => Self::CID_RESPONSE,
+                3 => [0, 0, 0, 0],
+                9 => {
+                    assert_eq!(self.last_argument, u32::from(EMMC_IDENTIFICATION_RCA) << 16);
+                    Self::CSD_RESPONSE
+                }
+                _ => [0, 0, 0, 0],
+            };
         }
     }
 
@@ -686,15 +1271,20 @@ mod tests {
                         self.clock_control
                     }
                 }
-                SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET | SDHCI_ERROR_INTERRUPT_STATUS_OFFSET => 0,
+                SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET => self.normal_interrupt_status,
+                SDHCI_ERROR_INTERRUPT_STATUS_OFFSET => self.error_interrupt_status,
                 _ => 0,
             })
         }
 
         fn read_u32(&mut self, offset: u64) -> Result<u32, SdhciInitializationError> {
             Ok(match offset {
-                SDHCI_PRESENT_STATE_OFFSET => 0x01FF_00F0,
+                SDHCI_PRESENT_STATE_OFFSET => self.present_state,
                 SDHCI_CAPABILITIES_LOW_OFFSET => self.capabilities_low,
+                SDHCI_RESPONSE_OFFSET => self.response[0],
+                SDHCI_RESPONSE_1_OFFSET => self.response[1],
+                SDHCI_RESPONSE_2_OFFSET => self.response[2],
+                SDHCI_RESPONSE_3_OFFSET => self.response[3],
                 _ => 0,
             })
         }
@@ -713,6 +1303,20 @@ mod tests {
             self.push_write(FakeWrite::U16(offset, value));
             if offset == SDHCI_CLOCK_CONTROL_OFFSET {
                 self.clock_control = value;
+            } else if offset == SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET {
+                self.normal_interrupt_status &= !value;
+            } else if offset == SDHCI_ERROR_INTERRUPT_STATUS_OFFSET {
+                self.error_interrupt_status &= !value;
+            } else if offset == SDHCI_COMMAND_OFFSET {
+                self.record_command(value);
+            }
+            Ok(())
+        }
+
+        fn write_u32(&mut self, offset: u64, value: u32) -> Result<(), SdhciInitializationError> {
+            self.push_write(FakeWrite::U32(offset, value));
+            if offset == SDHCI_ARGUMENT_OFFSET {
+                self.last_argument = value;
             }
             Ok(())
         }

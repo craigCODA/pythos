@@ -20,7 +20,9 @@ DEFAULT_ESP = ROOT / "image" / "esp"
 DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
 DEFAULT_STORAGE_IMAGE = ROOT / "target" / "pythos-store.img"
+DEFAULT_EMMC_IMAGE = ROOT / "target" / "pythos-emmc.img"
 DEFAULT_STORAGE_SIZE_BYTES = 16 * 1024 * 1024
+DEFAULT_EMMC_SIZE_BYTES = 32 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 20.0
 SUCCESS_MARKER = "PYTHOS:CORE:MILESTONE_1_COMPLETE"
 DEBUG_EXIT_CODES = {
@@ -218,6 +220,17 @@ def main() -> int:
         action="store_true",
         help="attach an SDHCI PCI controller for probe-only register discovery",
     )
+    parser.add_argument(
+        "--emmc",
+        action="store_true",
+        help="attach a QEMU eMMC card behind --sdhci for identification-only probing",
+    )
+    parser.add_argument(
+        "--emmc-image",
+        type=Path,
+        default=DEFAULT_EMMC_IMAGE,
+        help="storage image for --emmc; created if missing",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -234,6 +247,8 @@ def main() -> int:
         raise SystemExit("--esp and --iso are mutually exclusive")
     if args.ahci_storage_image and not args.ahci:
         raise SystemExit("--ahci-storage-image requires --ahci")
+    if args.emmc and not args.sdhci:
+        raise SystemExit("--emmc requires --sdhci")
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
@@ -327,6 +342,14 @@ def main() -> int:
             "-device",
             "sdhci-pci,id=pythos_sdhci,bus=pcie.0,addr=0x6",
         ]
+        if args.emmc:
+            ensure_storage_image(args.emmc_image, DEFAULT_EMMC_SIZE_BYTES)
+            command += [
+                "-drive",
+                f"if=none,id=pythos_emmc,format=raw,file={args.emmc_image}",
+                "-device",
+                "emmc,drive=pythos_emmc,bus=sd-bus",
+            ]
     if not args.no_virtio_blk:
         ensure_storage_image(args.storage_image)
         command += [
