@@ -62,7 +62,7 @@
 - [x] **Step 1: Add `PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT_READY` to required markers.**
 - [x] **Step 2: Run `python scripts/test-hardware-probe.py`.**
 - [x] **Step 3: Run `cargo build -p pythos-core --target x86_64-unknown-none --features verify`.**
-- [ ] **Step 4: Commit, push to `origin/object-shell`, and deploy the rebuilt ESP to Disk 2 Partition 2.**
+- [x] **Step 4: Commit, push to `origin/object-shell`, and deploy the rebuilt ESP to Disk 2 Partition 2.**
 
 ## Verification Results
 
@@ -87,4 +87,18 @@ HARDWARE_PROBE_TEST_OK
 
 cargo build -p pythos-core --target x86_64-unknown-none --features verify
 finished
+
+git push origin HEAD:object-shell
+124911f pushed to origin/object-shell
+
+target/deploy-usb-esp.ps1
+USB_ESP_DEPLOY_OK
+
+real laptop no-serial framebuffer boot
+sdhci init
+reset 00
+clock 0003
+power 0F
+state 01FF0000
+ints 00000000
 ```

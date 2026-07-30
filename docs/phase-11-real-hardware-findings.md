@@ -73,8 +73,24 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   - `SLOT_INTERRUPT_STATUS/HOST_CONTROLLER_VERSION` (`BAR0+0xFC`) =
     `0x06030000`
   This proves physical BAR0 register visibility on that laptop, not media
-  access. SDHCI initialization, eMMC command sequencing, partition discovery,
-  filesystems, interrupt-driven storage, and DMA isolation remain later work.
+  access.
+  A follow-up 2026-07-30 no-serial framebuffer boot of commit `124911f`
+  reached `sdhci init`, preserved `no disk writes`, and read:
+  - selected controller count = `0x0000000000000002`
+  - BDF = `01:00.0`
+  - vendor/device = `1217:8620`
+  - class/subclass/programming-interface = `08/05/01`
+  - BAR0 = `0x00000000E8B01000`
+  - reset control = `0x00`
+  - clock control = `0x0003`
+  - power control = `0x0F`
+  - present state = `0x01FF0000`
+  - interrupt status = `0x00000000`
+  This proves the physical SDHCI controller accepted the bounded reset,
+  internal-clock, and bus-power initialization sequence from ADR 0058. It does
+  not prove eMMC media support. eMMC command sequencing, card/device
+  identification, partition discovery, filesystems, interrupt-driven storage,
+  and DMA isolation remain later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
