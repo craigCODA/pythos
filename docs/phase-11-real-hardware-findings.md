@@ -93,10 +93,17 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   2026-07-30 QEMU acceptance boot with `sdhci-pci` plus an attached `emmc`
   device emitted OCR/RCA/CID/CSD markers and
   `PYTHOS:CORE:HARDWARE_PROBE:EMMC_IDENTIFICATION_READY`, while preserving
-  `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`. This proves the command-path
-  sequence in QEMU only; the physical laptop has not yet run this slice.
-  Partition discovery, filesystems, interrupt-driven storage, block reads,
-  block writes, and DMA isolation remain later work.
+  `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`. A follow-up 2026-07-30
+  no-serial framebuffer boot of commit `e808bda` reached the physical eMMC
+  identification screen on the same SDHCI/eMMC laptop and showed:
+  - `OCR` = `0xC0FF8080`
+  - `CID0` = `0x00D35C77`
+  - `CID1` = `0x34471800`
+  - `CSD0` = `0xEF8A4040`
+  This proves the physical eMMC device answered the bounded identification
+  command sequence after SDHCI initialization, still with no block data path and
+  no disk writes. Partition discovery, filesystems, interrupt-driven storage,
+  block reads, block writes, and DMA isolation remain later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
