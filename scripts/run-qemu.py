@@ -213,6 +213,11 @@ def main() -> int:
         type=Path,
         help="storage image for --ahci; defaults to --storage-image when omitted",
     )
+    parser.add_argument(
+        "--sdhci",
+        action="store_true",
+        help="attach an SDHCI PCI controller for probe-only register discovery",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -316,6 +321,11 @@ def main() -> int:
             ),
             "-device",
             "ide-hd,drive=pythos_ahci_store,bus=pythos_ahci.0,bootindex=-1",
+        ]
+    if args.sdhci:
+        command += [
+            "-device",
+            "sdhci-pci,id=pythos_sdhci,bus=pcie.0,addr=0x6",
         ]
     if not args.no_virtio_blk:
         ensure_storage_image(args.storage_image)

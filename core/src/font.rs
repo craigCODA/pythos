@@ -398,6 +398,16 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
             0b0111_1100,
             0,
         ],
+        b'p' => [
+            0,
+            0,
+            0b1111_1100,
+            0b1100_0110,
+            0b1100_0110,
+            0b1111_1100,
+            0b1100_0000,
+            0b1100_0000,
+        ],
         b'r' => [
             0,
             0,
@@ -496,7 +506,7 @@ mod tests {
 
     #[test]
     fn hardware_probe_identity_screen_has_fixed_boot_glyphs() {
-        for byte in b"PythOSsdhci emmcno disk writescountbdfvidclasssubifbar0123456789ABCDEF " {
+        for byte in b"PythOSsdhci emmcregsno disk writescountbdfvidclasssubifbarstatecapmaxcurslotver0123456789ABCDEF " {
             assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
         }
     }

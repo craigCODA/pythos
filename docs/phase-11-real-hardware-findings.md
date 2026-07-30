@@ -57,11 +57,15 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
     harness, machine-specific, historically very hard. Investigation only, and
     only after HDA works.
 - **Storage:** ADR 0054 adds a QEMU-verified polling AHCI backend, selected only
-  when legacy virtio-blk is absent. It is the tractable SATA path to validate
-  on physical hardware next, but a passing QEMU AHCI boot is not yet a claim
-  that the laptop's physical storage controller is supported. NVMe, partition
-  discovery, filesystems, interrupt-driven storage, and DMA isolation remain
-  later work.
+  when legacy virtio-blk is absent. Physical AHCI testing on the development PC
+  remains off limits because its AHCI-visible drive contains live data.
+  Probe-only hardware builds on the blank laptop identified an SDHCI/eMMC-class
+  PCI function at BDF `01:00.0`, vendor/device `1217:8620`,
+  class/subclass/programming-interface `08/05/01`, BAR0
+  `0x00000000E3B01000`, BAR5 `0x0000000000000000`. ADR 0057 adds only a
+  read-only BAR0 register snapshot for this controller; SDHCI initialization,
+  eMMC command sequencing, partition discovery, filesystems,
+  interrupt-driven storage, and DMA isolation remain later work.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

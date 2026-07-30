@@ -6,13 +6,14 @@
 
 #[cfg(feature = "hardware-probe")]
 use crate::framebuffer;
+use crate::sdhci_probe::SdhciRegisterSnapshot;
 use crate::storage_probe::{
     MemoryBar, StorageController, StorageControllerKind, StorageProbeReport,
 };
 #[cfg(feature = "hardware-probe")]
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
-const PROBE_SCREEN_MAX_LINES: usize = 9;
+const PROBE_SCREEN_MAX_LINES: usize = 13;
 const PROBE_LINE_MAX_BYTES: usize = 32;
 
 #[derive(Clone, Copy)]
@@ -90,13 +91,30 @@ impl ProbeScreen {
 }
 
 pub fn build_screen(report: &StorageProbeReport) -> ProbeScreen {
+    build_screen_with_sdhci_snapshot(report, None)
+}
+
+pub fn build_screen_with_sdhci_snapshot(
+    report: &StorageProbeReport,
+    sdhci_snapshot: Option<SdhciRegisterSnapshot>,
+) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
 
     let selected = select_controller(report);
     match selected {
         Some(controller) => {
-            if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+            let selected_sdhci_snapshot =
+                if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+                    sdhci_snapshot
+                } else {
+                    None
+                };
+            if controller.kind == StorageControllerKind::SdhciEmmcCandidate
+                && selected_sdhci_snapshot.is_some()
+            {
+                push_text(&mut screen, "sdhci regs");
+            } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
                 push_text(&mut screen, "sdhci emmc");
             } else {
                 push_text(&mut screen, "other storage");
@@ -106,8 +124,13 @@ pub fn build_screen(report: &StorageProbeReport) -> ProbeScreen {
             push_bdf(&mut screen, controller);
             push_vid_did(&mut screen, controller);
             push_class(&mut screen, controller);
-            push_bar(&mut screen, "bar0 ", controller.bar0);
-            push_bar(&mut screen, "bar5 ", controller.bar5);
+            if let Some(snapshot) = selected_sdhci_snapshot {
+                push_bar_base(&mut screen, "bar0 ", snapshot.bar0_base);
+                push_sdhci_snapshot(&mut screen, snapshot);
+            } else {
+                push_bar(&mut screen, "bar0 ", controller.bar0);
+                push_bar(&mut screen, "bar5 ", controller.bar5);
+            }
         }
         None => {
             push_text(&mut screen, "no storage");
@@ -123,8 +146,9 @@ pub fn build_screen(report: &StorageProbeReport) -> ProbeScreen {
 pub fn render(
     framebuffer_info: &PythFramebufferInfo,
     report: &StorageProbeReport,
+    sdhci_snapshot: Option<SdhciRegisterSnapshot>,
 ) -> Result<(), ()> {
-    let screen = build_screen(report);
+    let screen = build_screen_with_sdhci_snapshot(report, sdhci_snapshot);
     let mut lines = [""; PROBE_SCREEN_MAX_LINES];
     let mut index = 0;
     while index < screen.line_count() {
@@ -194,9 +218,33 @@ fn push_class(screen: &mut ProbeScreen, controller: StorageController) {
 }
 
 fn push_bar(screen: &mut ProbeScreen, label: &str, bar: Option<MemoryBar>) {
+    push_bar_base(screen, label, bar_base(bar));
+}
+
+fn push_bar_base(screen: &mut ProbeScreen, label: &str, base: u64) {
     let mut line = ProbeLine::new();
     line.push_str(label);
-    line.push_hex(bar_base(bar), 16);
+    line.push_hex(base, 16);
+    screen.push(line);
+}
+
+fn push_sdhci_snapshot(screen: &mut ProbeScreen, snapshot: SdhciRegisterSnapshot) {
+    push_u32(screen, "state ", snapshot.present_state);
+    push_u32(screen, "cap0 ", snapshot.capabilities_low);
+    push_u32(screen, "cap1 ", snapshot.capabilities_high);
+    push_u32(screen, "maxcur ", snapshot.max_current_capabilities);
+    push_u32(
+        screen,
+        "slotver ",
+        (u32::from(snapshot.host_controller_version) << 16)
+            | u32::from(snapshot.slot_interrupt_status),
+    );
+}
+
+fn push_u32(screen: &mut ProbeScreen, label: &str, value: u32) {
+    let mut line = ProbeLine::new();
+    line.push_str(label);
+    line.push_hex(u64::from(value), 8);
     screen.push(line);
 }
 
@@ -290,5 +338,35 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn formats_sdhci_register_snapshot_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+        let snapshot = crate::sdhci_probe::SdhciRegisterSnapshot {
+            bar0_base: 0x0000_0000_E3B0_1000,
+            present_state: 0x1122_3344,
+            capabilities_low: 0x5566_7788,
+            capabilities_high: 0x99AA_BBCC,
+            max_current_capabilities: 0xDDEE_F001,
+            slot_interrupt_status: 0x0001,
+            host_controller_version: 0x0203,
+        };
+
+        let screen = build_screen_with_sdhci_snapshot(&report, Some(snapshot));
+
+        assert_eq!(screen.line(1), Some("sdhci regs"));
+        assert_eq!(screen.line(7), Some("bar0 00000000E3B01000"));
+        assert_eq!(screen.line(8), Some("state 11223344"));
+        assert_eq!(screen.line(9), Some("cap0 55667788"));
+        assert_eq!(screen.line(10), Some("cap1 99AABBCC"));
+        assert_eq!(screen.line(11), Some("maxcur DDEEF001"));
+        assert_eq!(screen.line(12), Some("slotver 02030001"));
     }
 }
