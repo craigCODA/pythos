@@ -506,7 +506,7 @@ mod tests {
 
     #[test]
     fn hardware_probe_identity_screen_has_fixed_boot_glyphs() {
-        for byte in b"PythOSsdhci emmcregsno disk writescountbdfvidclasssubifbarstatecapmaxcurslotver0123456789ABCDEF " {
+        for byte in b"PythOSsdhci emmcregsinitno disk writescountbdfvidclasssubifbarstatecapmaxcurslotverresetclockpowerints0123456789ABCDEF " {
             assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
         }
     }

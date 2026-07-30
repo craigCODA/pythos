@@ -14,19 +14,31 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
 
     let report = storage_probe::run_probe();
     storage_probe::emit_serial_report(&report);
-    let sdhci_snapshot = select_sdhci_controller(&report).and_then(|controller| {
+    let selected_sdhci = select_sdhci_controller(&report);
+    let mut sdhci_snapshot = None;
+    let mut sdhci_init = None;
+    if let Some(controller) = selected_sdhci {
         match sdhci_probe::snapshot_controller(controller) {
             Ok(snapshot) => {
                 emit_sdhci_snapshot(snapshot);
                 serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:SDHCI_REGISTERS_READY");
-                Some(snapshot)
+                sdhci_snapshot = Some(snapshot);
+                match sdhci_probe::initialize_controller(controller) {
+                    Ok(init) => {
+                        emit_sdhci_init(init);
+                        serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT_READY");
+                        sdhci_init = Some(init);
+                    }
+                    Err(error) => {
+                        serial::write_line(error.marker());
+                    }
+                }
             }
             Err(error) => {
                 serial::write_line(error.marker());
-                None
             }
         }
-    });
+    }
 
     let final_color =
         if report.contains_kind(storage_probe::StorageControllerKind::SdhciEmmcCandidate) {
@@ -40,7 +52,9 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
         };
 
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    if hardware_probe_screen::render(&boot_info.framebuffer, &report, sdhci_snapshot).is_ok() {
+    if hardware_probe_screen::render(&boot_info.framebuffer, &report, sdhci_snapshot, sdhci_init)
+        .is_ok()
+    {
         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_READY");
     } else {
         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_FAILED");
@@ -91,5 +105,32 @@ fn emit_sdhci_snapshot(snapshot: sdhci_probe::SdhciRegisterSnapshot) {
     serial::write_hex_u64(
         "PYTHOS:CORE:HARDWARE_PROBE:SDHCI:HOST_CONTROLLER_VERSION=",
         u64::from(snapshot.host_controller_version),
+    );
+}
+
+fn emit_sdhci_init(init: sdhci_probe::SdhciInitializationReport) {
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:RESET=",
+        u64::from(init.reset_control),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:CLOCK=",
+        u64::from(init.clock_control),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:POWER=",
+        u64::from(init.power_control),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:PRESENT_STATE=",
+        u64::from(init.present_state),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:NORMAL_INTERRUPT_STATUS=",
+        u64::from(init.normal_interrupt_status),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:SDHCI_INIT:ERROR_INTERRUPT_STATUS=",
+        u64::from(init.error_interrupt_status),
     );
 }
