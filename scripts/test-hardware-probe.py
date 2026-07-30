@@ -11,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "hardware-probe-com1.log"
+EMMC_READ_IMAGE = TARGET / "hardware-probe-emmc-read.img"
+EMMC_READ_IMAGE_SIZE_BYTES = 32 * 1024 * 1024
 SUCCESS_MARKER = "PYTHOS:CORE:HARDWARE_PROBE_READY"
 REQUIRED_MARKERS = (
     "PYTHOS:CORE:HARDWARE_PROBE:ENTER",
@@ -25,6 +27,12 @@ REQUIRED_MARKERS = (
     "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CID0=",
     "PYTHOS:CORE:HARDWARE_PROBE:EMMC:CSD0=",
     "PYTHOS:CORE:HARDWARE_PROBE:EMMC_IDENTIFICATION_READY",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:LBA=0x0000000000000000",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:BLOCK_LEN=0x0000000000000200",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:FIRST_DWORD=0x0000000003020100",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:CHECKSUM=0x000000000000FF00",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:NONZERO_BYTES=0x00000000000001FE",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ONLY_BLOCK_READY",
     "PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_READY",
     "PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES",
     SUCCESS_MARKER,
@@ -35,6 +43,7 @@ FORBIDDEN_MARKERS = (
     "PYTHOS:CORE:OBJECT_STORE:PERSISTED",
     "PYTHOS:SHELL:RING3_ENTER",
     "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:",
 )
 
 
@@ -77,9 +86,18 @@ def build_probe_image() -> None:
     run([sys.executable, "scripts/build-image.py"])
 
 
+def prepare_emmc_read_image() -> None:
+    TARGET.mkdir(parents=True, exist_ok=True)
+    pattern = bytes(range(256)) * 2
+    with EMMC_READ_IMAGE.open("wb") as image:
+        image.write(pattern)
+        image.truncate(EMMC_READ_IMAGE_SIZE_BYTES)
+
+
 def run_probe_boot() -> str:
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
+    prepare_emmc_read_image()
     run(
         [
             sys.executable,
@@ -93,6 +111,8 @@ def run_probe_boot() -> str:
             "--no-audio-device",
             "--sdhci",
             "--emmc",
+            "--emmc-image",
+            str(EMMC_READ_IMAGE),
             "--expect-outcome",
             "success",
         ]

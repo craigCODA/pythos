@@ -104,6 +104,19 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   command sequence after SDHCI initialization, still with no block data path and
   no disk writes. Partition discovery, filesystems, interrupt-driven storage,
   block reads, block writes, and DMA isolation remain later work.
+  ADR 0060 adds one bounded read-only PIO block transfer after identification:
+  select RCA `1`, set block length `512`, read LBA `0` with `CMD17`, and report
+  only first dword/checksum/nonzero byte count. A 2026-07-30 QEMU acceptance
+  boot with a disposable patterned eMMC image emitted:
+  - `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:FIRST_DWORD=0x0000000003020100`
+  - `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:CHECKSUM=0x000000000000FF00`
+  - `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:NONZERO_BYTES=0x00000000000001FE`
+  - `PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ONLY_BLOCK_READY`
+  - `PYTHOS:CORE:HARDWARE_PROBE:NO_DISK_WRITES`
+  This proves the QEMU SDHCI/eMMC PIO read path for one sector. It does not yet
+  prove the physical O2 Micro `1217:8620` eMMC data path; the next real laptop
+  boot should show either `emmc read` with `lba0`/`first`/`csum`/`bytes`, or a
+  typed `EMMC_READ_ERROR:*` marker on serial-capable targets.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

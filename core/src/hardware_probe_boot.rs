@@ -1,8 +1,9 @@
 //! Probe-only real-hardware boot path.
 //!
 //! This feature is for machines whose real storage controller is not yet a
-//! supported PythOS block backend. It stops after PCI storage discovery so the
-//! target disk is never read, written, reset, or selected as an object store.
+//! supported PythOS block backend. It stops inside the bounded SDHCI/eMMC
+//! hardware probe so the target disk is never written or selected as an object
+//! store.
 
 use crate::memory::physical::PhysicalMemory;
 use crate::{fb_debug, hardware_probe_screen, sdhci_probe, serial, storage_probe};
@@ -18,6 +19,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     let mut sdhci_snapshot = None;
     let mut sdhci_init = None;
     let mut emmc_identification = None;
+    let mut emmc_read = None;
     if let Some(controller) = selected_sdhci {
         match sdhci_probe::snapshot_controller(controller) {
             Ok(snapshot) => {
@@ -36,6 +38,18 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
                                     "PYTHOS:CORE:HARDWARE_PROBE:EMMC_IDENTIFICATION_READY",
                                 );
                                 emmc_identification = Some(identification);
+                                match sdhci_probe::read_emmc_lba0_controller(controller) {
+                                    Ok(read) => {
+                                        emit_emmc_read(read);
+                                        serial::write_line(
+                                            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ONLY_BLOCK_READY",
+                                        );
+                                        emmc_read = Some(read);
+                                    }
+                                    Err(error) => {
+                                        emit_emmc_read_error(error);
+                                    }
+                                }
                             }
                             Err(error) => {
                                 emit_emmc_error(error);
@@ -71,6 +85,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
         sdhci_snapshot,
         sdhci_init,
         emmc_identification,
+        emmc_read,
     )
     .is_ok()
     {
@@ -205,6 +220,37 @@ fn emit_emmc_identification(identification: sdhci_probe::EmmcIdentificationRepor
     );
 }
 
+fn emit_emmc_read(read: sdhci_probe::EmmcReadBlockReport) {
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:LBA=",
+        u64::from(read.block_address),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:BLOCK_LEN=",
+        u64::from(read.block_len),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:FIRST_DWORD=",
+        u64::from(read.first_dword),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:CHECKSUM=",
+        u64::from(read.checksum),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:NONZERO_BYTES=",
+        u64::from(read.nonzero_byte_count),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:FINAL_NORMAL_INTERRUPT_STATUS=",
+        u64::from(read.final_normal_interrupt_status),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ:FINAL_ERROR_INTERRUPT_STATUS=",
+        u64::from(read.final_error_interrupt_status),
+    );
+}
+
 fn emit_emmc_error(error: sdhci_probe::EmmcIdentificationError) {
     serial::write_line(error.marker());
     if let sdhci_probe::EmmcIdentificationError::CommandError {
@@ -225,5 +271,45 @@ fn emit_emmc_error(error: sdhci_probe::EmmcIdentificationError) {
             "PYTHOS:CORE:HARDWARE_PROBE:EMMC_ERROR:ERROR_INTERRUPT_STATUS=",
             u64::from(error_interrupt_status),
         );
+    }
+}
+
+fn emit_emmc_read_error(error: sdhci_probe::EmmcReadBlockError) {
+    serial::write_line(error.marker());
+    match error {
+        sdhci_probe::EmmcReadBlockError::Command(
+            sdhci_probe::EmmcIdentificationError::CommandError {
+                command_index,
+                normal_interrupt_status,
+                error_interrupt_status,
+            },
+        ) => {
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:COMMAND_INDEX=",
+                u64::from(command_index),
+            );
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:NORMAL_INTERRUPT_STATUS=",
+                u64::from(normal_interrupt_status),
+            );
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:ERROR_INTERRUPT_STATUS=",
+                u64::from(error_interrupt_status),
+            );
+        }
+        sdhci_probe::EmmcReadBlockError::DataTransferError {
+            normal_interrupt_status,
+            error_interrupt_status,
+        } => {
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:NORMAL_INTERRUPT_STATUS=",
+                u64::from(normal_interrupt_status),
+            );
+            serial::write_hex_u64(
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ERROR:ERROR_INTERRUPT_STATUS=",
+                u64::from(error_interrupt_status),
+            );
+        }
+        _ => {}
     }
 }
