@@ -55,6 +55,7 @@ pub const SDHCI_PRESENT_STATE_COMMAND_INHIBIT: u32 = 1 << 0;
 pub const SDHCI_PRESENT_STATE_DATA_INHIBIT: u32 = 1 << 1;
 pub const SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE: u16 = 1 << 0;
 pub const SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE: u16 = 1 << 1;
+pub const SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY: u16 = 1 << 4;
 pub const SDHCI_NORMAL_INTERRUPT_BUFFER_READ_READY: u16 = 1 << 5;
 pub const SDHCI_NORMAL_INTERRUPT_ERROR: u16 = 1 << 15;
 pub const SDHCI_ERROR_INTERRUPT_ALL: u16 = 0xFFFF;
@@ -66,6 +67,7 @@ pub const SDHCI_COMMAND_CRC_CHECK: u16 = 0x0008;
 pub const SDHCI_COMMAND_INDEX_CHECK: u16 = 0x0010;
 pub const SDHCI_COMMAND_DATA_PRESENT: u16 = 0x0020;
 
+pub const SDHCI_TRANSFER_MODE_WRITE_DIRECTION: u16 = 0;
 pub const SDHCI_TRANSFER_MODE_READ_DIRECTION: u16 = 1 << 4;
 pub const SDHCI_DATA_TIMEOUT_MAX: u8 = 0x0E;
 
@@ -78,11 +80,15 @@ pub const EMMC_OCR_BUSY: u32 = 1 << 31;
 pub const EMMC_IDENTIFICATION_RCA: u16 = 1;
 pub const EMMC_READ_BLOCK_LEN: u16 = 512;
 pub const EMMC_READ_BLOCK_LBA: u32 = 0;
+pub const EMMC_WRITE_TEST_LBA: u32 = 2048;
+pub const EMMC_STATUS_READY_FOR_DATA: u32 = 1 << 8;
 
 const ONE_GIB: u64 = 1024 * 1024 * 1024;
 const LOADER_IDENTITY_LOWER_BOUND: u64 = 0x0020_0000;
 const LOADER_IDENTITY_UPPER_BOUND_EXCLUSIVE: u64 = 512 * ONE_GIB;
 const SDHCI_IDENTIFICATION_CLOCK_HZ: u32 = 400_000;
+const EMMC_WRITE_TEST_MAGIC: [u8; 16] = *b"PYTHOS_EMMC_WR00";
+const EMMC_WRITE_READY_ATTEMPT_LIMIT: usize = 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SdhciProbeError {
@@ -314,6 +320,142 @@ impl From<SdhciInitializationError> for EmmcReadBlockError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EmmcWriteBlockError {
+    Probe(SdhciProbeError),
+    RegisterIo(SdhciInitializationError),
+    Command {
+        command_index: u8,
+        error: EmmcIdentificationError,
+    },
+    DataInhibitTimeout,
+    BufferWriteReadyTimeout,
+    TransferCompleteTimeout,
+    DataTransferError {
+        normal_interrupt_status: u16,
+        error_interrupt_status: u16,
+    },
+    ProgramCompleteTimeout,
+    Readback(EmmcReadBlockError),
+    ReadbackMismatch,
+}
+
+impl EmmcWriteBlockError {
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Probe(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:SDHCI_PROBE",
+            Self::RegisterIo(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:REGISTER_IO",
+            Self::Command { error, .. } => match error {
+                EmmcIdentificationError::CommandInhibitTimeout => {
+                    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:COMMAND_INHIBIT_TIMEOUT"
+                }
+                EmmcIdentificationError::CommandCompleteTimeout => {
+                    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:COMMAND_COMPLETE_TIMEOUT"
+                }
+                EmmcIdentificationError::CommandError { .. } => {
+                    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:COMMAND_ERROR"
+                }
+                EmmcIdentificationError::UnexpectedResponse => {
+                    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:UNEXPECTED_RESPONSE"
+                }
+                _ => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:COMMAND_PATH",
+            },
+            Self::DataInhibitTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:DATA_INHIBIT_TIMEOUT"
+            }
+            Self::BufferWriteReadyTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:BUFFER_WRITE_READY_TIMEOUT"
+            }
+            Self::TransferCompleteTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:TRANSFER_COMPLETE_TIMEOUT"
+            }
+            Self::DataTransferError { .. } => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:DATA_TRANSFER_ERROR"
+            }
+            Self::ProgramCompleteTimeout => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:PROGRAM_COMPLETE_TIMEOUT"
+            }
+            Self::Readback(_) => "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:READBACK",
+            Self::ReadbackMismatch => {
+                "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_ERROR:READBACK_MISMATCH"
+            }
+        }
+    }
+
+    pub const fn screen_code(self) -> u32 {
+        match self {
+            Self::Probe(_) => 1,
+            Self::RegisterIo(_) => 2,
+            Self::Command { .. } => 3,
+            Self::DataInhibitTimeout => 4,
+            Self::BufferWriteReadyTimeout => 5,
+            Self::TransferCompleteTimeout => 6,
+            Self::DataTransferError { .. } => 7,
+            Self::ProgramCompleteTimeout => 8,
+            Self::Readback(_) => 9,
+            Self::ReadbackMismatch => 10,
+        }
+    }
+
+    pub const fn screen_command_index(self) -> Option<u8> {
+        match self {
+            Self::Command { command_index, .. } => Some(command_index),
+            Self::Readback(error) => error.screen_command_index(),
+            _ => None,
+        }
+    }
+
+    pub const fn screen_normal_interrupt_status(self) -> Option<u16> {
+        match self {
+            Self::Command {
+                error:
+                    EmmcIdentificationError::CommandError {
+                        normal_interrupt_status,
+                        ..
+                    },
+                ..
+            }
+            | Self::DataTransferError {
+                normal_interrupt_status,
+                ..
+            } => Some(normal_interrupt_status),
+            Self::Readback(error) => error.screen_normal_interrupt_status(),
+            _ => None,
+        }
+    }
+
+    pub const fn screen_error_interrupt_status(self) -> Option<u16> {
+        match self {
+            Self::Command {
+                error:
+                    EmmcIdentificationError::CommandError {
+                        error_interrupt_status,
+                        ..
+                    },
+                ..
+            }
+            | Self::DataTransferError {
+                error_interrupt_status,
+                ..
+            } => Some(error_interrupt_status),
+            Self::Readback(error) => error.screen_error_interrupt_status(),
+            _ => None,
+        }
+    }
+}
+
+impl From<SdhciProbeError> for EmmcWriteBlockError {
+    fn from(error: SdhciProbeError) -> Self {
+        Self::Probe(error)
+    }
+}
+
+impl From<SdhciInitializationError> for EmmcWriteBlockError {
+    fn from(error: SdhciInitializationError) -> Self {
+        Self::RegisterIo(error)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SdhciRegisterWindow {
     bar0_base: u64,
     length: u64,
@@ -370,6 +512,21 @@ pub struct EmmcReadBlockReport {
     pub first_dword: u32,
     pub checksum: u32,
     pub nonzero_byte_count: u32,
+    pub final_normal_interrupt_status: u16,
+    pub final_error_interrupt_status: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EmmcWriteBlockReport {
+    pub bar0_base: u64,
+    pub block_address: u32,
+    pub block_len: u16,
+    pub first_dword: u32,
+    pub checksum: u32,
+    pub readback_first_dword: u32,
+    pub readback_checksum: u32,
+    pub readback_nonzero_byte_count: u32,
+    pub readback_matches: bool,
     pub final_normal_interrupt_status: u16,
     pub final_error_interrupt_status: u16,
 }
@@ -436,6 +593,32 @@ pub fn read_emmc_lba0_controller(
         mapped_base: window.bar0_base(),
     };
     let mut report = read_emmc_lba0_with_io(&mut io)?;
+    report.bar0_base = window.bar0_base();
+    Ok(report)
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_emmc_test_block_controller(
+    controller: StorageController,
+) -> Result<EmmcWriteBlockReport, EmmcWriteBlockError> {
+    let window = prepare_register_window(controller)?;
+    let mut io = SdhciMmioWindow {
+        mapped_base: window.bar0_base(),
+    };
+    let mut report = write_emmc_test_block_with_io(&mut io)?;
+    report.bar0_base = window.bar0_base();
+    Ok(report)
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_selected_emmc_test_block_controller(
+    controller: StorageController,
+) -> Result<EmmcWriteBlockReport, EmmcWriteBlockError> {
+    let window = prepare_register_window(controller)?;
+    let mut io = SdhciMmioWindow {
+        mapped_base: window.bar0_base(),
+    };
+    let mut report = write_selected_emmc_test_block_with_io(&mut io)?;
     report.bar0_base = window.bar0_base();
     Ok(report)
 }
@@ -588,19 +771,39 @@ pub fn identify_emmc_with_io(
 pub fn read_emmc_lba0_with_io(
     io: &mut impl SdhciRegisterIo,
 ) -> Result<EmmcReadBlockReport, EmmcReadBlockError> {
+    read_emmc_block_with_io(io, EMMC_READ_BLOCK_LBA)
+}
+
+fn read_emmc_block_with_io(
+    io: &mut impl SdhciRegisterIo,
+    block_address: u32,
+) -> Result<EmmcReadBlockReport, EmmcReadBlockError> {
+    let (report, _matches_expected_pattern) =
+        read_emmc_block_with_pattern_check(io, block_address, false, true)?;
+    Ok(report)
+}
+
+fn read_emmc_block_with_pattern_check(
+    io: &mut impl SdhciRegisterIo,
+    block_address: u32,
+    check_write_pattern: bool,
+    select_card: bool,
+) -> Result<(EmmcReadBlockReport, bool), EmmcReadBlockError> {
     enable_read_status_reporting(io)?;
 
-    let _select_status = issue_read_short_command(
-        io,
-        SdhciCommand::new(
-            7,
-            u32::from(EMMC_IDENTIFICATION_RCA) << 16,
-            SdhciResponseKind::ShortBusy,
-            true,
-            true,
-        ),
-    )?;
-    wait_data_not_inhibited(io)?;
+    if select_card {
+        let _select_status = issue_read_short_command(
+            io,
+            SdhciCommand::new(
+                7,
+                u32::from(EMMC_IDENTIFICATION_RCA) << 16,
+                SdhciResponseKind::ShortBusy,
+                true,
+                true,
+            ),
+        )?;
+        wait_data_not_inhibited(io)?;
+    }
 
     let _block_len_status = issue_read_short_command(
         io,
@@ -626,7 +829,7 @@ pub fn read_emmc_lba0_with_io(
         io,
         SdhciCommand::with_data(
             17,
-            EMMC_READ_BLOCK_LBA,
+            block_address,
             SdhciResponseKind::Short,
             true,
             true,
@@ -638,12 +841,16 @@ pub fn read_emmc_lba0_with_io(
     let mut first_dword = 0;
     let mut checksum = 0u32;
     let mut nonzero_byte_count = 0u32;
+    let mut matches_expected_pattern = true;
     let word_count = usize::from(EMMC_READ_BLOCK_LEN) / 4;
     let mut word_index = 0;
     while word_index < word_count {
         let word = io.read_u32(SDHCI_BUFFER_DATA_PORT_OFFSET)?;
         if word_index == 0 {
             first_dword = word;
+        }
+        if check_write_pattern && word != emmc_write_test_word(word_index) {
+            matches_expected_pattern = false;
         }
         let mut byte_index = 0;
         while byte_index < 4 {
@@ -663,15 +870,158 @@ pub fn read_emmc_lba0_with_io(
         SDHCI_NORMAL_INTERRUPT_BUFFER_READ_READY | SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE,
     )?;
 
-    Ok(EmmcReadBlockReport {
+    Ok((
+        EmmcReadBlockReport {
+            bar0_base: 0,
+            block_address,
+            block_len: EMMC_READ_BLOCK_LEN,
+            first_dword,
+            checksum,
+            nonzero_byte_count,
+            final_normal_interrupt_status: io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?,
+            final_error_interrupt_status: io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?,
+        },
+        matches_expected_pattern,
+    ))
+}
+
+pub fn emmc_write_test_word(word_index: usize) -> u32 {
+    let byte_index = word_index * 4;
+    u32::from(emmc_write_test_byte(byte_index))
+        | (u32::from(emmc_write_test_byte(byte_index + 1)) << 8)
+        | (u32::from(emmc_write_test_byte(byte_index + 2)) << 16)
+        | (u32::from(emmc_write_test_byte(byte_index + 3)) << 24)
+}
+
+pub fn emmc_write_test_checksum() -> u32 {
+    let mut checksum = 0u32;
+    let mut index = 0;
+    while index < usize::from(EMMC_READ_BLOCK_LEN) {
+        checksum = checksum.wrapping_add(u32::from(emmc_write_test_byte(index)));
+        index += 1;
+    }
+    checksum
+}
+
+pub fn emmc_write_test_nonzero_byte_count() -> u32 {
+    let mut nonzero_byte_count = 0u32;
+    let mut index = 0;
+    while index < usize::from(EMMC_READ_BLOCK_LEN) {
+        if emmc_write_test_byte(index) != 0 {
+            nonzero_byte_count = nonzero_byte_count.wrapping_add(1);
+        }
+        index += 1;
+    }
+    nonzero_byte_count
+}
+
+fn emmc_write_test_byte(index: usize) -> u8 {
+    if index < EMMC_WRITE_TEST_MAGIC.len() {
+        EMMC_WRITE_TEST_MAGIC[index]
+    } else {
+        (index as u8).wrapping_mul(37).wrapping_add(0x5A)
+    }
+}
+
+pub fn write_emmc_test_block_with_io(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<EmmcWriteBlockReport, EmmcWriteBlockError> {
+    enable_write_status_reporting(io)?;
+
+    let _select_status = issue_write_short_command(
+        io,
+        SdhciCommand::new(
+            7,
+            u32::from(EMMC_IDENTIFICATION_RCA) << 16,
+            SdhciResponseKind::ShortBusy,
+            true,
+            true,
+        ),
+    )?;
+    wait_data_not_inhibited_for_write(io)?;
+
+    write_selected_emmc_test_block_after_status_enabled(io)
+}
+
+pub fn write_selected_emmc_test_block_with_io(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<EmmcWriteBlockReport, EmmcWriteBlockError> {
+    enable_write_status_reporting(io)?;
+    write_selected_emmc_test_block_after_status_enabled(io)
+}
+
+fn write_selected_emmc_test_block_after_status_enabled(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<EmmcWriteBlockReport, EmmcWriteBlockError> {
+    let _block_len_status = issue_write_short_command(
+        io,
+        SdhciCommand::new(
+            16,
+            u32::from(EMMC_READ_BLOCK_LEN),
+            SdhciResponseKind::Short,
+            true,
+            true,
+        ),
+    )?;
+
+    wait_data_not_inhibited_for_write(io)?;
+    io.write_u8(SDHCI_TIMEOUT_CONTROL_OFFSET, SDHCI_DATA_TIMEOUT_MAX)?;
+    io.write_u16(SDHCI_BLOCK_SIZE_OFFSET, EMMC_READ_BLOCK_LEN)?;
+    io.write_u16(SDHCI_BLOCK_COUNT_OFFSET, 1)?;
+    io.write_u16(
+        SDHCI_TRANSFER_MODE_OFFSET,
+        SDHCI_TRANSFER_MODE_WRITE_DIRECTION,
+    )?;
+
+    let _write_status = issue_write_short_command(
+        io,
+        SdhciCommand::with_data(
+            24,
+            EMMC_WRITE_TEST_LBA,
+            SdhciResponseKind::Short,
+            true,
+            true,
+        ),
+    )?;
+
+    wait_buffer_write_ready(io)?;
+
+    let word_count = usize::from(EMMC_READ_BLOCK_LEN) / 4;
+    let mut word_index = 0;
+    while word_index < word_count {
+        io.write_u32(
+            SDHCI_BUFFER_DATA_PORT_OFFSET,
+            emmc_write_test_word(word_index),
+        )?;
+        word_index += 1;
+    }
+
+    wait_write_transfer_complete(io)?;
+    io.write_u16(
+        SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET,
+        SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY | SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE,
+    )?;
+    wait_write_program_complete(io)?;
+
+    let (readback, readback_matches) =
+        read_emmc_block_with_pattern_check(io, EMMC_WRITE_TEST_LBA, true, false)
+            .map_err(EmmcWriteBlockError::Readback)?;
+    if !readback_matches {
+        return Err(EmmcWriteBlockError::ReadbackMismatch);
+    }
+
+    Ok(EmmcWriteBlockReport {
         bar0_base: 0,
-        block_address: EMMC_READ_BLOCK_LBA,
+        block_address: EMMC_WRITE_TEST_LBA,
         block_len: EMMC_READ_BLOCK_LEN,
-        first_dword,
-        checksum,
-        nonzero_byte_count,
-        final_normal_interrupt_status: io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?,
-        final_error_interrupt_status: io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?,
+        first_dword: emmc_write_test_word(0),
+        checksum: emmc_write_test_checksum(),
+        readback_first_dword: readback.first_dword,
+        readback_checksum: readback.checksum,
+        readback_nonzero_byte_count: readback.nonzero_byte_count,
+        readback_matches,
+        final_normal_interrupt_status: readback.final_normal_interrupt_status,
+        final_error_interrupt_status: readback.final_error_interrupt_status,
     })
 }
 
@@ -704,6 +1054,21 @@ fn enable_read_status_reporting(io: &mut impl SdhciRegisterIo) -> Result<(), Emm
     Ok(())
 }
 
+fn enable_write_status_reporting(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcWriteBlockError> {
+    io.write_u16(
+        SDHCI_NORMAL_INTERRUPT_STATUS_ENABLE_OFFSET,
+        SDHCI_NORMAL_INTERRUPT_COMMAND_COMPLETE
+            | SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE
+            | SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY
+            | SDHCI_NORMAL_INTERRUPT_ERROR,
+    )?;
+    io.write_u16(
+        SDHCI_ERROR_INTERRUPT_STATUS_ENABLE_OFFSET,
+        SDHCI_ERROR_INTERRUPT_ALL,
+    )?;
+    Ok(())
+}
+
 fn issue_read_short_command(
     io: &mut impl SdhciRegisterIo,
     command: SdhciCommand,
@@ -717,6 +1082,44 @@ fn issue_read_short_command(
         command_index,
         error,
     })
+}
+
+fn issue_write_short_command(
+    io: &mut impl SdhciRegisterIo,
+    command: SdhciCommand,
+) -> Result<u32, EmmcWriteBlockError> {
+    let command_index = command.index;
+    let response = issue_command(io, command).map_err(|error| EmmcWriteBlockError::Command {
+        command_index,
+        error,
+    })?;
+    expect_short_response(response).map_err(|error| EmmcWriteBlockError::Command {
+        command_index,
+        error,
+    })
+}
+
+fn wait_write_program_complete(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<(), EmmcWriteBlockError> {
+    let mut attempts = 0;
+    while attempts < EMMC_WRITE_READY_ATTEMPT_LIMIT {
+        let status = issue_write_short_command(
+            io,
+            SdhciCommand::new(
+                13,
+                u32::from(EMMC_IDENTIFICATION_RCA) << 16,
+                SdhciResponseKind::Short,
+                true,
+                true,
+            ),
+        )?;
+        if status & EMMC_STATUS_READY_FOR_DATA != 0 {
+            return Ok(());
+        }
+        attempts += 1;
+    }
+    Err(EmmcWriteBlockError::ProgramCompleteTimeout)
 }
 
 pub fn identification_clock_control(capabilities_low: u32) -> Result<u16, EmmcIdentificationError> {
@@ -917,6 +1320,17 @@ fn wait_data_not_inhibited(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcRead
     Err(EmmcReadBlockError::DataInhibitTimeout)
 }
 
+fn wait_data_not_inhibited_for_write(
+    io: &mut impl SdhciRegisterIo,
+) -> Result<(), EmmcWriteBlockError> {
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        if io.read_u32(SDHCI_PRESENT_STATE_OFFSET)? & SDHCI_PRESENT_STATE_DATA_INHIBIT == 0 {
+            return Ok(());
+        }
+    }
+    Err(EmmcWriteBlockError::DataInhibitTimeout)
+}
+
 fn clear_interrupt_status(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcIdentificationError> {
     io.write_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET, 0xFFFF)?;
     io.write_u16(
@@ -978,6 +1392,30 @@ fn wait_buffer_read_ready(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcReadB
     Err(EmmcReadBlockError::BufferReadReadyTimeout)
 }
 
+fn wait_buffer_write_ready(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcWriteBlockError> {
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        let normal_interrupt_status = io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?;
+        let error_interrupt_status = io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?;
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_ERROR != 0
+            || error_interrupt_status != 0
+        {
+            io.write_u16(
+                SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET,
+                normal_interrupt_status,
+            )?;
+            io.write_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET, error_interrupt_status)?;
+            return Err(EmmcWriteBlockError::DataTransferError {
+                normal_interrupt_status,
+                error_interrupt_status,
+            });
+        }
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY != 0 {
+            return Ok(());
+        }
+    }
+    Err(EmmcWriteBlockError::BufferWriteReadyTimeout)
+}
+
 fn wait_transfer_complete(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcReadBlockError> {
     for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
         let normal_interrupt_status = io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?;
@@ -1000,6 +1438,30 @@ fn wait_transfer_complete(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcReadB
         }
     }
     Err(EmmcReadBlockError::TransferCompleteTimeout)
+}
+
+fn wait_write_transfer_complete(io: &mut impl SdhciRegisterIo) -> Result<(), EmmcWriteBlockError> {
+    for _ in 0..SDHCI_COMMAND_POLL_LIMIT {
+        let normal_interrupt_status = io.read_u16(SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET)?;
+        let error_interrupt_status = io.read_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET)?;
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_ERROR != 0
+            || error_interrupt_status != 0
+        {
+            io.write_u16(
+                SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET,
+                normal_interrupt_status,
+            )?;
+            io.write_u16(SDHCI_ERROR_INTERRUPT_STATUS_OFFSET, error_interrupt_status)?;
+            return Err(EmmcWriteBlockError::DataTransferError {
+                normal_interrupt_status,
+                error_interrupt_status,
+            });
+        }
+        if normal_interrupt_status & SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE != 0 {
+            return Ok(());
+        }
+    }
+    Err(EmmcWriteBlockError::TransferCompleteTimeout)
 }
 
 fn read_long_response(io: &mut impl SdhciRegisterIo) -> Result<[u32; 4], EmmcIdentificationError> {
@@ -1616,6 +2078,86 @@ mod tests {
     }
 
     #[test]
+    fn emmc_write_test_pattern_is_fixed() {
+        assert_eq!(EMMC_WRITE_TEST_LBA, 2048);
+        assert_eq!(emmc_write_test_word(0), 0x4854_5950);
+        assert_eq!(emmc_write_test_checksum(), 0x0000_FBD8);
+        assert_eq!(emmc_write_test_nonzero_byte_count(), 0x0000_01FE);
+    }
+
+    #[test]
+    fn writes_test_lba_then_reads_back_without_dma_or_adma() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+
+        let report = write_emmc_test_block_with_io(&mut io).unwrap();
+
+        assert_eq!(report.block_address, EMMC_WRITE_TEST_LBA);
+        assert_eq!(report.block_len, EMMC_READ_BLOCK_LEN);
+        assert_eq!(report.first_dword, 0x4854_5950);
+        assert_eq!(report.checksum, 0x0000_FBD8);
+        assert_eq!(report.readback_first_dword, 0x4854_5950);
+        assert_eq!(report.readback_checksum, 0x0000_FBD8);
+        assert_eq!(report.readback_nonzero_byte_count, 0x0000_01FE);
+        assert!(report.readback_matches);
+        assert_eq!(io.command_indices(), &[7, 16, 24, 13, 16, 17]);
+        assert_eq!(io.last_write_lba, EMMC_WRITE_TEST_LBA);
+        assert_eq!(
+            io.data_port_write_count,
+            usize::from(EMMC_READ_BLOCK_LEN) / 4
+        );
+        assert!(
+            io.writes
+                .iter()
+                .take(io.write_count)
+                .all(|write| !write.touches_dma_path())
+        );
+    }
+
+    #[test]
+    fn selected_write_path_does_not_reselect_after_lba0_read() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        io.seed_read_block_pattern();
+
+        let _read = read_emmc_lba0_with_io(&mut io).unwrap();
+        let report = write_selected_emmc_test_block_with_io(&mut io).unwrap();
+
+        assert_eq!(report.block_address, EMMC_WRITE_TEST_LBA);
+        assert_eq!(report.checksum, 0x0000_FBD8);
+        assert!(report.readback_matches);
+        assert_eq!(io.command_indices(), &[7, 16, 17, 16, 24, 13, 16, 17]);
+    }
+
+    #[test]
+    fn pio_write_waits_have_typed_timeouts() {
+        let mut no_buffer_ready =
+            FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        no_buffer_ready.suppress_buffer_write_ready = true;
+
+        assert_eq!(
+            write_emmc_test_block_with_io(&mut no_buffer_ready),
+            Err(EmmcWriteBlockError::BufferWriteReadyTimeout)
+        );
+
+        let mut no_transfer_complete =
+            FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        no_transfer_complete.suppress_transfer_complete = true;
+
+        assert_eq!(
+            write_emmc_test_block_with_io(&mut no_transfer_complete),
+            Err(EmmcWriteBlockError::TransferCompleteTimeout)
+        );
+
+        let mut no_program_complete =
+            FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        no_program_complete.suppress_write_program_ready = true;
+
+        assert_eq!(
+            write_emmc_test_block_with_io(&mut no_program_complete),
+            Err(EmmcWriteBlockError::ProgramCompleteTimeout)
+        );
+    }
+
+    #[test]
     fn cmd1_busy_polling_has_typed_timeout() {
         let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
         io.cmd1_ready_after_attempts = EMMC_OCR_ATTEMPT_LIMIT + 1;
@@ -1678,6 +2220,16 @@ mod tests {
                     | SDHCI_ADMA_SYSTEM_ADDRESS_OFFSET
             )
         }
+
+        fn touches_dma_path(self) -> bool {
+            let offset = match self {
+                Self::U8(offset, _) | Self::U16(offset, _) | Self::U32(offset, _) => offset,
+            };
+            matches!(
+                offset,
+                SDHCI_DMA_ADDRESS_OFFSET | SDHCI_ADMA_SYSTEM_ADDRESS_OFFSET
+            )
+        }
     }
 
     const MAX_FAKE_WRITES: usize = 8192;
@@ -1697,11 +2249,16 @@ mod tests {
         transfer_mode: u16,
         read_block: [u8; EMMC_READ_BLOCK_LEN as usize],
         read_word_index: usize,
+        write_word_index: usize,
         suppress_buffer_read_ready: bool,
+        suppress_buffer_write_ready: bool,
         suppress_transfer_complete: bool,
+        suppress_write_program_ready: bool,
         error_on_command_index: Option<u8>,
         command_error_normal_status: u16,
         command_error_status: u16,
+        last_write_lba: u32,
+        data_port_write_count: usize,
         command_indices: [u8; EMMC_OCR_ATTEMPT_LIMIT + 8],
         command_count: usize,
         cmd1_attempts: usize,
@@ -1732,11 +2289,16 @@ mod tests {
                 transfer_mode: 0,
                 read_block: [0; EMMC_READ_BLOCK_LEN as usize],
                 read_word_index: 0,
+                write_word_index: 0,
                 suppress_buffer_read_ready: false,
+                suppress_buffer_write_ready: false,
                 suppress_transfer_complete: false,
+                suppress_write_program_ready: false,
                 error_on_command_index: None,
                 command_error_normal_status: SDHCI_NORMAL_INTERRUPT_ERROR,
                 command_error_status: 1,
+                last_write_lba: 0,
+                data_port_write_count: 0,
                 command_indices: [0; EMMC_OCR_ATTEMPT_LIMIT + 8],
                 command_count: 0,
                 cmd1_attempts: 0,
@@ -1798,18 +2360,37 @@ mod tests {
                     assert_eq!(self.last_argument, u32::from(EMMC_IDENTIFICATION_RCA) << 16);
                     Self::CSD_RESPONSE
                 }
+                13 => {
+                    assert_eq!(self.last_argument, u32::from(EMMC_IDENTIFICATION_RCA) << 16);
+                    if self.suppress_write_program_ready {
+                        [0, 0, 0, 0]
+                    } else {
+                        [EMMC_STATUS_READY_FOR_DATA, 0, 0, 0]
+                    }
+                }
                 16 => {
                     assert_eq!(self.last_argument, u32::from(EMMC_READ_BLOCK_LEN));
                     [0, 0, 0, 0]
                 }
                 17 => {
-                    assert_eq!(self.last_argument, EMMC_READ_BLOCK_LBA);
                     assert_eq!(self.block_size, EMMC_READ_BLOCK_LEN);
                     assert_eq!(self.block_count, 1);
                     assert_eq!(self.transfer_mode, SDHCI_TRANSFER_MODE_READ_DIRECTION);
                     self.read_word_index = 0;
                     if !self.suppress_buffer_read_ready {
                         self.normal_interrupt_status |= SDHCI_NORMAL_INTERRUPT_BUFFER_READ_READY;
+                    }
+                    [0, 0, 0, 0]
+                }
+                24 => {
+                    assert_eq!(self.last_argument, EMMC_WRITE_TEST_LBA);
+                    assert_eq!(self.block_size, EMMC_READ_BLOCK_LEN);
+                    assert_eq!(self.block_count, 1);
+                    assert_eq!(self.transfer_mode, SDHCI_TRANSFER_MODE_WRITE_DIRECTION);
+                    self.last_write_lba = self.last_argument;
+                    self.write_word_index = 0;
+                    if !self.suppress_buffer_write_ready {
+                        self.normal_interrupt_status |= SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY;
                     }
                     [0, 0, 0, 0]
                 }
@@ -1914,6 +2495,22 @@ mod tests {
             self.push_write(FakeWrite::U32(offset, value));
             if offset == SDHCI_ARGUMENT_OFFSET {
                 self.last_argument = value;
+            } else if offset == SDHCI_BUFFER_DATA_PORT_OFFSET {
+                let byte_index = self.write_word_index * 4;
+                assert!(byte_index + 3 < self.read_block.len());
+                self.read_block[byte_index] = (value & 0xFF) as u8;
+                self.read_block[byte_index + 1] = ((value >> 8) & 0xFF) as u8;
+                self.read_block[byte_index + 2] = ((value >> 16) & 0xFF) as u8;
+                self.read_block[byte_index + 3] = ((value >> 24) & 0xFF) as u8;
+                self.write_word_index += 1;
+                self.data_port_write_count += 1;
+                if self.write_word_index == usize::from(EMMC_READ_BLOCK_LEN) / 4 {
+                    self.normal_interrupt_status &= !SDHCI_NORMAL_INTERRUPT_BUFFER_WRITE_READY;
+                    if !self.suppress_transfer_complete {
+                        self.normal_interrupt_status |=
+                            SDHCI_NORMAL_INTERRUPT_TRANSFER_COMPLETE;
+                    }
+                }
             }
             Ok(())
         }

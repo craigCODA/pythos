@@ -346,7 +346,7 @@ def main() -> int:
             ensure_storage_image(args.emmc_image, DEFAULT_EMMC_SIZE_BYTES)
             command += [
                 "-drive",
-                f"if=none,id=pythos_emmc,format=raw,file={args.emmc_image}",
+                f"if=none,id=pythos_emmc,format=raw,cache=writethrough,file={args.emmc_image}",
                 "-device",
                 "emmc,drive=pythos_emmc,bus=sd-bus",
             ]

@@ -14,6 +14,9 @@ verify = []
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []
+# `hardware-probe-emmc-write` is an explicit destructive test image. It depends
+# on `hardware-probe` and writes one fixed sacrificial eMMC sector.
+hardware-probe-emmc-write = ["hardware-probe"]
 
 [dependencies]
 pythos-shared = { path = "../shared" }

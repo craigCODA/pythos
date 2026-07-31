@@ -8,7 +8,7 @@
 use crate::framebuffer;
 use crate::sdhci_probe::{
     EmmcIdentificationReport, EmmcReadBlockError, EmmcReadBlockReport, SdhciInitializationReport,
-    SdhciRegisterSnapshot,
+    EmmcWriteBlockError, EmmcWriteBlockReport, SdhciRegisterSnapshot,
 };
 use crate::storage_probe::{
     MemoryBar, StorageController, StorageControllerKind, StorageProbeReport,
@@ -101,21 +101,21 @@ pub fn build_screen_with_sdhci_snapshot(
     report: &StorageProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, sdhci_snapshot, None, None, None, None)
+    build_screen_with_sdhci_state(report, sdhci_snapshot, None, None, None, None, None, None)
 }
 
 pub fn build_screen_with_sdhci_init(
     report: &StorageProbeReport,
     sdhci_init: Option<SdhciInitializationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, sdhci_init, None, None, None)
+    build_screen_with_sdhci_state(report, None, sdhci_init, None, None, None, None, None)
 }
 
 pub fn build_screen_with_emmc_identification(
     report: &StorageProbeReport,
     emmc_identification: Option<EmmcIdentificationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, None, emmc_identification, None, None)
+    build_screen_with_sdhci_state(report, None, None, emmc_identification, None, None, None, None)
 }
 
 pub fn build_screen_with_emmc_read(
@@ -123,7 +123,16 @@ pub fn build_screen_with_emmc_read(
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, None, emmc_identification, emmc_read, None)
+    build_screen_with_sdhci_state(
+        report,
+        None,
+        None,
+        emmc_identification,
+        emmc_read,
+        None,
+        None,
+        None,
+    )
 }
 
 pub fn build_screen_with_emmc_read_error(
@@ -138,6 +147,31 @@ pub fn build_screen_with_emmc_read_error(
         emmc_identification,
         None,
         emmc_read_error,
+        None,
+        None,
+    )
+}
+
+pub fn build_screen_with_emmc_write(
+    report: &StorageProbeReport,
+    emmc_write: Option<EmmcWriteBlockReport>,
+) -> ProbeScreen {
+    build_screen_with_sdhci_state(report, None, None, None, None, None, emmc_write, None)
+}
+
+pub fn build_screen_with_emmc_write_error(
+    report: &StorageProbeReport,
+    emmc_write_error: Option<EmmcWriteBlockError>,
+) -> ProbeScreen {
+    build_screen_with_sdhci_state(
+        report,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        emmc_write_error,
     )
 }
 
@@ -148,6 +182,8 @@ fn build_screen_with_sdhci_state(
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
     emmc_read_error: Option<EmmcReadBlockError>,
+    emmc_write: Option<EmmcWriteBlockReport>,
+    emmc_write_error: Option<EmmcWriteBlockError>,
 ) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
@@ -185,7 +221,27 @@ fn build_screen_with_sdhci_state(
                 } else {
                     None
                 };
+            let selected_emmc_write =
+                if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+                    emmc_write
+                } else {
+                    None
+                };
+            let selected_emmc_write_error =
+                if controller.kind == StorageControllerKind::SdhciEmmcCandidate {
+                    emmc_write_error
+                } else {
+                    None
+                };
             if controller.kind == StorageControllerKind::SdhciEmmcCandidate
+                && selected_emmc_write.is_some()
+            {
+                push_text(&mut screen, "emmc write");
+            } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate
+                && selected_emmc_write_error.is_some()
+            {
+                push_text(&mut screen, "emmc write err");
+            } else if controller.kind == StorageControllerKind::SdhciEmmcCandidate
                 && selected_emmc_read.is_some()
             {
                 push_text(&mut screen, "emmc read");
@@ -210,12 +266,33 @@ fn build_screen_with_sdhci_state(
             } else {
                 push_text(&mut screen, "other storage");
             }
-            push_text(&mut screen, "no disk writes");
+            if selected_emmc_write.is_some() || selected_emmc_write_error.is_some() {
+                push_text(&mut screen, "disk writes");
+            } else {
+                push_text(&mut screen, "no disk writes");
+            }
             push_count(&mut screen, report.count() as u64);
             push_bdf(&mut screen, controller);
             push_vid_did(&mut screen, controller);
             push_class(&mut screen, controller);
-            if let Some(read) = selected_emmc_read {
+            if let Some(write) = selected_emmc_write {
+                push_bar_base(&mut screen, "bar0 ", write.bar0_base);
+                push_emmc_write(&mut screen, write);
+            } else if let Some(write_error) = selected_emmc_write_error {
+                push_bar(&mut screen, "bar0 ", controller.bar0);
+                push_u32(&mut screen, "lba ", crate::sdhci_probe::EMMC_WRITE_TEST_LBA);
+                push_u32(&mut screen, "err ", write_error.screen_code());
+                if let Some(command_index) = write_error.screen_command_index() {
+                    push_u8(&mut screen, "cmd ", command_index);
+                }
+                if let Some(normal_interrupt_status) = write_error.screen_normal_interrupt_status()
+                {
+                    push_u16(&mut screen, "norm ", normal_interrupt_status);
+                }
+                if let Some(error_interrupt_status) = write_error.screen_error_interrupt_status() {
+                    push_u16(&mut screen, "eint ", error_interrupt_status);
+                }
+            } else if let Some(read) = selected_emmc_read {
                 push_bar_base(&mut screen, "bar0 ", read.bar0_base);
                 if let Some(identification) = selected_emmc_identification {
                     push_u32(&mut screen, "ocr ", identification.ocr);
@@ -274,6 +351,8 @@ pub fn render(
     emmc_identification: Option<EmmcIdentificationReport>,
     emmc_read: Option<EmmcReadBlockReport>,
     emmc_read_error: Option<EmmcReadBlockError>,
+    emmc_write: Option<EmmcWriteBlockReport>,
+    emmc_write_error: Option<EmmcWriteBlockError>,
 ) -> Result<(), ()> {
     let screen = build_screen_with_sdhci_state(
         report,
@@ -282,6 +361,8 @@ pub fn render(
         emmc_identification,
         emmc_read,
         emmc_read_error,
+        emmc_write,
+        emmc_write_error,
     );
     let mut lines = [""; PROBE_SCREEN_MAX_LINES];
     let mut index = 0;
@@ -400,6 +481,14 @@ fn push_emmc_read(screen: &mut ProbeScreen, read: EmmcReadBlockReport) {
     push_u32(screen, "first ", read.first_dword);
     push_u32(screen, "csum ", read.checksum);
     push_u32(screen, "bytes ", read.nonzero_byte_count);
+}
+
+fn push_emmc_write(screen: &mut ProbeScreen, write: EmmcWriteBlockReport) {
+    push_u32(screen, "lba ", write.block_address);
+    push_u32(screen, "first ", write.first_dword);
+    push_u32(screen, "wr ", write.checksum);
+    push_u32(screen, "rd ", write.readback_checksum);
+    push_u8(screen, "match ", if write.readback_matches { 1 } else { 0 });
 }
 
 fn push_u8(screen: &mut ProbeScreen, label: &str, value: u8) {
@@ -681,6 +770,66 @@ mod tests {
         assert_eq!(screen.line(10), Some("first 03020100"));
         assert_eq!(screen.line(11), Some("csum 0000FF00"));
         assert_eq!(screen.line(12), Some("bytes 000001FE"));
+    }
+
+    #[test]
+    fn formats_emmc_write_report_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+        let write = EmmcWriteBlockReport {
+            bar0_base: 0x0000_0000_E8B0_1000,
+            block_address: crate::sdhci_probe::EMMC_WRITE_TEST_LBA,
+            block_len: 512,
+            first_dword: 0x4854_5950,
+            checksum: 0x0000_FBD8,
+            readback_first_dword: 0x4854_5950,
+            readback_checksum: 0x0000_FBD8,
+            readback_nonzero_byte_count: 0x0000_01FE,
+            readback_matches: true,
+            final_normal_interrupt_status: 0,
+            final_error_interrupt_status: 0,
+        };
+
+        let screen = build_screen_with_emmc_write(&report, Some(write));
+
+        assert_eq!(screen.line_count(), 13);
+        assert_eq!(screen.line(1), Some("emmc write"));
+        assert_eq!(screen.line(2), Some("disk writes"));
+        assert_eq!(screen.line(7), Some("bar0 00000000E8B01000"));
+        assert_eq!(screen.line(8), Some("lba 00000800"));
+        assert_eq!(screen.line(9), Some("first 48545950"));
+        assert_eq!(screen.line(10), Some("wr 0000FBD8"));
+        assert_eq!(screen.line(11), Some("rd 0000FBD8"));
+        assert_eq!(screen.line(12), Some("match 01"));
+        assert_screen_uses_fixed_boot_glyphs(&screen);
+    }
+
+    #[test]
+    fn formats_emmc_write_error_for_no_serial_capture() {
+        let mut report = StorageProbeReport::new();
+        assert!(report.record(controller(
+            StorageControllerKind::SdhciEmmcCandidate,
+            1,
+            0,
+            0
+        )));
+
+        let screen = build_screen_with_emmc_write_error(
+            &report,
+            Some(EmmcWriteBlockError::BufferWriteReadyTimeout),
+        );
+
+        assert_eq!(screen.line(1), Some("emmc write err"));
+        assert_eq!(screen.line(2), Some("disk writes"));
+        assert_eq!(screen.line(7), Some("bar0 00000000FEBC0000"));
+        assert_eq!(screen.line(8), Some("lba 00000800"));
+        assert_eq!(screen.line(9), Some("err 00000005"));
+        assert_screen_uses_fixed_boot_glyphs(&screen);
     }
 
     #[test]
