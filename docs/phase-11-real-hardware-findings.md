@@ -127,7 +127,19 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   interrupt bit, and `eint 0x0010` is the SDHCI data-timeout bit. The next
   diagnostic build programs SDHCI `TIMEOUT_CONTROL` to `0x0E` before CMD17 to
   test whether the O2 Micro controller's reset-default data timeout is too
-  short, still without issuing media write commands.
+  short, still without issuing media write commands. A 2026-07-31 no-serial
+  framebuffer boot of commit `979190f` on the same physical O2 Micro
+  `1217:8620` SDHCI/eMMC laptop reached `emmc read`, preserved
+  `no disk writes`, and showed:
+  - `OCR` = `0xC0FF8080`
+  - `LBA0` = `0x00000000`
+  - first dword = `0x00000000`
+  - checksum = `0x000006F9`
+  - nonzero bytes = `0x0000000C`
+  This proves the physical read-only PIO CMD17 data path for LBA 0 on this
+  controller after programming `TIMEOUT_CONTROL=0x0E`. It still does not prove
+  media writes, partition parsing, filesystem support, generic block-device
+  integration, interrupts, DMA/ADMA, or universal SDHCI/eMMC support.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
