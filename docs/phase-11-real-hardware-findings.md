@@ -121,7 +121,13 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   sequence, not a media write. The `c418320` screen did not identify whether
   `CMD7`, `CMD16`, or `CMD17` failed, so the follow-up diagnostic build adds
   no-serial `cmd`, `norm`, and `eint` fields for command-path failures while
-  preserving `NO_DISK_WRITES`.
+  preserving `NO_DISK_WRITES`. A 2026-07-31 follow-up no-serial framebuffer
+  boot of commit `4230c7c` showed `cmd 11`, `norm 8000`, and `eint 0010`.
+  `CMD17` was the first read-data command; `norm 0x8000` is the SDHCI error
+  interrupt bit, and `eint 0x0010` is the SDHCI data-timeout bit. The next
+  diagnostic build programs SDHCI `TIMEOUT_CONTROL` to `0x0E` before CMD17 to
+  test whether the O2 Micro controller's reset-default data timeout is too
+  short, still without issuing media write commands.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

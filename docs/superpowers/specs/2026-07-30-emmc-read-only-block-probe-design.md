@@ -59,11 +59,13 @@ CMD17 arg=00000000 R1  read single block LBA 0, data-present
 The transfer setup is:
 
 ```text
+TIMEOUT_CONTROL=0E
 BLOCK_SIZE=0200
 BLOCK_COUNT=0001
 TRANSFER_MODE=0010
 ```
 
+`TIMEOUT_CONTROL=0E` selects the maximum SDHCI data-timeout counter value.
 `TRANSFER_MODE=0010` selects device-to-host data direction with DMA disabled,
 ADMA disabled, auto-command disabled, and single-block transfer.
 
@@ -145,6 +147,8 @@ Verification requires:
 - Host tests for data-present command encoding and R1b select-card encoding.
 - Host tests for the PIO read path, checksum accounting, and forbidden
   DMA/ADMA/buffer-write accesses.
+- Host tests that the maximum data-timeout control value is programmed before
+  CMD17.
 - Host tests for buffer-ready or transfer-complete timeout errors.
 - QEMU hardware-probe acceptance with the deterministic disposable eMMC image.
 - Real hardware boot of the updated USB with visible `emmc read` output.

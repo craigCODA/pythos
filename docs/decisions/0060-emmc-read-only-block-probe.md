@@ -22,9 +22,11 @@ after SDHCI initialization and eMMC identification succeed:
 2. Set the block length to 512 bytes with `CMD16`.
 3. Program the SDHCI block size and block count for exactly one 512-byte block.
 4. Program transfer mode for a single-block read with DMA and ADMA disabled.
-5. Issue `CMD17` for logical block address `0`.
-6. Poll for buffer-read-ready and transfer-complete status with fixed budgets.
-7. Read exactly 512 bytes from the SDHCI buffer data port and report only a
+5. Program SDHCI `TIMEOUT_CONTROL` to `0x0E`, the maximum data-timeout counter
+   value.
+6. Issue `CMD17` for logical block address `0`.
+7. Poll for buffer-read-ready and transfer-complete status with fixed budgets.
+8. Read exactly 512 bytes from the SDHCI buffer data port and report only a
    compact checksum, first dword, and nonzero byte count.
 
 The probe must not write to the buffer data port, DMA address, ADMA address, or

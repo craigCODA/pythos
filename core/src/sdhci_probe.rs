@@ -25,6 +25,7 @@ pub const SDHCI_BUFFER_DATA_PORT_OFFSET: u64 = 0x20;
 pub const SDHCI_PRESENT_STATE_OFFSET: u64 = 0x24;
 pub const SDHCI_POWER_CONTROL_OFFSET: u64 = 0x29;
 pub const SDHCI_CLOCK_CONTROL_OFFSET: u64 = 0x2C;
+pub const SDHCI_TIMEOUT_CONTROL_OFFSET: u64 = 0x2E;
 pub const SDHCI_SOFTWARE_RESET_OFFSET: u64 = 0x2F;
 pub const SDHCI_NORMAL_INTERRUPT_STATUS_OFFSET: u64 = 0x30;
 pub const SDHCI_ERROR_INTERRUPT_STATUS_OFFSET: u64 = 0x32;
@@ -66,6 +67,7 @@ pub const SDHCI_COMMAND_INDEX_CHECK: u16 = 0x0010;
 pub const SDHCI_COMMAND_DATA_PRESENT: u16 = 0x0020;
 
 pub const SDHCI_TRANSFER_MODE_READ_DIRECTION: u16 = 1 << 4;
+pub const SDHCI_DATA_TIMEOUT_MAX: u8 = 0x0E;
 
 pub const SDHCI_SOFTWARE_RESET_ALL: u8 = 1 << 0;
 pub const SDHCI_INIT_POLL_LIMIT: usize = 100_000;
@@ -612,6 +614,7 @@ pub fn read_emmc_lba0_with_io(
     )?;
 
     wait_data_not_inhibited(io)?;
+    io.write_u8(SDHCI_TIMEOUT_CONTROL_OFFSET, SDHCI_DATA_TIMEOUT_MAX)?;
     io.write_u16(SDHCI_BLOCK_SIZE_OFFSET, EMMC_READ_BLOCK_LEN)?;
     io.write_u16(SDHCI_BLOCK_COUNT_OFFSET, 1)?;
     io.write_u16(
@@ -1537,6 +1540,34 @@ mod tests {
                 .take(io.write_count)
                 .all(|write| !write.touches_forbidden_read_path_write())
         );
+    }
+
+    #[test]
+    fn read_programs_max_data_timeout_before_cmd17() {
+        let mut io = FakeSdhciIo::new(SDHCI_CAPABILITIES_VOLTAGE_33 | ((200u32) << 8));
+        io.seed_read_block_pattern();
+
+        let _report = read_emmc_lba0_with_io(&mut io).unwrap();
+        let cmd17_word = sdhci_data_command_word(17, SdhciResponseKind::Short, true, true);
+        let mut timeout_write_index = None;
+        let mut cmd17_write_index = None;
+        let mut index = 0;
+        while index < io.write_count {
+            match io.writes[index] {
+                FakeWrite::U8(SDHCI_TIMEOUT_CONTROL_OFFSET, SDHCI_DATA_TIMEOUT_MAX) => {
+                    timeout_write_index = Some(index)
+                }
+                FakeWrite::U16(SDHCI_COMMAND_OFFSET, value) if value == cmd17_word => {
+                    cmd17_write_index = Some(index)
+                }
+                _ => {}
+            }
+            index += 1;
+        }
+
+        let timeout_write_index = timeout_write_index.expect("missing max data timeout write");
+        let cmd17_write_index = cmd17_write_index.expect("missing CMD17 command write");
+        assert!(timeout_write_index < cmd17_write_index);
     }
 
     #[test]
