@@ -140,6 +140,29 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   controller after programming `TIMEOUT_CONTROL=0x0E`. It still does not prove
   media writes, partition parsing, filesystem support, generic block-device
   integration, interrupts, DMA/ADMA, or universal SDHCI/eMMC support.
+  ADR 0061 adds a separate destructive `hardware-probe-emmc-write` feature for
+  disposable hardware. It keeps the default `hardware-probe` image read-only,
+  writes exactly one deterministic 512-byte PIO block to command address
+  `2048`, polls `CMD13` ready-for-data, reads the same address back with
+  `CMD17`, and compares the pattern. On the physical target OCR `0xC0FF8080`
+  means high-capacity/block addressing, so command address `2048` is physical
+  LBA `2048`. A 2026-07-31 QEMU acceptance boot of commit `3edeffd` emitted
+  `PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE_READBACK_MATCH_READY` and verified the
+  disposable raw image bytes at the OCR-derived host offset. A 2026-07-31
+  no-serial framebuffer boot of the same commit on the disposable O2 Micro
+  `1217:8620` SDHCI/eMMC laptop showed:
+  - `emmc write`
+  - `disk writes`
+  - `LBA` = `0x00000800`
+  - first dword = `0x48545950`
+  - write checksum = `0x0000FBD8`
+  - readback checksum = `0x0000FBD8`
+  - match = `0x01`
+  This proves only that this disposable physical eMMC target accepted the
+  bounded single-sector PIO `CMD24` write/readback sequence at LBA `2048`.
+  It does not prove safe repeated writes, generic eMMC block-device
+  integration, partition parsing, filesystem support, object-store persistence
+  on eMMC, interrupts, DMA/ADMA, or universal SDHCI support.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
