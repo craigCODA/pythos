@@ -179,7 +179,7 @@ pub fn initialize_normal_substrate(
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY");
     #[cfg(feature = "sdhci-emmc-backend")]
-    let _sdhci_emmc_device = match sdhci_emmc_controller {
+    let sdhci_emmc_device = match sdhci_emmc_controller {
         Some(controller) => Some(
             crate::sdhci_emmc::initialize_device(controller)
                 .map_err(|_| NormalInitError::BlockDevice)?,
@@ -204,7 +204,11 @@ pub fn initialize_normal_substrate(
     initialize_guarded_user_stack_pool().map_err(|_| NormalInitError::UserStacks)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY");
 
-    let block_device = block_device::select_device().map_err(|_| NormalInitError::BlockDevice)?;
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let block_device_selection = block_device::select_device_with_sdhci_emmc(sdhci_emmc_device);
+    #[cfg(not(feature = "sdhci-emmc-backend"))]
+    let block_device_selection = block_device::select_device();
+    let block_device = block_device_selection.map_err(|_| NormalInitError::BlockDevice)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY");
 
     Ok(NormalBootSubstrate {

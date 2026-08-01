@@ -374,7 +374,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
         #[cfg(feature = "sdhci-emmc-backend")]
-        let _sdhci_emmc_device = match sdhci_emmc_controller {
+        let sdhci_emmc_device = match sdhci_emmc_controller {
             Some(controller) => match sdhci_emmc::initialize_device(controller) {
                 Ok(device) => Some(device),
                 Err(_) => {
@@ -662,7 +662,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY");
         serial::write_line("PYTHOS:CORE:PHASE_6_COMPLETE");
-        let _block_device = match block_device::select_device() {
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let block_device_selection = block_device::select_device_with_sdhci_emmc(sdhci_emmc_device);
+        #[cfg(not(feature = "sdhci-emmc-backend"))]
+        let block_device_selection = block_device::select_device();
+        let _block_device = match block_device_selection {
             Ok(device) => device,
             Err(_) => {
                 serial::write_line("PYTHOS:PANIC");
