@@ -13,6 +13,12 @@ The next hardware question is narrower than generic storage support: can the
 same controller accept one bounded PIO media write and return the same bytes
 through a readback?
 
+Operator confirmation on 2026-08-01: the physical O2 Micro `1217:8620`
+SDHCI/eMMC laptop used for this Phase 11 probe is a disposable storage target
+and has been treated as disposable throughout bring-up. Future agents do not
+need to re-ask whether that exact target is disposable before running this
+ADR's already-authorized fixed single-sector write probe on it.
+
 ## Decision
 
 Add a separate `hardware-probe-emmc-write` build feature. The existing
@@ -59,4 +65,5 @@ same one-sector write/readback sequence.
 
 This ADR does not authorize generic eMMC block-device integration,
 filesystem/partition parsing, object-store persistence on eMMC, interrupt
-support, DMA/ADMA support, or universal SDHCI support.
+support, DMA/ADMA support, universal SDHCI support, or applying this disposable
+target confirmation to any other machine or storage controller.

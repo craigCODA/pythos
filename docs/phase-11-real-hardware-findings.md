@@ -163,6 +163,15 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   It does not prove safe repeated writes, generic eMMC block-device
   integration, partition parsing, filesystem support, object-store persistence
   on eMMC, interrupts, DMA/ADMA, or universal SDHCI support.
+- Operator confirmation on 2026-08-01: this exact O2 Micro `1217:8620`
+  SDHCI/eMMC laptop is a disposable storage target and has been treated as
+  disposable throughout Phase 11 bring-up. Future agents do not need to re-ask
+  whether this exact target is disposable before deploying or running the
+  already-authorized ADR 0061 `hardware-probe-emmc-write` image against fixed
+  command address/LBA `2048`. This confirmation does not authorize broader
+  storage writes, other LBAs, repeated-write validation, normal object-store
+  persistence on eMMC, DMA/ADMA, interrupt-driven storage, universal SDHCI/eMMC
+  support, or writes on any other machine/controller.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
