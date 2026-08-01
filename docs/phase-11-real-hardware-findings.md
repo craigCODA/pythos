@@ -172,6 +172,12 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   storage writes, other LBAs, repeated-write validation, normal object-store
   persistence on eMMC, DMA/ADMA, interrupt-driven storage, universal SDHCI/eMMC
   support, or writes on any other machine/controller.
+- ADR 0062 implementation starts from commit `dcebc2e` and promotes the proven
+  single-block PIO path into an opt-in `sdhci-emmc-backend` block backend. The
+  physical target remains the same already-confirmed disposable O2 Micro
+  `1217:8620` SDHCI/eMMC laptop. Physical backend validation is forbidden until
+  QEMU storage acceptance and QEMU object-shell persistence acceptance pass
+  against a disposable emulated eMMC image without selecting virtio or AHCI.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
