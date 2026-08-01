@@ -1710,7 +1710,7 @@ def build_boot_artifacts(media: str) -> None:
 
 def default_qemu_timeout() -> float | None:
     value = os.environ.get("PYTHOS_TEST_BOOT_TIMEOUT")
-    return float(value) if value else None
+    return float(value) if value else 60.0
 
 
 def qemu_timeout_args(timeout: float | None) -> list[str]:
