@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 ISO = TARGET / "pythos.iso"
 SERIAL_LOG = TARGET / "sdhci-emmc-block-device.log"
+SCREENDUMP = TARGET / "sdhci-emmc-block-device.ppm"
 EMMC_IMAGE = TARGET / "sdhci-emmc-store.img"
 SECTOR_SIZE = 512
 STORAGE_SIZE_BYTES = 32 * 1024 * 1024
@@ -29,6 +30,7 @@ REQUIRED_MARKERS = (
     "PYTHOS:CORE:GENERAL_STORAGE:PERSISTED",
     "PYTHOS:CORE:GENERAL_STORAGE:RESTORED",
     "PYTHOS:CORE:PHASE_10_COMPLETE",
+    "PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY",
     "PYTHOS:CORE:MILESTONE_1_COMPLETE",
 )
 FORBIDDEN_MARKERS = (
@@ -90,6 +92,8 @@ def prepare_fresh_image(path: Path) -> None:
 def run_sdhci_emmc_boot() -> str:
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
+    if SCREENDUMP.exists():
+        SCREENDUMP.unlink()
     return run(
         [
             sys.executable,
@@ -100,6 +104,8 @@ def run_sdhci_emmc_boot() -> str:
             str(SERIAL_LOG),
             "--timeout",
             "60",
+            "--screendump",
+            str(SCREENDUMP),
             "--no-virtio-blk",
             "--sdhci",
             "--emmc",
@@ -146,6 +152,13 @@ def assert_persistent_signatures_on_emmc_image() -> None:
         )
 
 
+def assert_screendump_written() -> None:
+    if not SCREENDUMP.exists():
+        raise AssertionError(f"missing screendump {SCREENDUMP}")
+    if SCREENDUMP.stat().st_size == 0:
+        raise AssertionError(f"empty screendump {SCREENDUMP}")
+
+
 def main() -> int:
     build_boot_iso()
     prepare_fresh_image(EMMC_IMAGE)
@@ -162,6 +175,7 @@ def main() -> int:
     assert_contains(second, "PYTHOS:CORE:OBJECT_STORE:RESTORED")
 
     assert_persistent_signatures_on_emmc_image()
+    assert_screendump_written()
     print("SDHCI_EMMC_BLOCK_DEVICE_TEST_OK")
     return 0
 

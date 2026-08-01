@@ -178,6 +178,15 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   `1217:8620` SDHCI/eMMC laptop. Physical backend validation is forbidden until
   QEMU storage acceptance and QEMU object-shell persistence acceptance pass
   against a disposable emulated eMMC image without selecting virtio or AHCI.
+- The SDHCI/eMMC backend now has a verify-only no-serial acceptance panel that
+  renders only after the Phase 7-10 storage proof path reaches
+  `PYTHOS:CORE:PHASE_10_COMPLETE`. The panel text is:
+  `PythOS / sdhci emmc backend / phase10 ok / disk writes / capacity <hex>`.
+  QEMU acceptance requires
+  `PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY` plus the existing
+  serial and host-image storage oracles. Physical two-cold-boot evidence on the
+  disposable O2 Micro `1217:8620` target is still pending and must not be
+  inferred from this QEMU result.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

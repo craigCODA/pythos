@@ -77,6 +77,8 @@ mod shell_objects;
 mod software_renderer;
 mod storage_adversarial;
 mod storage_allocator;
+#[cfg(any(test, all(feature = "verify", feature = "sdhci-emmc-backend")))]
+mod storage_backend_screen;
 mod storage_concurrency;
 mod storage_journal;
 mod storage_probe;
@@ -1535,6 +1537,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY");
         serial::write_line("PYTHOS:CORE:PHASE_10_COMPLETE");
 
+        #[cfg(feature = "sdhci-emmc-backend")]
+        if storage_backend_screen::render(&boot_info.framebuffer, _block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
         serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
         serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
         qemu_exit::success();
