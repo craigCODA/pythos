@@ -7,8 +7,8 @@
 #[cfg(feature = "hardware-probe")]
 use crate::framebuffer;
 use crate::sdhci_probe::{
-    EmmcIdentificationReport, EmmcReadBlockError, EmmcReadBlockReport, SdhciInitializationReport,
-    EmmcWriteBlockError, EmmcWriteBlockReport, SdhciRegisterSnapshot,
+    EmmcIdentificationReport, EmmcReadBlockError, EmmcReadBlockReport, EmmcWriteBlockError,
+    EmmcWriteBlockReport, SdhciInitializationReport, SdhciRegisterSnapshot,
 };
 use crate::storage_probe::{
     MemoryBar, StorageController, StorageControllerKind, StorageProbeReport,
@@ -115,7 +115,16 @@ pub fn build_screen_with_emmc_identification(
     report: &StorageProbeReport,
     emmc_identification: Option<EmmcIdentificationReport>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(report, None, None, emmc_identification, None, None, None, None)
+    build_screen_with_sdhci_state(
+        report,
+        None,
+        None,
+        emmc_identification,
+        None,
+        None,
+        None,
+        None,
+    )
 }
 
 pub fn build_screen_with_emmc_read(
@@ -163,16 +172,7 @@ pub fn build_screen_with_emmc_write_error(
     report: &StorageProbeReport,
     emmc_write_error: Option<EmmcWriteBlockError>,
 ) -> ProbeScreen {
-    build_screen_with_sdhci_state(
-        report,
-        None,
-        None,
-        None,
-        None,
-        None,
-        None,
-        emmc_write_error,
-    )
+    build_screen_with_sdhci_state(report, None, None, None, None, None, None, emmc_write_error)
 }
 
 fn build_screen_with_sdhci_state(

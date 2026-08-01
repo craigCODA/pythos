@@ -61,6 +61,8 @@ mod retained_services;
 mod revision_history;
 mod runtime_loader;
 mod scheduler;
+#[cfg(any(test, feature = "hardware-probe", feature = "sdhci-emmc-backend"))]
+mod sdhci;
 #[cfg(any(test, feature = "hardware-probe"))]
 mod sdhci_probe;
 mod serial;

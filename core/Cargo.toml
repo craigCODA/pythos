@@ -17,6 +17,9 @@ hardware-probe = []
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]
+# `sdhci-emmc-backend` is an opt-in polling PIO production backend. It is not
+# enabled by default and does not alter the probe gates.
+sdhci-emmc-backend = []
 
 [dependencies]
 pythos-shared = { path = "../shared" }
