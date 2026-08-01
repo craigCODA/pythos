@@ -131,15 +131,18 @@ pub fn initialize_normal_substrate(
         Some(bootstrap_frame),
     )
     .map_err(|_| NormalInitError::Memory)?;
-    let (shell_address_space, loaded_shell) = UserAddressSpace::build_with_user_elf_and_bootstrap(
-        physical_memory,
-        boot_info,
-        &shell_image,
-        shell_manifest.elf(),
-        SHELL_BOOTSTRAP_USER_PTR,
-        bootstrap_frame,
-    )
-    .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    let supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
+    let (shell_address_space, loaded_shell) =
+        UserAddressSpace::build_with_user_elf_bootstrap_and_supervisor_mappings(
+            physical_memory,
+            boot_info,
+            &shell_image,
+            shell_manifest.elf(),
+            SHELL_BOOTSTRAP_USER_PTR,
+            bootstrap_frame,
+            &supervisor_mappings,
+        )
+        .map_err(|_| NormalInitError::ShellAddressSpace)?;
     if loaded_shell.entry() != shell_image.entry()
         || loaded_shell.segment_count() != shell_image.segment_count()
         || !loaded_shell.bss_zeroed()
@@ -152,6 +155,15 @@ pub fn initialize_normal_substrate(
     shell_address_space
         .validate_user_bootstrap_mapping(SHELL_BOOTSTRAP_USER_PTR)
         .map_err(|_| NormalInitError::ShellBootstrap)?;
+    let mut mapping_index = 0;
+    while mapping_index < supervisor_mappings.len() {
+        if let Some((phys, virt, _)) = supervisor_mappings[mapping_index] {
+            shell_address_space
+                .validate_supervisor_mapping(virt, phys)
+                .map_err(|_| NormalInitError::ShellAddressSpace)?;
+        }
+        mapping_index += 1;
+    }
     let shell_launch = PreparedShellLaunch {
         address_space: shell_address_space.retain_for_boot(),
         image: shell_image,
