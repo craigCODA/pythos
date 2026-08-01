@@ -3,8 +3,9 @@
 Current boundary: Phase 11 targeted SDHCI/eMMC backend validation is in
 progress on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
 The opt-in `sdhci-emmc-backend` path is verified in QEMU through the existing
-storage and object-shell flows; the disposable physical O2 Micro `1217:8620`
-two-cold-boot backend proof is still pending.
+storage and object-shell flows. One physical boot video from the disposable O2
+Micro `1217:8620` laptop reached the final Phase 10 backend panel; the second
+cold boot without reimaging is still pending.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -27,8 +28,27 @@ Supported and verified:
 
 Pending physical evidence:
 
-- the same SDHCI/eMMC backend on the one disposable O2 Micro `1217:8620`
-  laptop
+- second cold boot of the same SDHCI/eMMC backend on the one disposable O2
+  Micro `1217:8620` laptop, without reimaging between boots
+
+Recorded physical evidence:
+
+- `D:\Downloads\20260801_171753.mp4` (SHA-256
+  `DC178998ECFE6F3349A29930C083A61545817421963EB8D265DC96D0604C900E`)
+  shows one physical boot reaching:
+
+```text
+PythOS
+sdhci emmc backend
+phase10 ok
+disk writes
+capacity 000000000747C000
+```
+
+- Screen-only frame:
+  `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg`
+- Milestone evidence page:
+  `docs/milestones/2026-08-01-physical-emmc-phase10.md`
 
 Not implemented:
 
@@ -64,8 +84,9 @@ disk writes
 capacity <hex>
 ```
 
-Do not infer physical backend support from QEMU. Record two cold boots without
-reimaging before marking the physical acceptance item complete.
+Do not infer physical backend support from QEMU. The first physical boot is
+recorded; record the second cold boot without reimaging before marking the
+physical acceptance item complete.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 
