@@ -166,6 +166,7 @@ impl KernelAddressSpace {
         boot_info: &PythBootInfo,
         hda_mmio: Option<(u64, u64, u64)>,
         ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
         shell_bootstrap_frame: Option<u64>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
@@ -211,6 +212,16 @@ impl KernelAddressSpace {
         // kernel device window, uncacheable: device registers reflect live
         // hardware state and must never be served from a stale cache line.
         if let Some((phys, virt, len)) = ahci_mmio {
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
+        }
+        // ADR 0062: map the selected SDHCI/eMMC BAR0 window uncacheable for
+        // synchronous polling PIO. The backend does not enable DMA/ADMA.
+        if let Some((phys, virt, len)) = sdhci_emmc_mmio {
             tables.map_physical_range(
                 virt,
                 phys,

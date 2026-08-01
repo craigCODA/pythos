@@ -3,6 +3,7 @@
 //! This module owns the fake-MMIO-testable reset, identification, single-block
 //! PIO read/write, bounded wait, and volatile MMIO access primitives. Probe-only
 //! PCI classification and loader-identity BAR validation stay in `sdhci_probe`.
+#![cfg_attr(all(not(test), feature = "sdhci-emmc-backend"), allow(dead_code))]
 
 pub const SDHCI_DMA_ADDRESS_OFFSET: u64 = 0x00;
 pub const SDHCI_BLOCK_SIZE_OFFSET: u64 = 0x04;

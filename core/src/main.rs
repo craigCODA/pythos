@@ -63,6 +63,8 @@ mod runtime_loader;
 mod scheduler;
 #[cfg(any(test, feature = "hardware-probe", feature = "sdhci-emmc-backend"))]
 mod sdhci;
+#[cfg(any(test, feature = "sdhci-emmc-backend"))]
+mod sdhci_emmc;
 #[cfg(any(test, feature = "hardware-probe"))]
 mod sdhci_probe;
 mod serial;
@@ -197,12 +199,32 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 block_device::AHCI_MMIO_LEN,
             )
         });
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let sdhci_emmc_controller = match sdhci_emmc::probe_controller() {
+            Ok(controller) => Some(controller),
+            Err(sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent) => None,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
+            (
+                controller.physical_mmio_base,
+                sdhci_emmc::SDHCI_EMMC_MMIO_VIRT,
+                sdhci_emmc::SDHCI_EMMC_MMIO_LEN,
+            )
+        });
+        #[cfg(not(feature = "sdhci-emmc-backend"))]
+        let sdhci_emmc_mmio = None;
 
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
             hda_mmio,
             ahci_mmio,
+            sdhci_emmc_mmio,
             None,
         ) {
             Ok(address_space) => address_space,
@@ -351,6 +373,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let _sdhci_emmc_device = match sdhci_emmc_controller {
+            Some(controller) => match sdhci_emmc::initialize_device(controller) {
+                Ok(device) => Some(device),
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            },
+            None => None,
+        };
         fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_KERNEL_ADDR);
         if memory::r#virtual::prove_old_identity_map_removed().is_err() {
             serial::write_line("PYTHOS:PANIC");

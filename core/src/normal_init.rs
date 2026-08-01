@@ -106,11 +106,28 @@ pub fn initialize_normal_substrate(
             block_device::AHCI_MMIO_LEN,
         )
     });
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let sdhci_emmc_controller = match crate::sdhci_emmc::probe_controller() {
+        Ok(controller) => Some(controller),
+        Err(crate::sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent) => None,
+        Err(_) => return Err(NormalInitError::BlockDevice),
+    };
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
+        (
+            controller.physical_mmio_base,
+            crate::sdhci_emmc::SDHCI_EMMC_MMIO_VIRT,
+            crate::sdhci_emmc::SDHCI_EMMC_MMIO_LEN,
+        )
+    });
+    #[cfg(not(feature = "sdhci-emmc-backend"))]
+    let sdhci_emmc_mmio = None;
     let kernel_address_space = KernelAddressSpace::build(
         physical_memory,
         boot_info,
         None,
         ahci_mmio,
+        sdhci_emmc_mmio,
         Some(bootstrap_frame),
     )
     .map_err(|_| NormalInitError::Memory)?;
@@ -161,6 +178,14 @@ pub fn initialize_normal_substrate(
         kernel_address_space.activate();
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY");
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let _sdhci_emmc_device = match sdhci_emmc_controller {
+        Some(controller) => Some(
+            crate::sdhci_emmc::initialize_device(controller)
+                .map_err(|_| NormalInitError::BlockDevice)?,
+        ),
+        None => None,
+    };
     // GDT/TSS ring-3 selectors are already installed by the common
     // `gdt::initialize()` call before the verify/normal branch; this marker
     // covers the user address-space construction proved just above.
