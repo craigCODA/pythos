@@ -49,3 +49,18 @@ backend acceptance and QEMU object-shell persistence acceptance pass repeatedly.
 Physical validation, when authorized by those QEMU gates, applies only to the
 confirmed disposable O2 Micro `1217:8620` SDHCI/eMMC laptop unless a later ADR
 records a different target and safety boundary.
+
+## Implementation Status
+
+As of 2026-08-01, `feature/sdhci-emmc-backend` implements this ADR through the
+ADR 0062 backend commits and the `cf68c3b` final-regression harness-timeout
+follow-up. QEMU storage acceptance and QEMU object-shell persistence acceptance
+pass repeatedly with `sdhci-emmc-backend` enabled, including fallback-marker
+rejection and host-image signature checks.
+
+The verify-only physical acceptance panel is implemented and renders only after
+the Phase 7-10 storage path reaches `PYTHOS:CORE:PHASE_10_COMPLETE`. Physical
+backend acceptance on the disposable O2 Micro `1217:8620` target remains
+pending until two cold boots without reimaging show the final panel. This ADR
+still does not claim generic SDHCI/eMMC support, partition parsing, filesystem
+support, DMA/ADMA, interrupts, hotplug, or safe writes on any other target.

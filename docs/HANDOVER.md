@@ -1,11 +1,71 @@
 # PythOS Handover
 
-Current boundary: Phase 8 `real-hardware-isolation` complete. Halt at the
-Phase 8 -> Later Phases boundary.
+Current boundary: Phase 11 targeted SDHCI/eMMC backend validation is in
+progress on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
+The opt-in `sdhci-emmc-backend` path is verified in QEMU through the existing
+storage and object-shell flows; the disposable physical O2 Micro `1217:8620`
+two-cold-boot backend proof is still pending.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
+
+## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
+
+ADR 0062 adds an opt-in polling single-block PIO SDHCI/eMMC backend behind the
+existing `BlockDeviceInfo` surface. The backend keeps virtio and AHCI intact,
+uses recursive PCI discovery, maps SDHCI BAR0 into an uncacheable
+supervisor-only MMIO window before the kernel CR3 switch, initializes/selects
+the eMMC card once per boot, derives capacity from EXT_CSD, and dispatches
+single-sector CMD17/CMD24 requests through bounded polling loops.
+
+Supported and verified:
+
+- legacy virtio-blk in QEMU
+- polling AHCI in QEMU
+- polling single-block PIO SDHCI/eMMC in QEMU
+
+Pending physical evidence:
+
+- the same SDHCI/eMMC backend on the one disposable O2 Micro `1217:8620`
+  laptop
+
+Not implemented:
+
+- interrupts, DMA/ADMA, multi-block I/O, hotplug
+- generic SD/SDHCI support
+- partitions or filesystems
+- PythOS-native boot/storage format
+- interactive physical shell pending built-in input support
+
+Backend-specific QEMU acceptance:
+
+```powershell
+python scripts\test-sdhci-emmc-block-device.py
+python scripts\test-object-shell.py --backend sdhci-emmc
+```
+
+The storage test boots from ISO with `--no-virtio-blk --sdhci --emmc`, rejects
+virtio/AHCI selection markers, requires `DEVICE_SELECTED_SDHCI_EMMC`, runs the
+Phase 7-10 storage proofs twice against the same disposable eMMC image, checks
+host image signatures, and captures the verify-only framebuffer panel marker
+`PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY`.
+
+The USB ESP for physical validation was refreshed on 2026-08-01 by replacing
+only `EFI` and `PYTHOS` on Disk 2 Partition 2, label `PYTHOS_ESP`, preserving
+`NvVars` and system metadata. Expected physical panel after a successful
+verify boot:
+
+```text
+PythOS
+sdhci emmc backend
+phase10 ok
+disk writes
+capacity <hex>
+```
+
+Do not infer physical backend support from QEMU. Record two cold boots without
+reimaging before marking the physical acceptance item complete.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 

@@ -187,6 +187,20 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   serial and host-image storage oracles. Physical two-cold-boot evidence on the
   disposable O2 Micro `1217:8620` target is still pending and must not be
   inferred from this QEMU result.
+- On 2026-08-01, branch `feature/sdhci-emmc-backend` reached final QEMU
+  regression after the ADR 0062 implementation commits and the `cf68c3b`
+  milestone-timeout harness follow-up. Verified evidence includes
+  `test-emmc-write-probe.py`, `test-ahci-block-device.py`,
+  `test-sdhci-emmc-block-device.py` twice, `test-persistent-storage.py`,
+  `test-normal-fast-boot.py`, `test-com2-shell-transport.py`,
+  `test-object-shell.py`, `test-object-shell.py --backend sdhci-emmc` twice,
+  and `test-boot.py --slice milestone-1` on ESP and ISO media. The
+  SDHCI/eMMC storage tests selected `DEVICE_SELECTED_SDHCI_EMMC`, rejected
+  virtio/AHCI selection, reached `PHASE_10_COMPLETE` and
+  `MILESTONE_1_COMPLETE`, and confirmed the backing-image object/general
+  storage signatures. The physical USB ESP was refreshed for the disposable
+  target, but physical backend acceptance remains pending until two cold-boot
+  photos of the final panel are recorded.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
