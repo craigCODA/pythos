@@ -1,11 +1,11 @@
 # PythOS Handover
 
-Current boundary: Phase 11 targeted SDHCI/eMMC backend validation is in
-progress on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
+Current boundary: Phase 11 targeted SDHCI/eMMC backend panel validation is
+recorded on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
 The opt-in `sdhci-emmc-backend` path is verified in QEMU through the existing
-storage and object-shell flows. One physical boot video from the disposable O2
-Micro `1217:8620` laptop reached the final Phase 10 backend panel; the second
-cold boot without reimaging is still pending.
+storage and object-shell flows. Two operator-supplied physical boot artifacts
+from the disposable O2 Micro `1217:8620` laptop reached the final Phase 10
+backend panel: the JPG is the first run and the MP4 is the second run.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -25,17 +25,32 @@ Supported and verified:
 - legacy virtio-blk in QEMU
 - polling AHCI in QEMU
 - polling single-block PIO SDHCI/eMMC in QEMU
+- polling single-block PIO SDHCI/eMMC reaching the final Phase 10 backend
+  panel across two cold-boot runs on the one disposable O2 Micro `1217:8620`
+  laptop
 
-Pending physical evidence:
+Physical evidence status:
 
-- second cold boot of the same SDHCI/eMMC backend on the one disposable O2
-  Micro `1217:8620` laptop, without reimaging between boots
+- the ADR 0062 two-cold-boot physical panel gate is recorded for this one
+  disposable O2 Micro `1217:8620` target only
 
 Recorded physical evidence:
 
-- `D:\Downloads\20260801_171753.mp4` (SHA-256
+- `D:\Downloads\20260801_171744.jpg` (first run, SHA-256
+  `9886EDD5D79A1BE50A887C38EB3CB9A90896D619D7B341AB098FFEB48D904122`)
+  shows:
+
+```text
+PythOS
+sdhci emmc backend
+phase10 ok
+disk writes
+capacity 000000000747C000
+```
+
+- `D:\Downloads\20260801_171753.mp4` (second run, SHA-256
   `DC178998ECFE6F3349A29930C083A61545817421963EB8D265DC96D0604C900E`)
-  shows one physical boot reaching:
+  shows:
 
 ```text
 PythOS
@@ -47,6 +62,8 @@ capacity 000000000747C000
 
 - Screen-only frame:
   `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg`
+- Screen-only frame from the second run:
+  `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot2.jpg`
 - Milestone evidence page:
   `docs/milestones/2026-08-01-physical-emmc-phase10.md`
 
@@ -84,9 +101,9 @@ disk writes
 capacity <hex>
 ```
 
-Do not infer physical backend support from QEMU. The first physical boot is
-recorded; record the second cold boot without reimaging before marking the
-physical acceptance item complete.
+Do not infer physical backend support from QEMU. The physical panel gate is now
+recorded for the disposable O2 Micro `1217:8620` target only; do not generalize
+it to other SDHCI/eMMC controllers or to interactive physical shell use.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 

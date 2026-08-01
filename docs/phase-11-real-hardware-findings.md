@@ -184,9 +184,9 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   `PythOS / sdhci emmc backend / phase10 ok / disk writes / capacity <hex>`.
   QEMU acceptance requires
   `PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY` plus the existing
-  serial and host-image storage oracles. The first physical boot video is
-  recorded below; complete two-cold-boot acceptance on the disposable O2 Micro
-  `1217:8620` target remains pending and must not be inferred from this QEMU
+  serial and host-image storage oracles. The two physical boot artifacts are
+  recorded below; physical acceptance is still scoped only to the disposable
+  O2 Micro `1217:8620` target and must not be generalized from this QEMU
   result.
 - On 2026-08-01, branch `feature/sdhci-emmc-backend` reached final QEMU
   regression after the ADR 0062 implementation commits and the `cf68c3b`
@@ -201,25 +201,35 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   `MILESTONE_1_COMPLETE`, and confirmed the backing-image object/general
   storage signatures. The physical USB ESP was refreshed for the disposable
   target.
-- A 2026-08-01 operator-supplied video,
-  `D:\Downloads\20260801_171753.mp4` (SHA-256
+- On 2026-08-01, the operator identified
+  `D:\Downloads\20260801_171744.jpg` as the first run and
+  `D:\Downloads\20260801_171753.mp4` as the second run from the physical
+  SDHCI/eMMC backend validation sequence. The first-run JPG has SHA-256
+  `9886EDD5D79A1BE50A887C38EB3CB9A90896D619D7B341AB098FFEB48D904122`. The
+  second-run MP4 has SHA-256
   `DC178998ECFE6F3349A29930C083A61545817421963EB8D265DC96D0604C900E`,
-  15.89 seconds, 3840 by 2160, 59.27 fps), shows one physical boot of the
-  disposable O2 Micro `1217:8620` target reaching the final verify-only
-  acceptance panel:
+  duration 15.89 seconds, resolution 3840 by 2160, and frame rate 59.27 fps.
+  Both artifacts show the disposable O2 Micro `1217:8620` target reaching the
+  final verify-only acceptance panel:
   - `PythOS`
   - `sdhci emmc backend`
   - `phase10 ok`
   - `disk writes`
   - `capacity 000000000747C000`
-  A screen-only frame from that video is committed as
+  A screen-only frame from the first run is committed as
   `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg`
   (SHA-256
-  `7B8D115E4D7D1E3FC9DF1077F2A4F69DCB28372CF03E157FF6EBF6510609EC25`),
-  and the milestone evidence page is
-  `docs/milestones/2026-08-01-physical-emmc-phase10.md`. This is the first of
-  the required two cold boots; physical backend acceptance remains pending
-  until the second cold boot reaches the same final panel without reimaging.
+  `0E804EC38610BFF3AD982737EBF02E432DBC3B0858A573B4E1753D9611A55732`).
+  A screen-only frame from the second run is committed as
+  `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot2.jpg`
+  (SHA-256
+  `7B8D115E4D7D1E3FC9DF1077F2A4F69DCB28372CF03E157FF6EBF6510609EC25`).
+  The milestone evidence page is
+  `docs/milestones/2026-08-01-physical-emmc-phase10.md`. This completes the
+  planned two-cold-boot physical Phase 10 backend panel gate for the one
+  disposable O2 Micro `1217:8620` target only. It does not prove generic
+  SDHCI/eMMC support, safe writes on other targets, partition/filesystem
+  support, DMA/ADMA, interrupts, hotplug, or interactive physical shell use.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

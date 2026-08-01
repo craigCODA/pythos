@@ -6,10 +6,10 @@ takes ownership of memory and execution from firmware, builds a native PythCore
 execution substrate, brings up service identity and capability mechanisms,
 persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
-SDHCI/eMMC block backends in QEMU. One physical boot of the SDHCI/eMMC backend
-has reached the final Phase 10 acceptance panel on the confirmed disposable
-O2 Micro `1217:8620` target; the second cold boot required for physical
-acceptance is still pending.
+SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has reached the
+final Phase 10 acceptance panel across two cold-boot runs on the confirmed
+disposable O2 Micro `1217:8620` target. That physical result is intentionally
+scoped to that one target.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -28,7 +28,7 @@ and where the boundary of the work still is.
 | Ring-3 object shell in QEMU | Arbitrary third-party programs |
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
-| One physical SDHCI/eMMC final-panel boot | Two-cold-boot physical backend acceptance |
+| Two physical SDHCI/eMMC final-panel boots on O2 Micro `1217:8620` | Physical interactive shell input |
 
 ## What PythOS Is
 
@@ -267,11 +267,11 @@ SDHCI/eMMC backend. The SDHCI/eMMC backend is selected only when the QEMU test
 boots from ISO with virtio disabled and no AHCI storage disk, and the tests
 reject fallback markers so a passing run cannot be explained by another disk.
 
-The SDHCI/eMMC branch has one physical video record showing the final Phase 10
-backend panel on the disposable O2 Micro `1217:8620` laptop:
+The SDHCI/eMMC branch has a first-run photo and second-run video showing the
+final Phase 10 backend panel on the disposable O2 Micro `1217:8620` laptop:
 [docs/milestones/2026-08-01-physical-emmc-phase10.md](milestones/2026-08-01-physical-emmc-phase10.md).
-That is not yet a generic hardware-support claim and not yet the two-cold-boot
-physical acceptance gate.
+That is a target-specific physical backend result, not a generic
+hardware-support claim.
 
 ## How Claims Are Verified
 
@@ -324,7 +324,7 @@ implemented:
 * generic SDHCI/eMMC support;
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
-* two-cold-boot physical SDHCI/eMMC backend acceptance;
+* physical interactive object-shell use through built-in keyboard or trackpad;
 * AI inside the trusted core;
 * Patch, Open Surface, Causal Lens UI, or semantic indexing.
 
@@ -347,8 +347,8 @@ make narrower but stronger claims:
   QEMU;
 * SDHCI/eMMC backend tests reject virtio/AHCI fallback and inspect the backing
   eMMC image;
-* one physical SDHCI/eMMC video shows the final Phase 10 backend panel on the
-  disposable O2 Micro `1217:8620` target;
+* first-run photo and second-run video evidence show the final Phase 10
+  SDHCI/eMMC backend panel on the disposable O2 Micro `1217:8620` target;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate.
 

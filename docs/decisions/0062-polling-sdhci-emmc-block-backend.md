@@ -59,11 +59,11 @@ pass repeatedly with `sdhci-emmc-backend` enabled, including fallback-marker
 rejection and host-image signature checks.
 
 The verify-only physical acceptance panel is implemented and renders only after
-the Phase 7-10 storage path reaches `PYTHOS:CORE:PHASE_10_COMPLETE`. Physical
-backend acceptance on the disposable O2 Micro `1217:8620` target remains
-pending until two cold boots without reimaging show the final panel. One
-2026-08-01 physical boot video reached that panel and is recorded in
-`docs/milestones/2026-08-01-physical-emmc-phase10.md`; the second cold boot is
-still pending. This ADR still does not claim generic SDHCI/eMMC support,
-partition parsing, filesystem support, DMA/ADMA, interrupts, hotplug, or safe
-writes on any other target.
+the Phase 7-10 storage path reaches `PYTHOS:CORE:PHASE_10_COMPLETE`. On
+2026-08-01, operator-supplied first-run photo evidence and second-run video
+evidence both reached that panel on the disposable O2 Micro `1217:8620`
+target. The evidence is recorded in
+`docs/milestones/2026-08-01-physical-emmc-phase10.md`. This completes the
+planned two-cold-boot physical panel gate for that one target only. This ADR
+still does not claim generic SDHCI/eMMC support, partition parsing, filesystem
+support, DMA/ADMA, interrupts, hotplug, or safe writes on any other target.

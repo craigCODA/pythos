@@ -2,9 +2,9 @@
 
 Date: 2026-08-01
 
-Status: partial physical acceptance. One physical boot reached the final
-SDHCI/eMMC Phase 10 backend panel. The two-cold-boot gate is still open until a
-second cold boot is captured without reimaging the device.
+Status: target-specific physical acceptance recorded. A first-run photo and a
+second-run video both show the final SDHCI/eMMC Phase 10 backend panel on the
+confirmed disposable O2 Micro `1217:8620` target.
 
 ## Repository State
 
@@ -44,29 +44,38 @@ The physical panel is rendered only after the verify storage path reaches
 COM1 serial and host-image signature checks; the physical laptop currently has
 no serial capture path.
 
-## Video Artifact
+## Physical Artifacts
 
-The raw video is intentionally not committed to git because it is 143,974,709
-bytes, which is too large for a normal GitHub-tracked file. It should be
-published as a release asset or external video artifact if this milestone is
-promoted publicly.
+The raw photo and video are intentionally not committed to git. The video is
+143,974,709 bytes, which is too large for a normal GitHub-tracked file. The raw
+artifacts should be published as release assets or external evidence artifacts
+if this milestone is promoted publicly.
 
-- Local artifact: `D:\Downloads\20260801_171753.mp4`
-- Duration: 15.89 seconds
-- Resolution: 3840 by 2160
-- Frame rate: 59.27 fps
-- SHA-256:
+- First-run local artifact: `D:\Downloads\20260801_171744.jpg`
+- First-run raw SHA-256:
+  `9886EDD5D79A1BE50A887C38EB3CB9A90896D619D7B341AB098FFEB48D904122`
+- Second-run local artifact: `D:\Downloads\20260801_171753.mp4`
+- Second-run duration: 15.89 seconds
+- Second-run resolution: 3840 by 2160
+- Second-run frame rate: 59.27 fps
+- Second-run raw SHA-256:
   `DC178998ECFE6F3349A29930C083A61545817421963EB8D265DC96D0604C900E`
 
-Committed screen-only frame:
+Committed first-run screen-only frame:
 [2026-08-01-physical-sdhci-emmc-backend-boot1.jpg](../evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg)
 
-Frame SHA-256:
+First-run frame SHA-256:
+`0E804EC38610BFF3AD982737EBF02E432DBC3B0858A573B4E1753D9611A55732`
+
+Committed second-run screen-only frame:
+[2026-08-01-physical-sdhci-emmc-backend-boot2.jpg](../evidence/2026-08-01-physical-sdhci-emmc-backend-boot2.jpg)
+
+Second-run frame SHA-256:
 `7B8D115E4D7D1E3FC9DF1077F2A4F69DCB28372CF03E157FF6EBF6510609EC25`
 
 ## Observed Physical Screen
 
-The final panel visible in the video says:
+The final panel visible in both physical artifacts says:
 
 ```text
 PythOS
@@ -77,8 +86,8 @@ capacity 000000000747C000
 ```
 
 This is evidence that the opt-in polling SDHCI/eMMC backend reached the final
-Phase 10 verify-storage acceptance panel on the disposable physical O2 Micro
-`1217:8620` target once.
+Phase 10 verify-storage acceptance panel across two physical runs on the
+disposable O2 Micro `1217:8620` target.
 
 ## QEMU Acceptance Backing This Image
 
@@ -114,7 +123,6 @@ storage signatures in the backing eMMC image.
 
 This record does not claim:
 
-- two-cold-boot physical acceptance yet;
 - generic SDHCI, SD-card, or eMMC compatibility;
 - interrupt-driven storage;
 - DMA, ADMA, SDMA, or multi-block I/O;
@@ -122,12 +130,12 @@ This record does not claim:
 - safe writes on any machine other than the confirmed disposable target;
 - interactive physical object-shell use through built-in keyboard or trackpad.
 
-## Remaining Gate
+## Completed Gate
 
-Cold boot the same disposable target again without reimaging it and capture the
-same final panel. After that second boot is recorded, update this page and
-`docs/phase-11-real-hardware-findings.md` from partial physical acceptance to
-two-cold-boot physical acceptance.
+The planned two-cold-boot physical Phase 10 backend panel gate is recorded for
+the one disposable O2 Micro `1217:8620` target. The next work is either
+publication/merge work for this branch or a separate, explicitly scoped
+physical-input or broader-hardware milestone.
 
 ## Implementation Method
 
