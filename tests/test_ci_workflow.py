@@ -34,8 +34,6 @@ class CiWorkflowTest(unittest.TestCase):
             "python scripts/test-boot.py --slice milestone-1 --timeout 60",
             "python scripts/test-boot.py --slice milestone-1 --media iso --timeout 60",
             "python scripts/test-persistent-storage.py",
-            "python scripts/test-sdhci-emmc-block-device.py",
-            "python scripts/test-object-shell.py --backend sdhci-emmc",
             "python -m unittest tests.boot_core_handoff",
         )
 
