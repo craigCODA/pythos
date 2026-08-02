@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
@@ -15,7 +16,21 @@ def load_script(name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {name}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    scripts_dir = str(ROOT / "scripts")
+    inserted_scripts_dir = scripts_dir not in sys.path
+    if inserted_scripts_dir:
+        sys.path.insert(0, scripts_dir)
+    previous_module = sys.modules.get(module_name)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if previous_module is None:
+            sys.modules.pop(module_name, None)
+        else:
+            sys.modules[module_name] = previous_module
+        if inserted_scripts_dir:
+            sys.path.remove(scripts_dir)
     return module
 
 
@@ -98,7 +113,7 @@ class BuildOrchestrationTest(unittest.TestCase):
         calls: list[list[object]] = []
         module.run = calls.append
 
-        module.build_boot_image()
+        module.build_boot_image(module.backend_config("virtio"))
 
         self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
 
