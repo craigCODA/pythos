@@ -8,12 +8,14 @@ after the machine actually resets and the shell comes back up."""
 
 from __future__ import annotations
 
+import argparse
 import os
 import signal
 import socket
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import launcher_click
@@ -22,7 +24,73 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "object-shell-com1.log"
 STORAGE_IMAGE = TARGET / "pythos-store.img"
+AHCI_IMAGE = TARGET / "object-shell-ahci.img"
+EMMC_IMAGE = TARGET / "object-shell-emmc.img"
+ISO = TARGET / "pythos.iso"
 SHELL_PORT = 4583
+
+
+@dataclass(frozen=True)
+class BackendConfig:
+    storage_image: Path
+    core_features: tuple[str, ...]
+    build_iso: bool
+    qemu_args: tuple[str, ...]
+    selected_marker: str
+    forbidden_markers: tuple[str, ...]
+
+
+def backend_config(name: str) -> BackendConfig:
+    if name == "virtio":
+        return BackendConfig(
+            storage_image=STORAGE_IMAGE,
+            core_features=(),
+            build_iso=False,
+            qemu_args=(),
+            selected_marker="PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO",
+            forbidden_markers=(
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI",
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_SDHCI_EMMC",
+            ),
+        )
+    if name == "ahci":
+        return BackendConfig(
+            storage_image=AHCI_IMAGE,
+            core_features=(),
+            build_iso=False,
+            qemu_args=(
+                "--no-virtio-blk",
+                "--ahci",
+                "--ahci-storage-image",
+                str(AHCI_IMAGE),
+            ),
+            selected_marker="PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI",
+            forbidden_markers=(
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO",
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_SDHCI_EMMC",
+            ),
+        )
+    if name == "sdhci-emmc":
+        return BackendConfig(
+            storage_image=EMMC_IMAGE,
+            core_features=("sdhci-emmc-backend",),
+            build_iso=True,
+            qemu_args=(
+                "--iso",
+                str(ISO),
+                "--no-virtio-blk",
+                "--sdhci",
+                "--emmc",
+                "--emmc-image",
+                str(EMMC_IMAGE),
+            ),
+            selected_marker="PYTHOS:CORE:BLOCK:DEVICE_SELECTED_SDHCI_EMMC",
+            forbidden_markers=(
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO",
+                "PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI",
+            ),
+        )
+    raise AssertionError(f"unsupported backend {name}")
 
 
 def run(command: list[str]) -> None:
@@ -108,11 +176,24 @@ def build_verified_user_shell() -> None:
     run([sys.executable, "scripts/verify-user-elf.py"])
 
 
-def build_boot_image() -> None:
+def build_boot_image(config: BackendConfig) -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    core_command = [
+        "cargo",
+        "build",
+        "-p",
+        "pythos-core",
+        "--target",
+        "x86_64-unknown-none",
+    ]
+    if config.core_features:
+        core_command += ["--features", ",".join(config.core_features)]
+    run(core_command)
     build_verified_user_shell()
-    run([sys.executable, "scripts/build-image.py"])
+    if config.build_iso:
+        run([sys.executable, "scripts/build-iso.py"])
+    else:
+        run([sys.executable, "scripts/build-image.py"])
 
 
 def terminate_process_tree(process: subprocess.Popen[str]) -> None:
@@ -141,15 +222,30 @@ def terminate_process_tree(process: subprocess.Popen[str]) -> None:
         process.wait(timeout=5)
 
 
+def assert_forbidden_markers_absent(serial: str, config: BackendConfig) -> None:
+    for marker in config.forbidden_markers:
+        if marker in serial:
+            raise AssertionError(f"unexpected backend marker {marker}")
+
+
 def main() -> int:
-    build_boot_image()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--backend",
+        choices=("virtio", "ahci", "sdhci-emmc"),
+        default="virtio",
+    )
+    args = parser.parse_args()
+    config = backend_config(args.backend)
+
+    build_boot_image(config)
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
     # Task 10's lifecycle asserts a specific deterministic object id
     # (1042, the first `next_shell_note_id`); a storage image left over
     # from an earlier run would already have consumed that id.
-    if STORAGE_IMAGE.exists():
-        STORAGE_IMAGE.unlink()
+    if config.storage_image.exists():
+        config.storage_image.unlink()
     popen_kwargs: dict[str, object] = {}
     if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
@@ -166,6 +262,7 @@ def main() -> int:
             "--allow-reboot",
             "--expect-outcome",
             "timeout",
+            *config.qemu_args,
         ],
         cwd=ROOT,
         text=True,
@@ -179,6 +276,8 @@ def main() -> int:
         # normal boot can reach shell entry faster than the log poll interval.
         with connect_shell(30) as sock:
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 30)
+            serial = wait_for_file_marker(SERIAL_LOG, config.selected_marker, 30)
+            assert_forbidden_markers_absent(serial, config)
             # ADR 0053: normal boot now blocks on a real click before
             # launching the shell - inject one over QMP.
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY", 30)
@@ -334,6 +433,7 @@ def main() -> int:
             sock.sendall(b"reboot\r\n")
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:SYSTEM:REBOOTING", 10)
             wait_for_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
+            wait_for_marker_count(SERIAL_LOG, config.selected_marker, 2, 30)
             # ADR 0053: the post-reboot boot also blocks on a real click
             # before relaunching the shell - same QEMU process, same QMP
             # port, inject a second one.
@@ -377,6 +477,10 @@ def main() -> int:
                     f"inspect object {object_id} after reboot",
                 )
             print("OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK")
+            final_serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
+            assert_forbidden_markers_absent(final_serial, config)
+            if args.backend == "sdhci-emmc":
+                print("OBJECT_SHELL_SDHCI_EMMC_TEST_OK")
         return 0
     finally:
         terminate_process_tree(process)

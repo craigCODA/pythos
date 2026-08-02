@@ -166,6 +166,7 @@ impl KernelAddressSpace {
         boot_info: &PythBootInfo,
         hda_mmio: Option<(u64, u64, u64)>,
         ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
         shell_bootstrap_frame: Option<u64>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
@@ -211,6 +212,16 @@ impl KernelAddressSpace {
         // kernel device window, uncacheable: device registers reflect live
         // hardware state and must never be served from a stale cache line.
         if let Some((phys, virt, len)) = ahci_mmio {
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
+        }
+        // ADR 0062: map the selected SDHCI/eMMC BAR0 window uncacheable for
+        // synchronous polling PIO. The backend does not enable DMA/ADMA.
+        if let Some((phys, virt, len)) = sdhci_emmc_mmio {
             tables.map_physical_range(
                 virt,
                 phys,
@@ -302,7 +313,8 @@ impl RetainedUserAddressSpace {
         // SAFETY:
         // 1. Invariant: `root_table_phys` is a 4 KiB-aligned PML4 physical
         //    address whose mappings were validated before the larger
-        //    `UserAddressSpace` was intentionally retained for boot.
+        //    `UserAddressSpace` was intentionally retained for boot,
+        //    including any configured supervisor-only device MMIO windows.
         // 2. Established by: `UserAddressSpace::retain_for_boot` is called
         //    only after `validate_user_elf_entry` or equivalent validation.
         // 3. Lifetime: the page tables are PythCore-owned and intentionally
@@ -351,7 +363,7 @@ impl UserAddressSpace {
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
-        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, None)
+        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, None, &[])
     }
 
     pub fn build_with_user_elf_and_bootstrap(
@@ -368,6 +380,26 @@ impl UserAddressSpace {
             image,
             elf_bytes,
             Some((bootstrap_user_ptr, bootstrap_physical)),
+            &[],
+        )
+    }
+
+    pub fn build_with_user_elf_bootstrap_and_supervisor_mappings(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+        bootstrap_user_ptr: u64,
+        bootstrap_physical: u64,
+        supervisor_mappings: &[Option<(u64, u64, u64)>],
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        Self::build_with_user_elf_inner(
+            allocator,
+            boot_info,
+            image,
+            elf_bytes,
+            Some((bootstrap_user_ptr, bootstrap_physical)),
+            supervisor_mappings,
         )
     }
 
@@ -377,6 +409,7 @@ impl UserAddressSpace {
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
         bootstrap_mapping: Option<(u64, u64)>,
+        supervisor_mappings: &[Option<(u64, u64, u64)>],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         let mut user_elf_frames = [0u64; MAX_USER_ELF_FRAMES];
@@ -384,6 +417,7 @@ impl UserAddressSpace {
         map_kernel_segments(&mut tables)?;
         map_user_stack_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
+        map_supervisor_mappings(&mut tables, supervisor_mappings)?;
 
         let mut segment_index = 0;
         while segment_index < image.segment_count() {
@@ -488,6 +522,20 @@ impl UserAddressSpace {
     pub fn validate_user_bootstrap_mapping(&self, bootstrap_user_ptr: u64) -> Result<(), VmError> {
         let entry = user_leaf_entry_from_root(self.root_table_phys, bootstrap_user_ptr)?;
         if entry & PTE_WRITE != 0 || entry & PTE_NO_EXECUTE == 0 {
+            return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
+    pub fn validate_supervisor_mapping(
+        &self,
+        virt: u64,
+        expected_phys: u64,
+    ) -> Result<(), VmError> {
+        if translate_from_root(self.root_table_phys, virt)? != expected_phys {
+            return Err(VmError::UnmappedSource);
+        }
+        if user_can_access_from_root(self.root_table_phys, virt)? {
             return Err(VmError::UserAccessViolation);
         }
         Ok(())
@@ -827,6 +875,28 @@ fn map_bootstrap_stack(
             .ok_or(VmError::RangeOverflow)?,
         PTE_WRITE | PTE_NO_EXECUTE,
     )
+}
+
+fn map_supervisor_mappings(
+    tables: &mut PageTableBuilder<'_>,
+    mappings: &[Option<(u64, u64, u64)>],
+) -> Result<(), VmError> {
+    let mut index = 0;
+    while index < mappings.len() {
+        if let Some((phys, virt, len)) = mappings[index] {
+            // Device MMIO stays supervisor-only in user CR3 roots so syscall-
+            // time storage I/O can reach configured backends without exposing
+            // controller registers to CPL3.
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
+        }
+        index += 1;
+    }
+    Ok(())
 }
 
 fn map_user_elf_segment(

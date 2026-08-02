@@ -4,8 +4,12 @@ PythOS is an x86-64 operating-system prototype built around one rule: claims
 about the system must be backed by executable evidence. It boots through UEFI,
 takes ownership of memory and execution from firmware, builds a native PythCore
 execution substrate, brings up service identity and capability mechanisms,
-persists typed objects across reboot, and finishes with a bounded
-hardware-enforced ring-3 authority-boundary proof.
+persists typed objects across QEMU reboots, runs a capability-controlled ring-3
+object shell, and verifies storage through virtio, AHCI, and opt-in
+SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has reached the
+final Phase 10 acceptance panel across two cold-boot runs on the confirmed
+disposable O2 Micro `1217:8620` target. That physical result is intentionally
+scoped to that one target.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -20,8 +24,11 @@ and where the boundary of the work still is.
 | Timer and scheduler proofs | Dynamic application platform |
 | Capability enforcement proofs | General filesystem |
 | Bounded GUI and audio proofs | Networking |
-| Persistent checkpoint proof | Scalable object database |
-| Fixed ring-3 boundary proof | Arbitrary third-party programs |
+| Phase 10 typed-object storage in QEMU | Scalable object database |
+| Ring-3 object shell in QEMU | Arbitrary third-party programs |
+| Polling AHCI backend in QEMU | Broad physical hardware support |
+| Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
+| Two physical SDHCI/eMMC final-panel boots on O2 Micro `1217:8620` | Physical interactive shell input |
 
 ## What PythOS Is
 
@@ -45,8 +52,10 @@ Hardware
 ```
 
 The project has completed the roadmap's bounded architecture proofs through
-Phase 8, `real-hardware-isolation`. Later phases such as networking, package
-management, updates, physical hardware expansion, SMP, semantic indexing, and
+Phase 10, `general-purpose-storage`, in QEMU. The current active branch also
+contains the first persistent ring-3 object shell and an opt-in polling
+SDHCI/eMMC backend. Later phases such as networking, package management,
+updates, broad physical hardware expansion, SMP, semantic indexing, and
 optional AI remain intentionally unimplemented.
 
 ## Development Method
@@ -229,6 +238,41 @@ That is the strongest current claim in the project: for the fixed proof surface,
 authority at the user/kernel boundary is enforced by PythCore and the hardware,
 not by cooperating service code.
 
+### Dynamic Process And Storage Extensions
+
+Phase 9 extends the fixed Phase 8 boundary with dynamic user ELF loading,
+general syscall ABI versioning, copy-in/copy-out pointer validation, dynamic
+capability grants, argv/environment delivery, general fault isolation, and a
+process-model adversarial suite. These are still bounded proofs, but they move
+the project beyond a single hardcoded ring-3 transition.
+
+Phase 10 extends the object store with a journaled block allocator, dynamic
+object create/delete, explicit fragmentation/reuse policy, per-service storage
+quotas, serialized concurrent writes, and adversarial storage recovery. The
+Phase 10 marker is:
+
+```text
+PYTHOS:CORE:PHASE_10_COMPLETE
+```
+
+The normal object-shell path uses COM2 as an interactive transport and proves a
+create/inspect/revise/history/reboot/restore lifecycle over the same typed
+object storage model.
+
+### Block Backends
+
+The original persistent-storage path uses legacy virtio-blk in QEMU. Later
+backend work adds polling AHCI in QEMU and an opt-in polling single-block PIO
+SDHCI/eMMC backend. The SDHCI/eMMC backend is selected only when the QEMU test
+boots from ISO with virtio disabled and no AHCI storage disk, and the tests
+reject fallback markers so a passing run cannot be explained by another disk.
+
+The SDHCI/eMMC branch has a first-run photo and second-run video showing the
+final Phase 10 backend panel on the disposable O2 Micro `1217:8620` laptop:
+[docs/milestones/2026-08-01-physical-emmc-phase10.md](milestones/2026-08-01-physical-emmc-phase10.md).
+That is a target-specific physical backend result, not a generic
+hardware-support claim.
+
 ## How Claims Are Verified
 
 Verification is layered.
@@ -242,11 +286,18 @@ accepted as success evidence.
 The main acceptance commands are:
 
 ```powershell
-python scripts\test-boot.py --slice capability-enforcement-at-boundary --timeout 60
-python scripts\test-boot.py --slice graceful-audio-fallback --no-audio-device --timeout 60
-python scripts\test-boot.py --slice milestone-1 --timeout 60
-python scripts\test-boot.py --slice milestone-1 --media iso --timeout 60
+cargo fmt --check
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
+cargo test -p pythos-core
+python scripts\test-boot.py --slice milestone-1
+python scripts\test-boot.py --slice milestone-1 --media iso
 python scripts\test-persistent-storage.py
+python scripts\test-normal-fast-boot.py
+python scripts\test-com2-shell-transport.py
+python scripts\test-object-shell.py
+python scripts\test-ahci-block-device.py
+python scripts\test-sdhci-emmc-block-device.py
+python scripts\test-object-shell.py --backend sdhci-emmc
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -265,21 +316,22 @@ PythOS is not currently a general-purpose desktop OS. The following are not
 implemented:
 
 * general-purpose filesystem allocation;
-* dynamic object database;
-* dynamic user process creation;
-* general userspace ABI;
-* user pointer copy-in/copy-out policy;
 * networking;
 * package management;
 * immutable A/B updates;
 * SMP;
 * broad physical hardware support;
+* generic SDHCI/eMMC support;
+* interrupt-driven or DMA-backed storage;
+* partitions or filesystems on the SDHCI/eMMC target;
+* physical interactive object-shell use through built-in keyboard or trackpad;
 * AI inside the trusted core;
 * Patch, Open Surface, Causal Lens UI, or semantic indexing.
 
-The Phase 8 boundary proof is real, but it is bounded. It proves the current
-fixed ring-3/syscall/capability surface, not arbitrary third-party user
-programs or a mature application platform.
+The Phase 8 through Phase 10 proofs are real, but they are bounded. They prove
+the current ring-3/syscall/capability/storage surfaces, not arbitrary
+third-party user programs, a mature application platform, or broad hardware
+compatibility.
 
 ## Why This Is Different From "It Boots"
 
@@ -291,7 +343,13 @@ make narrower but stronger claims:
 * scheduler and preemption progress are serial-ordered;
 * storage recovery is verified across real QEMU reboot and killed mid-commit
   scenarios;
-* the final Phase 8 boundary proves bad-pointer containment, copied capability
+* the ring-3 object shell persists typed, versioned objects across reboot in
+  QEMU;
+* SDHCI/eMMC backend tests reject virtio/AHCI fallback and inspect the backing
+  eMMC image;
+* first-run photo and second-run video evidence show the final Phase 10
+  SDHCI/eMMC backend panel on the disposable O2 Micro `1217:8620` target;
+* the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate.
 
 The value of the project is the discipline around those claims. The repo does
@@ -308,6 +366,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 docs/HANDOVER.md
 docs/THREAT-MODEL.md
+docs/milestones/2026-08-01-physical-emmc-phase10.md
 ```
 
 Key late-phase ADRs:
@@ -318,6 +377,12 @@ docs/decisions/0025-phase-7-object-store-checkpoint-recovery.md
 docs/decisions/0028-phase-8-syscall-abi.md
 docs/decisions/0035-phase-8-crash-containment.md
 docs/decisions/0036-phase-8-capability-boundary.md
+docs/decisions/0044-phase-10-block-allocator-format.md
+docs/decisions/0045-phase-10-fragmentation-policy.md
+docs/decisions/0051-first-ring3-object-shell.md
+docs/decisions/0052-object-shell-service-abi.md
+docs/decisions/0054-polling-ahci-block-backend.md
+docs/decisions/0062-polling-sdhci-emmc-block-backend.md
 ```
 
 Verification entry points:
@@ -326,6 +391,9 @@ Verification entry points:
 scripts/test-boot.py
 scripts/run-qemu.py
 scripts/test-persistent-storage.py
+scripts/test-object-shell.py
+scripts/test-ahci-block-device.py
+scripts/test-sdhci-emmc-block-device.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py

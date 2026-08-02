@@ -18,6 +18,7 @@ const PCI_BUS_NUMBERS_OFFSET: u8 = 0x18;
 const PCI_BAR0_OFFSET: u8 = 0x10;
 const PCI_BAR1_OFFSET: u8 = 0x14;
 const PCI_BAR5_OFFSET: u8 = 0x24;
+const PCI_COMMAND_MEMORY_SPACE: u32 = 1 << 1;
 const PCI_HEADER_MULTIFUNCTION: u8 = 1 << 7;
 const PCI_CLASS_MASS_STORAGE: u8 = 0x01;
 const PCI_CLASS_BRIDGE: u8 = 0x06;
@@ -118,14 +119,23 @@ impl StorageProbeReport {
     pub fn contains_kind(&self, kind: StorageControllerKind) -> bool {
         let mut index = 0;
         while index < self.count {
-            if let Some(controller) = self.controllers[index] {
-                if controller.kind == kind {
-                    return true;
-                }
+            if self.controllers[index].is_some_and(|controller| controller.kind == kind) {
+                return true;
             }
             index += 1;
         }
         false
+    }
+
+    pub fn first_of_kind(&self, kind: StorageControllerKind) -> Option<StorageController> {
+        let mut index = 0;
+        while let Some(controller) = self.controller_at(index) {
+            if controller.kind == kind {
+                return Some(controller);
+            }
+            index += 1;
+        }
+        None
     }
 }
 
@@ -222,6 +232,22 @@ pub fn run_probe() -> StorageProbeReport {
     let mut visited = [false; 256];
     scan_bus(0, &mut visited, &mut report);
     report
+}
+
+#[cfg(not(test))]
+pub fn enable_memory_space(controller: StorageController) {
+    let current = read_config_u32(controller.bus, controller.device, controller.function, 0x04);
+    write_config_u32(
+        controller.bus,
+        controller.device,
+        controller.function,
+        0x04,
+        memory_space_command_value(current),
+    );
+}
+
+pub const fn memory_space_command_value(current: u32) -> u32 {
+    current | PCI_COMMAND_MEMORY_SPACE
 }
 
 #[cfg(not(test))]
@@ -397,6 +423,15 @@ fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     inl(PCI_CONFIG_DATA)
 }
 
+#[cfg(not(test))]
+fn write_config_u32(bus: u8, device: u8, function: u8, offset: u8, value: u32) {
+    outl(
+        PCI_CONFIG_ADDRESS,
+        config_address(bus, device, function, offset),
+    );
+    outl(PCI_CONFIG_DATA, value);
+}
+
 fn config_address(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     0x8000_0000
         | (u32::from(bus) << 16)
@@ -408,17 +443,18 @@ fn config_address(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 #[cfg(not(test))]
 fn outl(port: u16, value: u32) {
     // SAFETY:
-    // 1. Invariant: port `0xCF8` is the x86 PCI configuration-address port,
-    //    and `value` is a config-mechanism-1 address.
-    // 2. Established by: callers only pass `PCI_CONFIG_ADDRESS` and construct
-    //    the value with `config_address`.
+    // 1. Invariant: port `0xCF8` is the x86 PCI configuration-address port
+    //    and port `0xCFC` is the selected PCI configuration-data port.
+    // 2. Established by: callers only pass `PCI_CONFIG_ADDRESS` with a value
+    //    built by `config_address`, or `PCI_CONFIG_DATA` immediately after
+    //    selecting the target config address.
     // 3. Lifetime: valid for this single port-I/O instruction.
     // 4. Pointer ownership: no memory pointers are used.
     // 5. Alignment: not applicable to port I/O.
     // 6. Mapped length: not applicable; port I/O is CPU-mediated.
     // 7. Concurrency: hardware-probe boot is single-core and pre-userspace.
     // 8. Violation: a wrong port/value could target unrelated I/O hardware.
-    // SAFETY: full PCI config-address port I/O invariant is documented above.
+    // SAFETY: full PCI config write port-I/O invariant is documented above.
     unsafe {
         asm!(
             "out dx, eax",
@@ -622,5 +658,52 @@ mod tests {
         assert!(report.overflowed());
         assert!(report.contains_kind(StorageControllerKind::Nvme));
         assert!(!report.contains_kind(StorageControllerKind::SdhciEmmcCandidate));
+    }
+
+    #[test]
+    fn finds_first_controller_of_requested_kind() {
+        let mut report = StorageProbeReport::new();
+        let ahci = StorageController {
+            kind: StorageControllerKind::Ahci,
+            bus: 0,
+            device: 31,
+            function: 2,
+            vendor_id: vendor(TEST_AHCI_VENDOR_DEVICE),
+            device_id: device_id(TEST_AHCI_VENDOR_DEVICE),
+            class_code: PCI_CLASS_MASS_STORAGE,
+            subclass: PCI_SUBCLASS_SATA,
+            prog_if: PCI_PROG_IF_AHCI,
+            bar0: None,
+            bar5: Some(MemoryBar::Memory32(u64::from(TEST_AHCI_BAR5_BASE))),
+        };
+        let sdhci = StorageController {
+            kind: StorageControllerKind::SdhciEmmcCandidate,
+            bus: 1,
+            device: 0,
+            function: 0,
+            vendor_id: vendor(TEST_SDHCI_VENDOR_DEVICE),
+            device_id: device_id(TEST_SDHCI_VENDOR_DEVICE),
+            class_code: PCI_CLASS_SYSTEM_PERIPHERAL,
+            subclass: PCI_SUBCLASS_SD_HOST,
+            prog_if: PCI_PROG_IF_AHCI,
+            bar0: Some(MemoryBar::Memory64(TEST_SDHCI_BAR0_BASE)),
+            bar5: None,
+        };
+
+        assert!(report.record(ahci));
+        assert!(report.record(sdhci));
+
+        assert_eq!(
+            report.first_of_kind(StorageControllerKind::SdhciEmmcCandidate),
+            Some(sdhci)
+        );
+        assert_eq!(report.first_of_kind(StorageControllerKind::Nvme), None);
+    }
+
+    #[test]
+    fn memory_space_enable_sets_only_the_memory_space_command_bit() {
+        assert_eq!(memory_space_command_value(0), 1 << 1);
+        assert_eq!(memory_space_command_value(1 << 0), (1 << 0) | (1 << 1));
+        assert_eq!(memory_space_command_value(0) & (1 << 2), 0);
     }
 }

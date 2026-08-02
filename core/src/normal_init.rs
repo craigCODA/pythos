@@ -106,23 +106,43 @@ pub fn initialize_normal_substrate(
             block_device::AHCI_MMIO_LEN,
         )
     });
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let sdhci_emmc_controller = match crate::sdhci_emmc::probe_controller() {
+        Ok(controller) => Some(controller),
+        Err(crate::sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent) => None,
+        Err(_) => return Err(NormalInitError::BlockDevice),
+    };
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
+        (
+            controller.physical_mmio_base,
+            crate::sdhci_emmc::SDHCI_EMMC_MMIO_VIRT,
+            crate::sdhci_emmc::SDHCI_EMMC_MMIO_LEN,
+        )
+    });
+    #[cfg(not(feature = "sdhci-emmc-backend"))]
+    let sdhci_emmc_mmio = None;
     let kernel_address_space = KernelAddressSpace::build(
         physical_memory,
         boot_info,
         None,
         ahci_mmio,
+        sdhci_emmc_mmio,
         Some(bootstrap_frame),
     )
     .map_err(|_| NormalInitError::Memory)?;
-    let (shell_address_space, loaded_shell) = UserAddressSpace::build_with_user_elf_and_bootstrap(
-        physical_memory,
-        boot_info,
-        &shell_image,
-        shell_manifest.elf(),
-        SHELL_BOOTSTRAP_USER_PTR,
-        bootstrap_frame,
-    )
-    .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    let supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
+    let (shell_address_space, loaded_shell) =
+        UserAddressSpace::build_with_user_elf_bootstrap_and_supervisor_mappings(
+            physical_memory,
+            boot_info,
+            &shell_image,
+            shell_manifest.elf(),
+            SHELL_BOOTSTRAP_USER_PTR,
+            bootstrap_frame,
+            &supervisor_mappings,
+        )
+        .map_err(|_| NormalInitError::ShellAddressSpace)?;
     if loaded_shell.entry() != shell_image.entry()
         || loaded_shell.segment_count() != shell_image.segment_count()
         || !loaded_shell.bss_zeroed()
@@ -135,6 +155,15 @@ pub fn initialize_normal_substrate(
     shell_address_space
         .validate_user_bootstrap_mapping(SHELL_BOOTSTRAP_USER_PTR)
         .map_err(|_| NormalInitError::ShellBootstrap)?;
+    let mut mapping_index = 0;
+    while mapping_index < supervisor_mappings.len() {
+        if let Some((phys, virt, _)) = supervisor_mappings[mapping_index] {
+            shell_address_space
+                .validate_supervisor_mapping(virt, phys)
+                .map_err(|_| NormalInitError::ShellAddressSpace)?;
+        }
+        mapping_index += 1;
+    }
     let shell_launch = PreparedShellLaunch {
         address_space: shell_address_space.retain_for_boot(),
         image: shell_image,
@@ -161,6 +190,14 @@ pub fn initialize_normal_substrate(
         kernel_address_space.activate();
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY");
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let sdhci_emmc_device = match sdhci_emmc_controller {
+        Some(controller) => Some(
+            crate::sdhci_emmc::initialize_device(controller)
+                .map_err(|_| NormalInitError::BlockDevice)?,
+        ),
+        None => None,
+    };
     // GDT/TSS ring-3 selectors are already installed by the common
     // `gdt::initialize()` call before the verify/normal branch; this marker
     // covers the user address-space construction proved just above.
@@ -179,7 +216,11 @@ pub fn initialize_normal_substrate(
     initialize_guarded_user_stack_pool().map_err(|_| NormalInitError::UserStacks)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY");
 
-    let block_device = block_device::select_device().map_err(|_| NormalInitError::BlockDevice)?;
+    #[cfg(feature = "sdhci-emmc-backend")]
+    let block_device_selection = block_device::select_device_with_sdhci_emmc(sdhci_emmc_device);
+    #[cfg(not(feature = "sdhci-emmc-backend"))]
+    let block_device_selection = block_device::select_device();
+    let block_device = block_device_selection.map_err(|_| NormalInitError::BlockDevice)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY");
 
     Ok(NormalBootSubstrate {

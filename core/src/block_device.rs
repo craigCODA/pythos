@@ -140,6 +140,8 @@ pub enum BlockDeviceError {
 pub enum BlockDeviceInfo {
     Virtio(VirtioBlockDevice),
     Ahci(AhciBlockDevice),
+    #[cfg(feature = "sdhci-emmc-backend")]
+    SdhciEmmc(crate::sdhci_emmc::SdhciEmmcBlockDevice),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -175,6 +177,8 @@ impl BlockDeviceInfo {
         match self {
             Self::Virtio(device) => device.capacity_sectors,
             Self::Ahci(device) => device.capacity_sectors,
+            #[cfg(feature = "sdhci-emmc-backend")]
+            Self::SdhciEmmc(device) => device.card.capacity_sectors,
         }
     }
 
@@ -184,6 +188,8 @@ impl BlockDeviceInfo {
             // AHCI has no virtqueue. Keep this nonzero so the existing storage
             // service liveness check remains meaningful across backends.
             Self::Ahci(_) => 1,
+            #[cfg(feature = "sdhci-emmc-backend")]
+            Self::SdhciEmmc(_) => 1,
         }
     }
 
@@ -212,6 +218,7 @@ struct PciFunction {
     bar5: u32,
 }
 
+#[cfg(not(feature = "sdhci-emmc-backend"))]
 pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
     match scan_primary_bus_for_virtio() {
         Ok(device) => {
@@ -219,14 +226,50 @@ pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
             serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO");
             Ok(device)
         }
-        Err(BlockDeviceError::DeviceAbsent) => {
-            let device = scan_primary_bus_for_ahci()?;
-            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
-            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI");
-            Ok(device)
-        }
+        Err(BlockDeviceError::DeviceAbsent) => select_ahci_device(),
         Err(error) => Err(error),
     }
+}
+
+#[cfg(feature = "sdhci-emmc-backend")]
+pub fn select_device_with_sdhci_emmc(
+    sdhci_emmc_device: Option<crate::sdhci_emmc::SdhciEmmcBlockDevice>,
+) -> Result<BlockDeviceInfo, BlockDeviceError> {
+    match scan_primary_bus_for_virtio() {
+        Ok(device) => {
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+            serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_VIRTIO");
+            Ok(device)
+        }
+        Err(BlockDeviceError::DeviceAbsent) => match scan_primary_bus_for_ahci() {
+            Ok(device) => {
+                serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+                serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI");
+                Ok(device)
+            }
+            Err(BlockDeviceError::DeviceAbsent) => select_sdhci_emmc_device(sdhci_emmc_device),
+            Err(error) => Err(error),
+        },
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(not(feature = "sdhci-emmc-backend"))]
+fn select_ahci_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
+    let device = scan_primary_bus_for_ahci()?;
+    serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+    serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_AHCI");
+    Ok(device)
+}
+
+#[cfg(feature = "sdhci-emmc-backend")]
+fn select_sdhci_emmc_device(
+    sdhci_emmc_device: Option<crate::sdhci_emmc::SdhciEmmcBlockDevice>,
+) -> Result<BlockDeviceInfo, BlockDeviceError> {
+    let device = sdhci_emmc_device.ok_or(BlockDeviceError::DeviceAbsent)?;
+    serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED");
+    serial::write_line("PYTHOS:CORE:BLOCK:DEVICE_SELECTED_SDHCI_EMMC");
+    Ok(BlockDeviceInfo::SdhciEmmc(device))
 }
 
 pub fn probe_ahci() -> Option<AhciController> {
@@ -292,6 +335,31 @@ fn execute_sector_request(
             }
             submit_ahci_sector_request(ahci, sector, write, bytes)
         }
+        #[cfg(feature = "sdhci-emmc-backend")]
+        BlockDeviceInfo::SdhciEmmc(sdhci_emmc) => {
+            if sector >= sdhci_emmc.card.capacity_sectors {
+                return Err(BlockDeviceError::RequestFailed);
+            }
+            if write {
+                crate::sdhci_emmc::write_sector(sdhci_emmc, sector, bytes)
+            } else {
+                crate::sdhci_emmc::read_sector(sdhci_emmc, sector, bytes)
+            }
+            .map_err(map_sdhci_emmc_error)
+        }
+    }
+}
+
+#[cfg(feature = "sdhci-emmc-backend")]
+fn map_sdhci_emmc_error(error: crate::sdhci_emmc::SdhciEmmcBackendError) -> BlockDeviceError {
+    match error {
+        crate::sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent => BlockDeviceError::DeviceAbsent,
+        crate::sdhci_emmc::SdhciEmmcBackendError::InvalidController
+        | crate::sdhci_emmc::SdhciEmmcBackendError::InvalidBar
+        | crate::sdhci_emmc::SdhciEmmcBackendError::MmioWindowOverflow => {
+            BlockDeviceError::InvalidBar
+        }
+        crate::sdhci_emmc::SdhciEmmcBackendError::Block(_) => BlockDeviceError::RequestFailed,
     }
 }
 
@@ -1502,6 +1570,48 @@ mod tests {
             BlockDeviceInfo::new_for_test(16, 8),
             BlockDeviceInfo::Virtio(_)
         ));
+    }
+
+    #[cfg(feature = "sdhci-emmc-backend")]
+    const fn test_sdhci_emmc_device(
+        capacity_sectors: u64,
+    ) -> crate::sdhci_emmc::SdhciEmmcBlockDevice {
+        crate::sdhci_emmc::SdhciEmmcBlockDevice {
+            bus: 1,
+            device: 0,
+            function: 0,
+            mmio_base: crate::sdhci_emmc::SDHCI_EMMC_MMIO_VIRT,
+            card: crate::sdhci::EmmcCard {
+                rca: 1,
+                addressing: crate::sdhci::EmmcAddressingMode::Sector,
+                capacity_sectors,
+            },
+        }
+    }
+
+    #[cfg(feature = "sdhci-emmc-backend")]
+    #[test]
+    fn sdhci_emmc_reports_capacity_and_nonzero_queue_liveness() {
+        let device = BlockDeviceInfo::SdhciEmmc(test_sdhci_emmc_device(65_536));
+
+        assert_eq!(device.capacity_sectors(), 65_536);
+        assert_eq!(device.queue_size(), 1);
+    }
+
+    #[cfg(feature = "sdhci-emmc-backend")]
+    #[test]
+    fn sdhci_emmc_rejects_out_of_range_before_adapter_io() {
+        let mut bytes = [0; SECTOR_SIZE];
+        let device = BlockDeviceInfo::SdhciEmmc(test_sdhci_emmc_device(1));
+
+        assert_eq!(
+            execute_sector_request(device, 1, false, &mut bytes),
+            Err(BlockDeviceError::RequestFailed)
+        );
+        assert_eq!(
+            execute_sector_request(device, 1, true, &mut bytes),
+            Err(BlockDeviceError::RequestFailed)
+        );
     }
 
     #[test]

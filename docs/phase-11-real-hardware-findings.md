@@ -172,6 +172,64 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   storage writes, other LBAs, repeated-write validation, normal object-store
   persistence on eMMC, DMA/ADMA, interrupt-driven storage, universal SDHCI/eMMC
   support, or writes on any other machine/controller.
+- ADR 0062 implementation starts from commit `dcebc2e` and promotes the proven
+  single-block PIO path into an opt-in `sdhci-emmc-backend` block backend. The
+  physical target remains the same already-confirmed disposable O2 Micro
+  `1217:8620` SDHCI/eMMC laptop. Physical backend validation is forbidden until
+  QEMU storage acceptance and QEMU object-shell persistence acceptance pass
+  against a disposable emulated eMMC image without selecting virtio or AHCI.
+- The SDHCI/eMMC backend now has a verify-only no-serial acceptance panel that
+  renders only after the Phase 7-10 storage proof path reaches
+  `PYTHOS:CORE:PHASE_10_COMPLETE`. The panel text is:
+  `PythOS / sdhci emmc backend / phase10 ok / disk writes / capacity <hex>`.
+  QEMU acceptance requires
+  `PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY` plus the existing
+  serial and host-image storage oracles. The two physical boot artifacts are
+  recorded below; physical acceptance is still scoped only to the disposable
+  O2 Micro `1217:8620` target and must not be generalized from this QEMU
+  result.
+- On 2026-08-01, branch `feature/sdhci-emmc-backend` reached final QEMU
+  regression after the ADR 0062 implementation commits and the `cf68c3b`
+  milestone-timeout harness follow-up. Verified evidence includes
+  `test-emmc-write-probe.py`, `test-ahci-block-device.py`,
+  `test-sdhci-emmc-block-device.py` twice, `test-persistent-storage.py`,
+  `test-normal-fast-boot.py`, `test-com2-shell-transport.py`,
+  `test-object-shell.py`, `test-object-shell.py --backend sdhci-emmc` twice,
+  and `test-boot.py --slice milestone-1` on ESP and ISO media. The
+  SDHCI/eMMC storage tests selected `DEVICE_SELECTED_SDHCI_EMMC`, rejected
+  virtio/AHCI selection, reached `PHASE_10_COMPLETE` and
+  `MILESTONE_1_COMPLETE`, and confirmed the backing-image object/general
+  storage signatures. The physical USB ESP was refreshed for the disposable
+  target.
+- On 2026-08-01, the operator identified
+  `D:\Downloads\20260801_171744.jpg` as the first run and
+  `D:\Downloads\20260801_171753.mp4` as the second run from the physical
+  SDHCI/eMMC backend validation sequence. The first-run JPG has SHA-256
+  `9886EDD5D79A1BE50A887C38EB3CB9A90896D619D7B341AB098FFEB48D904122`. The
+  second-run MP4 has SHA-256
+  `DC178998ECFE6F3349A29930C083A61545817421963EB8D265DC96D0604C900E`,
+  duration 15.89 seconds, resolution 3840 by 2160, and frame rate 59.27 fps.
+  Both artifacts show the disposable O2 Micro `1217:8620` target reaching the
+  final verify-only acceptance panel:
+  - `PythOS`
+  - `sdhci emmc backend`
+  - `phase10 ok`
+  - `disk writes`
+  - `capacity 000000000747C000`
+  A screen-only frame from the first run is committed as
+  `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg`
+  (SHA-256
+  `0E804EC38610BFF3AD982737EBF02E432DBC3B0858A573B4E1753D9611A55732`).
+  A screen-only frame from the second run is committed as
+  `docs/evidence/2026-08-01-physical-sdhci-emmc-backend-boot2.jpg`
+  (SHA-256
+  `7B8D115E4D7D1E3FC9DF1077F2A4F69DCB28372CF03E157FF6EBF6510609EC25`).
+  The milestone evidence page is
+  `docs/milestones/2026-08-01-physical-emmc-phase10.md`. This completes the
+  planned two-cold-boot physical Phase 10 backend panel gate for the one
+  disposable O2 Micro `1217:8620` target only. It does not prove generic
+  SDHCI/eMMC support, safe writes on other targets, partition/filesystem
+  support, DMA/ADMA, interrupts, hotplug, or interactive physical shell use.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

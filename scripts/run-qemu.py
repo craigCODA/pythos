@@ -218,12 +218,12 @@ def main() -> int:
     parser.add_argument(
         "--sdhci",
         action="store_true",
-        help="attach an SDHCI PCI controller for probe-only register discovery",
+        help="attach an SDHCI PCI controller",
     )
     parser.add_argument(
         "--emmc",
         action="store_true",
-        help="attach a QEMU eMMC card behind --sdhci for identification-only probing",
+        help="attach a QEMU eMMC card behind --sdhci",
     )
     parser.add_argument(
         "--emmc-image",

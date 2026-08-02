@@ -61,6 +61,10 @@ mod retained_services;
 mod revision_history;
 mod runtime_loader;
 mod scheduler;
+#[cfg(any(test, feature = "hardware-probe", feature = "sdhci-emmc-backend"))]
+mod sdhci;
+#[cfg(any(test, feature = "sdhci-emmc-backend"))]
+mod sdhci_emmc;
 #[cfg(any(test, feature = "hardware-probe"))]
 mod sdhci_probe;
 mod serial;
@@ -73,6 +77,8 @@ mod shell_objects;
 mod software_renderer;
 mod storage_adversarial;
 mod storage_allocator;
+#[cfg(any(test, all(feature = "verify", feature = "sdhci-emmc-backend")))]
+mod storage_backend_screen;
 mod storage_concurrency;
 mod storage_journal;
 mod storage_probe;
@@ -195,12 +201,32 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 block_device::AHCI_MMIO_LEN,
             )
         });
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let sdhci_emmc_controller = match sdhci_emmc::probe_controller() {
+            Ok(controller) => Some(controller),
+            Err(sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent) => None,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
+            (
+                controller.physical_mmio_base,
+                sdhci_emmc::SDHCI_EMMC_MMIO_VIRT,
+                sdhci_emmc::SDHCI_EMMC_MMIO_LEN,
+            )
+        });
+        #[cfg(not(feature = "sdhci-emmc-backend"))]
+        let sdhci_emmc_mmio = None;
 
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
             hda_mmio,
             ahci_mmio,
+            sdhci_emmc_mmio,
             None,
         ) {
             Ok(address_space) => address_space,
@@ -349,6 +375,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
         serial::write_line("PYTHOS:CORE:VM_READY");
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let sdhci_emmc_device = match sdhci_emmc_controller {
+            Some(controller) => match sdhci_emmc::initialize_device(controller) {
+                Ok(device) => Some(device),
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            },
+            None => None,
+        };
         fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_KERNEL_ADDR);
         if memory::r#virtual::prove_old_identity_map_removed().is_err() {
             serial::write_line("PYTHOS:PANIC");
@@ -627,7 +664,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:GRACEFUL_AUDIO_FALLBACK_READY");
         serial::write_line("PYTHOS:CORE:PHASE_6_COMPLETE");
-        let _block_device = match block_device::select_device() {
+        #[cfg(feature = "sdhci-emmc-backend")]
+        let block_device_selection = block_device::select_device_with_sdhci_emmc(sdhci_emmc_device);
+        #[cfg(not(feature = "sdhci-emmc-backend"))]
+        let block_device_selection = block_device::select_device();
+        let _block_device = match block_device_selection {
             Ok(device) => device,
             Err(_) => {
                 serial::write_line("PYTHOS:PANIC");
@@ -1496,6 +1537,11 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY");
         serial::write_line("PYTHOS:CORE:PHASE_10_COMPLETE");
 
+        #[cfg(feature = "sdhci-emmc-backend")]
+        if storage_backend_screen::render(&boot_info.framebuffer, _block_device).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
         serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
         serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
         qemu_exit::success();
