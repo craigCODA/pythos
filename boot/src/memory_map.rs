@@ -64,6 +64,24 @@ impl CapturedMemoryMap {
         self.descriptor_version = descriptor_version;
         if self.is_captured() { Ok(()) } else { Err(()) }
     }
+
+    #[cfg(test)]
+    pub(crate) fn for_test(
+        ptr: *mut EfiMemoryDescriptor,
+        len: usize,
+        map_key: usize,
+        descriptor_size: usize,
+        descriptor_version: u32,
+    ) -> Self {
+        Self {
+            ptr,
+            len,
+            capacity: len,
+            map_key,
+            descriptor_size,
+            descriptor_version,
+        }
+    }
 }
 
 pub(crate) fn capture(system_table: *mut EfiSystemTable) -> Result<CapturedMemoryMap, ()> {

@@ -9,6 +9,9 @@ rust-version.workspace = true
 [dependencies]
 pythos-shared = { path = "../shared" }
 
+[features]
+evidence-terminal = []
+
 [[bin]]
 name = "bootx64"
 path = "src/main.rs"

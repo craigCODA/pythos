@@ -1,8 +1,10 @@
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 #![no_std]
 
 mod boot_info;
 mod elf;
+#[cfg(feature = "evidence-terminal")]
+mod evidence_log;
 mod exit_boot_services;
 mod fb_debug;
 mod firmware;
@@ -16,6 +18,7 @@ mod qemu_exit;
 mod serial;
 mod uefi;
 
+#[cfg(not(test))]
 use core::panic::PanicInfo;
 
 type EfiHandle = *mut core::ffi::c_void;
@@ -27,10 +30,20 @@ pub extern "efiapi" fn efi_main(
     system_table: *mut uefi::EfiSystemTable,
 ) -> EfiStatus {
     serial::init_com1();
-    serial::write_line("PYTHOS:LOADER:ENTER");
+    #[cfg(feature = "evidence-terminal")]
+    let mut evidence_log = match evidence_log::AllocatedEvidenceLog::allocate(system_table) {
+        Ok(log) => Some(log),
+        Err(()) => {
+            serial::write_line("PYTHOS:LOADER:EVIDENCE_LOG_ALLOC_FAILED");
+            None
+        }
+    };
+    #[cfg(not(feature = "evidence-terminal"))]
+    let mut evidence_log = None;
+    loader_marker(&mut evidence_log, "PYTHOS:LOADER:ENTER");
     let mut framebuffer = match graphics::initialize_gop(system_table) {
         Ok(framebuffer) => {
-            serial::write_line("PYTHOS:LOADER:GOP_READY");
+            loader_marker(&mut evidence_log, "PYTHOS:LOADER:GOP_READY");
             framebuffer
         }
         Err(()) => fail(),
@@ -41,7 +54,7 @@ pub extern "efiapi" fn efi_main(
         Ok(_) => fail(),
         Err(()) => fail(),
     };
-    serial::write_line("PYTHOS:LOADER:KERNEL_LOADED");
+    loader_marker(&mut evidence_log, "PYTHOS:LOADER:KERNEL_LOADED");
     fb_debug::fill(&framebuffer, fb_debug::COLOR_KERNEL);
 
     let init_bundle = match initrd::load_init_pak(system_table, image_handle) {
@@ -84,11 +97,12 @@ pub extern "efiapi" fn efi_main(
         memory_map: &memory_map,
         stack: &stack,
         firmware_tables,
+        evidence_log: evidence_log_input(&evidence_log),
     }) {
         Ok(boot_info) => boot_info,
         Err(()) => fail(),
     };
-    serial::write_line("PYTHOS:LOADER:MEMORY_MAP_READY");
+    loader_marker(&mut evidence_log, "PYTHOS:LOADER:MEMORY_MAP_READY");
     fb_debug::fill(&framebuffer, fb_debug::COLOR_MMAP);
 
     match exit_boot_services::exit_once(system_table, image_handle, memory_map.map_key) {
@@ -106,6 +120,7 @@ pub extern "efiapi" fn efi_main(
                     memory_map: &memory_map,
                     stack: &stack,
                     firmware_tables,
+                    evidence_log: evidence_log_input(&evidence_log),
                 })
                 .is_err()
             {
@@ -119,7 +134,7 @@ pub extern "efiapi" fn efi_main(
         }
         exit_boot_services::ExitBootServicesResult::Failed => fail(),
     }
-    serial::write_line("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
+    loader_marker(&mut evidence_log, "PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
     // Firmware paging is still active until `enter_pythcore` switches CR3, so the
     // identity-mapped framebuffer is still writable. This final paint proves the
     // loader survived ExitBootServices and is about to hand off to PythCore.
@@ -149,12 +164,38 @@ pub extern "efiapi" fn efi_main(
     }
 }
 
+#[cfg(feature = "evidence-terminal")]
+fn loader_marker(log: &mut Option<evidence_log::AllocatedEvidenceLog>, marker: &str) {
+    evidence_log::write_marker(log, marker);
+}
+
+#[cfg(not(feature = "evidence-terminal"))]
+fn loader_marker(_log: &mut Option<()>, marker: &str) {
+    serial::write_line(marker);
+}
+
+#[cfg(feature = "evidence-terminal")]
+fn evidence_log_input(
+    log: &Option<evidence_log::AllocatedEvidenceLog>,
+) -> boot_info::EvidenceLogInput<'_> {
+    log.as_ref()
+}
+
+#[cfg(not(feature = "evidence-terminal"))]
+fn evidence_log_input(_log: &Option<()>) -> boot_info::EvidenceLogInput<'_> {
+    None
+}
+
+#[cfg(test)]
+fn main() {}
+
 fn fail() -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
     fb_debug::fill_fail();
     qemu_exit::panic();
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
