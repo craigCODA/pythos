@@ -169,6 +169,11 @@ PythCore must immediately emit `PYTHOS:CORE:ENTER`.
 `PythBootInfo` and `PythFramebufferInfo` live in `shared/src/boot_protocol.rs`.
 ADR 0019 appends explicit `font_phys` and `font_len` fields and increments the
 boot ABI minor version to 2.
+ABI 0.3 consumes part of `PythBootInfo.reserved` for the opt-in ADR 0063
+evidence log: `evidence_log_phys: u64`, `evidence_log_len: u32`,
+`evidence_log_flags: u32`, and `reserved: [u64; 6]`.
+`evidence_log_flags & 0x0000_0001` means the 64 KiB `PYLOG001` evidence buffer
+is present. Unknown evidence flags are invalid.
 
 Magic:
 

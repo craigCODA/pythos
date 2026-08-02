@@ -92,7 +92,10 @@ impl AllocatedBootInfo {
             runtime_services_ptr: 0,
             command_line_ptr: 0,
             command_line_len: 0,
-            reserved: [0; 8],
+            evidence_log_phys: 0,
+            evidence_log_len: 0,
+            evidence_log_flags: 0,
+            reserved: [0; 6],
         };
 
         // SAFETY:

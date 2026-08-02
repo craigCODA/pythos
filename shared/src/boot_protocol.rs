@@ -1,6 +1,9 @@
 pub const PYTH_BOOT_MAGIC: u64 = 0x5059_5448_424F_4F54;
 pub const PYTH_BOOT_ABI_MAJOR: u16 = 0;
-pub const PYTH_BOOT_ABI_MINOR: u16 = 2;
+pub const PYTH_BOOT_ABI_MINOR: u16 = 3;
+pub const PYTH_EVIDENCE_LOG_FLAG_PRESENT: u32 = 0x0000_0001;
+
+use crate::evidence_log::EVIDENCE_LOG_TOTAL_BYTES;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -30,7 +33,10 @@ pub struct PythBootInfo {
     pub runtime_services_ptr: u64,
     pub command_line_ptr: u64,
     pub command_line_len: u32,
-    pub reserved: [u64; 8],
+    pub evidence_log_phys: u64,
+    pub evidence_log_len: u32,
+    pub evidence_log_flags: u32,
+    pub reserved: [u64; 6],
 }
 
 #[repr(C)]
@@ -66,6 +72,7 @@ pub enum BootInfoError {
     BadKernelRange,
     BadStackRange,
     BadFont,
+    BadEvidenceLog,
 }
 
 impl PythBootInfo {
@@ -109,6 +116,22 @@ impl PythBootInfo {
         }
         if self.font_phys == 0 || self.font_len == 0 || !self.font_phys.is_multiple_of(4096) {
             return Err(BootInfoError::BadFont);
+        }
+        match self.evidence_log_flags {
+            0 => {
+                if self.evidence_log_phys != 0 || self.evidence_log_len != 0 {
+                    return Err(BootInfoError::BadEvidenceLog);
+                }
+            }
+            PYTH_EVIDENCE_LOG_FLAG_PRESENT => {
+                if self.evidence_log_phys == 0
+                    || !self.evidence_log_phys.is_multiple_of(4096)
+                    || self.evidence_log_len as usize != EVIDENCE_LOG_TOTAL_BYTES
+                {
+                    return Err(BootInfoError::BadEvidenceLog);
+                }
+            }
+            _ => return Err(BootInfoError::BadEvidenceLog),
         }
         Ok(())
     }
@@ -171,7 +194,10 @@ mod tests {
             runtime_services_ptr: 0,
             command_line_ptr: 0,
             command_line_len: 0,
-            reserved: [0; 8],
+            evidence_log_phys: 0,
+            evidence_log_len: 0,
+            evidence_log_flags: 0,
+            reserved: [0; 6],
         }
     }
 
@@ -225,10 +251,52 @@ mod tests {
     }
 
     #[test]
+    fn evidence_log_metadata_boot_abi_minor_is_three() {
+        assert_eq!(PYTH_BOOT_ABI_MINOR, 3);
+        assert_eq!(PYTH_EVIDENCE_LOG_FLAG_PRESENT, 0x0000_0001);
+    }
+
+    #[test]
     fn nonzero_reserved_is_rejected() {
         let mut info = valid_boot_info();
         info.reserved[3] = 1;
         assert_eq!(info.validate(), Err(BootInfoError::NonZeroReserved));
+    }
+
+    #[test]
+    fn evidence_log_metadata_absent_requires_zero_metadata() {
+        let mut info = valid_boot_info();
+        info.evidence_log_phys = 0x80_0000;
+        assert_eq!(info.validate(), Err(BootInfoError::BadEvidenceLog));
+
+        let mut info = valid_boot_info();
+        info.evidence_log_len = EVIDENCE_LOG_TOTAL_BYTES as u32;
+        assert_eq!(info.validate(), Err(BootInfoError::BadEvidenceLog));
+    }
+
+    #[test]
+    fn evidence_log_metadata_present_requires_alignment_and_exact_length() {
+        let mut info = valid_boot_info();
+        info.evidence_log_flags = PYTH_EVIDENCE_LOG_FLAG_PRESENT;
+        info.evidence_log_phys = 0x80_0000;
+        info.evidence_log_len = EVIDENCE_LOG_TOTAL_BYTES as u32;
+        assert_eq!(info.validate(), Ok(()));
+
+        info.evidence_log_phys = 0x80_0001;
+        assert_eq!(info.validate(), Err(BootInfoError::BadEvidenceLog));
+
+        info.evidence_log_phys = 0x80_0000;
+        info.evidence_log_len = 4096;
+        assert_eq!(info.validate(), Err(BootInfoError::BadEvidenceLog));
+    }
+
+    #[test]
+    fn evidence_log_metadata_rejects_unknown_flags() {
+        let mut info = valid_boot_info();
+        info.evidence_log_flags = 0x0000_0002;
+        info.evidence_log_phys = 0x80_0000;
+        info.evidence_log_len = EVIDENCE_LOG_TOTAL_BYTES as u32;
+        assert_eq!(info.validate(), Err(BootInfoError::BadEvidenceLog));
     }
 
     #[test]
