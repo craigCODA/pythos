@@ -24,7 +24,8 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo test -p pythos-core",
             "python scripts/build-user-shell.py",
             "python scripts/verify-user-elf.py",
-            "cargo clippy -p pythos-core --target x86_64-unknown-none -- -D warnings",
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings",
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings",
             "cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings",
             "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf",
             "python scripts/test-boot.py --slice phase-6-complete",
@@ -33,6 +34,8 @@ class CiWorkflowTest(unittest.TestCase):
             "python scripts/test-boot.py --slice milestone-1 --timeout 60",
             "python scripts/test-boot.py --slice milestone-1 --media iso --timeout 60",
             "python scripts/test-persistent-storage.py",
+            "python scripts/test-sdhci-emmc-block-device.py",
+            "python scripts/test-object-shell.py --backend sdhci-emmc",
             "python -m unittest tests.boot_core_handoff",
         )
 
