@@ -24,18 +24,23 @@ It renders pages like:
 
 ```text
 PythOS Evidence Terminal
-page 01/04 count 000000F2 hash 8A31C04E
+page 01/04 count 000000F2 crc 8A31C04E
 > PYTHOS:LOADER:ENTER
 > PYTHOS:LOADER:GOP_READY
 > PYTHOS:LOADER:KERNEL_LOADED
 ...
 ```
 
-The renderer advances through all pages at a fixed bounded delay so a phone
-video can capture the full transcript. The final page remains visible on
-physical hardware after the QEMU debug-exit write is ignored by real hardware.
-In QEMU, the same image still exits through the existing success path after the
-terminal pass, so automated acceptance remains deterministic.
+The renderer advances through all pages at a fixed bounded dwell so a phone
+video can capture the full transcript. The dwell should use the existing PIT
+tick clock because this screen renders after Phase 10, long after
+`PYTHOS:CORE:TIMER_READY`. Any CPU spin-loop fallback is calibrated and verified
+only for the O2 Micro `1217:8620` target evidence image; it is not portable to a
+second physical target without new measurement. In QEMU, the same image still
+exits through the existing success path after the terminal pass, so automated
+acceptance remains deterministic. On physical hardware, the QEMU debug-exit
+write is ignored and execution remains in an infinite halt/spin loop with the
+final terminal page visible.
 
 The terminal must include the loader markers and PythCore markers from the same
 boot:
@@ -117,7 +122,7 @@ capacity   payload bytes
 used       bytes written
 lines      accepted line count
 dropped    line count lost to capacity/truncation
-checksum   rolling checksum of accepted bytes
+crc32      CRC-32/ISO-HDLC of accepted bytes
 ```
 
 Payload bytes are ASCII marker lines separated by `\n`. Appending a line:
@@ -126,8 +131,13 @@ Payload bytes are ASCII marker lines separated by `\n`. Appending a line:
 - appends `\n` after each line;
 - increments the line count only when the line fits;
 - increments `dropped` if the buffer is full;
-- updates the rolling checksum for every accepted byte;
+- updates the CRC for every accepted byte, including `\n`;
 - never allocates.
+
+The checksum algorithm is CRC-32/ISO-HDLC: reflected polynomial `0xEDB88320`,
+initial state `0xFFFF_FFFF`, reflected byte updates, and displayed/stored value
+`state ^ 0xFFFF_FFFF`. Implementations may use a bitwise no-table update to
+keep the shared format no-alloc and small.
 
 The serial writer remains the source of visible boot progress. Evidence logging
 is a mirror of the marker stream and must not block COM1 output.
@@ -142,12 +152,16 @@ Rendering rules:
 
 - clear the screen to a dark terminal background;
 - draw a title and status line at the top;
-- show `page NN/MM`, line count, drop count, and checksum;
+- show `page NN/MM`, line count, drop count, and CRC-32;
 - draw transcript lines prefixed with `>`;
 - wrap or truncate lines at the calculated terminal width;
-- advance pages with a fixed spin/PIT delay;
+- advance pages with a fixed PIT-tick dwell; if a CPU spin fallback is used, it
+  must be documented as O2 Micro `1217:8620`-only evidence timing;
 - render the final page last and leave it visible before calling
-  `qemu_exit::success()`.
+  `qemu_exit::success()`;
+- after the success-port write, rely on `qemu_exit::success()`'s non-returning
+  infinite loop so real hardware keeps showing the final framebuffer instead of
+  falling through into undefined code.
 
 The font table must include every character used by marker lines and terminal
 chrome: uppercase letters, digits, colon, underscore, dash, slash, greater-than,
@@ -179,7 +193,7 @@ Required tests before physical deployment:
 - core serial tests proving PythCore marker writes append to the existing loader
   transcript;
 - terminal renderer tests for paging, glyph coverage, line wrapping/truncation,
-  checksum/status formatting, and final-page selection;
+  CRC/status formatting, dwell selection, and final-page selection;
 - QEMU verify acceptance with `verify,sdhci-emmc-backend,evidence-terminal`
   proving the image still reaches `PYTHOS:CORE:MILESTONE_1_COMPLETE` and exits
   with `QEMU_OUTCOME success`;
