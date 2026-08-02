@@ -1,7 +1,5 @@
 # PythOS
 
-[![QEMU Acceptance](https://github.com/craigCODA/pythos/actions/workflows/qemu-acceptance.yml/badge.svg?branch=main)](https://github.com/craigCODA/pythos/actions/workflows/qemu-acceptance.yml?query=branch%3Amain)
-
 PythOS is a from-scratch, verification-driven x86-64 operating system. It
 boots through UEFI, runs a capability-controlled ring-3 object shell, persists
 typed and versioned objects across QEMU reboots, and includes polling AHCI and
