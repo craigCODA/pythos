@@ -46,48 +46,48 @@ pub extern "efiapi" fn efi_main(
             loader_marker(&mut evidence_log, "PYTHOS:LOADER:GOP_READY");
             framebuffer
         }
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     fb_debug::fill(&framebuffer, fb_debug::COLOR_GOP);
     let loaded_kernel = match elf::load_pythcore(system_table, image_handle) {
         Ok(loaded_kernel) if loaded_kernel.is_well_formed() => loaded_kernel,
-        Ok(_) => fail(),
-        Err(()) => fail(),
+        Ok(_) => fail(&mut evidence_log),
+        Err(()) => fail(&mut evidence_log),
     };
     loader_marker(&mut evidence_log, "PYTHOS:LOADER:KERNEL_LOADED");
     fb_debug::fill(&framebuffer, fb_debug::COLOR_KERNEL);
 
     let init_bundle = match initrd::load_init_pak(system_table, image_handle) {
         Ok(init_bundle) if init_bundle.is_loaded() => init_bundle,
-        Ok(_) => fail(),
-        Err(()) => fail(),
+        Ok(_) => fail(&mut evidence_log),
+        Err(()) => fail(&mut evidence_log),
     };
     let loaded_font = match font::load_font(system_table, image_handle) {
         Ok(loaded_font) if loaded_font.is_loaded() => loaded_font,
-        Ok(_) => fail(),
-        Err(()) => fail(),
+        Ok(_) => fail(&mut evidence_log),
+        Err(()) => fail(&mut evidence_log),
     };
     let firmware_tables = match firmware::discover(system_table) {
         Ok(tables) => tables,
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     let allocated_boot_info = match boot_info::AllocatedBootInfo::allocate(system_table) {
         Ok(allocated_boot_info) => allocated_boot_info,
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     let stack = match paging::BootstrapStack::allocate(system_table) {
         Ok(stack) => stack,
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     let page_tables = match paging::build(system_table, &loaded_kernel, &framebuffer, &stack) {
         Ok(page_tables) => page_tables,
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     framebuffer.mapped_virtual_base = paging::DEVICE_VIRT_BASE;
     let mut memory_map = match memory_map::capture(system_table) {
         Ok(memory_map) if memory_map.is_captured() => memory_map,
-        Ok(_) => fail(),
-        Err(()) => fail(),
+        Ok(_) => fail(&mut evidence_log),
+        Err(()) => fail(&mut evidence_log),
     };
     let boot_info = match allocated_boot_info.populate(boot_info::BootInfoInputs {
         framebuffer,
@@ -100,7 +100,7 @@ pub extern "efiapi" fn efi_main(
         evidence_log: evidence_log_input(&evidence_log),
     }) {
         Ok(boot_info) => boot_info,
-        Err(()) => fail(),
+        Err(()) => fail(&mut evidence_log),
     };
     loader_marker(&mut evidence_log, "PYTHOS:LOADER:MEMORY_MAP_READY");
     fb_debug::fill(&framebuffer, fb_debug::COLOR_MMAP);
@@ -109,7 +109,7 @@ pub extern "efiapi" fn efi_main(
         exit_boot_services::ExitBootServicesResult::Exited => {}
         exit_boot_services::ExitBootServicesResult::StaleMapKey => {
             if memory_map.refresh(system_table).is_err() {
-                fail();
+                fail(&mut evidence_log);
             }
             if allocated_boot_info
                 .populate(boot_info::BootInfoInputs {
@@ -124,15 +124,15 @@ pub extern "efiapi" fn efi_main(
                 })
                 .is_err()
             {
-                fail();
+                fail(&mut evidence_log);
             }
             match exit_boot_services::exit_once(system_table, image_handle, memory_map.map_key) {
                 exit_boot_services::ExitBootServicesResult::Exited => {}
                 exit_boot_services::ExitBootServicesResult::StaleMapKey
-                | exit_boot_services::ExitBootServicesResult::Failed => fail(),
+                | exit_boot_services::ExitBootServicesResult::Failed => fail(&mut evidence_log),
             }
         }
-        exit_boot_services::ExitBootServicesResult::Failed => fail(),
+        exit_boot_services::ExitBootServicesResult::Failed => fail(&mut evidence_log),
     }
     loader_marker(&mut evidence_log, "PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK");
     // Firmware paging is still active until `enter_pythcore` switches CR3, so the
@@ -189,13 +189,31 @@ fn evidence_log_input(_log: &Option<()>) -> boot_info::EvidenceLogInput<'_> {
 #[cfg(test)]
 fn main() {}
 
-fn fail() -> ! {
+#[cfg(feature = "evidence-terminal")]
+fn fail(log: &mut Option<evidence_log::AllocatedEvidenceLog>) -> ! {
+    loader_marker(log, "PYTHOS:LOADER:FAIL");
+    fb_debug::fill_fail();
+    qemu_exit::panic();
+}
+
+#[cfg(not(feature = "evidence-terminal"))]
+fn fail(_log: &mut Option<()>) -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
     fb_debug::fill_fail();
     qemu_exit::panic();
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "evidence-terminal"))]
+#[panic_handler]
+fn panic(_info: &PanicInfo<'_>) -> ! {
+    // Evidence state is unavailable here because this panic handler has no local
+    // reference to the in-scope loader evidence-log object.
+    serial::write_line("PYTHOS:LOADER:FAIL");
+    fb_debug::fill_fail();
+    qemu_exit::panic();
+}
+
+#[cfg(all(not(test), not(feature = "evidence-terminal")))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     serial::write_line("PYTHOS:LOADER:FAIL");
