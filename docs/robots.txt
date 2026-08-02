@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://craigcoda.github.io/pythos/sitemap.xml

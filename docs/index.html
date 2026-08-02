@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PythOS - Persistent Object Operating System for x86-64</title>
+    <meta name="description" content="PythOS is a verification-driven x86-64 operating system with a capability-gated ring-3 object shell and target-specific physical SDHCI/eMMC evidence.">
+    <link rel="canonical" href="https://craigcoda.github.io/pythos/">
+    <link rel="stylesheet" href="assets/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="./">PythOS</a>
+      <nav class="nav" aria-label="Primary">
+        <a href="architecture/">Architecture</a>
+        <a href="milestones/">Milestones</a>
+        <a href="evidence/">Evidence</a>
+        <a href="status/">Status</a>
+        <a href="about/">About</a>
+        <a href="https://github.com/craigCODA/pythos">GitHub</a>
+      </nav>
+    </header>
+
+    <main>
+      <section class="hero">
+        <div class="hero-inner">
+          <p class="kicker">Physical SDHCI/eMMC Phase 10 evidence</p>
+          <h1>PythOS</h1>
+          <p>
+            A from-scratch, verification-driven x86-64 operating system that boots
+            through UEFI, runs a capability-controlled ring-3 object shell, and
+            persists typed/versioned objects across verified storage backends.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="milestones/">Read milestone</a>
+            <a class="button secondary" href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Release assets</a>
+          </div>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="content split">
+          <div>
+            <h2>Current Proof</h2>
+            <p class="lede">
+              PythOS reached its Phase 10 storage acceptance panel on a disposable
+              O2 Micro <code>1217:8620</code> SDHCI/eMMC laptop target across two
+              cold-boot runs. The result is target-specific evidence, not a
+              generic storage-support claim.
+            </p>
+            <div class="fact-list">
+              <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
+              <p class="fact"><strong>Storage path</strong> QEMU-backed virtio-blk, polling AHCI, and polling SDHCI/eMMC acceptance coverage.</p>
+              <p class="fact"><strong>Physical marker</strong> Final panel shows <span class="mark">sdhci emmc backend</span>, <span class="mark">phase10 ok</span>, and <span class="mark">disk writes</span>.</p>
+            </div>
+          </div>
+          <figure>
+            <img class="evidence-img" src="evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg" alt="PythOS physical SDHCI eMMC backend Phase 10 acceptance panel">
+            <figcaption class="caption">Committed first-run screen frame from the physical O2 Micro 1217:8620 target.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band dark">
+        <div class="content">
+          <h2>Evidence Map</h2>
+          <div class="grid">
+            <article class="tile">
+              <h3>Milestone Record</h3>
+              <p>The stable milestone page records the hardware identity, exact markers, physical artifacts, QEMU acceptance commands, and scope boundary.</p>
+              <p><a href="milestones/2026-08-01-physical-emmc-phase10/">Open milestone page</a></p>
+            </article>
+            <article class="tile">
+              <h3>Release Assets</h3>
+              <p>The raw first-run photo and second-run MP4 are attached to the GitHub release instead of stored as large repository blobs.</p>
+              <p><a href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Open release</a></p>
+            </article>
+            <article class="tile">
+              <h3>Claim Boundary</h3>
+              <p>The repo names what is verified and what remains unfinished: no DMA/ADMA, interrupts, partitions, generic SDHCI/eMMC, or broad physical input claim.</p>
+              <p><a href="status/">Read status</a></p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="content">
+        <span>PythOS public milestone site</span>
+        <a href="https://github.com/craigCODA/pythos">github.com/craigCODA/pythos</a>
+      </div>
+    </footer>
+  </body>
+</html>

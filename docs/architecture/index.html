@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Architecture - PythOS</title>
+    <meta name="description" content="PythOS architecture: UEFI loader, PythCore native executive, capabilities, ring-3 shell, typed objects, and storage proofs.">
+    <link rel="canonical" href="https://craigcoda.github.io/pythos/architecture/">
+    <link rel="stylesheet" href="../assets/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../">PythOS</a>
+      <nav class="nav" aria-label="Primary">
+        <a href="./" aria-current="page">Architecture</a>
+        <a href="../milestones/">Milestones</a>
+        <a href="../evidence/">Evidence</a>
+        <a href="../status/">Status</a>
+        <a href="../about/">About</a>
+        <a href="https://github.com/craigCODA/pythos">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <section class="band">
+        <div class="content narrow">
+          <p class="kicker">Verified structure</p>
+          <h1>Architecture</h1>
+          <p class="lede">
+            PythOS keeps the privileged core narrow. PythCore owns firmware handoff,
+            memory, interrupts, scheduling, IPC, capabilities, syscalls, and
+            controlled hardware primitives. Policy and user-facing behavior move
+            outward into isolated services.
+          </p>
+          <pre><code>Hardware
+-&gt; UEFI firmware
+-&gt; PythOS UEFI loader
+-&gt; PythCore native executive
+-&gt; capability-gated ring-3 services
+-&gt; typed objects, workspaces, shell, and applications</code></pre>
+        </div>
+      </section>
+      <section class="band">
+        <div class="content grid">
+          <article class="tile">
+            <h3>Boot Chain</h3>
+            <p>UEFI loads <code>BOOTX64.EFI</code>, which validates and jumps into the PythCore ELF with explicit boot metadata.</p>
+          </article>
+          <article class="tile">
+            <h3>Authority Model</h3>
+            <p>Kernel-owned capability handles gate privileged operations, including storage and syscall-mediated object-shell behavior.</p>
+          </article>
+          <article class="tile">
+            <h3>Object Storage</h3>
+            <p>Typed object records carry stable IDs, schema versions, relationships, revisions, provenance, and persisted workspace state.</p>
+          </article>
+          <article class="tile">
+            <h3>Hardware Backends</h3>
+            <p>The public milestone includes QEMU-backed virtio-blk, AHCI, and SDHCI/eMMC paths, plus target-specific physical SDHCI/eMMC evidence.</p>
+          </article>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content">
+        <a href="../">PythOS</a>
+        <a href="../TECHNICAL-OVERVIEW.md">Technical overview</a>
+      </div>
+    </footer>
+  </body>
+</html>

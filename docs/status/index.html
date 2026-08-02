@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Status - PythOS</title>
+    <meta name="description" content="Implemented versus not claimed for the current public PythOS milestone.">
+    <link rel="canonical" href="https://craigcoda.github.io/pythos/status/">
+    <link rel="stylesheet" href="../assets/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../">PythOS</a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../architecture/">Architecture</a>
+        <a href="../milestones/">Milestones</a>
+        <a href="../evidence/">Evidence</a>
+        <a href="./" aria-current="page">Status</a>
+        <a href="../about/">About</a>
+        <a href="https://github.com/craigCODA/pythos">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <section class="band">
+        <div class="content narrow">
+          <p class="kicker">Claims boundary</p>
+          <h1>Status</h1>
+          <p class="lede">
+            PythOS publishes the strongest verified claim it can support and names
+            what is deliberately outside the current milestone.
+          </p>
+        </div>
+      </section>
+      <section class="band">
+        <div class="content">
+          <table class="status-table">
+            <thead>
+              <tr>
+                <th>Area</th>
+                <th>Verified now</th>
+                <th>Not claimed</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Boot</td>
+                <td>UEFI loader, PythCore entry, QEMU serial marker oracle, framebuffer completion.</td>
+                <td>Generic firmware compatibility across arbitrary PCs.</td>
+              </tr>
+              <tr>
+                <td>User boundary</td>
+                <td>Ring-3 execution, separate address spaces, syscall ABI, copy-in/copy-out checks, capability gates.</td>
+                <td>Full hostile multi-user security or broad application ecosystem support.</td>
+              </tr>
+              <tr>
+                <td>Objects</td>
+                <td>Persistent typed/versioned objects, relationships, revision history, workspace snapshot restoration.</td>
+                <td>General-purpose POSIX filesystem or package-management surface.</td>
+              </tr>
+              <tr>
+                <td>Storage</td>
+                <td>QEMU virtio-blk, QEMU polling AHCI, QEMU SDHCI/eMMC, and target-specific physical O2 Micro SDHCI/eMMC evidence.</td>
+                <td>DMA/ADMA, interrupts, hotplug, partitions, filesystems, or safe writes on other machines.</td>
+              </tr>
+              <tr>
+                <td>Physical interaction</td>
+                <td>Physical framebuffer acceptance panel for the storage backend path.</td>
+                <td>Physical interactive object-shell input through the laptop keyboard or trackpad.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content">
+        <a href="../">PythOS</a>
+        <a href="../HANDOVER.md">Current handover</a>
+      </div>
+    </footer>
+  </body>
+</html>

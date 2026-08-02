@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PythOS Runs Persistent Object Storage Through Physical SDHCI/eMMC Hardware</title>
+    <meta name="description" content="PythOS Phase 10 physical SDHCI/eMMC evidence on an O2 Micro 1217:8620 laptop target, with QEMU backing, artifacts, and scope boundary.">
+    <link rel="canonical" href="https://craigcoda.github.io/pythos/milestones/2026-08-01-physical-emmc-phase10/">
+    <link rel="stylesheet" href="../../assets/site.css">
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="../../">PythOS</a>
+      <nav class="nav" aria-label="Primary">
+        <a href="../../architecture/">Architecture</a>
+        <a href="../" aria-current="page">Milestones</a>
+        <a href="../../evidence/">Evidence</a>
+        <a href="../../status/">Status</a>
+        <a href="../../about/">About</a>
+        <a href="https://github.com/craigCODA/pythos">GitHub</a>
+      </nav>
+    </header>
+    <main>
+      <section class="band">
+        <div class="content narrow">
+          <p class="kicker">2026-08-01</p>
+          <h1>PythOS Runs Persistent Object Storage Through Physical SDHCI/eMMC Hardware</h1>
+          <p class="lede">
+            The Phase 10 storage backend panel was reached across two cold-boot
+            runs on a disposable O2 Micro <code>1217:8620</code> laptop target.
+            This page records the public claim, the evidence, and what remains
+            outside the claim.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Release assets</a>
+            <a class="button" href="../2026-08-01-physical-emmc-phase10.md">Source record</a>
+          </div>
+        </div>
+      </section>
+      <section class="band">
+        <div class="content split">
+          <div>
+            <h2>Observed Panel</h2>
+            <pre><code>PythOS
+sdhci emmc backend
+phase10 ok
+disk writes
+capacity 000000000747C000</code></pre>
+            <p>
+              The panel is rendered only after the verify-storage path reaches
+              <code>PYTHOS:CORE:PHASE_10_COMPLETE</code>. QEMU remains the
+              automated oracle through COM1 serial and host-image checks; the
+              physical laptop currently has no serial capture path.
+            </p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="../../evidence/2026-08-01-physical-sdhci-emmc-backend-boot2.jpg" alt="Second physical PythOS SDHCI eMMC backend acceptance frame">
+            <figcaption class="caption">Second-run committed frame from the physical acceptance video.</figcaption>
+          </figure>
+        </div>
+      </section>
+      <section class="band dark">
+        <div class="content">
+          <h2>Hardware and Repository</h2>
+          <div class="grid">
+            <article class="tile">
+              <h3>Target</h3>
+              <p>O2 Micro SDHCI/eMMC, vendor/device <code>1217:8620</code>, BDF <code>01:00.0</code>, class/subclass/pi <code>08/05/01</code>.</p>
+            </article>
+            <article class="tile">
+              <h3>Merge Commit</h3>
+              <p><code>0a59547100eace8eca0ac5d08153ef88f213b272</code></p>
+            </article>
+            <article class="tile">
+              <h3>ADR</h3>
+              <p><a href="../../decisions/0062-polling-sdhci-emmc-block-backend.md">ADR 0062 - Polling SDHCI/eMMC Block Backend</a></p>
+            </article>
+          </div>
+        </div>
+      </section>
+      <section class="band">
+        <div class="content">
+          <h2>QEMU Backing</h2>
+          <p class="lede">
+            Before physical deployment, the branch passed formatting, clippy,
+            host tests, and QEMU acceptance for storage, shell transport, and
+            object persistence.
+          </p>
+          <pre><code>cargo fmt --check
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
+cargo test -p pythos-core
+python scripts\test-sdhci-emmc-block-device.py
+python scripts\test-object-shell.py --backend sdhci-emmc
+python scripts\test-boot.py --slice milestone-1</code></pre>
+        </div>
+      </section>
+      <section class="band">
+        <div class="content">
+          <h2>Not Claimed</h2>
+          <div class="grid">
+            <article class="tile">
+              <h3>Storage scope</h3>
+              <p>No generic SDHCI/eMMC compatibility, DMA/ADMA, interrupts, hotplug, partitions, or filesystems are claimed.</p>
+            </article>
+            <article class="tile">
+              <h3>Hardware scope</h3>
+              <p>No safe-write claim is made for machines other than the confirmed disposable O2 Micro <code>1217:8620</code> target.</p>
+            </article>
+            <article class="tile">
+              <h3>Input scope</h3>
+              <p>The physical evidence covers the framebuffer acceptance panel, not physical interactive object-shell input.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+    </main>
+    <footer class="site-footer">
+      <div class="content">
+        <a href="../../">PythOS</a>
+        <a href="https://github.com/craigCODA/pythos/pull/1">PR #1</a>
+      </div>
+    </footer>
+  </body>
+</html>

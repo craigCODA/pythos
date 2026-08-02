@@ -13,6 +13,12 @@ confirmed disposable O2 Micro `1217:8620` target.
   `85a0d3aa74aff0425684149eedcaca2033c18371`
 - Binary-affecting physical acceptance implementation commit:
   `057fc37199f510d4e6da07f577143a430bb3eb81`
+- Public merge commit on `main`:
+  `0a59547100eace8eca0ac5d08153ef88f213b272`
+- Milestone release:
+  [PythOS Milestone 1: Physical Persistent Object Storage](https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage)
+- Public site:
+  [PythOS - Persistent Object Operating System for x86-64](https://craigcoda.github.io/pythos/)
 - ADR: [ADR 0062](../decisions/0062-polling-sdhci-emmc-block-backend.md)
 - Hardware findings:
   [Phase 11 Real-Hardware Findings](../phase-11-real-hardware-findings.md)
