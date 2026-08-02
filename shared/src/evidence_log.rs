@@ -63,6 +63,7 @@ pub fn append_line(buffer: &mut [u8], line: &str) -> Result<(), EvidenceLogError
     }
 
     let mut header = read_header(buffer)?;
+    validate_header(&header)?;
     let payload = payload_mut(buffer);
     let needed = line
         .len()
@@ -188,7 +189,10 @@ fn payload_mut(buffer: &mut [u8]) -> &mut [u8] {
 
 #[cfg(test)]
 mod tests {
+    extern crate std;
+
     use super::*;
+    use std::panic;
 
     #[test]
     fn initializes_header_and_empty_payload() {
@@ -268,6 +272,34 @@ mod tests {
             append_line(&mut buffer, "bad\rline"),
             Err(EvidenceLogError::EmbeddedLineBreak)
         );
+    }
+
+    #[test]
+    fn append_line_rejects_corrupted_used_header_without_panicking() {
+        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
+        initialize(&mut buffer).unwrap();
+        buffer[16..20].copy_from_slice(&(u32::MAX).to_le_bytes());
+
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            append_line(&mut buffer, "PYTHOS:CORE:PHASE_10_COMPLETE")
+        }));
+
+        assert!(result.is_ok(), "append_line panicked on corrupted used header");
+        assert_eq!(result.unwrap(), Err(EvidenceLogError::InvalidHeader));
+    }
+
+    #[test]
+    fn append_line_rejects_corrupted_capacity_header_without_panicking() {
+        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
+        initialize(&mut buffer).unwrap();
+        buffer[12..16].copy_from_slice(&(0u32).to_le_bytes());
+
+        let result = panic::catch_unwind(panic::AssertUnwindSafe(|| {
+            append_line(&mut buffer, "PYTHOS:CORE:PHASE_10_COMPLETE")
+        }));
+
+        assert!(result.is_ok(), "append_line panicked on corrupted capacity header");
+        assert_eq!(result.unwrap(), Err(EvidenceLogError::InvalidHeader));
     }
 
     #[test]
