@@ -154,17 +154,39 @@ fn read_header(buffer: &[u8]) -> Result<EvidenceLogHeader, EvidenceLogError> {
         .get(..core::mem::size_of::<EvidenceLogHeader>())
         .ok_or(EvidenceLogError::InvalidHeader)?;
     Ok(EvidenceLogHeader {
-        magic: header_bytes[0..8].try_into().expect("slice length is fixed"),
-        version: u32::from_le_bytes(header_bytes[8..12].try_into().expect("slice length is fixed")),
+        magic: header_bytes[0..8]
+            .try_into()
+            .expect("slice length is fixed"),
+        version: u32::from_le_bytes(
+            header_bytes[8..12]
+                .try_into()
+                .expect("slice length is fixed"),
+        ),
         capacity: u32::from_le_bytes(
-            header_bytes[12..16].try_into().expect("slice length is fixed"),
+            header_bytes[12..16]
+                .try_into()
+                .expect("slice length is fixed"),
         ),
-        used: u32::from_le_bytes(header_bytes[16..20].try_into().expect("slice length is fixed")),
-        lines: u32::from_le_bytes(header_bytes[20..24].try_into().expect("slice length is fixed")),
+        used: u32::from_le_bytes(
+            header_bytes[16..20]
+                .try_into()
+                .expect("slice length is fixed"),
+        ),
+        lines: u32::from_le_bytes(
+            header_bytes[20..24]
+                .try_into()
+                .expect("slice length is fixed"),
+        ),
         dropped: u32::from_le_bytes(
-            header_bytes[24..28].try_into().expect("slice length is fixed"),
+            header_bytes[24..28]
+                .try_into()
+                .expect("slice length is fixed"),
         ),
-        crc32: u32::from_le_bytes(header_bytes[28..32].try_into().expect("slice length is fixed")),
+        crc32: u32::from_le_bytes(
+            header_bytes[28..32]
+                .try_into()
+                .expect("slice length is fixed"),
+        ),
     })
 }
 
@@ -284,7 +306,10 @@ mod tests {
             append_line(&mut buffer, "PYTHOS:CORE:PHASE_10_COMPLETE")
         }));
 
-        assert!(result.is_ok(), "append_line panicked on corrupted used header");
+        assert!(
+            result.is_ok(),
+            "append_line panicked on corrupted used header"
+        );
         assert_eq!(result.unwrap(), Err(EvidenceLogError::InvalidHeader));
     }
 
@@ -298,7 +323,10 @@ mod tests {
             append_line(&mut buffer, "PYTHOS:CORE:PHASE_10_COMPLETE")
         }));
 
-        assert!(result.is_ok(), "append_line panicked on corrupted capacity header");
+        assert!(
+            result.is_ok(),
+            "append_line panicked on corrupted capacity header"
+        );
         assert_eq!(result.unwrap(), Err(EvidenceLogError::InvalidHeader));
     }
 
