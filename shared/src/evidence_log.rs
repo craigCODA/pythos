@@ -17,14 +17,12 @@ pub struct EvidenceLogHeader {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvidenceLogError {
-    BufferTooSmall,
-    InvalidMagic,
-    UnsupportedVersion,
-    CapacityMismatch,
-    UsedOutOfRange,
-    LineTooLong,
-    NonAscii,
+    InvalidBufferLength,
+    InvalidHeader,
     LengthOverflow,
+    LineTooLong,
+    EmbeddedLineBreak,
+    NonAscii,
     Full,
 }
 
@@ -35,17 +33,14 @@ pub struct EvidenceLogSnapshot<'a> {
 }
 
 pub fn initialize(buffer: &mut [u8]) -> Result<(), EvidenceLogError> {
-    if buffer.len() < header_len() {
-        return Err(EvidenceLogError::BufferTooSmall);
-    }
-
+    ensure_exact_buffer_length(buffer.len())?;
     buffer.fill(0);
     write_header(
         buffer,
         EvidenceLogHeader {
             magic: EVIDENCE_LOG_MAGIC,
             version: EVIDENCE_LOG_VERSION,
-            capacity: payload_capacity(buffer.len())?,
+            capacity: payload_capacity() as u32,
             used: 0,
             lines: 0,
             dropped: 0,
@@ -56,67 +51,64 @@ pub fn initialize(buffer: &mut [u8]) -> Result<(), EvidenceLogError> {
 }
 
 pub fn append_line(buffer: &mut [u8], line: &str) -> Result<(), EvidenceLogError> {
+    ensure_exact_buffer_length(buffer.len())?;
     if !line.is_ascii() {
         return Err(EvidenceLogError::NonAscii);
+    }
+    if line.bytes().any(|byte| byte == b'\n' || byte == b'\r') {
+        return Err(EvidenceLogError::EmbeddedLineBreak);
     }
     if line.len() > MAX_EVIDENCE_LINE_BYTES {
         return Err(EvidenceLogError::LineTooLong);
     }
 
-    let header = read_header(buffer)?;
-    let line_len = line.len();
-    let needed = line_len
+    let mut header = read_header(buffer)?;
+    let payload = payload_mut(buffer);
+    let needed = line
+        .len()
         .checked_add(1)
         .ok_or(EvidenceLogError::LengthOverflow)?;
-    let used = usize::try_from(header.used).map_err(|_| EvidenceLogError::UsedOutOfRange)?;
-    let capacity = usize::try_from(header.capacity).map_err(|_| EvidenceLogError::CapacityMismatch)?;
-    let next_used = used
-        .checked_add(needed)
+    let needed_u32 = u32::try_from(needed).map_err(|_| EvidenceLogError::LengthOverflow)?;
+
+    let new_used = header
+        .used
+        .checked_add(needed_u32)
         .ok_or(EvidenceLogError::LengthOverflow)?;
-    if next_used > capacity {
-        let mut updated = header;
-        updated.dropped = updated.dropped.saturating_add(1);
-        write_header(buffer, updated);
+    if new_used > header.capacity {
+        header.dropped = header.dropped.saturating_add(1);
+        write_header(buffer, header);
         return Err(EvidenceLogError::Full);
     }
 
-    let payload_start = header_len();
-    let payload_end = payload_start + used;
-    let line_bytes = line.as_bytes();
-    buffer[payload_end..payload_end + line_len].copy_from_slice(line_bytes);
-    buffer[payload_end + line_len] = b'\n';
-
-    let mut updated = header;
-    updated.used = u32::try_from(next_used).map_err(|_| EvidenceLogError::LengthOverflow)?;
-    updated.lines = updated.lines.saturating_add(1);
-    updated.crc32 = crc32_iso_hdlc(&buffer[payload_start..payload_start + next_used]);
-    write_header(buffer, updated);
+    let start = header.used as usize;
+    let end = start + needed;
+    payload[start..start + line.len()].copy_from_slice(line.as_bytes());
+    payload[start + line.len()] = b'\n';
+    header.used = new_used;
+    header.lines = header.lines.saturating_add(1);
+    header.crc32 = crc32_iso_hdlc(&payload[..end]);
+    write_header(buffer, header);
     Ok(())
 }
 
 pub fn snapshot(buffer: &[u8]) -> Result<EvidenceLogSnapshot<'_>, EvidenceLogError> {
+    ensure_exact_buffer_length(buffer.len())?;
     let header = read_header(buffer)?;
-    let used = usize::try_from(header.used).map_err(|_| EvidenceLogError::UsedOutOfRange)?;
-    let capacity = usize::try_from(header.capacity).map_err(|_| EvidenceLogError::CapacityMismatch)?;
-    if capacity != payload_capacity(buffer.len())? as usize {
-        return Err(EvidenceLogError::CapacityMismatch);
+    validate_header(&header)?;
+
+    let payload = payload(buffer);
+    let used = header.used as usize;
+    if used > payload.len() {
+        return Err(EvidenceLogError::InvalidHeader);
     }
-    if used > capacity {
-        return Err(EvidenceLogError::UsedOutOfRange);
+    if crc32_iso_hdlc(&payload[..used]) != header.crc32 {
+        return Err(EvidenceLogError::InvalidHeader);
     }
 
-    let payload_start = header_len();
-    let payload_end = payload_start
-        .checked_add(used)
-        .ok_or(EvidenceLogError::LengthOverflow)?;
-    let payload = buffer
-        .get(payload_start..payload_end)
-        .ok_or(EvidenceLogError::UsedOutOfRange)?;
-    if crc32_iso_hdlc(payload) != header.crc32 {
-        return Err(EvidenceLogError::InvalidMagic);
-    }
-
-    Ok(EvidenceLogSnapshot { header, payload })
+    Ok(EvidenceLogSnapshot {
+        header,
+        payload: &payload[..used],
+    })
 }
 
 pub fn crc32_iso_hdlc(bytes: &[u8]) -> u32 {
@@ -128,7 +120,70 @@ pub fn crc32_iso_hdlc(bytes: &[u8]) -> u32 {
             crc = (crc >> 1) ^ (0xEDB8_8320 & mask);
         }
     }
-    crc ^ 0xFFFF_FFFF
+    !crc
+}
+
+fn ensure_exact_buffer_length(length: usize) -> Result<(), EvidenceLogError> {
+    if length == EVIDENCE_LOG_TOTAL_BYTES {
+        Ok(())
+    } else {
+        Err(EvidenceLogError::InvalidBufferLength)
+    }
+}
+
+fn payload_capacity() -> usize {
+    EVIDENCE_LOG_TOTAL_BYTES - core::mem::size_of::<EvidenceLogHeader>()
+}
+
+fn validate_header(header: &EvidenceLogHeader) -> Result<(), EvidenceLogError> {
+    if header.magic != EVIDENCE_LOG_MAGIC
+        || header.version != EVIDENCE_LOG_VERSION
+        || header.capacity as usize != payload_capacity()
+    {
+        return Err(EvidenceLogError::InvalidHeader);
+    }
+    if header.used > header.capacity {
+        return Err(EvidenceLogError::InvalidHeader);
+    }
+    Ok(())
+}
+
+fn read_header(buffer: &[u8]) -> Result<EvidenceLogHeader, EvidenceLogError> {
+    let header_bytes = buffer
+        .get(..core::mem::size_of::<EvidenceLogHeader>())
+        .ok_or(EvidenceLogError::InvalidHeader)?;
+    Ok(EvidenceLogHeader {
+        magic: header_bytes[0..8].try_into().expect("slice length is fixed"),
+        version: u32::from_le_bytes(header_bytes[8..12].try_into().expect("slice length is fixed")),
+        capacity: u32::from_le_bytes(
+            header_bytes[12..16].try_into().expect("slice length is fixed"),
+        ),
+        used: u32::from_le_bytes(header_bytes[16..20].try_into().expect("slice length is fixed")),
+        lines: u32::from_le_bytes(header_bytes[20..24].try_into().expect("slice length is fixed")),
+        dropped: u32::from_le_bytes(
+            header_bytes[24..28].try_into().expect("slice length is fixed"),
+        ),
+        crc32: u32::from_le_bytes(header_bytes[28..32].try_into().expect("slice length is fixed")),
+    })
+}
+
+fn write_header(buffer: &mut [u8], header: EvidenceLogHeader) {
+    let header_bytes = &mut buffer[..core::mem::size_of::<EvidenceLogHeader>()];
+    header_bytes[0..8].copy_from_slice(&header.magic);
+    header_bytes[8..12].copy_from_slice(&header.version.to_le_bytes());
+    header_bytes[12..16].copy_from_slice(&header.capacity.to_le_bytes());
+    header_bytes[16..20].copy_from_slice(&header.used.to_le_bytes());
+    header_bytes[20..24].copy_from_slice(&header.lines.to_le_bytes());
+    header_bytes[24..28].copy_from_slice(&header.dropped.to_le_bytes());
+    header_bytes[28..32].copy_from_slice(&header.crc32.to_le_bytes());
+}
+
+fn payload(buffer: &[u8]) -> &[u8] {
+    &buffer[core::mem::size_of::<EvidenceLogHeader>()..]
+}
+
+fn payload_mut(buffer: &mut [u8]) -> &mut [u8] {
+    &mut buffer[core::mem::size_of::<EvidenceLogHeader>()..]
 }
 
 #[cfg(test)]
@@ -139,7 +194,9 @@ mod tests {
     fn initializes_header_and_empty_payload() {
         let mut buffer = [0xA5u8; EVIDENCE_LOG_TOTAL_BYTES];
         initialize(&mut buffer).unwrap();
+
         let snapshot = snapshot(&buffer).unwrap();
+
         assert_eq!(snapshot.header.magic, EVIDENCE_LOG_MAGIC);
         assert_eq!(snapshot.header.version, EVIDENCE_LOG_VERSION);
         assert_eq!(
@@ -154,26 +211,68 @@ mod tests {
     }
 
     #[test]
-    fn append_line_records_newline_and_crc32_iso_hdlc() {
-        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
-        initialize(&mut buffer).unwrap();
-        append_line(&mut buffer, "PYTHOS:LOADER:ENTER").unwrap();
-        let snapshot = snapshot(&buffer).unwrap();
-        assert_eq!(snapshot.payload, b"PYTHOS:LOADER:ENTER\n");
-        assert_eq!(snapshot.header.used as usize, snapshot.payload.len());
-        assert_eq!(snapshot.header.lines, 1);
-        assert_eq!(snapshot.header.dropped, 0);
-        assert_eq!(snapshot.header.crc32, crc32_iso_hdlc(snapshot.payload));
+    fn initialize_rejects_short_and_long_buffers() {
+        let mut short_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES - 1];
+        let mut long_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES + 1];
+
+        assert_eq!(
+            initialize(&mut short_buffer),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
+        assert_eq!(
+            initialize(&mut long_buffer),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
     }
 
     #[test]
-    fn crc32_iso_hdlc_matches_check_value() {
-        assert_eq!(crc32_iso_hdlc(b"123456789"), 0xCBF4_3926);
+    fn append_line_rejects_short_and_long_buffers() {
+        let mut short_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES - 1];
+        let mut long_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES + 1];
+
+        assert_eq!(
+            append_line(&mut short_buffer, "PYTHOS:LOADER:ENTER"),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
+        assert_eq!(
+            append_line(&mut long_buffer, "PYTHOS:LOADER:ENTER"),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
+    }
+
+    #[test]
+    fn snapshot_rejects_short_and_long_buffers() {
+        let short_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES - 1];
+        let long_buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES + 1];
+
+        assert_eq!(
+            snapshot(&short_buffer),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
+        assert_eq!(
+            snapshot(&long_buffer),
+            Err(EvidenceLogError::InvalidBufferLength)
+        );
+    }
+
+    #[test]
+    fn append_line_rejects_embedded_cr_or_lf() {
+        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
+        initialize(&mut buffer).unwrap();
+
+        assert_eq!(
+            append_line(&mut buffer, "bad\nline"),
+            Err(EvidenceLogError::EmbeddedLineBreak)
+        );
+        assert_eq!(
+            append_line(&mut buffer, "bad\rline"),
+            Err(EvidenceLogError::EmbeddedLineBreak)
+        );
     }
 
     #[test]
     fn full_buffer_increments_dropped_without_mutating_payload() {
-        let mut buffer = [0u8; 96];
+        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
         initialize(&mut buffer).unwrap();
         append_line(&mut buffer, "PYTHOS:CORE:PHASE_10_COMPLETE").unwrap();
         let expected_prefix = b"PYTHOS:CORE:PHASE_10_COMPLETE\n";
@@ -182,7 +281,9 @@ mod tests {
             assert_eq!(&before.payload[..expected_prefix.len()], expected_prefix);
             (before.header.used, before.header.crc32)
         };
+
         while append_line(&mut buffer, "PYTHOS:CORE:FRAMEBUFFER_READY").is_ok() {}
+
         let after = snapshot(&buffer).unwrap();
         assert!(after.header.dropped > 0);
         assert_eq!(&after.payload[..expected_prefix.len()], expected_prefix);
@@ -190,69 +291,9 @@ mod tests {
         assert_eq!(before_used as usize, expected_prefix.len());
         assert_eq!(before_crc, crc32_iso_hdlc(expected_prefix));
     }
-}
 
-fn header_len() -> usize {
-    core::mem::size_of::<EvidenceLogHeader>()
-}
-
-fn payload_capacity(total_len: usize) -> Result<u32, EvidenceLogError> {
-    let capacity = total_len
-        .checked_sub(header_len())
-        .ok_or(EvidenceLogError::BufferTooSmall)?;
-    u32::try_from(capacity).map_err(|_| EvidenceLogError::CapacityMismatch)
-}
-
-fn read_header(buffer: &[u8]) -> Result<EvidenceLogHeader, EvidenceLogError> {
-    if buffer.len() < header_len() {
-        return Err(EvidenceLogError::BufferTooSmall);
+    #[test]
+    fn crc32_iso_hdlc_matches_check_value() {
+        assert_eq!(crc32_iso_hdlc(b"123456789"), 0xCBF4_3926);
     }
-
-    let header = EvidenceLogHeader {
-        magic: read_array::<8>(buffer, 0)?,
-        version: read_u32(buffer, 8)?,
-        capacity: read_u32(buffer, 12)?,
-        used: read_u32(buffer, 16)?,
-        lines: read_u32(buffer, 20)?,
-        dropped: read_u32(buffer, 24)?,
-        crc32: read_u32(buffer, 28)?,
-    };
-
-    if header.magic != EVIDENCE_LOG_MAGIC {
-        return Err(EvidenceLogError::InvalidMagic);
-    }
-    if header.version != EVIDENCE_LOG_VERSION {
-        return Err(EvidenceLogError::UnsupportedVersion);
-    }
-    if header.capacity != payload_capacity(buffer.len())? {
-        return Err(EvidenceLogError::CapacityMismatch);
-    }
-
-    Ok(header)
-}
-
-fn write_header(buffer: &mut [u8], header: EvidenceLogHeader) {
-    buffer[..8].copy_from_slice(&header.magic);
-    buffer[8..12].copy_from_slice(&header.version.to_le_bytes());
-    buffer[12..16].copy_from_slice(&header.capacity.to_le_bytes());
-    buffer[16..20].copy_from_slice(&header.used.to_le_bytes());
-    buffer[20..24].copy_from_slice(&header.lines.to_le_bytes());
-    buffer[24..28].copy_from_slice(&header.dropped.to_le_bytes());
-    buffer[28..32].copy_from_slice(&header.crc32.to_le_bytes());
-}
-
-fn read_u32(buffer: &[u8], offset: usize) -> Result<u32, EvidenceLogError> {
-    let bytes = buffer
-        .get(offset..offset + 4)
-        .ok_or(EvidenceLogError::BufferTooSmall)?;
-    Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
-}
-
-fn read_array<const N: usize>(buffer: &[u8], offset: usize) -> Result<[u8; N], EvidenceLogError> {
-    let bytes = buffer
-        .get(offset..offset + N)
-        .ok_or(EvidenceLogError::BufferTooSmall)?;
-    let mut array = [0u8; N];
-    array.copy_from_slice(bytes);
-    Ok(array)
 }
