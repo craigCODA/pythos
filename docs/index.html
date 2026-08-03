@@ -24,7 +24,7 @@
     <main>
       <section class="hero">
         <div class="hero-inner">
-          <p class="kicker">Physical SDHCI/eMMC Phase 10 evidence</p>
+          <p class="kicker">Physical Phase 10 evidence terminal</p>
           <h1>PythOS</h1>
           <p>
             A from-scratch, verification-driven x86-64 operating system that boots
@@ -43,21 +43,50 @@
           <div>
             <h2>Current Proof</h2>
             <p class="lede">
-              PythOS reached its Phase 10 storage acceptance panel on a disposable
-              O2 Micro <code>1217:8620</code> SDHCI/eMMC laptop target across two
-              cold-boot runs. The result is target-specific evidence, not a
-              generic storage-support claim.
+              PythOS reached its Phase 10 storage path on a disposable O2 Micro
+              <code>1217:8620</code> SDHCI/eMMC laptop target, then rendered a
+              five-page evidence terminal showing the ordered acceptance-marker
+              stream with zero dropped markers. The result is target-specific
+              physical evidence, not a generic storage-support claim.
             </p>
             <div class="fact-list">
               <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
               <p class="fact"><strong>Storage path</strong> QEMU-backed virtio-blk, polling AHCI, and polling SDHCI/eMMC acceptance coverage.</p>
-              <p class="fact"><strong>Physical marker</strong> Final panel shows <span class="mark">sdhci emmc backend</span>, <span class="mark">phase10 ok</span>, and <span class="mark">disk writes</span>.</p>
+              <p class="fact"><strong>Evidence terminal</strong> <span class="mark">count 00000139</span>, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>.</p>
             </div>
           </div>
           <figure>
-            <img class="evidence-img" src="evidence/2026-08-01-physical-sdhci-emmc-backend-boot1.jpg" alt="PythOS physical SDHCI eMMC backend Phase 10 acceptance panel">
-            <figcaption class="caption">Committed first-run screen frame from the physical O2 Micro 1217:8620 target.</figcaption>
+            <img class="evidence-img" src="evidence/2026-08-02-evidence-terminal-page-5.jpg" alt="PythOS physical evidence terminal final page showing Phase 10 and milestone completion">
+            <figcaption class="caption">Final evidence-terminal page from the physical O2 Micro 1217:8620 target.</figcaption>
           </figure>
+        </div>
+      </section>
+
+      <section class="band">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">Evidence terminal</p>
+            <h2>Five Pages, Zero Drops</h2>
+          </div>
+          <p class="lede">
+            PythOS emits a bounded evidence terminal during acceptance runs. The
+            captured Phase 10 run produced 139 ordered markers across five
+            terminal pages, with zero dropped markers and a recorded CRC. The
+            marker stream covers loader handoff, kernel initialization,
+            capability enforcement, scheduler behavior, IPC, object persistence,
+            crash recovery, storage authorization, adversarial storage checks,
+            SDHCI/eMMC acceptance, and framebuffer readiness.
+          </p>
+          <p class="boundary-note">
+            These markers are acceptance evidence for the captured milestone
+            path. They are not a claim that every named subsystem is
+            production-complete, portable, interrupt-driven, or broadly supported
+            across hardware.
+          </p>
+          <div class="actions">
+            <a class="button primary" href="evidence/#evidence-terminal">Open gallery</a>
+            <a class="button" href="status/">Read claim boundary</a>
+          </div>
         </div>
       </section>
 

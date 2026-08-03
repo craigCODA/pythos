@@ -6,10 +6,10 @@ takes ownership of memory and execution from firmware, builds a native PythCore
 execution substrate, brings up service identity and capability mechanisms,
 persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
-SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has reached the
-final Phase 10 acceptance panel across two cold-boot runs on the confirmed
-disposable O2 Micro `1217:8620` target. That physical result is intentionally
-scoped to that one target.
+SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has reached a
+five-page Phase 10 physical evidence terminal on the confirmed disposable O2
+Micro `1217:8620` target: 139 ordered markers, zero dropped markers, and CRC
+`176F4C6E`. That physical result is intentionally scoped to that one target.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -28,7 +28,7 @@ and where the boundary of the work still is.
 | Ring-3 object shell in QEMU | Arbitrary third-party programs |
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
-| Two physical SDHCI/eMMC final-panel boots on O2 Micro `1217:8620` | Physical interactive shell input |
+| Physical SDHCI/eMMC evidence terminal on O2 Micro `1217:8620` | Physical interactive shell input |
 
 ## What PythOS Is
 

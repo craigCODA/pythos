@@ -1,11 +1,12 @@
 # PythOS Handover
 
-Current boundary: Phase 11 targeted SDHCI/eMMC backend panel validation is
-recorded on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
-The opt-in `sdhci-emmc-backend` path is verified in QEMU through the existing
-storage and object-shell flows. Two operator-supplied physical boot artifacts
-from the disposable O2 Micro `1217:8620` laptop reached the final Phase 10
-backend panel: the JPG is the first run and the MP4 is the second run.
+Current boundary: Phase 10 SDHCI/eMMC physical evidence is recorded for the
+disposable O2 Micro `1217:8620` target. The opt-in `sdhci-emmc-backend` path is
+verified in QEMU through the existing storage and object-shell flows. Two
+2026-08-01 physical boot artifacts reached the final Phase 10 backend panel,
+and the 2026-08-02 follow-up evidence-terminal run rendered 139 ordered
+markers across five framebuffer pages with zero dropped markers and CRC
+`176F4C6E`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -104,6 +105,34 @@ capacity <hex>
 Do not infer physical backend support from QEMU. The physical panel gate is now
 recorded for the disposable O2 Micro `1217:8620` target only; do not generalize
 it to other SDHCI/eMMC controllers or to interactive physical shell use.
+
+## Physical Evidence Terminal (2026-08-02)
+
+ADR 0063 adds an opt-in framebuffer evidence terminal for serial-less physical
+capture. The current physical evidence-terminal artifact shows:
+
+```text
+PythOS Evidence Terminal
+page 01/05 count 00000139 drop 00000000 crc 176F4C6E
+...
+page 05/05 count 00000139 drop 00000000 crc 176F4C6E
+PYTHOS:CORE:PHASE_10_COMPLETE
+PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY
+PYTHOS:CORE:FRAMEBUFFER_READY
+PYTHOS:CORE:MILESTONE_1_COMPLETE
+```
+
+Committed screen frames:
+
+- `docs/evidence/2026-08-02-evidence-terminal-page-1.jpg`
+- `docs/evidence/2026-08-02-evidence-terminal-page-2.jpg`
+- `docs/evidence/2026-08-02-evidence-terminal-page-3.jpg`
+- `docs/evidence/2026-08-02-evidence-terminal-page-4.jpg`
+- `docs/evidence/2026-08-02-evidence-terminal-page-5.jpg`
+
+This is acceptance evidence for the captured milestone path, not a claim that
+every named subsystem marker is production-complete, portable, interrupt-driven,
+or broadly supported across hardware. COM1 remains the automated QEMU oracle.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 

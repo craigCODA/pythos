@@ -95,6 +95,36 @@ This is evidence that the opt-in polling SDHCI/eMMC backend reached the final
 Phase 10 verify-storage acceptance panel across two physical runs on the
 disposable O2 Micro `1217:8620` target.
 
+## Evidence Terminal Follow-up
+
+On 2026-08-02, the follow-up physical evidence-terminal run rendered the full
+acceptance-marker stream across five framebuffer pages:
+
+```text
+PythOS Evidence Terminal
+page 01/05 count 00000139 drop 00000000 crc 176F4C6E
+...
+page 05/05 count 00000139 drop 00000000 crc 176F4C6E
+```
+
+The five committed screen frames are:
+
+- [Evidence terminal page 1/5](../evidence/2026-08-02-evidence-terminal-page-1.jpg)
+- [Evidence terminal page 2/5](../evidence/2026-08-02-evidence-terminal-page-2.jpg)
+- [Evidence terminal page 3/5](../evidence/2026-08-02-evidence-terminal-page-3.jpg)
+- [Evidence terminal page 4/5](../evidence/2026-08-02-evidence-terminal-page-4.jpg)
+- [Evidence terminal page 5/5](../evidence/2026-08-02-evidence-terminal-page-5.jpg)
+
+The terminal evidence shows the captured path through loader handoff, kernel
+initialization, capability gates, scheduler and IPC checks, object persistence,
+crash recovery, adversarial storage checks, SDHCI/eMMC acceptance, framebuffer
+readiness, and `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
+
+These markers are acceptance evidence for the captured milestone path. They are
+not a claim that every named subsystem is production-complete, portable,
+interrupt-driven, or broadly supported across hardware. ADR 0063 records the
+evidence-terminal design and its scope boundary.
+
 ## QEMU Acceptance Backing This Image
 
 Before the physical image was deployed, the branch passed:

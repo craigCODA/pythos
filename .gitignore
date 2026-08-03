@@ -8,3 +8,4 @@ __pycache__/
 *.pyc
 /image/esp/NvVars
 .worktrees/
+.codex-remote-attachments/

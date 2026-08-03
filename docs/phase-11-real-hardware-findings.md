@@ -230,6 +230,18 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   disposable O2 Micro `1217:8620` target only. It does not prove generic
   SDHCI/eMMC support, safe writes on other targets, partition/filesystem
   support, DMA/ADMA, interrupts, hotplug, or interactive physical shell use.
+- On 2026-08-02, the follow-up ADR 0063 evidence-terminal physical run
+  rendered the captured acceptance-marker stream across five framebuffer pages:
+  `count 00000139`, `drop 00000000`, and `crc 176F4C6E`. The committed frames
+  are `docs/evidence/2026-08-02-evidence-terminal-page-1.jpg` through
+  `docs/evidence/2026-08-02-evidence-terminal-page-5.jpg`. Page 5 shows
+  `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY`,
+  `PYTHOS:CORE:PHASE_10_COMPLETE`,
+  `PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY`,
+  `PYTHOS:CORE:FRAMEBUFFER_READY`, and
+  `PYTHOS:CORE:MILESTONE_1_COMPLETE`. This is stronger visual evidence for the
+  captured milestone path, but it still does not replace COM1 as the automated
+  oracle or broaden the physical hardware claim beyond the same target.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.

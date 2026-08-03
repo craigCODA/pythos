@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical and QEMU evidence for the SDHCI/eMMC Phase 10 milestone.">
+    <meta name="description" content="PythOS physical evidence terminal, SDHCI/eMMC Phase 10 frames, and QEMU evidence for the current milestone.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -30,6 +30,57 @@
             screen-only frames below are committed in the repository so the public
             docs stay citable without storing a large video blob in git.
           </p>
+        </div>
+      </section>
+      <section class="band" id="evidence-terminal">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">Physical evidence terminal</p>
+            <h2>139 Ordered Markers Across Five Pages</h2>
+          </div>
+          <p class="lede">
+            PythOS emits a bounded evidence terminal during acceptance runs. The
+            captured Phase 10 physical run produced 139 ordered markers across
+            five terminal pages, with zero dropped markers and a recorded CRC.
+            The marker stream covers loader handoff, kernel initialization,
+            capability enforcement, scheduler behavior, IPC, object persistence,
+            crash recovery, storage authorization, adversarial storage checks,
+            SDHCI/eMMC acceptance, and framebuffer readiness.
+          </p>
+          <div class="evidence-stats" aria-label="Evidence terminal summary">
+            <span><strong>pages</strong> 05</span>
+            <span><strong>count</strong> 00000139</span>
+            <span><strong>drop</strong> 00000000</span>
+            <span><strong>crc</strong> 176F4C6E</span>
+          </div>
+          <p class="boundary-note">
+            These markers are acceptance evidence for the captured milestone
+            path. They are not a claim that every named subsystem is
+            production-complete, portable, interrupt-driven, or broadly supported
+            across hardware.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-02-evidence-terminal-page-1.jpg" alt="PythOS evidence terminal page 1 of 5">
+              <figcaption class="caption">Evidence terminal page 1/5 - loader, kernel, exceptions, controllers, scheduler, shell.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-02-evidence-terminal-page-2.jpg" alt="PythOS evidence terminal page 2 of 5">
+              <figcaption class="caption">Evidence terminal page 2/5 - permissions, capability checks, audit log, runtime, input, UI, and audio markers.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-02-evidence-terminal-page-3.jpg" alt="PythOS evidence terminal page 3 of 5">
+              <figcaption class="caption">Evidence terminal page 3/5 - storage grants and denials, append-only journal, crash recovery, typed object persistence.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-02-evidence-terminal-page-4.jpg" alt="PythOS evidence terminal page 4 of 5">
+              <figcaption class="caption">Evidence terminal page 4/5 - user-mode boundary tests, syscall checks, copy validation, dynamic capability tests.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-02-evidence-terminal-page-5.jpg" alt="PythOS evidence terminal page 5 of 5 showing Phase 10 completion">
+              <figcaption class="caption">Evidence terminal page 5/5 - adversarial storage suite, Phase 10 completion, SDHCI/eMMC framebuffer acceptance.</figcaption>
+            </figure>
+          </div>
         </div>
       </section>
       <section class="band">
