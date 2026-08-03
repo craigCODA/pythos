@@ -939,7 +939,8 @@ fn map_evidence_log_supervisor_mapping(
     }
     #[cfg(not(feature = "evidence-terminal"))]
     {
-        return Ok(());
+        let _ = tables;
+        Ok(())
     }
     #[cfg(feature = "evidence-terminal")]
     {
