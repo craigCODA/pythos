@@ -213,7 +213,7 @@ does not prove USB logging, generic physical storage support, or any filesystem.
 ## QEMU Acceptance Record
 
 Recorded on branch `agent/physical-evidence-terminal` at implementation commit
-`3b53a15` before documentation sync:
+`5e73e73` before documentation sync:
 
 ```powershell
 python scripts/test-evidence-terminal.py

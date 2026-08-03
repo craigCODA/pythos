@@ -132,7 +132,7 @@ physical capture. It is not part of the two 2026-08-01 physical artifacts above:
 those artifacts show the older five-line SDHCI/eMMC backend panel only.
 
 QEMU acceptance for the evidence terminal was recorded on branch
-`agent/physical-evidence-terminal` at implementation commit `3b53a15` before
+`agent/physical-evidence-terminal` at implementation commit `5e73e73` before
 documentation sync:
 
 ```powershell

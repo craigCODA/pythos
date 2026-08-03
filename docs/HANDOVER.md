@@ -2,7 +2,7 @@
 
 Current boundary: ADR 0063 physical evidence terminal is implemented on branch
 `agent/physical-evidence-terminal` and QEMU-accepted at implementation commit
-`3b53a15` before this documentation sync. Phase 10 remains complete. The
+`5e73e73` before this documentation sync. Phase 10 remains complete. The
 evidence-terminal path has not yet been physically validated; the next physical
 step is to boot the new image on the disposable O2 Micro `1217:8620` laptop and
 record the terminal transcript photo/video.
@@ -121,7 +121,7 @@ renders the same accepted marker transcript after the Phase 10 storage proof.
 COM1 remains the automated oracle; the framebuffer terminal is only a visual
 mirror for evidence capture.
 
-QEMU acceptance recorded at implementation commit `3b53a15`:
+QEMU acceptance recorded at implementation commit `5e73e73`:
 
 ```powershell
 python scripts\test-evidence-terminal.py
