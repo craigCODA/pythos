@@ -23,6 +23,8 @@ mod dynamic_capabilities;
 mod dynamic_object_store;
 #[cfg(feature = "evidence-terminal")]
 mod evidence_log;
+#[cfg(feature = "evidence-terminal")]
+mod evidence_terminal;
 mod fb_debug;
 mod font;
 mod font_system;
@@ -1589,6 +1591,26 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
         serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
+        #[cfg(feature = "evidence-terminal")]
+        {
+            let snapshot = match evidence_log::snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+            if evidence_terminal::render(&snapshot, &boot_info.framebuffer).is_err() {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if snapshot.header.dropped == 0 {
+                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_READY");
+            } else {
+                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED");
+                qemu_exit::panic();
+            }
+        }
         qemu_exit::success();
     }
 

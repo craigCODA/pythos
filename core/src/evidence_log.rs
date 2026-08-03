@@ -65,6 +65,24 @@ pub fn append_marker(marker: &str) {
     });
 }
 
+pub fn snapshot() -> Result<evidence_log::EvidenceLogSnapshot<'static>, EvidenceLogAttachError> {
+    let installed = installed_log().ok_or(EvidenceLogAttachError::Absent)?;
+    // SAFETY:
+    // 1. Invariant: `installed.ptr..ptr+len` names the installed evidence log
+    //    buffer retained for this boot proof.
+    // 2. Established by: `install` validates and records only a loader-owned
+    //    buffer that passed shared-format validation.
+    // 3. Lifetime: the buffer is retained until the terminal renders and the
+    //    boot proof terminates.
+    // 4. Pointer ownership: PythCore owns the backing allocation after handoff.
+    // 5. Alignment: byte-slice access has no stronger alignment need.
+    // 6. Mapped length: exactly `installed.len` bytes.
+    // 7. Concurrency: single-core verification path.
+    // 8. Violation: a stale pointer corrupts evidence rendering or faults.
+    let buffer = unsafe { core::slice::from_raw_parts(installed.ptr, installed.len) };
+    evidence_log::snapshot(buffer).map_err(EvidenceLogAttachError::InvalidLog)
+}
+
 fn install(buffer: &mut [u8]) -> Result<(), EvidenceLogAttachError> {
     evidence_log::snapshot(buffer).map_err(EvidenceLogAttachError::InvalidLog)?;
     let installed = InstalledLog::from_buffer(buffer);
@@ -94,6 +112,29 @@ fn install(buffer: &mut [u8]) -> Result<(), EvidenceLogAttachError> {
     Ok(())
 }
 
+fn installed_log() -> Option<InstalledLog> {
+    #[cfg(test)]
+    {
+        return TEST_INSTALLED_LOG.with(|state| *state.borrow());
+    }
+
+    #[cfg(not(test))]
+    // SAFETY:
+    // 1. Invariant: `INSTALLED_LOG`, when present, holds a copyable descriptor
+    //    for the single retained boot evidence buffer.
+    // 2. Established by: `install` writes only validated descriptors.
+    // 3. Lifetime: the descriptor and backing allocation are retained for the
+    //    boot proof.
+    // 4. Pointer ownership: this reads a copy of the descriptor, not the buffer.
+    // 5. Alignment: `addr_of!` observes the static at its natural alignment.
+    // 6. Mapped length: one `Option<InstalledLog>` descriptor.
+    // 7. Concurrency: single-core verification path.
+    // 8. Violation: reading an invalid descriptor would corrupt later access.
+    unsafe {
+        core::ptr::addr_of!(INSTALLED_LOG).read()
+    }
+}
+
 fn with_installed_buffer_mut<R>(f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
     #[cfg(test)]
     {
@@ -119,21 +160,21 @@ fn with_installed_buffer_mut<R>(f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
     }
 
     #[cfg(not(test))]
-    // SAFETY:
-    // 1. Invariant: `INSTALLED_LOG`, when present, holds the single retained
-    //    boot evidence buffer for this core.
-    // 2. Established by: `install` above validates and stores the buffer once
-    //    for the single-core verify path.
-    // 3. Lifetime: the backing loader allocation is retained for the boot.
-    // 4. Pointer ownership: PythCore owns the allocation after handoff and
-    //    mutates it only through this module.
-    // 5. Alignment: byte-slice access has no stronger alignment need.
-    // 6. Mapped length: exactly `installed.len` bytes.
-    // 7. Concurrency: single-core verification path.
-    // 8. Violation: a stale pointer corrupts memory or faults.
-    unsafe {
-        let installed = core::ptr::addr_of!(INSTALLED_LOG).read()?;
-        let buffer = core::slice::from_raw_parts_mut(installed.ptr, installed.len);
+    {
+        let installed = installed_log()?;
+        // SAFETY:
+        // 1. Invariant: `installed.ptr..ptr+len` names the single retained
+        //    boot evidence buffer for this core.
+        // 2. Established by: `install` validates and stores the buffer once
+        //    for the single-core verify path.
+        // 3. Lifetime: the backing loader allocation is retained for the boot.
+        // 4. Pointer ownership: PythCore owns the allocation after handoff and
+        //    mutates it only through this module.
+        // 5. Alignment: byte-slice access has no stronger alignment need.
+        // 6. Mapped length: exactly `installed.len` bytes.
+        // 7. Concurrency: single-core verification path.
+        // 8. Violation: a stale pointer corrupts memory or faults.
+        let buffer = unsafe { core::slice::from_raw_parts_mut(installed.ptr, installed.len) };
         Some(f(buffer))
     }
 }
@@ -224,6 +265,20 @@ mod tests {
 
         let snapshot = snapshot(&buffer.0).unwrap();
         assert_eq!(snapshot.payload, b"PYTHOS:CORE:BOOTINFO_VALID\n");
+    }
+
+    #[test]
+    fn snapshot_returns_installed_evidence_payload() {
+        let _reset = ResetOnDrop;
+        let mut buffer = AlignedEvidenceBuffer([0u8; EVIDENCE_LOG_TOTAL_BYTES]);
+        initialize(&mut buffer.0).unwrap();
+        let boot_info = evidence_boot_info(&mut buffer.0);
+
+        attach_from_boot_info(&boot_info).unwrap();
+        append_marker("PYTHOS:CORE:FRAMEBUFFER_READY");
+
+        let snapshot = super::snapshot().unwrap();
+        assert_eq!(snapshot.payload, b"PYTHOS:CORE:FRAMEBUFFER_READY\n");
     }
 
     #[test]
