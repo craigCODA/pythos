@@ -1178,9 +1178,12 @@ milestone success marker unchanged, then renders the captured transcript and
 emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final terminal frame
 is visible and the log snapshot reports `dropped == 0`. If the transcript
 drops accepted lines, the boot emits `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED`
-and must not pass acceptance. Page dwell uses PIT ticks; the bounded spin
-fallback is calibrated/verified only on the O2 Micro `1217:8620` evidence
-target and is not a generic timing guarantee.
+and must not pass acceptance. After emitting the ready marker, the guest waits
+one bounded evidence-terminal capture dwell before `qemu_exit::success()` so
+the QEMU screendump request has a finite window on the final frame. Page dwell
+and ready-marker capture dwell use PIT ticks; the bounded spin fallback is
+calibrated/verified only on the O2 Micro `1217:8620` evidence target and is not
+a generic timing guarantee.
 
 Run the evidence-terminal acceptance script with:
 
@@ -1193,7 +1196,8 @@ It builds `pythos-boot` with `evidence-terminal`, builds `pythos-core` with
 backend and delayed success marker `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`,
 rejects virtio/AHCI fallback and panic/dropped-transcript markers, and requires
 both `QEMU_OUTCOME success` and a `target/evidence-terminal.ppm` PPM dump whose
-dimensions and colors match the evidence-terminal frame. This is QEMU
+dimensions, palette, and row-structured glyph pixels match the
+evidence-terminal frame. This is QEMU
 acceptance only; physical evidence-terminal validation requires a later O2
 Micro `1217:8620` boot photo or video.
 

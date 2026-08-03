@@ -21,6 +21,13 @@ TERMINAL_BACKGROUND = (12, 16, 32)
 TERMINAL_TITLE = (80, 230, 150)
 TERMINAL_STATUS = (150, 200, 220)
 TERMINAL_BODY = (225, 230, 240)
+TERMINAL_MARGIN_X = 24
+TERMINAL_MARGIN_Y = 24
+TERMINAL_GLYPH_WIDTH = 8
+TERMINAL_GLYPH_HEIGHT = 8
+TERMINAL_ROW_GAP = 2
+TERMINAL_ROW_ADVANCE = TERMINAL_GLYPH_HEIGHT + TERMINAL_ROW_GAP
+TERMINAL_CHROME_ROWS = 3
 REQUIRED_MARKERS = (
     "PYTHOS:LOADER:ENTER",
     "PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK",
@@ -205,6 +212,90 @@ def count_terminal_colors(pixels: bytes) -> dict[tuple[int, int, int], int]:
     return colors
 
 
+def pixel_offset(width: int, x: int, y: int) -> int:
+    return ((y * width) + x) * 3
+
+
+def count_text_band_pixels(
+    pixels: bytes,
+    width: int,
+    height: int,
+    row: int,
+    color: tuple[int, int, int],
+) -> tuple[int, int, int]:
+    y0 = TERMINAL_MARGIN_Y + (row * TERMINAL_ROW_ADVANCE)
+    y1 = min(y0 + TERMINAL_GLYPH_HEIGHT, height)
+    x0 = TERMINAL_MARGIN_X
+    x1 = max(x0, width - TERMINAL_MARGIN_X)
+    seen_x: set[int] = set()
+    seen_y: set[int] = set()
+    count = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            offset = pixel_offset(width, x, y)
+            if pixels[offset : offset + 3] == bytes(color):
+                count += 1
+                seen_x.add(x)
+                seen_y.add(y)
+    return count, len(seen_x), len(seen_y)
+
+
+def assert_text_band_has_glyphs(
+    pixels: bytes,
+    width: int,
+    height: int,
+    row: int,
+    color: tuple[int, int, int],
+    label: str,
+    min_pixels: int,
+    min_columns: int,
+) -> None:
+    count, columns, scanlines = count_text_band_pixels(pixels, width, height, row, color)
+    if count < min_pixels or columns < min_columns or scanlines < 3:
+        raise AssertionError(
+            f"screendump missing {label} glyph structure at row {row}: "
+            f"{count} pixels, {columns} columns, {scanlines} scanlines"
+        )
+
+
+def assert_terminal_text_structure(width: int, height: int, pixels: bytes) -> None:
+    assert_text_band_has_glyphs(
+        pixels,
+        width,
+        height,
+        0,
+        TERMINAL_TITLE,
+        "title-row",
+        min_pixels=32,
+        min_columns=12,
+    )
+    assert_text_band_has_glyphs(
+        pixels,
+        width,
+        height,
+        1,
+        TERMINAL_STATUS,
+        "status-row",
+        min_pixels=48,
+        min_columns=16,
+    )
+
+    terminal_rows = (height - (TERMINAL_MARGIN_Y * 2)) // TERMINAL_ROW_ADVANCE
+    rows_to_scan = range(TERMINAL_CHROME_ROWS, min(terminal_rows, TERMINAL_CHROME_ROWS + 14))
+    populated_body_rows = 0
+    for row in rows_to_scan:
+        count, columns, scanlines = count_text_band_pixels(
+            pixels, width, height, row, TERMINAL_BODY
+        )
+        if count >= 24 and columns >= 10 and scanlines >= 3:
+            populated_body_rows += 1
+    if populated_body_rows < 4:
+        raise AssertionError(
+            "screendump missing transcript/body row glyph structure: "
+            f"{populated_body_rows} structured body rows"
+        )
+
+
 def assert_evidence_terminal_screendump_bytes(data: bytes, serial: str) -> None:
     if "PYTHOS:CORE:EVIDENCE_TERMINAL_READY" not in serial:
         raise AssertionError("serial did not reach evidence terminal ready marker")
@@ -217,6 +308,7 @@ def assert_evidence_terminal_screendump_bytes(data: bytes, serial: str) -> None:
     for color in (TERMINAL_TITLE, TERMINAL_STATUS, TERMINAL_BODY):
         if colors[color] == 0:
             raise AssertionError(f"screendump missing terminal color {color}")
+    assert_terminal_text_structure(width, height, pixels)
 
 
 def assert_screendump_shows_evidence_terminal(serial: str) -> None:
@@ -232,9 +324,27 @@ def run_self_tests() -> None:
     width = TERMINAL_MIN_WIDTH
     height = TERMINAL_MIN_HEIGHT
     pixels = bytearray(TERMINAL_BACKGROUND * (width * height))
-    for index, color in enumerate((TERMINAL_TITLE, TERMINAL_STATUS, TERMINAL_BODY)):
-        offset = index * 3
+
+    def put_pixel(x: int, y: int, color: tuple[int, int, int]) -> None:
+        offset = pixel_offset(width, x, y)
         pixels[offset : offset + 3] = bytes(color)
+
+    def draw_glyph_run(row: int, glyphs: int, color: tuple[int, int, int]) -> None:
+        y0 = TERMINAL_MARGIN_Y + (row * TERMINAL_ROW_ADVANCE)
+        for glyph in range(glyphs):
+            x0 = TERMINAL_MARGIN_X + (glyph * TERMINAL_GLYPH_WIDTH)
+            for dy in range(1, 7):
+                for dx in (1, 2, 5):
+                    put_pixel(x0 + dx, y0 + dy, color)
+                if dy in (1, 4, 6):
+                    for dx in range(1, 6):
+                        put_pixel(x0 + dx, y0 + dy, color)
+
+    draw_glyph_run(0, 8, TERMINAL_TITLE)
+    draw_glyph_run(1, 12, TERMINAL_STATUS)
+    for row in range(TERMINAL_CHROME_ROWS, TERMINAL_CHROME_ROWS + 6):
+        draw_glyph_run(row, 10, TERMINAL_BODY)
+
     terminal_like_ppm = (
         f"P6\n{width} {height}\n255\n".encode("ascii")
         + bytes(pixels)
@@ -251,6 +361,25 @@ def run_self_tests() -> None:
         pass
     else:
         raise AssertionError("blank non-empty PPM should not pass terminal validation")
+
+    color_only_pixels = bytearray(TERMINAL_BACKGROUND * (width * height))
+    for index, color in enumerate((TERMINAL_TITLE, TERMINAL_STATUS, TERMINAL_BODY)):
+        x0 = width - 32
+        y0 = height - 32 + (index * 8)
+        for y in range(y0, y0 + 4):
+            for x in range(x0, x0 + 4):
+                offset = pixel_offset(width, x, y)
+                color_only_pixels[offset : offset + 3] = bytes(color)
+    color_only_ppm = (
+        f"P6\n{width} {height}\n255\n".encode("ascii")
+        + bytes(color_only_pixels)
+    )
+    try:
+        assert_evidence_terminal_screendump_bytes(color_only_ppm, serial)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("color-only PPM should not pass terminal validation")
 
 
 def main(argv: list[str] | None = None) -> int:

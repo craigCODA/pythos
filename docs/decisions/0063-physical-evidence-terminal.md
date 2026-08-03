@@ -64,6 +64,9 @@ with the nonzero drop count, emits `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED`,
 and enters the panic exit path. The evidence-terminal QEMU harness uses
 `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` as its success trigger while still
 requiring `PYTHOS:CORE:MILESTONE_1_COMPLETE` to appear first in the transcript.
+After emitting the ready marker, PythCore performs one additional bounded
+terminal dwell before entering `qemu_exit::success()` so QEMU screendump capture
+has a finite guest-side window while the final terminal page remains visible.
 
 On physical hardware the QEMU debug-exit port write is ignored and
 `qemu_exit::success()` remains in its non-returning loop, leaving the final

@@ -1599,6 +1599,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
             if snapshot.header.dropped == 0 {
                 serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_READY");
+                evidence_terminal::dwell_after_ready_marker();
             } else {
                 serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED");
                 qemu_exit::panic();

@@ -160,6 +160,9 @@ Rendering rules:
   must be documented as O2 Micro `1217:8620`-only evidence timing;
 - render the final page last and leave it visible before calling
   `qemu_exit::success()`;
+- emit `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final page is
+  rendered, then wait one bounded capture dwell before `qemu_exit::success()`
+  so QEMU has a deterministic screendump window;
 - after the success-port write, rely on `qemu_exit::success()`'s non-returning
   infinite loop so real hardware keeps showing the final framebuffer instead of
   falling through into undefined code.
@@ -225,9 +228,10 @@ EVIDENCE_TERMINAL_TEST_OK
 ```
 
 The acceptance run required the PPM framebuffer dump at
-`target/evidence-terminal.ppm` to match the evidence-terminal frame palette;
-manual inspection showed terminal page `05/05` with `count 00000138`, `drop
-00000000`, CRC `734FF002`, and final markers through
+`target/evidence-terminal.ppm` to match the evidence-terminal frame palette and
+expected title/status/body row glyph structure; manual inspection showed
+terminal page `05/05` with `count 00000138`, `drop 00000000`, CRC `734FF002`,
+and final markers through
 `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
 
 ## Out Of Scope

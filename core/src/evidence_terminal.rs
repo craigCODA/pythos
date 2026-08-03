@@ -357,8 +357,21 @@ fn format_status_line(
 }
 
 fn dwell_between_pages() {
+    dwell_for_ticks(DWELL_TICKS);
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn dwell_after_ready_marker() {
+    dwell_for_ticks(ready_capture_dwell_ticks());
+}
+
+const fn ready_capture_dwell_ticks() -> u64 {
+    DWELL_TICKS
+}
+
+fn dwell_for_ticks(dwell_ticks: u64) {
     let start = timer::ticks();
-    let target = start.saturating_add(DWELL_TICKS);
+    let target = start.saturating_add(dwell_ticks);
     let mut observed = start;
     let mut stale_spins = 0usize;
     while observed < target {
@@ -369,7 +382,7 @@ fn dwell_between_pages() {
             continue;
         }
         if stale_spins >= TICK_PROBE_LIMIT {
-            fallback_spin_delay();
+            fallback_spin_delay(dwell_ticks);
             return;
         }
         stale_spins += 1;
@@ -378,12 +391,17 @@ fn dwell_between_pages() {
 }
 
 #[cfg(feature = "evidence-terminal")]
-fn fallback_spin_delay() {
+fn fallback_spin_delay(dwell_ticks: u64) {
     // Fallback used only when PIT ticks stay stuck for one bounded probe
     // interval. This spin calibration is verified only on O2 Micro 1217:8620
     // under the `evidence-terminal` path and should not be treated as a
     // general timing guarantee for other hardware.
-    for _ in 0..(DWELL_TICKS as usize * FALLBACK_SPINS_PER_TICK) {
+    let tick_count = if dwell_ticks > usize::MAX as u64 {
+        usize::MAX / FALLBACK_SPINS_PER_TICK
+    } else {
+        dwell_ticks as usize
+    };
+    for _ in 0..tick_count.saturating_mul(FALLBACK_SPINS_PER_TICK) {
         hint::spin_loop();
     }
 }
@@ -551,5 +569,11 @@ mod tests {
             render(&snapshot, &info),
             Err(EvidenceTerminalError::PageCountTooLarge)
         );
+    }
+
+    #[test]
+    fn ready_capture_dwell_uses_finite_terminal_tick_budget() {
+        assert_eq!(ready_capture_dwell_ticks(), DWELL_TICKS);
+        assert!(ready_capture_dwell_ticks() > 0);
     }
 }

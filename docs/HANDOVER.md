@@ -146,21 +146,26 @@ screendump: target\evidence-terminal.ppm
 ```
 
 The harness now requires the PPM screendump to match the evidence-terminal
-frame palette, not merely to be non-empty. Manual screendump inspection showed
-a rendered terminal page `05/05` with `count 00000138`, `drop 00000000`, CRC
-`734FF002`, and final markers through `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
+frame palette and expected title/status/body row glyph structure, not merely to
+be non-empty or palette-colored. Manual screendump inspection showed a rendered
+terminal page `05/05` with `count 00000138`, `drop 00000000`, CRC `734FF002`,
+and final markers through `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
 
 Implementation notes:
 
 - `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` is emitted only after the terminal
   renders and the snapshot reports `dropped == 0`.
+- After `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`, PythCore waits one bounded
+  evidence-terminal capture dwell before `qemu_exit::success()` so QEMU can
+  take the screendump while the final frame is still guest-visible.
 - `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED` is a failing path, not success.
 - The evidence buffer is mapped at fixed high kernel virtual window
   `0xFFFF_C000_1003_0000`, writable/NX in the kernel root, and supervisor-only
   in user roots so serial hooks can append while user CR3 roots are active
   without colliding with low or user ELF virtual ranges.
-- Page dwell uses PIT ticks with a bounded spin fallback documented as verified
-  only for the O2 Micro `1217:8620` evidence path.
+- Page dwell and ready-marker capture dwell use PIT ticks with a bounded spin
+  fallback documented as verified only for the O2 Micro `1217:8620` evidence
+  path.
 
 Physical status: pending. Do not claim the new terminal has been observed on
 real hardware until the operator boots this branch image and supplies a new
