@@ -238,18 +238,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         let sdhci_emmc_mmio = None;
 
         #[cfg(feature = "evidence-terminal")]
-        let evidence_log_mapping = if boot_info.evidence_log_flags
-            & pythos_shared::boot_protocol::PYTH_EVIDENCE_LOG_FLAG_PRESENT
-            != 0
-        {
-            Some((
-                boot_info.evidence_log_phys,
-                boot_info.evidence_log_phys,
-                u64::from(boot_info.evidence_log_len),
-            ))
-        } else {
-            None
-        };
+        let evidence_log_mapping = memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
 
         #[cfg(feature = "evidence-terminal")]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
@@ -416,6 +405,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         // 8. Violation: execution faults immediately after the CR3 switch.
         unsafe {
             address_space.activate();
+        }
+        #[cfg(feature = "evidence-terminal")]
+        if evidence_log::rebase_to_kernel_virtual_window(boot_info).is_err() {
+            qemu_exit::panic();
         }
         if address_space.validate_active(boot_info).is_err() {
             serial::write_line("PYTHOS:CORE:MEMORY_INVALID");

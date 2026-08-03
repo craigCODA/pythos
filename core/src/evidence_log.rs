@@ -6,6 +6,8 @@ use pythos_shared::evidence_log::{self, EvidenceLogError};
 #[cfg(test)]
 extern crate std;
 
+pub const EVIDENCE_LOG_KERNEL_VIRT: u64 = 0xFFFF_C000_1003_0000;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum EvidenceLogAttachError {
     Absent,
@@ -38,20 +40,39 @@ std::thread_local! {
 }
 
 pub fn attach_from_boot_info(boot_info: &PythBootInfo) -> Result<(), EvidenceLogAttachError> {
+    install_from_boot_info_address(boot_info, boot_info.evidence_log_phys)
+}
+
+#[cfg(not(test))]
+pub fn rebase_to_kernel_virtual_window(
+    boot_info: &PythBootInfo,
+) -> Result<(), EvidenceLogAttachError> {
+    install_from_boot_info_address(boot_info, EVIDENCE_LOG_KERNEL_VIRT)
+}
+
+fn install_from_boot_info_address(
+    boot_info: &PythBootInfo,
+    address: u64,
+) -> Result<(), EvidenceLogAttachError> {
     if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
         return Err(EvidenceLogAttachError::Absent);
     }
     let len = usize::try_from(boot_info.evidence_log_len)
         .map_err(|_| EvidenceLogAttachError::BadLength)?;
-    let ptr = boot_info.evidence_log_phys as *mut u8;
+    let ptr = address as *mut u8;
     // SAFETY:
-    // 1. Invariant: `ptr..ptr+len` is the 64 KiB loader-owned evidence buffer
-    //    advertised by validated ABI 0.3 boot info.
+    // 1. Invariant: `ptr..ptr+len` maps the 64 KiB loader-owned evidence
+    //    buffer advertised by validated ABI 0.3 boot info. Before VM_READY,
+    //    `ptr` is the loader-provided physical address under the temporary
+    //    identity map; after VM_READY, it is the fixed supervisor-only
+    //    `EVIDENCE_LOG_KERNEL_VIRT` mapping.
     // 2. Established by: `PythBootInfo::validate` checked alignment, flags,
-    //    and exact length before this function is called in the verify path.
+    //    and exact length, and `KernelAddressSpace::build` maps the same
+    //    physical range at `EVIDENCE_LOG_KERNEL_VIRT` before rebase.
     // 3. Lifetime: loader allocations are retained for this boot proof.
     // 4. Pointer ownership: PythCore owns the allocation after handoff.
-    // 5. Alignment: page alignment is validated by the boot protocol.
+    // 5. Alignment: page alignment is validated by the boot protocol and the
+    //    fixed virtual window is page-aligned.
     // 6. Mapped length: exactly `len` bytes.
     // 7. Concurrency: single-core verification path.
     // 8. Violation: a bad pointer corrupts memory or faults before rendering.
@@ -295,5 +316,16 @@ mod tests {
             attach_from_boot_info(&boot_info),
             Err(EvidenceLogAttachError::Absent)
         );
+    }
+
+    #[test]
+    fn evidence_terminal_kernel_window_is_fixed_high_supervisor_space() {
+        assert_eq!(EVIDENCE_LOG_KERNEL_VIRT, 0xFFFF_C000_1003_0000);
+        assert_eq!(EVIDENCE_LOG_KERNEL_VIRT % 4096, 0);
+        assert!(EVIDENCE_LOG_KERNEL_VIRT >= 0xFFFF_C000_0000_0000);
+        assert!(
+            EVIDENCE_LOG_KERNEL_VIRT + EVIDENCE_LOG_TOTAL_BYTES as u64 <= 0xFFFF_C000_1004_0000
+        );
+        assert_ne!(EVIDENCE_LOG_KERNEL_VIRT, 0x0020_0000);
     }
 }

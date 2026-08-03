@@ -130,7 +130,7 @@ def request_screendump(path: Path) -> None:
             {"execute": "qmp_capabilities"},
             {
                 "execute": "screendump",
-                "arguments": {"filename": str(path), "format": "png"},
+                "arguments": {"filename": str(path), "format": "ppm"},
             },
         ):
             sock_file.write(json.dumps(command) + "\n")
@@ -384,7 +384,7 @@ def main() -> int:
                 elif args.success_marker in serial:
                     terminal_outcome = QemuOutcome.SUCCESS
                 if terminal_outcome is not None:
-                    if screendump_pending:
+                    if args.screendump:
                         screendump_pending = False
                         try:
                             request_screendump(args.screendump.resolve())

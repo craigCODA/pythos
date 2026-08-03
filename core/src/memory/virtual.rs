@@ -5,6 +5,8 @@
 #![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::architecture::x86_64::exceptions;
+#[cfg(feature = "evidence-terminal")]
+use crate::evidence_log;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
 use crate::{user_elf, user_mode, user_stacks};
 use core::arch::asm;
@@ -323,8 +325,9 @@ impl KernelAddressSpace {
         translate_active(boot_info.font_phys)?;
         translate_active(boot_info.bootstrap_stack_top - 8)?;
         translate_active(boot_info.framebuffer.mapped_virtual_base)?;
+        #[cfg(feature = "evidence-terminal")]
         if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT != 0 {
-            translate_active(boot_info.evidence_log_phys)?;
+            translate_active(evidence_log::EVIDENCE_LOG_KERNEL_VIRT)?;
         }
 
         let mut stack_probe = 0u64;
@@ -934,16 +937,22 @@ fn map_evidence_log_supervisor_mapping(
     if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
         return Ok(());
     }
-    // ADR 0063: the COM1 mirror hook may run while a user CR3 is active.
-    // Keep the evidence RAM buffer supervisor-only in each user root so
-    // kernel-mode trap/syscall code can append markers without exposing it to
-    // CPL3 or treating RAM as uncacheable device MMIO.
-    tables.map_physical_range(
-        boot_info.evidence_log_phys,
-        boot_info.evidence_log_phys,
-        u64::from(boot_info.evidence_log_len),
-        PTE_WRITE | PTE_NO_EXECUTE,
-    )
+    #[cfg(not(feature = "evidence-terminal"))]
+    {
+        return Ok(());
+    }
+    #[cfg(feature = "evidence-terminal")]
+    {
+        // ADR 0063: the COM1 mirror hook may run while a user CR3 is active.
+        // Keep the evidence RAM buffer supervisor-only in each user root so
+        // kernel-mode trap/syscall code can append markers without exposing it to
+        // CPL3, colliding with user ELF space, or treating RAM as uncacheable
+        // device MMIO.
+        let Some((phys, virt, len)) = evidence_log_supervisor_mapping(boot_info) else {
+            return Ok(());
+        };
+        tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)
+    }
 }
 
 fn map_supervisor_mappings(
@@ -1422,6 +1431,18 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
 // mapping's actual effect on real AHCI hardware is proven functionally by
 // Task E's QEMU integration test.
 const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
+#[cfg(feature = "evidence-terminal")]
+pub fn evidence_log_supervisor_mapping(boot_info: &PythBootInfo) -> Option<(u64, u64, u64)> {
+    if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
+        return None;
+    }
+    Some((
+        boot_info.evidence_log_phys,
+        evidence_log::EVIDENCE_LOG_KERNEL_VIRT,
+        u64::from(boot_info.evidence_log_len),
+    ))
+}
+
 const _: () = {
     let flags = PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE;
     assert!(flags & PTE_WRITE == PTE_WRITE);
