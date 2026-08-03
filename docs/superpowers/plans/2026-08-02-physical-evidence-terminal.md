@@ -818,11 +818,10 @@ if "PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED" in output:
     raise AssertionError("evidence terminal dropped transcript lines")
 ```
 
-- [ ] **Step 5: Verify the screendump exists and is non-empty.**
+- [ ] **Step 5: Verify the screendump is the evidence terminal frame.**
 
 ```python
-if not SCREENDUMP.exists() or SCREENDUMP.stat().st_size == 0:
-    raise AssertionError(f"missing or empty screendump {SCREENDUMP}")
+assert_screendump_shows_evidence_terminal(serial)
 ```
 
 - [ ] **Step 6: Run the acceptance script.**

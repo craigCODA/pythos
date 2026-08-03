@@ -1192,9 +1192,10 @@ It builds `pythos-boot` with `evidence-terminal`, builds `pythos-core` with
 `verify,sdhci-emmc-backend,evidence-terminal`, boots QEMU with the SDHCI/eMMC
 backend and delayed success marker `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`,
 rejects virtio/AHCI fallback and panic/dropped-transcript markers, and requires
-both `QEMU_OUTCOME success` and a non-empty `target/evidence-terminal.ppm`
-screendump. This is QEMU acceptance only; physical evidence-terminal validation
-requires a later O2 Micro `1217:8620` boot photo or video.
+both `QEMU_OUTCOME success` and a `target/evidence-terminal.ppm` PPM dump whose
+dimensions and colors match the evidence-terminal frame. This is QEMU
+acceptance only; physical evidence-terminal validation requires a later O2
+Micro `1217:8620` boot photo or video.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 

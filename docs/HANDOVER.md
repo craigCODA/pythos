@@ -1,11 +1,17 @@
 # PythOS Handover
 
-Current boundary: Phase 11 targeted SDHCI/eMMC backend panel validation is
-recorded on branch `feature/sdhci-emmc-backend`. Phase 10 remains complete.
-The opt-in `sdhci-emmc-backend` path is verified in QEMU through the existing
-storage and object-shell flows. Two operator-supplied physical boot artifacts
-from the disposable O2 Micro `1217:8620` laptop reached the final Phase 10
-backend panel: the JPG is the first run and the MP4 is the second run.
+Current boundary: ADR 0063 physical evidence terminal is implemented on branch
+`agent/physical-evidence-terminal` and QEMU-accepted at implementation commit
+`3b53a15` before this documentation sync. Phase 10 remains complete. The
+evidence-terminal path has not yet been physically validated; the next physical
+step is to boot the new image on the disposable O2 Micro `1217:8620` laptop and
+record the terminal transcript photo/video.
+
+The earlier Phase 11 targeted SDHCI/eMMC backend panel validation remains
+recorded on branch `feature/sdhci-emmc-backend`. Two operator-supplied physical
+boot artifacts from the disposable O2 Micro `1217:8620` laptop reached the
+final Phase 10 backend panel: the JPG is the first run and the MP4 is the
+second run.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -104,6 +110,62 @@ capacity <hex>
 Do not infer physical backend support from QEMU. The physical panel gate is now
 recorded for the disposable O2 Micro `1217:8620` target only; do not generalize
 it to other SDHCI/eMMC controllers or to interactive physical shell use.
+
+## Physical Evidence Terminal (2026-08-02, branch `agent/physical-evidence-terminal`)
+
+ADR 0063 adds an opt-in framebuffer evidence terminal for serial-less physical
+capture. The UEFI loader allocates a page-aligned 64 KiB `PYLOG001` evidence
+buffer, mirrors loader markers into it, passes it through explicit
+`PythBootInfo` ABI 0.3 fields, and PythCore validates, maps, appends to, and
+renders the same accepted marker transcript after the Phase 10 storage proof.
+COM1 remains the automated oracle; the framebuffer terminal is only a visual
+mirror for evidence capture.
+
+QEMU acceptance recorded at implementation commit `3b53a15`:
+
+```powershell
+python scripts\test-evidence-terminal.py
+```
+
+Successful output included:
+
+```text
+PYTHOS:CORE:EVIDENCE_TERMINAL_READY
+QEMU_OUTCOME success
+EVIDENCE_TERMINAL_TEST_OK
+```
+
+The acceptance boot used:
+
+```text
+pythos-boot: evidence-terminal
+pythos-core: verify,sdhci-emmc-backend,evidence-terminal
+QEMU storage: --no-virtio-blk --sdhci --emmc
+success marker: PYTHOS:CORE:EVIDENCE_TERMINAL_READY
+screendump: target\evidence-terminal.ppm
+```
+
+The harness now requires the PPM screendump to match the evidence-terminal
+frame palette, not merely to be non-empty. Manual screendump inspection showed
+a rendered terminal page `05/05` with `count 00000138`, `drop 00000000`, CRC
+`734FF002`, and final markers through `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
+
+Implementation notes:
+
+- `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` is emitted only after the terminal
+  renders and the snapshot reports `dropped == 0`.
+- `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED` is a failing path, not success.
+- The evidence buffer is mapped at fixed high kernel virtual window
+  `0xFFFF_C000_1003_0000`, writable/NX in the kernel root, and supervisor-only
+  in user roots so serial hooks can append while user CR3 roots are active
+  without colliding with low or user ELF virtual ranges.
+- Page dwell uses PIT ticks with a bounded spin fallback documented as verified
+  only for the O2 Micro `1217:8620` evidence path.
+
+Physical status: pending. Do not claim the new terminal has been observed on
+real hardware until the operator boots this branch image and supplies a new
+photo/video. The existing 2026-08-01 artifacts prove only the older five-line
+SDHCI/eMMC backend panel, not the full evidence-terminal transcript.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 
