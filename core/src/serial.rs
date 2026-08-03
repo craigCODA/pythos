@@ -82,6 +82,17 @@ pub fn try_read_byte_com2() -> Option<u8> {
 pub fn write_line(line: &str) {
     write_str(line);
     write_str("\r\n");
+    after_line_written(line);
+}
+
+fn after_line_written(_line: &str) {
+    #[cfg(feature = "evidence-terminal")]
+    crate::evidence_log::append_marker(_line);
+}
+
+#[cfg(all(test, feature = "evidence-terminal"))]
+pub(crate) fn after_line_written_for_test(line: &str) {
+    after_line_written(line);
 }
 
 pub fn write_hex_u64(label: &str, value: u64) {
@@ -178,5 +189,27 @@ mod tests {
     fn com1_and_com2_line_status_ports_are_distinct() {
         assert_eq!(line_status_port(COM1_BASE), COM1_BASE + 5);
         assert_ne!(line_status_port(COM1_BASE), line_status_port(COM2_BASE));
+    }
+
+    #[cfg(feature = "evidence-terminal")]
+    #[test]
+    fn serial_mirror_after_line_written_appends_after_install() {
+        use pythos_shared::evidence_log::EVIDENCE_LOG_TOTAL_BYTES;
+
+        struct ResetOnDrop;
+
+        impl Drop for ResetOnDrop {
+            fn drop(&mut self) {
+                crate::evidence_log::reset_for_test();
+            }
+        }
+
+        let _reset = ResetOnDrop;
+        let mut buffer = [0u8; EVIDENCE_LOG_TOTAL_BYTES];
+        pythos_shared::evidence_log::initialize(&mut buffer).unwrap();
+        crate::evidence_log::install_for_test(&mut buffer).unwrap();
+        after_line_written_for_test("PYTHOS:CORE:FRAMEBUFFER_READY");
+        let snapshot = pythos_shared::evidence_log::snapshot(&buffer).unwrap();
+        assert_eq!(snapshot.payload, b"PYTHOS:CORE:FRAMEBUFFER_READY\n");
     }
 }

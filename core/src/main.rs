@@ -21,6 +21,8 @@ mod compositor;
 mod context_switch;
 mod dynamic_capabilities;
 mod dynamic_object_store;
+#[cfg(feature = "evidence-terminal")]
+mod evidence_log;
 mod fb_debug;
 mod font;
 mod font_system;
@@ -138,6 +140,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
+    #[cfg(feature = "evidence-terminal")]
+    match evidence_log::attach_from_boot_info(boot_info) {
+        Ok(()) => {
+            evidence_log::append_marker("PYTHOS:CORE:ENTER");
+            evidence_log::append_marker("PYTHOS:CORE:BOOTINFO_VALID");
+        }
+        Err(evidence_log::EvidenceLogAttachError::Absent) => {}
+        Err(_) => {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+    }
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_BOOTINFO);
 
     #[cfg_attr(test, allow(unused_mut, unused_variables))]
@@ -221,6 +235,37 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(not(feature = "sdhci-emmc-backend"))]
         let sdhci_emmc_mmio = None;
 
+        #[cfg(feature = "evidence-terminal")]
+        let evidence_log_mapping = if boot_info.evidence_log_flags
+            & pythos_shared::boot_protocol::PYTH_EVIDENCE_LOG_FLAG_PRESENT
+            != 0
+        {
+            Some((
+                boot_info.evidence_log_phys,
+                boot_info.evidence_log_phys,
+                u64::from(boot_info.evidence_log_len),
+            ))
+        } else {
+            None
+        };
+
+        #[cfg(feature = "evidence-terminal")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            None,
+            evidence_log_mapping,
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(not(feature = "evidence-terminal"))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,

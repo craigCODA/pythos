@@ -10,7 +10,7 @@ use crate::{user_elf, user_mode, user_stacks};
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
-use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PythBootInfo};
+use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PYTH_EVIDENCE_LOG_FLAG_PRESENT, PythBootInfo};
 
 const TWO_MIB: u64 = 2 * 1024 * 1024;
 const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
@@ -161,6 +161,7 @@ pub struct KernelAddressSpace {
 }
 
 impl KernelAddressSpace {
+    #[cfg(feature = "evidence-terminal")]
     pub fn build(
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
@@ -168,6 +169,47 @@ impl KernelAddressSpace {
         ahci_mmio: Option<(u64, u64, u64)>,
         sdhci_emmc_mmio: Option<(u64, u64, u64)>,
         shell_bootstrap_frame: Option<u64>,
+        evidence_log_mapping: Option<(u64, u64, u64)>,
+    ) -> Result<Self, VmError> {
+        Self::build_inner(
+            allocator,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            shell_bootstrap_frame,
+            evidence_log_mapping,
+        )
+    }
+
+    #[cfg(not(feature = "evidence-terminal"))]
+    pub fn build(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        hda_mmio: Option<(u64, u64, u64)>,
+        ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
+        shell_bootstrap_frame: Option<u64>,
+    ) -> Result<Self, VmError> {
+        Self::build_inner(
+            allocator,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            shell_bootstrap_frame,
+            None,
+        )
+    }
+
+    fn build_inner(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        hda_mmio: Option<(u64, u64, u64)>,
+        ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
+        shell_bootstrap_frame: Option<u64>,
+        evidence_log_mapping: Option<(u64, u64, u64)>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
@@ -200,6 +242,9 @@ impl KernelAddressSpace {
             boot_info.framebuffer.byte_length,
             PTE_WRITE | PTE_NO_EXECUTE,
         )?;
+        if let Some((phys, virt, len)) = evidence_log_mapping {
+            tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
+        }
         // ADR 0048: map the runtime-discovered HDA controller MMIO into the
         // kernel device window so the audio driver can reach its registers.
         // Note: this HDA mapping predates PTE_CACHE_DISABLE and has the same
@@ -278,6 +323,9 @@ impl KernelAddressSpace {
         translate_active(boot_info.font_phys)?;
         translate_active(boot_info.bootstrap_stack_top - 8)?;
         translate_active(boot_info.framebuffer.mapped_virtual_base)?;
+        if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT != 0 {
+            translate_active(boot_info.evidence_log_phys)?;
+        }
 
         let mut stack_probe = 0u64;
         stack_probe = stack_probe.wrapping_add(1);
