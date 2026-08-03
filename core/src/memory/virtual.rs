@@ -392,6 +392,7 @@ impl UserAddressSpace {
         map_kernel_segments(&mut tables)?;
         map_user_mode_proof_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
+        map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
         tables.map_allocated_table_frames()?;
         let table_frames = tables.allocated_frames;
         let table_frame_count = tables.allocated_count;
@@ -465,6 +466,7 @@ impl UserAddressSpace {
         map_kernel_segments(&mut tables)?;
         map_user_stack_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
+        map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
         map_supervisor_mappings(&mut tables, supervisor_mappings)?;
 
         let mut segment_index = 0;
@@ -921,6 +923,25 @@ fn map_bootstrap_stack(
             .bootstrap_stack_top
             .checked_sub(boot_info.bootstrap_stack_bottom)
             .ok_or(VmError::RangeOverflow)?,
+        PTE_WRITE | PTE_NO_EXECUTE,
+    )
+}
+
+fn map_evidence_log_supervisor_mapping(
+    tables: &mut PageTableBuilder<'_>,
+    boot_info: &PythBootInfo,
+) -> Result<(), VmError> {
+    if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
+        return Ok(());
+    }
+    // ADR 0063: the COM1 mirror hook may run while a user CR3 is active.
+    // Keep the evidence RAM buffer supervisor-only in each user root so
+    // kernel-mode trap/syscall code can append markers without exposing it to
+    // CPL3 or treating RAM as uncacheable device MMIO.
+    tables.map_physical_range(
+        boot_info.evidence_log_phys,
+        boot_info.evidence_log_phys,
+        u64::from(boot_info.evidence_log_len),
         PTE_WRITE | PTE_NO_EXECUTE,
     )
 }

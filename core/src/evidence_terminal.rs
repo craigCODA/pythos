@@ -21,6 +21,7 @@ const TITLE_TEXT: &str = "PythOS Evidence Terminal";
 pub enum EvidenceTerminalError {
     Framebuffer,
     GeometryTooSmall,
+    PageCountTooLarge,
     #[cfg(test)]
     RowBufferTooSmall,
     InvalidAscii,
@@ -199,6 +200,9 @@ pub fn render(
     }
 
     let total_pages = wrapped_page_count(snapshot, geometry.columns, geometry.rows);
+    if total_pages > 99 {
+        return Err(EvidenceTerminalError::PageCountTooLarge);
+    }
     let surface = framebuffer::TerminalSurface::new(framebuffer)
         .map_err(|_| EvidenceTerminalError::Framebuffer)?;
     let mut cursor = TranscriptCursor::new(snapshot, geometry.columns)?;
@@ -290,7 +294,10 @@ fn terminal_geometry(
         .ok_or(EvidenceTerminalError::GeometryTooSmall)?;
     let columns = inner_width / glyph_advance();
     let rows = inner_height / row_advance();
-    if columns <= RowPrefix::Marker.len() as u64 || rows <= CHROME_ROWS as u64 {
+    if columns < STATUS_LINE_LEN as u64
+        || columns <= RowPrefix::Marker.len() as u64
+        || rows <= CHROME_ROWS as u64
+    {
         return Err(EvidenceTerminalError::GeometryTooSmall);
     }
     Ok(TerminalGeometry {
@@ -351,25 +358,21 @@ fn format_status_line(
 
 fn dwell_between_pages() {
     let start = timer::ticks();
-    if wait_for_tick_progress(start) {
-        wait_until(start.saturating_add(DWELL_TICKS));
-        return;
-    }
-    fallback_spin_delay();
-}
-
-fn wait_for_tick_progress(start: u64) -> bool {
-    for _ in 0..TICK_PROBE_LIMIT {
-        if timer::ticks() != start {
-            return true;
+    let target = start.saturating_add(DWELL_TICKS);
+    let mut observed = start;
+    let mut stale_spins = 0usize;
+    while observed < target {
+        let current = timer::ticks();
+        if current != observed {
+            observed = current;
+            stale_spins = 0;
+            continue;
         }
-        hint::spin_loop();
-    }
-    false
-}
-
-fn wait_until(target_tick: u64) {
-    while timer::ticks() < target_tick {
+        if stale_spins >= TICK_PROBE_LIMIT {
+            fallback_spin_delay();
+            return;
+        }
+        stale_spins += 1;
         hint::spin_loop();
     }
 }
@@ -496,6 +499,15 @@ mod tests {
     }
 
     #[test]
+    fn terminal_geometry_rejects_status_line_truncation() {
+        let too_narrow = MARGIN_X * 2 + ((STATUS_LINE_LEN as u64 - 1) * glyph_advance());
+        assert_eq!(
+            terminal_geometry(&framebuffer_info(too_narrow as u32, 600)),
+            Err(EvidenceTerminalError::GeometryTooSmall)
+        );
+    }
+
+    #[test]
     fn wrapped_rows_use_space_prefix_after_first_segment() {
         let snapshot = snapshot_from_lines(&["ABCDEFGH"]);
         let mut cursor = TranscriptCursor::new(&snapshot, 6).unwrap();
@@ -522,5 +534,22 @@ mod tests {
         render(&snapshot, &info).unwrap();
 
         assert!(pixels.iter().any(|pixel| *pixel != 0));
+    }
+
+    #[test]
+    fn render_rejects_unrepresentable_page_count() {
+        let mut buffer = Box::new([0u8; EVIDENCE_LOG_TOTAL_BYTES]);
+        initialize(&mut *buffer).unwrap();
+        for _ in 0..5_200 {
+            append_line(&mut *buffer, "A").unwrap();
+        }
+        let leaked = Box::leak(buffer);
+        let snapshot = snapshot(leaked).unwrap();
+        let (_, info) = mapped_framebuffer_info(800, 600);
+
+        assert_eq!(
+            render(&snapshot, &info),
+            Err(EvidenceTerminalError::PageCountTooLarge)
+        );
     }
 }
