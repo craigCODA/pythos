@@ -174,6 +174,12 @@ evidence log: `evidence_log_phys: u64`, `evidence_log_len: u32`,
 `evidence_log_flags: u32`, and `reserved: [u64; 6]`.
 `evidence_log_flags & 0x0000_0001` means the 64 KiB `PYLOG001` evidence buffer
 is present. Unknown evidence flags are invalid.
+ADR 0063 also defines the opt-in `evidence-terminal` boot/core feature pair:
+the UEFI loader owns a page-aligned 64 KiB `PYLOG001` buffer, mirrors accepted
+loader markers into it, passes it through the ABI 0.3 fields, and PythCore
+validates, maps, appends to, and renders the same transcript as framebuffer
+evidence. COM1 remains the automated oracle; the framebuffer terminal is a
+visual mirror for physical evidence capture.
 
 Magic:
 
@@ -1166,6 +1172,29 @@ Phase 10 `storage-quota-per-service` requires `PYTHOS:CORE:STORAGE_QUOTA:GRANTED
 Phase 10 `concurrent-write-safety` requires `PYTHOS:CORE:CONCURRENT_WRITE:SERIALIZED` after `PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY`, `PYTHOS:CORE:CONCURRENT_WRITE:CORRUPTION_DENIED` after the serialized marker, and `PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY` after the corruption-denied marker.
 
 Phase 10 `storage-adversarial-suite` requires `PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE` after `PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY`, `PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED` after the create/delete marker, `PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED` after the out-of-quota marker, `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` after the dynamic torn-write marker, `PYTHOS:CORE:PHASE_10_COMPLETE` after the adversarial-ready marker, and `PYTHOS:CORE:PHASE_10_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
+
+The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
+milestone success marker unchanged, then renders the captured transcript and
+emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final terminal frame
+is visible and the log snapshot reports `dropped == 0`. If the transcript
+drops accepted lines, the boot emits `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED`
+and must not pass acceptance. Page dwell uses PIT ticks; the bounded spin
+fallback is calibrated/verified only on the O2 Micro `1217:8620` evidence
+target and is not a generic timing guarantee.
+
+Run the evidence-terminal acceptance script with:
+
+```powershell
+python scripts/test-evidence-terminal.py
+```
+
+It builds `pythos-boot` with `evidence-terminal`, builds `pythos-core` with
+`verify,sdhci-emmc-backend,evidence-terminal`, boots QEMU with the SDHCI/eMMC
+backend and delayed success marker `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`,
+rejects virtio/AHCI fallback and panic/dropped-transcript markers, and requires
+both `QEMU_OUTCOME success` and a non-empty `target/evidence-terminal.ppm`
+screendump. This is QEMU acceptance only; physical evidence-terminal validation
+requires a later O2 Micro `1217:8620` boot photo or video.
 
 `scripts/run-qemu.py --expect-outcome success` must print:
 
