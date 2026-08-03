@@ -88,7 +88,7 @@ fn install(buffer: &mut [u8]) -> Result<(), EvidenceLogAttachError> {
     // 7. Concurrency: single-core verification path.
     // 8. Violation: overwriting with an invalid pointer corrupts later writes.
     unsafe {
-        INSTALLED_LOG = Some(installed);
+        core::ptr::addr_of_mut!(INSTALLED_LOG).write(Some(installed));
     }
 
     Ok(())
@@ -132,7 +132,7 @@ fn with_installed_buffer_mut<R>(f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
     // 7. Concurrency: single-core verification path.
     // 8. Violation: a stale pointer corrupts memory or faults.
     unsafe {
-        let installed = INSTALLED_LOG.as_mut()?;
+        let installed = core::ptr::addr_of!(INSTALLED_LOG).read()?;
         let buffer = core::slice::from_raw_parts_mut(installed.ptr, installed.len);
         Some(f(buffer))
     }
