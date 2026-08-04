@@ -5,12 +5,14 @@
 #![cfg_attr(feature = "verify", allow(dead_code))]
 
 use crate::architecture::x86_64::exceptions;
+#[cfg(feature = "evidence-terminal")]
+use crate::evidence_log;
 use crate::memory::physical::{MemoryError, PAGE_SIZE, PhysicalMemory};
 use crate::{user_elf, user_mode, user_stacks};
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
-use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PythBootInfo};
+use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PYTH_EVIDENCE_LOG_FLAG_PRESENT, PythBootInfo};
 
 const TWO_MIB: u64 = 2 * 1024 * 1024;
 const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
@@ -161,6 +163,7 @@ pub struct KernelAddressSpace {
 }
 
 impl KernelAddressSpace {
+    #[cfg(feature = "evidence-terminal")]
     pub fn build(
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
@@ -168,6 +171,47 @@ impl KernelAddressSpace {
         ahci_mmio: Option<(u64, u64, u64)>,
         sdhci_emmc_mmio: Option<(u64, u64, u64)>,
         shell_bootstrap_frame: Option<u64>,
+        evidence_log_mapping: Option<(u64, u64, u64)>,
+    ) -> Result<Self, VmError> {
+        Self::build_inner(
+            allocator,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            shell_bootstrap_frame,
+            evidence_log_mapping,
+        )
+    }
+
+    #[cfg(not(feature = "evidence-terminal"))]
+    pub fn build(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        hda_mmio: Option<(u64, u64, u64)>,
+        ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
+        shell_bootstrap_frame: Option<u64>,
+    ) -> Result<Self, VmError> {
+        Self::build_inner(
+            allocator,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            shell_bootstrap_frame,
+            None,
+        )
+    }
+
+    fn build_inner(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        hda_mmio: Option<(u64, u64, u64)>,
+        ahci_mmio: Option<(u64, u64, u64)>,
+        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
+        shell_bootstrap_frame: Option<u64>,
+        evidence_log_mapping: Option<(u64, u64, u64)>,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
@@ -200,6 +244,9 @@ impl KernelAddressSpace {
             boot_info.framebuffer.byte_length,
             PTE_WRITE | PTE_NO_EXECUTE,
         )?;
+        if let Some((phys, virt, len)) = evidence_log_mapping {
+            tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
+        }
         // ADR 0048: map the runtime-discovered HDA controller MMIO into the
         // kernel device window so the audio driver can reach its registers.
         // Note: this HDA mapping predates PTE_CACHE_DISABLE and has the same
@@ -278,6 +325,10 @@ impl KernelAddressSpace {
         translate_active(boot_info.font_phys)?;
         translate_active(boot_info.bootstrap_stack_top - 8)?;
         translate_active(boot_info.framebuffer.mapped_virtual_base)?;
+        #[cfg(feature = "evidence-terminal")]
+        if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT != 0 {
+            translate_active(evidence_log::EVIDENCE_LOG_KERNEL_VIRT)?;
+        }
 
         let mut stack_probe = 0u64;
         stack_probe = stack_probe.wrapping_add(1);
@@ -344,6 +395,7 @@ impl UserAddressSpace {
         map_kernel_segments(&mut tables)?;
         map_user_mode_proof_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
+        map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
         tables.map_allocated_table_frames()?;
         let table_frames = tables.allocated_frames;
         let table_frame_count = tables.allocated_count;
@@ -417,6 +469,7 @@ impl UserAddressSpace {
         map_kernel_segments(&mut tables)?;
         map_user_stack_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
+        map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
         map_supervisor_mappings(&mut tables, supervisor_mappings)?;
 
         let mut segment_index = 0;
@@ -875,6 +928,32 @@ fn map_bootstrap_stack(
             .ok_or(VmError::RangeOverflow)?,
         PTE_WRITE | PTE_NO_EXECUTE,
     )
+}
+
+fn map_evidence_log_supervisor_mapping(
+    tables: &mut PageTableBuilder<'_>,
+    boot_info: &PythBootInfo,
+) -> Result<(), VmError> {
+    if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
+        return Ok(());
+    }
+    #[cfg(not(feature = "evidence-terminal"))]
+    {
+        let _ = tables;
+        Ok(())
+    }
+    #[cfg(feature = "evidence-terminal")]
+    {
+        // ADR 0063: the COM1 mirror hook may run while a user CR3 is active.
+        // Keep the evidence RAM buffer supervisor-only in each user root so
+        // kernel-mode trap/syscall code can append markers without exposing it to
+        // CPL3, colliding with user ELF space, or treating RAM as uncacheable
+        // device MMIO.
+        let Some((phys, virt, len)) = evidence_log_supervisor_mapping(boot_info) else {
+            return Ok(());
+        };
+        tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)
+    }
 }
 
 fn map_supervisor_mappings(
@@ -1353,6 +1432,18 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
 // mapping's actual effect on real AHCI hardware is proven functionally by
 // Task E's QEMU integration test.
 const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
+#[cfg(feature = "evidence-terminal")]
+pub fn evidence_log_supervisor_mapping(boot_info: &PythBootInfo) -> Option<(u64, u64, u64)> {
+    if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
+        return None;
+    }
+    Some((
+        boot_info.evidence_log_phys,
+        evidence_log::EVIDENCE_LOG_KERNEL_VIRT,
+        u64::from(boot_info.evidence_log_len),
+    ))
+}
+
 const _: () = {
     let flags = PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE;
     assert!(flags & PTE_WRITE == PTE_WRITE);

@@ -163,6 +163,42 @@ selection markers, reached `PYTHOS:CORE:PHASE_10_COMPLETE` and
 `PYTHOS:CORE:MILESTONE_1_COMPLETE`, and confirmed the expected object/general
 storage signatures in the backing eMMC image.
 
+## Evidence Terminal Follow-Up
+
+ADR 0063 adds a later opt-in framebuffer evidence terminal for serial-less
+physical capture. It is not part of the two 2026-08-01 physical artifacts above:
+those artifacts show the older five-line SDHCI/eMMC backend panel only.
+
+QEMU acceptance for the evidence terminal was recorded on branch
+`agent/physical-evidence-terminal` at implementation commit `5e73e73` before
+documentation sync:
+
+```powershell
+python scripts\test-evidence-terminal.py
+```
+
+Successful output included:
+
+```text
+PYTHOS:CORE:EVIDENCE_TERMINAL_READY
+QEMU_OUTCOME success
+EVIDENCE_TERMINAL_TEST_OK
+```
+
+That acceptance boot built `pythos-boot` with `evidence-terminal`, built
+`pythos-core` with `verify,sdhci-emmc-backend,evidence-terminal`, booted QEMU
+with `--no-virtio-blk --sdhci --emmc`, rejected panic/fallback/dropped
+transcript markers, and required the PPM framebuffer dump at
+`target\evidence-terminal.ppm` to match the evidence-terminal frame palette.
+
+Manual screendump inspection showed terminal page `05/05` with count
+`00000138`, dropped count `00000000`, CRC `734FF002`, and final markers through
+`PYTHOS:CORE:MILESTONE_1_COMPLETE`.
+
+Physical evidence-terminal validation is still pending. A later O2 Micro
+`1217:8620` boot photo or video is required before claiming the full terminal
+transcript has been observed on real hardware.
+
 ## Not Claimed
 
 This record does not claim:

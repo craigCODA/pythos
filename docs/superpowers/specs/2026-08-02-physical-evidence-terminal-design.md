@@ -2,7 +2,8 @@
 
 Date: 2026-08-02
 
-Status: Approved design direction; implementation not started.
+Status: Implemented and QEMU-accepted; physical O2 Micro `1217:8620`
+evidence-terminal validation pending operator boot evidence.
 
 ## Goal
 
@@ -24,7 +25,7 @@ It renders pages like:
 
 ```text
 PythOS Evidence Terminal
-page 01/04 count 000000F2 crc 8A31C04E
+page 01/04 count 000000F2 drop 00000000 crc 8A31C04E
 > PYTHOS:LOADER:ENTER
 > PYTHOS:LOADER:GOP_READY
 > PYTHOS:LOADER:KERNEL_LOADED
@@ -79,7 +80,7 @@ UEFI firmware
    -> emit framebuffer/milestone completion markers
 ```
 
-The implementation should add a small shared `evidence_log` format under the
+The implementation adds a small shared `evidence_log` format under the
 shared crate so the boot loader and PythCore use the same header, checksum, and
 append rules.
 
@@ -154,11 +155,14 @@ Rendering rules:
 - draw a title and status line at the top;
 - show `page NN/MM`, line count, drop count, and CRC-32;
 - draw transcript lines prefixed with `>`;
-- wrap or truncate lines at the calculated terminal width;
+- wrap lines at the calculated terminal width;
 - advance pages with a fixed PIT-tick dwell; if a CPU spin fallback is used, it
   must be documented as O2 Micro `1217:8620`-only evidence timing;
 - render the final page last and leave it visible before calling
   `qemu_exit::success()`;
+- emit `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final page is
+  rendered, then wait one bounded capture dwell before `qemu_exit::success()`
+  so QEMU has a deterministic screendump window;
 - after the success-port write, rely on `qemu_exit::success()`'s non-returning
   infinite loop so real hardware keeps showing the final framebuffer instead of
   falling through into undefined code.
@@ -195,8 +199,9 @@ Required tests before physical deployment:
 - terminal renderer tests for paging, glyph coverage, line wrapping/truncation,
   CRC/status formatting, dwell selection, and final-page selection;
 - QEMU verify acceptance with `verify,sdhci-emmc-backend,evidence-terminal`
-  proving the image still reaches `PYTHOS:CORE:MILESTONE_1_COMPLETE` and exits
-  with `QEMU_OUTCOME success`;
+  proving the image still reaches `PYTHOS:CORE:MILESTONE_1_COMPLETE`, renders
+  the terminal, emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`, and exits with
+  `QEMU_OUTCOME success`;
 - QEMU serial assertions that the terminal path does not rename or reorder any
   existing milestone markers.
 
@@ -204,6 +209,30 @@ Physical evidence remains target-specific. A successful video of the terminal on
 the O2 Micro `1217:8620` laptop proves that one serial-less physical target
 rendered the complete marker transcript after the Phase 10 storage path. It
 does not prove USB logging, generic physical storage support, or any filesystem.
+
+## QEMU Acceptance Record
+
+Recorded on branch `agent/physical-evidence-terminal` at implementation commit
+`5e73e73` before documentation sync:
+
+```powershell
+python scripts/test-evidence-terminal.py
+```
+
+Successful output included:
+
+```text
+PYTHOS:CORE:EVIDENCE_TERMINAL_READY
+QEMU_OUTCOME success
+EVIDENCE_TERMINAL_TEST_OK
+```
+
+The acceptance run required the PPM framebuffer dump at
+`target/evidence-terminal.ppm` to match the evidence-terminal frame palette and
+expected title/status/body row glyph structure; manual inspection showed
+terminal page `05/05` with `count 00000138`, `drop 00000000`, CRC `734FF002`,
+and final markers through
+`PYTHOS:CORE:MILESTONE_1_COMPLETE`.
 
 ## Out Of Scope
 

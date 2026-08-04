@@ -21,6 +21,10 @@ mod compositor;
 mod context_switch;
 mod dynamic_capabilities;
 mod dynamic_object_store;
+#[cfg(feature = "evidence-terminal")]
+mod evidence_log;
+#[cfg(feature = "evidence-terminal")]
+mod evidence_terminal;
 mod fb_debug;
 mod font;
 mod font_system;
@@ -138,6 +142,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
     };
     serial::write_line("PYTHOS:CORE:BOOTINFO_VALID");
+    #[cfg(feature = "evidence-terminal")]
+    match evidence_log::attach_from_boot_info(boot_info) {
+        Ok(()) => {
+            evidence_log::append_marker("PYTHOS:CORE:ENTER");
+            evidence_log::append_marker("PYTHOS:CORE:BOOTINFO_VALID");
+        }
+        Err(evidence_log::EvidenceLogAttachError::Absent) => {}
+        Err(_) => {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+    }
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_BOOTINFO);
 
     #[cfg_attr(test, allow(unused_mut, unused_variables))]
@@ -221,6 +237,26 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(not(feature = "sdhci-emmc-backend"))]
         let sdhci_emmc_mmio = None;
 
+        #[cfg(feature = "evidence-terminal")]
+        let evidence_log_mapping = memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
+
+        #[cfg(feature = "evidence-terminal")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            hda_mmio,
+            ahci_mmio,
+            sdhci_emmc_mmio,
+            None,
+            evidence_log_mapping,
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(not(feature = "evidence-terminal"))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
@@ -369,6 +405,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         // 8. Violation: execution faults immediately after the CR3 switch.
         unsafe {
             address_space.activate();
+        }
+        #[cfg(feature = "evidence-terminal")]
+        if evidence_log::rebase_to_kernel_virtual_window(boot_info).is_err() {
+            qemu_exit::panic();
         }
         if address_space.validate_active(boot_info).is_err() {
             serial::write_line("PYTHOS:CORE:MEMORY_INVALID");
@@ -1544,6 +1584,27 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
         serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
+        #[cfg(feature = "evidence-terminal")]
+        {
+            let snapshot = match evidence_log::snapshot() {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+            if evidence_terminal::render(&snapshot, &boot_info.framebuffer).is_err() {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if snapshot.header.dropped == 0 {
+                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_READY");
+                evidence_terminal::dwell_after_ready_marker();
+            } else {
+                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED");
+                qemu_exit::panic();
+            }
+        }
         qemu_exit::success();
     }
 

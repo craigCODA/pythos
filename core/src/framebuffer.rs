@@ -53,6 +53,12 @@ const BODY: Rgb = Rgb {
     green: 230,
     blue: 240,
 };
+#[cfg(feature = "evidence-terminal")]
+const TERMINAL_STATUS: Rgb = Rgb {
+    red: 150,
+    green: 200,
+    blue: 220,
+};
 const PROBE_PANEL_BACKGROUND: Rgb = Rgb {
     red: 4,
     green: 12,
@@ -222,6 +228,47 @@ struct Rgb {
     red: u8,
     green: u8,
     blue: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(feature = "evidence-terminal")]
+pub(crate) enum TerminalTextRole {
+    Title,
+    Status,
+    Body,
+}
+
+#[cfg(feature = "evidence-terminal")]
+pub(crate) struct TerminalSurface {
+    surface: Surface,
+}
+
+#[cfg(feature = "evidence-terminal")]
+impl TerminalSurface {
+    pub(crate) fn new(framebuffer: &PythFramebufferInfo) -> Result<Self, ()> {
+        Ok(Self {
+            surface: Surface::new(framebuffer)?,
+        })
+    }
+
+    pub(crate) fn clear(&self) {
+        self.surface.clear(BACKGROUND);
+    }
+
+    pub(crate) fn draw_text(
+        &self,
+        x: u64,
+        y: u64,
+        text: &str,
+        role: TerminalTextRole,
+    ) -> Result<(), ()> {
+        let color = match role {
+            TerminalTextRole::Title => TITLE,
+            TerminalTextRole::Status => TERMINAL_STATUS,
+            TerminalTextRole::Body => BODY,
+        };
+        self.surface.draw_text(x, y, 1, text, color)
+    }
 }
 
 /// Linearly blend `a` -> `b` by `f` in 0..=255 (0 = `a`, 255 = `b`).

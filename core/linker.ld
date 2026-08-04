@@ -11,22 +11,22 @@ SECTIONS
 {
     . = 0xFFFFFFFF80000000;
 
-    __pythcore_rodata_start = .;
+    PROVIDE(__pythcore_rodata_start = .);
     .rodata : ALIGN(4K) {
         *(.rodata .rodata.*)
         *(.eh_frame .eh_frame.*)
     } :rodata
-    __pythcore_rodata_end = .;
+    PROVIDE(__pythcore_rodata_end = .);
 
     . = ALIGN(4K);
-    __pythcore_text_start = .;
+    PROVIDE(__pythcore_text_start = .);
     .text : {
         *(.text .text.*)
     } :text
-    __pythcore_text_end = .;
+    PROVIDE(__pythcore_text_end = .);
 
     . = ALIGN(4K);
-    __pythcore_data_start = .;
+    PROVIDE(__pythcore_data_start = .);
     .data : {
         *(.data .data.*)
         *(.got .got.*)
@@ -45,15 +45,15 @@ SECTIONS
        ranges are intentionally left out of __pythcore_data_start .. _end's
        normal mapping loop; see map_kernel_segments in memory/virtual.rs. */
     . = ALIGN(4K);
-    __pythcore_syscall_stack_guard_low_start = .;
+    PROVIDE(__pythcore_syscall_stack_guard_low_start = .);
     . += 4K;
-    __pythcore_syscall_stack_start = .;
+    PROVIDE(__pythcore_syscall_stack_start = .);
     .syscall_stack : ALIGN(4K) {
         *(.syscall_stack)
     } :data
     . = ALIGN(4K);
-    __pythcore_syscall_stack_guard_high_start = .;
+    PROVIDE(__pythcore_syscall_stack_guard_high_start = .);
     . += 4K;
-    __pythcore_syscall_stack_guard_high_end = .;
-    __pythcore_data_end = .;
+    PROVIDE(__pythcore_syscall_stack_guard_high_end = .);
+    PROVIDE(__pythcore_data_end = .);
 }

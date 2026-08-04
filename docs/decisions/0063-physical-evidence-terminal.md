@@ -62,10 +62,11 @@ CRC-32/ISO-HDLC is defined as reflected polynomial `0xEDB88320`, initial state
 
 The loader allocates and initializes the evidence buffer before emitting
 `PYTHOS:LOADER:ENTER`, then mirrors loader markers to both COM1 and the
-evidence buffer. PythCore validates the buffer, maps it into the
-PythCore-owned page tables before the broad loader identity map is removed,
-backfills the earliest core markers that were emitted before attachment, then
-mirrors subsequent core marker writes through the serial path.
+evidence buffer. PythCore validates the buffer, maps it at fixed high kernel
+virtual window `0xFFFF_C000_1003_0000` in the PythCore-owned page tables before
+the broad loader identity map is removed, keeps that mapping supervisor-only in
+user roots, backfills the earliest core markers that were emitted before
+attachment, then mirrors subsequent core marker writes through the serial path.
 
 The evidence terminal emits no replacement milestone markers. Existing marker
 names and order remain intact. To let the QEMU screendump capture the terminal
@@ -76,6 +77,9 @@ with the nonzero drop count, emits `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED`,
 and enters the panic exit path. The evidence-terminal QEMU harness uses
 `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` as its success trigger while still
 requiring `PYTHOS:CORE:MILESTONE_1_COMPLETE` to appear first in the transcript.
+After emitting the ready marker, PythCore performs one additional bounded
+terminal dwell before entering `qemu_exit::success()` so QEMU screendump capture
+has a finite guest-side window while the final terminal page remains visible.
 
 On physical hardware the QEMU debug-exit port write is ignored and
 `qemu_exit::success()` remains in its non-returning loop, leaving the final
