@@ -8,15 +8,68 @@ use crate::pyth_tig::{
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VerifyError {
     Decode(PackageDecodeError),
-    UnknownType { code: u16 },
-    UnknownOpcode { code: u16 },
-    InvalidBlockRange { block: u32 },
-    MissingTerminator { block: u32 },
-    MultipleTerminators { block: u32 },
-    InvalidControlTarget { block: u32, target: u32 },
-    BlockArgumentCountMismatch { source: u32, target: u32 },
-    ValueNotAvailable { node: u32, input: u8 },
-    ResultTypeForbidden { node: u32 },
+    UnknownType {
+        code: u16,
+    },
+    UnknownOpcode {
+        code: u16,
+    },
+    InvalidBlockRange {
+        block: u32,
+    },
+    MissingTerminator {
+        block: u32,
+    },
+    MultipleTerminators {
+        block: u32,
+    },
+    InvalidControlTarget {
+        block: u32,
+        target: u32,
+    },
+    BlockArgumentCountMismatch {
+        source: u32,
+        target: u32,
+    },
+    ValueNotAvailable {
+        node: u32,
+        input: u8,
+    },
+    ResultTypeForbidden {
+        node: u32,
+    },
+    TypeMismatch {
+        node: u32,
+        input: u8,
+        expected: PythType,
+        actual: PythType,
+    },
+    EffectInputMissing {
+        node: u32,
+    },
+    EffectFork {
+        producer: u32,
+    },
+    EffectChainDisconnected {
+        node: u32,
+    },
+    CapabilityOriginInvalid {
+        node: u32,
+    },
+    CapabilityImportMissing {
+        node: u32,
+        import_slot: u16,
+    },
+    ImportTypeMismatch {
+        import_slot: u16,
+    },
+    ImportRightsInsufficient {
+        node: u32,
+        import_slot: u16,
+    },
+    HostResultInvalid {
+        node: u32,
+    },
     ResourceBudgetExceeded,
     NonCanonicalEncoding,
     ChecksumMismatch,
@@ -63,6 +116,7 @@ pub fn verify_package<'a>(
     verify_control_flow(package, block_starts, block_ends)?;
     verify_reachable_blocks(package)?;
     verify_value_availability(package, node_blocks)?;
+    verify_semantics(package)?;
 
     Ok(VerifiedGraph { package: *package })
 }
@@ -551,6 +605,303 @@ fn count_values(inputs: [u32; 4]) -> usize {
     count
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CapabilityOrigin {
+    None,
+    HostResult(u32),
+}
+
+fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
+    let mut result_types = [PythType::Unit; MAX_GRAPH_NODES];
+    let mut capability_origins = [CapabilityOrigin::None; MAX_GRAPH_NODES];
+    let mut effect_consumers = [0u8; MAX_GRAPH_NODES];
+    let mut effect_start = None;
+    let mut current_effect = NO_VALUE;
+
+    for (node_index, node) in package.nodes().iter().enumerate() {
+        let opcode = Opcode::try_from(node.opcode)
+            .expect("known opcode validation already accepted every node opcode");
+        let actual_result = PythType::try_from(node.result_type)
+            .expect("known type validation already accepted every node result type");
+        result_types[node_index] = actual_result;
+
+        if actual_result == PythType::Capability && !matches!(opcode, Opcode::HostResult) {
+            return Err(VerifyError::CapabilityOriginInvalid {
+                node: node_index as u32,
+            });
+        }
+
+        match opcode {
+            Opcode::HostResult => {
+                verify_host_result(package, node_index, &node, actual_result)?;
+                if actual_result == PythType::Capability {
+                    capability_origins[node_index] = CapabilityOrigin::HostResult(node.input0);
+                }
+            }
+            Opcode::Jump | Opcode::Return => {}
+            _ => {
+                verify_opcode_signature(package, node_index, &node, &result_types)?;
+            }
+        }
+
+        if opcode == Opcode::EffectStart {
+            if effect_start.replace(node_index as u32).is_some()
+                || actual_result != PythType::Effect
+                || count_values([node.input0, node.input1, node.input2, node.input3]) != 0
+            {
+                return Err(VerifyError::EffectChainDisconnected {
+                    node: node_index as u32,
+                });
+            }
+            current_effect = node_index as u32;
+        } else if opcode.signature().effectful {
+            let producer = node.input0;
+            if producer == NO_VALUE {
+                return Err(VerifyError::EffectInputMissing {
+                    node: node_index as u32,
+                });
+            }
+
+            let producer_index =
+                usize::try_from(producer).map_err(|_| VerifyError::ValueNotAvailable {
+                    node: node_index as u32,
+                    input: 0,
+                })?;
+            effect_consumers[producer_index] = effect_consumers[producer_index].saturating_add(1);
+            if effect_consumers[producer_index] > 1 {
+                return Err(VerifyError::EffectFork { producer });
+            }
+
+            if producer != current_effect {
+                return Err(VerifyError::EffectChainDisconnected {
+                    node: node_index as u32,
+                });
+            }
+            current_effect = node_index as u32;
+
+            verify_host_import(package, node_index as u32, &node, opcode)?;
+        }
+
+        verify_capability_inputs(node_index, &node, &result_types, &capability_origins)?;
+    }
+
+    Ok(())
+}
+
+fn verify_opcode_signature(
+    package: &PythGraphPackage<'_>,
+    node_index: usize,
+    node: &crate::pyth_tig::NodeRecord,
+    result_types: &[PythType; MAX_GRAPH_NODES],
+) -> Result<(), VerifyError> {
+    let opcode = Opcode::try_from(node.opcode)
+        .expect("known opcode validation already accepted every node opcode");
+    let signature = opcode.signature();
+    let actual_result = result_types[node_index];
+
+    if !opcode_accepts_result(opcode, actual_result, signature.result) {
+        return Err(VerifyError::ResultTypeForbidden {
+            node: node_index as u32,
+        });
+    }
+
+    let inputs = [node.input0, node.input1, node.input2, node.input3];
+    for (input_index, input) in inputs
+        .iter()
+        .copied()
+        .enumerate()
+        .take(usize::from(signature.input_count))
+    {
+        if input == NO_VALUE {
+            if signature.inputs[input_index] == PythType::Effect {
+                return Err(VerifyError::EffectInputMissing {
+                    node: node_index as u32,
+                });
+            }
+            return Err(VerifyError::ValueNotAvailable {
+                node: node_index as u32,
+                input: input_index as u8,
+            });
+        }
+        let producer_index =
+            usize::try_from(input).map_err(|_| VerifyError::ValueNotAvailable {
+                node: node_index as u32,
+                input: input_index as u8,
+            })?;
+        if producer_index >= package.nodes().len() {
+            return Err(VerifyError::ValueNotAvailable {
+                node: node_index as u32,
+                input: input_index as u8,
+            });
+        }
+        let actual = result_types[producer_index];
+        let expected = signature.inputs[input_index];
+        if actual != expected {
+            return Err(VerifyError::TypeMismatch {
+                node: node_index as u32,
+                input: input_index as u8,
+                expected,
+                actual,
+            });
+        }
+    }
+
+    for (input_index, input) in inputs
+        .iter()
+        .enumerate()
+        .skip(usize::from(signature.input_count))
+    {
+        if *input != NO_VALUE {
+            return Err(VerifyError::ValueNotAvailable {
+                node: node_index as u32,
+                input: input_index as u8,
+            });
+        }
+    }
+
+    Ok(())
+}
+
+fn opcode_accepts_result(opcode: Opcode, actual: PythType, expected: PythType) -> bool {
+    if actual == expected {
+        return true;
+    }
+
+    matches!(
+        (opcode, actual),
+        (
+            Opcode::ConstU64,
+            PythType::ObjectId | PythType::RevisionId | PythType::TaskId | PythType::ProposalId
+        )
+    )
+}
+
+fn verify_host_result(
+    package: &PythGraphPackage<'_>,
+    node_index: usize,
+    node: &crate::pyth_tig::NodeRecord,
+    actual_result: PythType,
+) -> Result<(), VerifyError> {
+    let producer_index =
+        usize::try_from(node.input0).map_err(|_| VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        })?;
+    if producer_index + 1 != node_index {
+        return Err(VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        });
+    }
+    let producer = package
+        .nodes()
+        .get(producer_index)
+        .ok_or(VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        })?;
+    let producer_opcode =
+        Opcode::try_from(producer.opcode).map_err(|_| VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        })?;
+    if !producer_opcode.signature().effectful
+        || node.input1 != NO_VALUE
+        || node.input2 != NO_VALUE
+        || node.input3 != NO_VALUE
+    {
+        return Err(VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        });
+    }
+
+    let expected = match node.auxiliary0 {
+        0 => PythType::ErrorCode,
+        1 => PythType::ObjectId,
+        2 => PythType::RevisionId,
+        3 => PythType::Capability,
+        4 => PythType::Utf8,
+        _ => {
+            return Err(VerifyError::HostResultInvalid {
+                node: node_index as u32,
+            });
+        }
+    };
+    if actual_result != expected {
+        return Err(VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        });
+    }
+
+    Ok(())
+}
+
+fn verify_host_import(
+    package: &PythGraphPackage<'_>,
+    node_index: u32,
+    node: &crate::pyth_tig::NodeRecord,
+    opcode: Opcode,
+) -> Result<(), VerifyError> {
+    let signature = opcode.signature();
+    let Some(required_resource_kind) = signature.required_resource_kind else {
+        return Ok(());
+    };
+    let import_slot =
+        u16::try_from(node.auxiliary0).map_err(|_| VerifyError::CapabilityImportMissing {
+            node: node_index,
+            import_slot: u16::MAX,
+        })?;
+    let import = find_import(package, import_slot).ok_or(VerifyError::CapabilityImportMissing {
+        node: node_index,
+        import_slot,
+    })?;
+    if import.expected_type != PythType::Capability.code() {
+        return Err(VerifyError::ImportTypeMismatch { import_slot });
+    }
+    if import.resource_kind != required_resource_kind
+        || (import.rights & signature.required_rights) != signature.required_rights
+    {
+        return Err(VerifyError::ImportRightsInsufficient {
+            node: node_index,
+            import_slot,
+        });
+    }
+    Ok(())
+}
+
+fn find_import(
+    package: &PythGraphPackage<'_>,
+    import_slot: u16,
+) -> Option<crate::pyth_tig::CapabilityImportRecord> {
+    package
+        .imports()
+        .iter()
+        .find(|import| import.import_slot == import_slot)
+}
+
+fn verify_capability_inputs(
+    node_index: usize,
+    node: &crate::pyth_tig::NodeRecord,
+    result_types: &[PythType; MAX_GRAPH_NODES],
+    capability_origins: &[CapabilityOrigin; MAX_GRAPH_NODES],
+) -> Result<(), VerifyError> {
+    for (input_index, input) in [node.input0, node.input1, node.input2, node.input3]
+        .into_iter()
+        .enumerate()
+    {
+        if input == NO_VALUE {
+            continue;
+        }
+        let producer_index =
+            usize::try_from(input).map_err(|_| VerifyError::ValueNotAvailable {
+                node: node_index as u32,
+                input: input_index as u8,
+            })?;
+        if result_types[producer_index] == PythType::Capability
+            && capability_origins[producer_index] == CapabilityOrigin::None
+        {
+            return Err(VerifyError::CapabilityOriginInvalid { node: input });
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -604,6 +955,38 @@ mod tests {
         assert_eq!(
             verify_bytes(&package),
             Err(VerifyError::InvalidBlockRange { block: 1 })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_type_mismatch_effect_fork_and_capability_constant() {
+        assert_eq!(
+            verify_bytes(&test_support::package_with_add_bool()),
+            Err(VerifyError::TypeMismatch {
+                node: 2,
+                input: 0,
+                expected: PythType::U64,
+                actual: PythType::Bool,
+            })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::package_with_effect_fork()),
+            Err(VerifyError::EffectFork { producer: 0 })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::package_with_capability_constant()),
+            Err(VerifyError::CapabilityOriginInvalid { node: 1 })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_insufficient_import_rights() {
+        assert_eq!(
+            verify_bytes(&test_support::object_revise_with_read_only_import()),
+            Err(VerifyError::ImportRightsInsufficient {
+                node: 3,
+                import_slot: 0,
+            })
         );
     }
 }
