@@ -2,9 +2,10 @@
 
 **Destination:** `scripts/AGENTS.md`
 
-**Status:** Proposed PythTIG harness guardrail pending owner adoption of ADR
-0064 and ADR 0065. For now, this applies only to PythTIG-related harness edits
-and does not authorize new scripts during the docs-only adoption pass.
+**Status:** Guardrail for accepted PythTIG architecture. ADR 0065 remains
+provisional until Phase 1 evidence supports an owner format freeze. For now,
+this applies only to PythTIG-related harness edits and does not authorize
+runtime, compiler, or boot-behavior changes before the matching phase.
 
 ## Purpose
 

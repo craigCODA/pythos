@@ -101,6 +101,7 @@ PythTIG is an SSA-like typed instruction graph with explicit basic blocks.
 - Effectful operations consume and produce a single `Effect` token. This makes side-effect order explicit and prevents hidden reordering. Typed data returned by a host operation is extracted by immediately following `HostResult` nodes that reference that producer; the effectful producer itself still has one graph result, the next `Effect` token.
 - Loops are control-flow back edges to blocks with parameters. Runtime instruction budgets bound loop execution.
 - Capability values can originate only from validated imports or capability-returning host operations. A graph cannot construct a capability from an integer.
+- In the Phase 1 candidate ABI, a declared import is materialized as a graph value only by an entry-block `BlockParam` with `result_type = Capability` and `auxiliary0 = import_slot`. Host operations consume that capability through normal graph inputs; a hidden per-op import slot does not grant authority. `HostResult` capability values are rejected until an accepted per-op result schema defines a capability-returning host operation.
 - Graphs are immutable after package validation.
 
 ## 6. Phase 1 primitive type candidates
@@ -187,10 +188,13 @@ Version 1 does not expose raw addresses, arbitrary aggregates, user-defined layo
 
 ### Header
 
-`PythGraphHeader` is exactly 96 bytes and uses little-endian encoding.
+`PythGraphHeader` is exactly 96 bytes and uses little-endian encoding. The
+Phase 1 candidate public layout struct uses `#[repr(C, packed(4))]` so the
+`checksum` field remains at byte offset 84; plain `#[repr(C)]` would align that
+`u64` field to byte 88 and produce a 104-byte structure on x86-64.
 
 ```rust
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct PythGraphHeader {
     pub magic: [u8; 8],              // b"PYTHTIG1"
     pub major: u16,                  // 1
@@ -215,6 +219,40 @@ pub struct PythGraphHeader {
     pub reserved: u32,
 }
 ```
+
+Header field offsets are byte offsets from the start of the package:
+
+```text
+offset size field
+0      8    magic
+8      2    major
+10     2    minor
+12     4    flags
+16     8    package_id
+24     8    principal_id
+32     4    entry_block
+36     4    type_count
+40     4    block_count
+44     4    node_count
+48     4    import_count
+52     4    constant_pool_len
+56     4    string_table_len
+60     4    types_offset
+64     4    blocks_offset
+68     4    nodes_offset
+72     4    imports_offset
+76     4    constant_pool_offset
+80     4    string_table_offset
+84     8    checksum
+92     4    reserved
+96     0    end
+```
+
+The public layout struct records the candidate byte layout for shared tests and
+ABI review. It is not the package codec. Encoders and decoders must use
+explicit little-endian reads and writes for each field, and must not transmute
+or otherwise treat host struct layout as the on-disk representation. Packed
+public fields also must not be borrowed as if they were naturally aligned.
 
 ### Records
 
@@ -280,6 +318,15 @@ maximum executed nodes      65536 per invocation
 ```
 
 The checksum is the repository's deterministic 64-bit integrity digest with the header checksum field treated as zero. It is an integrity binding inside the trusted bundle, not a cryptographic signature claim.
+
+Phase 1 import materialization convention: an entry-block `BlockParam` whose
+result type is `Capability` uses `auxiliary0` as the declared capability-import
+slot. The verifier binds that node's value provenance to the import slot after
+checking the import record exists and has expected type `Capability`. Effectful
+host operations consume the capability value as an ordinary SSA input and use
+its import provenance for resource-kind and rights checks. `HostResult` typed
+fields are accepted only when a documented per-op result schema permits the
+requested field; Phase 1 defines no capability-returning `HostResult`.
 
 ## 9. Verification pipeline
 
@@ -434,7 +481,7 @@ The proposed marker namespace is `PYTHOS:PYTHTIG:`. Marker details live in
 PythTIG version 1 is complete when:
 
 1. `pythc` compiles the accepted source subset into canonical packages.
-2. The shared verifier rejects malformed, ill-typed, capability-forged, effect-invalid, and over-budget graphs.
+2. The shared decoder/verifier pipeline rejects malformed, ill-typed, capability-forged, effect-invalid, and over-limit graph packages.
 3. PythCore launches the generic runtime in ring 3 with read-only package and capability imports.
 4. Graph programs perform typed object operations without bypassing PythCore.
 5. Task Steward emits explainable proposals but cannot establish task authority.

@@ -44,6 +44,9 @@ jobs:
           cargo test -p pythos-shared
           cargo test -p pythos-core
 
+      - name: PythTIG format harness
+        run: python scripts/test-pyth-tig-format.py
+
       - name: User shell ELF
         run: |
           python scripts/build-user-shell.py

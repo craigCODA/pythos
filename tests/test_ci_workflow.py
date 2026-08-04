@@ -22,6 +22,7 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo fmt --check",
             "cargo test -p pythos-shared",
             "cargo test -p pythos-core",
+            "python scripts/test-pyth-tig-format.py",
             "python scripts/build-user-shell.py",
             "python scripts/verify-user-elf.py",
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings",

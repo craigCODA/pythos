@@ -7,7 +7,7 @@ negative corpus pass and the owner freezes the format.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Enforce red-green-refactor for every code change.
 
-**Goal:** Implement the canonical PythTIG package ABI, no-alloc decoder, deterministic encoder tool, and shared verifier that rejects malformed, ill-typed, effect-invalid, capability-forged, and over-budget graphs.
+**Goal:** Implement the canonical PythTIG package ABI, no-alloc decoder, deterministic encoder tool, and shared verifier pipeline that rejects malformed, ill-typed, effect-invalid, capability-forged, and over-limit graph packages.
 
 **Architecture:** All semantic constants and validation live in `pythos-shared` so PythCore and host tools use the same implementation. A small host tool builds canonical fixtures and mutation cases. No runtime launch exists in this phase.
 
@@ -267,6 +267,10 @@ pub enum VerifyError {
 `VerifiedGraph` stores only a `PythGraphPackage` and has no public constructor.
 
 Implement block ranges, exactly-one-last-terminator, control targets, block-argument arity, and a bounded dominance analysis using fixed arrays sized by ABI maxima.
+The `ResourceBudgetExceeded` verifier error is a defense-in-depth result for
+direct `verify_package` contexts. The public CLI and `verify_bytes` path must
+reject over-limit package record counts during decode as `Decode(CountLimit)`
+before a `VerifiedGraph` can exist.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -357,7 +361,19 @@ node's prescribed result convention recorded in `auxiliary0`; do not encode
 hidden extra results. If the first verifier corpus proves a signature should
 change before freeze, update ADR 0065 in the same branch.
 
-For v1, every effectful host operation returns `Effect`; typed host data is written into a following `HostResult` structural node identified by `auxiliary0`. Add `HostResult` as opcode `0x0008`, with verifier rules that it immediately follows and references one effectful producer. This avoids multi-result node ambiguity.
+For v1, a declared capability import is materialized as an SSA value only by an
+entry-block `BlockParam` whose `result_type` is `Capability` and whose
+`auxiliary0` is the import slot. Host operations consume that value through
+normal graph inputs and use its import provenance for resource-kind and rights
+checks. They must not acquire authority from a hidden per-op import slot.
+
+For v1, every effectful host operation returns `Effect`; typed host data is
+written into a following `HostResult` structural node identified by
+`auxiliary0`. Add `HostResult` as opcode `0x0008`, with verifier rules that it
+immediately follows and references one effectful producer. This avoids
+multi-result node ambiguity. A `HostResult` field is valid only when a per-op
+host-result schema documents that field for the referenced producer. Phase 1
+defines no capability-returning `HostResult`.
 
 - [ ] **Step 4: Implement semantic passes**
 
@@ -375,7 +391,9 @@ ImportRightsInsufficient { node: u32, import_slot: u16 },
 HostResultInvalid { node: u32 },
 ```
 
-Track capability provenance as `Import(slot)` or `HostResult(node)`. Integer constants and arithmetic results can never be reinterpreted as `Capability`.
+Track capability provenance as `Import(slot)`, and add `HostResult(node)` only
+for a later documented capability-returning host operation. Integer constants
+and arithmetic results can never be reinterpreted as `Capability`.
 
 - [ ] **Step 5: Run GREEN**
 
@@ -481,16 +499,16 @@ The encoder calculates aligned offsets, zeroes reserved fields, computes checksu
 
 ```text
 bad magic                   Decode(BadMagic)
-unknown major               Decode(UnsupportedVersion)
+unknown major               Decode(UnsupportedMajor)
 section overlap             Decode(SectionOverlap)
 checksum mismatch           Decode(ChecksumMismatch)
-missing terminator          MissingTerminator
-bad control target          InvalidControlTarget
-type mismatch               TypeMismatch
-effect fork                 EffectFork
-capability constant         CapabilityOriginInvalid
-insufficient rights         ImportRightsInsufficient
-node budget exceeded        ResourceBudgetExceeded
+missing terminator          MissingTerminator { block: 0 }
+bad control target          InvalidControlTarget { block: 0, target: 9 }
+type mismatch               TypeMismatch { node: 3, input: 0, expected: U64, actual: Bool }
+effect fork                 EffectFork { producer: 0 }
+capability constant         CapabilityOriginInvalid { node: 1 }
+insufficient rights         ImportRightsInsufficient { node: 3, import_slot: 0 }
+node count limit            Decode(CountLimit)
 ```
 
 Print `PYTH_TIG_MUTATION_SUITE_OK` only after every mutation produces its expected error.
