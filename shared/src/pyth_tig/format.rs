@@ -18,6 +18,7 @@ const TYPE_RECORD_SIZE: usize = core::mem::size_of::<TypeRecord>();
 const BLOCK_RECORD_SIZE: usize = core::mem::size_of::<BlockRecord>();
 const NODE_RECORD_SIZE: usize = core::mem::size_of::<NodeRecord>();
 const CAPABILITY_IMPORT_RECORD_SIZE: usize = core::mem::size_of::<CapabilityImportRecord>();
+const RECORD_SECTION_ALIGNMENT: usize = 4;
 const CHECKSUM_OFFSET: usize = 84;
 const CHECKSUM_END: usize = 92;
 
@@ -49,6 +50,7 @@ pub struct PythGraphHeader {
     pub reserved: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct TypeRecord {
     pub kind: u16,
@@ -56,6 +58,7 @@ pub struct TypeRecord {
     pub auxiliary: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct BlockRecord {
     pub block_id: u32,
@@ -67,6 +70,7 @@ pub struct BlockRecord {
     pub reserved: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct NodeRecord {
     pub opcode: u16,
@@ -82,6 +86,7 @@ pub struct NodeRecord {
     pub immediate: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(C)]
 pub struct CapabilityImportRecord {
     pub name_offset: u32,
@@ -91,6 +96,178 @@ pub struct CapabilityImportRecord {
     pub expected_type: u16,
     pub import_slot: u16,
     pub reserved: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypeRecords<'a> {
+    bytes: &'a [u8],
+}
+
+impl TypeRecords<'_> {
+    pub const fn len(&self) -> usize {
+        self.bytes.len() / TYPE_RECORD_SIZE
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<TypeRecord> {
+        record_bytes(self.bytes, index, TYPE_RECORD_SIZE)
+            .and_then(|bytes| decode_type_record(bytes, 0).ok())
+    }
+
+    pub const fn iter(&self) -> TypeRecordIter<'_> {
+        TypeRecordIter {
+            records: *self,
+            index: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TypeRecordIter<'a> {
+    records: TypeRecords<'a>,
+    index: usize,
+}
+
+impl Iterator for TypeRecordIter<'_> {
+    type Item = TypeRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.get(self.index)?;
+        self.index += 1;
+        Some(record)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockRecords<'a> {
+    bytes: &'a [u8],
+}
+
+impl BlockRecords<'_> {
+    pub const fn len(&self) -> usize {
+        self.bytes.len() / BLOCK_RECORD_SIZE
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<BlockRecord> {
+        record_bytes(self.bytes, index, BLOCK_RECORD_SIZE)
+            .and_then(|bytes| decode_block_record(bytes, 0).ok())
+    }
+
+    pub const fn iter(&self) -> BlockRecordIter<'_> {
+        BlockRecordIter {
+            records: *self,
+            index: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BlockRecordIter<'a> {
+    records: BlockRecords<'a>,
+    index: usize,
+}
+
+impl Iterator for BlockRecordIter<'_> {
+    type Item = BlockRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.get(self.index)?;
+        self.index += 1;
+        Some(record)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeRecords<'a> {
+    bytes: &'a [u8],
+}
+
+impl NodeRecords<'_> {
+    pub const fn len(&self) -> usize {
+        self.bytes.len() / NODE_RECORD_SIZE
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<NodeRecord> {
+        record_bytes(self.bytes, index, NODE_RECORD_SIZE)
+            .and_then(|bytes| decode_node_record(bytes, 0).ok())
+    }
+
+    pub const fn iter(&self) -> NodeRecordIter<'_> {
+        NodeRecordIter {
+            records: *self,
+            index: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NodeRecordIter<'a> {
+    records: NodeRecords<'a>,
+    index: usize,
+}
+
+impl Iterator for NodeRecordIter<'_> {
+    type Item = NodeRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.get(self.index)?;
+        self.index += 1;
+        Some(record)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityImportRecords<'a> {
+    bytes: &'a [u8],
+}
+
+impl CapabilityImportRecords<'_> {
+    pub const fn len(&self) -> usize {
+        self.bytes.len() / CAPABILITY_IMPORT_RECORD_SIZE
+    }
+
+    pub const fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    pub fn get(&self, index: usize) -> Option<CapabilityImportRecord> {
+        record_bytes(self.bytes, index, CAPABILITY_IMPORT_RECORD_SIZE)
+            .and_then(|bytes| decode_capability_import_record(bytes, 0).ok())
+    }
+
+    pub const fn iter(&self) -> CapabilityImportRecordIter<'_> {
+        CapabilityImportRecordIter {
+            records: *self,
+            index: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CapabilityImportRecordIter<'a> {
+    records: CapabilityImportRecords<'a>,
+    index: usize,
+}
+
+impl Iterator for CapabilityImportRecordIter<'_> {
+    type Item = CapabilityImportRecord;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let record = self.records.get(self.index)?;
+        self.index += 1;
+        Some(record)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -143,23 +320,44 @@ impl<'a> PythGraphPackage<'a> {
         self.header
     }
 
-    pub fn types(&self) -> &'a [TypeRecord] {
-        self.record_slice::<TypeRecord>(self.header.types_offset, self.header.type_count)
+    pub fn types(&self) -> TypeRecords<'a> {
+        TypeRecords {
+            bytes: self.record_section(
+                self.header.types_offset,
+                self.header.type_count,
+                TYPE_RECORD_SIZE,
+            ),
+        }
     }
 
-    pub fn blocks(&self) -> &'a [BlockRecord] {
-        self.record_slice::<BlockRecord>(self.header.blocks_offset, self.header.block_count)
+    pub fn blocks(&self) -> BlockRecords<'a> {
+        BlockRecords {
+            bytes: self.record_section(
+                self.header.blocks_offset,
+                self.header.block_count,
+                BLOCK_RECORD_SIZE,
+            ),
+        }
     }
 
-    pub fn nodes(&self) -> &'a [NodeRecord] {
-        self.record_slice::<NodeRecord>(self.header.nodes_offset, self.header.node_count)
+    pub fn nodes(&self) -> NodeRecords<'a> {
+        NodeRecords {
+            bytes: self.record_section(
+                self.header.nodes_offset,
+                self.header.node_count,
+                NODE_RECORD_SIZE,
+            ),
+        }
     }
 
-    pub fn imports(&self) -> &'a [CapabilityImportRecord] {
-        self.record_slice::<CapabilityImportRecord>(
-            self.header.imports_offset,
-            self.header.import_count,
-        )
+    pub fn imports(&self) -> CapabilityImportRecords<'a> {
+        CapabilityImportRecords {
+            bytes: self.record_section(
+                self.header.imports_offset,
+                self.header.import_count,
+                CAPABILITY_IMPORT_RECORD_SIZE,
+            ),
+        }
     }
 
     pub fn constant_pool(&self) -> &'a [u8] {
@@ -177,42 +375,21 @@ impl<'a> PythGraphPackage<'a> {
     }
 
     pub fn string_at(&self, offset: u32, len: u16) -> Result<&'a [u8], PackageDecodeError> {
-        let start = usize::try_from(offset).map_err(|_| PackageDecodeError::OffsetOverflow)?;
-        let len = usize::from(len);
-        let end = start
-            .checked_add(len)
+        let end_offset = offset
+            .checked_add(u32::from(len))
             .ok_or(PackageDecodeError::OffsetOverflow)?;
+        let start = usize::try_from(offset).map_err(|_| PackageDecodeError::OffsetOverflow)?;
+        let end = usize::try_from(end_offset).map_err(|_| PackageDecodeError::OffsetOverflow)?;
         self.string_table()
             .get(start..end)
             .ok_or(PackageDecodeError::StringOutOfBounds)
     }
 
-    fn record_slice<T>(&self, offset: u32, count: u32) -> &'a [T] {
+    fn record_section(&self, offset: u32, count: u32, record_size: usize) -> &'a [u8] {
         let count = usize::try_from(count).expect("validated PythTIG record count fits usize");
-        if count == 0 {
-            return &[];
-        }
-        let range = record_range(offset, count, core::mem::size_of::<T>())
+        let range = record_range(offset, count, record_size)
             .expect("validated PythTIG record range remains in bounds");
-        let ptr = self.bytes.as_ptr().wrapping_add(range.start).cast::<T>();
-        // SAFETY:
-        // 1. Invariant: the byte range is wholly inside the decoded package and
-        //    contains exactly `count * size_of::<T>()` initialized bytes.
-        // 2. Established by: `decode()` calling `validate_sections()` with the
-        //    same header offsets/counts before constructing `PythGraphPackage`.
-        // 3. Lifetime: the returned slice is tied to `self.bytes`, which owns no
-        //    mutation authority and outlives `'a`.
-        // 4. Pointer ownership: the pointer is derived from the immutable input
-        //    slice; the decoder does not take ownership or create mutable aliases.
-        // 5. Alignment: `validate_record_section()` checked the section pointer
-        //    against `align_of::<T>()` before this accessor can run.
-        // 6. Mapped length: `record_range()` and `validate_sections()` checked
-        //    multiplication, addition, and package bounds for this byte range.
-        // 7. Concurrency: only shared immutable references are produced.
-        // 8. Violation consequence: a caller bypassing `decode()` invariants
-        //    would make `from_raw_parts` undefined behavior, so construction is
-        //    kept private and all public access goes through `decode()`.
-        unsafe { core::slice::from_raw_parts(ptr, count) }
+        &self.bytes[range.start..range.end]
     }
 
     fn byte_section(&self, offset: u32, len: u32) -> &'a [u8] {
@@ -316,14 +493,10 @@ fn validate_sections(bytes: &[u8], header: PythGraphHeader) -> Result<(), Packag
     let constant_pool = byte_range(header.constant_pool_offset, header.constant_pool_len)?;
     let string_table = byte_range(header.string_table_offset, header.string_table_len)?;
 
-    validate_record_section(bytes, types, core::mem::align_of::<TypeRecord>())?;
-    validate_record_section(bytes, blocks, core::mem::align_of::<BlockRecord>())?;
-    validate_record_section(bytes, nodes, core::mem::align_of::<NodeRecord>())?;
-    validate_record_section(
-        bytes,
-        imports,
-        core::mem::align_of::<CapabilityImportRecord>(),
-    )?;
+    validate_record_section(bytes, types)?;
+    validate_record_section(bytes, blocks)?;
+    validate_record_section(bytes, nodes)?;
+    validate_record_section(bytes, imports)?;
     validate_record_reserved(bytes, blocks, block_count, BLOCK_RECORD_SIZE, 20)?;
     validate_record_reserved(
         bytes,
@@ -381,14 +554,9 @@ fn range_from_parts(start: usize, len: usize) -> Result<SectionRange, PackageDec
     Ok(SectionRange { start, end })
 }
 
-fn validate_record_section(
-    bytes: &[u8],
-    range: SectionRange,
-    align: usize,
-) -> Result<(), PackageDecodeError> {
+fn validate_record_section(bytes: &[u8], range: SectionRange) -> Result<(), PackageDecodeError> {
     validate_byte_section(bytes, range)?;
-    let ptr = bytes.as_ptr().wrapping_add(range.start);
-    if ptr.align_offset(align) != 0 {
+    if !range.start.is_multiple_of(RECORD_SECTION_ALIGNMENT) {
         return Err(PackageDecodeError::SectionUnaligned);
     }
     Ok(())
@@ -464,6 +632,63 @@ fn read_magic(bytes: &[u8]) -> Result<[u8; 8], PackageDecodeError> {
     read_bytes::<8>(bytes, 0)
 }
 
+fn decode_type_record(bytes: &[u8], offset: usize) -> Result<TypeRecord, PackageDecodeError> {
+    Ok(TypeRecord {
+        kind: read_u16(bytes, offset)?,
+        flags: read_u16(bytes, offset + 2)?,
+        auxiliary: read_u32(bytes, offset + 4)?,
+    })
+}
+
+fn decode_block_record(bytes: &[u8], offset: usize) -> Result<BlockRecord, PackageDecodeError> {
+    Ok(BlockRecord {
+        block_id: read_u32(bytes, offset)?,
+        first_node: read_u32(bytes, offset + 4)?,
+        node_count: read_u32(bytes, offset + 8)?,
+        parameter_count: read_u16(bytes, offset + 12)?,
+        flags: read_u16(bytes, offset + 14)?,
+        terminator_node: read_u32(bytes, offset + 16)?,
+        reserved: read_u32(bytes, offset + 20)?,
+    })
+}
+
+fn decode_node_record(bytes: &[u8], offset: usize) -> Result<NodeRecord, PackageDecodeError> {
+    Ok(NodeRecord {
+        opcode: read_u16(bytes, offset)?,
+        result_type: read_u16(bytes, offset + 2)?,
+        flags: read_u16(bytes, offset + 4)?,
+        block_index: read_u16(bytes, offset + 6)?,
+        input0: read_u32(bytes, offset + 8)?,
+        input1: read_u32(bytes, offset + 12)?,
+        input2: read_u32(bytes, offset + 16)?,
+        input3: read_u32(bytes, offset + 20)?,
+        auxiliary0: read_u32(bytes, offset + 24)?,
+        auxiliary1: read_u32(bytes, offset + 28)?,
+        immediate: read_u64(bytes, offset + 32)?,
+    })
+}
+
+fn decode_capability_import_record(
+    bytes: &[u8],
+    offset: usize,
+) -> Result<CapabilityImportRecord, PackageDecodeError> {
+    Ok(CapabilityImportRecord {
+        name_offset: read_u32(bytes, offset)?,
+        name_len: read_u16(bytes, offset + 4)?,
+        resource_kind: read_u16(bytes, offset + 6)?,
+        rights: read_u64(bytes, offset + 8)?,
+        expected_type: read_u16(bytes, offset + 16)?,
+        import_slot: read_u16(bytes, offset + 18)?,
+        reserved: read_u32(bytes, offset + 20)?,
+    })
+}
+
+fn record_bytes(bytes: &[u8], index: usize, record_size: usize) -> Option<&[u8]> {
+    let start = index.checked_mul(record_size)?;
+    let end = start.checked_add(record_size)?;
+    bytes.get(start..end)
+}
+
 fn read_u16(bytes: &[u8], offset: usize) -> Result<u16, PackageDecodeError> {
     Ok(u16::from_le_bytes(read_bytes::<2>(bytes, offset)?))
 }
@@ -510,6 +735,8 @@ mod tests {
 
     mod decoder {
         use super::*;
+        extern crate std;
+        use std::vec::Vec;
 
         #[test]
         fn decoder_exposes_non_overlapping_sections() {
@@ -519,6 +746,25 @@ mod tests {
             assert_eq!(package.blocks().len(), 1);
             assert_eq!(package.nodes().len(), 3);
             assert_eq!(package.imports().len(), 1);
+            assert_eq!(package.types().get(1).unwrap().kind, PythType::Utf8.code());
+            assert_eq!(package.blocks().get(0).unwrap().terminator_node, 2);
+            assert_eq!(
+                package.nodes().get(1).unwrap().opcode,
+                Opcode::ConstUtf8.code()
+            );
+            assert_eq!(package.imports().get(0).unwrap().name_len, 5);
+            assert_eq!(package.string_at(0, 5).unwrap(), b"hello");
+        }
+
+        #[test]
+        fn decoder_accepts_valid_package_from_unaligned_slice_address() {
+            let bytes = crate::pyth_tig::test_support::minimal_log_package();
+            let mut hosted = Vec::new();
+            hosted.push(0xA5);
+            hosted.extend_from_slice(&bytes);
+
+            let package = PythGraphPackage::decode(&hosted[1..]).unwrap();
+            assert_eq!(package.nodes().len(), 3);
             assert_eq!(package.string_at(0, 5).unwrap(), b"hello");
         }
 
@@ -553,6 +799,78 @@ mod tests {
             assert_eq!(
                 PythGraphPackage::decode(&import_reserved),
                 Err(PackageDecodeError::NonZeroReserved)
+            );
+        }
+
+        #[test]
+        fn decoder_rejects_checksum_mismatch_and_out_of_bounds_section_ranges() {
+            let mut checksum = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::corrupt_checksum(&mut checksum);
+            assert_eq!(
+                PythGraphPackage::decode(&checksum),
+                Err(PackageDecodeError::ChecksumMismatch)
+            );
+
+            let mut out_of_bounds = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::move_string_table_past_end(&mut out_of_bounds);
+            assert_eq!(
+                PythGraphPackage::decode(&out_of_bounds),
+                Err(PackageDecodeError::SectionOutOfBounds)
+            );
+        }
+
+        #[test]
+        fn decoder_handles_zero_count_sections() {
+            let bytes = crate::pyth_tig::test_support::empty_package();
+            let package = PythGraphPackage::decode(&bytes).unwrap();
+            assert_eq!(package.types().len(), 0);
+            assert_eq!(package.blocks().len(), 0);
+            assert_eq!(package.nodes().len(), 0);
+            assert_eq!(package.imports().len(), 0);
+            assert_eq!(package.constant_pool(), b"");
+            assert_eq!(package.string_table(), b"");
+            assert!(package.types().get(0).is_none());
+            assert!(package.blocks().get(0).is_none());
+            assert!(package.nodes().get(0).is_none());
+            assert!(package.imports().get(0).is_none());
+        }
+
+        #[test]
+        fn decoder_rejects_unsupported_flags_and_versions() {
+            let mut flags = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::set_header_flags(&mut flags, 1);
+            assert_eq!(
+                PythGraphPackage::decode(&flags),
+                Err(PackageDecodeError::UnsupportedFlags)
+            );
+
+            let mut major = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::set_header_major(&mut major, PYTH_TIG_MAJOR + 1);
+            assert_eq!(
+                PythGraphPackage::decode(&major),
+                Err(PackageDecodeError::UnsupportedMajor)
+            );
+
+            let mut minor = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::set_header_minor(&mut minor, PYTH_TIG_MINOR + 1);
+            assert_eq!(
+                PythGraphPackage::decode(&minor),
+                Err(PackageDecodeError::UnsupportedMinor)
+            );
+        }
+
+        #[test]
+        fn string_at_rejects_out_of_range_and_overflow_ranges() {
+            let bytes = crate::pyth_tig::test_support::minimal_log_package();
+            let package = PythGraphPackage::decode(&bytes).unwrap();
+
+            assert_eq!(
+                package.string_at(4, 2),
+                Err(PackageDecodeError::StringOutOfBounds)
+            );
+            assert_eq!(
+                package.string_at(u32::MAX, 1),
+                Err(PackageDecodeError::OffsetOverflow)
             );
         }
     }

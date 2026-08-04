@@ -15,8 +15,13 @@ const NODE_RECORD_SIZE: usize = core::mem::size_of::<NodeRecord>();
 const IMPORT_RECORD_SIZE: usize = core::mem::size_of::<CapabilityImportRecord>();
 const CHECKSUM_OFFSET: usize = 84;
 const HEADER_RESERVED_OFFSET: usize = 92;
+const FLAGS_OFFSET: usize = 12;
+const MAJOR_OFFSET: usize = 8;
+const MINOR_OFFSET: usize = 10;
 const BLOCKS_OFFSET_OFFSET: usize = 64;
 const NODES_OFFSET_OFFSET: usize = 68;
+const IMPORTS_OFFSET_OFFSET: usize = 72;
+const STRING_TABLE_OFFSET_OFFSET: usize = 80;
 const MINIMAL_LOG_PACKAGE_LEN: usize = HEADER_SIZE
     + 3 * TYPE_RECORD_SIZE
     + BLOCK_RECORD_SIZE
@@ -58,6 +63,10 @@ pub struct AlignedPackage {
     bytes: [u8; MINIMAL_LOG_PACKAGE_LEN],
 }
 
+pub struct EmptyPackage {
+    bytes: [u8; HEADER_SIZE],
+}
+
 impl core::ops::Deref for AlignedPackage {
     type Target = [u8];
 
@@ -67,6 +76,20 @@ impl core::ops::Deref for AlignedPackage {
 }
 
 impl core::ops::DerefMut for AlignedPackage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bytes
+    }
+}
+
+impl core::ops::Deref for EmptyPackage {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.bytes
+    }
+}
+
+impl core::ops::DerefMut for EmptyPackage {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.bytes
     }
@@ -199,9 +222,48 @@ pub fn minimal_log_package() -> AlignedPackage {
     package
 }
 
+pub fn empty_package() -> EmptyPackage {
+    let mut package = EmptyPackage {
+        bytes: [0u8; HEADER_SIZE],
+    };
+    let bytes = &mut package.bytes[..];
+    bytes[0..8].copy_from_slice(&PYTH_TIG_MAGIC);
+    write_u16(bytes, MAJOR_OFFSET, PYTH_TIG_MAJOR);
+    write_u16(bytes, MINOR_OFFSET, PYTH_TIG_MINOR);
+    write_u64(bytes, 16, 0x5059_5448_5449_4702);
+    write_u64(bytes, 24, 0x5059_5448_5052_4E02);
+    write_u32(bytes, 60, HEADER_SIZE as u32);
+    write_u32(bytes, BLOCKS_OFFSET_OFFSET, HEADER_SIZE as u32);
+    write_u32(bytes, NODES_OFFSET_OFFSET, HEADER_SIZE as u32);
+    write_u32(bytes, IMPORTS_OFFSET_OFFSET, HEADER_SIZE as u32);
+    write_u32(bytes, 76, HEADER_SIZE as u32);
+    write_u32(bytes, STRING_TABLE_OFFSET_OFFSET, HEADER_SIZE as u32);
+    refresh_checksum(bytes);
+    package
+}
+
 pub fn set_nodes_offset_equal_blocks_offset(bytes: &mut [u8]) {
     let blocks_offset = read_u32(bytes, BLOCKS_OFFSET_OFFSET);
     write_u32(bytes, NODES_OFFSET_OFFSET, blocks_offset);
+    refresh_checksum(bytes);
+}
+
+pub fn corrupt_checksum(bytes: &mut [u8]) {
+    bytes[CHECKSUM_OFFSET] ^= 0x01;
+}
+
+pub fn set_header_major(bytes: &mut [u8], major: u16) {
+    write_u16(bytes, MAJOR_OFFSET, major);
+    refresh_checksum(bytes);
+}
+
+pub fn set_header_minor(bytes: &mut [u8], minor: u16) {
+    write_u16(bytes, MINOR_OFFSET, minor);
+    refresh_checksum(bytes);
+}
+
+pub fn set_header_flags(bytes: &mut [u8], flags: u32) {
+    write_u32(bytes, FLAGS_OFFSET, flags);
     refresh_checksum(bytes);
 }
 
@@ -217,8 +279,14 @@ pub fn set_first_block_reserved(bytes: &mut [u8], reserved: u32) {
 }
 
 pub fn set_first_import_reserved(bytes: &mut [u8], reserved: u32) {
-    let imports_offset = read_u32(bytes, 72) as usize;
+    let imports_offset = read_u32(bytes, IMPORTS_OFFSET_OFFSET) as usize;
     write_u32(bytes, imports_offset + 20, reserved);
+    refresh_checksum(bytes);
+}
+
+pub fn move_string_table_past_end(bytes: &mut [u8]) {
+    let past_end = bytes.len() as u32 + 4;
+    write_u32(bytes, STRING_TABLE_OFFSET_OFFSET, past_end);
     refresh_checksum(bytes);
 }
 
