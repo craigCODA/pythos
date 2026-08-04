@@ -53,7 +53,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     cases.push((
         "missing terminator",
         missing_terminator,
-        "MissingTerminator",
+        "MissingTerminator { block: 0 }",
     ));
 
     let bad_control_target = encode::build_log_package(
@@ -71,7 +71,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     cases.push((
         "bad control target",
         bad_control_target,
-        "InvalidControlTarget",
+        "InvalidControlTarget { block: 0, target: 9 }",
     ));
 
     let type_mismatch = encode::build_log_package(
@@ -86,7 +86,11 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
         pythos_shared::pyth_tig::opcode::RESOURCE_SYSTEM_LOG,
         PythType::Capability.code(),
     );
-    cases.push(("type mismatch", type_mismatch, "TypeMismatch"));
+    cases.push((
+        "type mismatch",
+        type_mismatch,
+        "TypeMismatch { node: 3, input: 0, expected: U64, actual: Bool }",
+    ));
 
     let effect_fork = encode::build_log_package(
         &[
@@ -101,7 +105,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
         pythos_shared::pyth_tig::opcode::RESOURCE_SYSTEM_LOG,
         PythType::Capability.code(),
     );
-    cases.push(("effect fork", effect_fork, "EffectFork"));
+    cases.push(("effect fork", effect_fork, "EffectFork { producer: 0 }"));
 
     let capability_constant = encode::build_log_package(
         &[
@@ -118,7 +122,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     cases.push((
         "capability constant",
         capability_constant,
-        "CapabilityOriginInvalid",
+        "CapabilityOriginInvalid { node: 1 }",
     ));
 
     let insufficient_rights = encode::build_log_package(
@@ -136,7 +140,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     cases.push((
         "insufficient rights",
         insufficient_rights,
-        "ImportRightsInsufficient",
+        "ImportRightsInsufficient { node: 3, import_slot: 0 }",
     ));
 
     let mut node_budget_exceeded = valid_fixture.to_vec();
@@ -153,13 +157,13 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     ));
 
     for (name, bytes, expected) in cases {
-        let error = verify_bytes(&bytes)
-            .expect_err("mutated PythTIG package unexpectedly passed verification");
+        let error = match verify_bytes(&bytes) {
+            Ok(_) => return Err(format!("{name} unexpectedly verified")),
+            Err(error) => error,
+        };
         let actual = format!("{error:?}");
-        if !actual.contains(expected) {
-            return Err(format!(
-                "{name} produced {actual}, expected error containing {expected}"
-            ));
+        if actual != expected {
+            return Err(format!("{name} produced {actual}, expected {expected}"));
         }
         println!("PYTH_TIG_MUTATION_OK {name}: {actual}");
     }
