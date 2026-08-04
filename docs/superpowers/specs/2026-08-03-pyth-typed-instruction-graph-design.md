@@ -187,10 +187,13 @@ Version 1 does not expose raw addresses, arbitrary aggregates, user-defined layo
 
 ### Header
 
-`PythGraphHeader` is exactly 96 bytes and uses little-endian encoding.
+`PythGraphHeader` is exactly 96 bytes and uses little-endian encoding. The
+Phase 1 candidate public layout struct uses `#[repr(C, packed(4))]` so the
+`checksum` field remains at byte offset 84; plain `#[repr(C)]` would align that
+`u64` field to byte 88 and produce a 104-byte structure on x86-64.
 
 ```rust
-#[repr(C)]
+#[repr(C, packed(4))]
 pub struct PythGraphHeader {
     pub magic: [u8; 8],              // b"PYTHTIG1"
     pub major: u16,                  // 1
@@ -215,6 +218,40 @@ pub struct PythGraphHeader {
     pub reserved: u32,
 }
 ```
+
+Header field offsets are byte offsets from the start of the package:
+
+```text
+offset size field
+0      8    magic
+8      2    major
+10     2    minor
+12     4    flags
+16     8    package_id
+24     8    principal_id
+32     4    entry_block
+36     4    type_count
+40     4    block_count
+44     4    node_count
+48     4    import_count
+52     4    constant_pool_len
+56     4    string_table_len
+60     4    types_offset
+64     4    blocks_offset
+68     4    nodes_offset
+72     4    imports_offset
+76     4    constant_pool_offset
+80     4    string_table_offset
+84     8    checksum
+92     4    reserved
+96     0    end
+```
+
+The public layout struct records the candidate byte layout for shared tests and
+ABI review. It is not the package codec. Encoders and decoders must use
+explicit little-endian reads and writes for each field, and must not transmute
+or otherwise treat host struct layout as the on-disk representation. Packed
+public fields also must not be borrowed as if they were naturally aligned.
 
 ### Records
 

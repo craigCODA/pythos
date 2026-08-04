@@ -29,6 +29,45 @@ PythTIG version 1 packages are canonical, little-endian byte streams with:
 - a deterministic 64-bit integrity checksum with the checksum field treated as
   zero.
 
+The Phase 1 candidate `PythGraphHeader` public layout struct is 96 bytes using
+`#[repr(C, packed(4))]`. This 4-byte packing is part of the candidate layout
+contract because the `checksum` field is intentionally at byte offset 84. A
+plain `#[repr(C)]` layout on x86-64 would align that `u64` field to byte 88 and
+produce a 104-byte structure.
+
+Header field offsets are byte offsets from the start of the package:
+
+```text
+offset size field
+0      8    magic
+8      2    major
+10     2    minor
+12     4    flags
+16     8    package_id
+24     8    principal_id
+32     4    entry_block
+36     4    type_count
+40     4    block_count
+44     4    node_count
+48     4    import_count
+52     4    constant_pool_len
+56     4    string_table_len
+60     4    types_offset
+64     4    blocks_offset
+68     4    nodes_offset
+72     4    imports_offset
+76     4    constant_pool_offset
+80     4    string_table_offset
+84     8    checksum
+92     4    reserved
+96     0    end
+```
+
+All integer fields remain little-endian on disk. Encoders and decoders must use
+explicit little-endian reads and writes for each field; they must not transmute
+or otherwise treat host struct layout as the on-disk codec. Packed public fields
+also must not be borrowed as if they were naturally aligned.
+
 The Phase 1 candidate package bounds are:
 
 ```text

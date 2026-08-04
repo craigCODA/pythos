@@ -13,8 +13,8 @@ pub const MAX_EXECUTED_NODES_PER_INVOCATION: usize = 65_536;
 
 pub const NO_VALUE: u32 = u32::MAX;
 
-// The provisional v1 on-disk header fixes the checksum field at byte 84 and
-// total size at 96 bytes. Encoding still must write integers as little-endian.
+// The provisional v1 public layout struct mirrors the candidate 96-byte header
+// with `checksum` at byte 84. Codecs must still read/write explicit LE fields.
 #[repr(C, packed(4))]
 pub struct PythGraphHeader {
     pub magic: [u8; 8],
