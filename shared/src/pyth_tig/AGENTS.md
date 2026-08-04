@@ -2,9 +2,9 @@
 
 **Destination:** `shared/src/pyth_tig/AGENTS.md`
 
-**Status:** Proposed guardrail pending owner adoption of ADR 0064 and ADR 0065.
-This file does not authorize implementation before a phase-specific
-re-invocation.
+**Status:** Guardrail for accepted PythTIG architecture. ADR 0065 remains
+provisional until Phase 1 evidence supports an owner format freeze. This file
+does not authorize implementation before a phase-specific re-invocation.
 
 ## Purpose
 
