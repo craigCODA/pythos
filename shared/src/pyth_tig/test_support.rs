@@ -222,6 +222,98 @@ pub fn minimal_log_package() -> AlignedPackage {
     package
 }
 
+pub fn package_without_terminator() -> AlignedPackage {
+    minimal_log_package()
+}
+
+pub fn package_with_bad_branch_target() -> AlignedPackage {
+    let mut package = minimal_log_package();
+    let bytes = &mut package.bytes[..];
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_node_record(
+        bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstBool.code(),
+            result_type: PythType::Bool.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 1,
+        },
+    );
+    write_node_record(
+        bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Branch.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [1, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 9,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    refresh_checksum(bytes);
+    package
+}
+
+pub fn package_with_use_before_definition() -> AlignedPackage {
+    let mut package = minimal_log_package();
+    let bytes = &mut package.bytes[..];
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_node_record(
+        bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 1,
+        },
+    );
+    write_node_record(
+        bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::AddU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [2, 0, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [1, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    refresh_checksum(bytes);
+    package
+}
+
 pub fn empty_package() -> EmptyPackage {
     let mut package = EmptyPackage {
         bytes: [0u8; HEADER_SIZE],
