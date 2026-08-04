@@ -27,18 +27,18 @@ Do not claim full security where only logical isolation exists.
 
 AI remains outside the trusted core.
 
-## Proposed PythTIG / Convergent Architecture Guardrails
+## PythTIG / Convergent Architecture Guardrails
 
-PythTIG is proposed architecture pending owner adoption, recorded in proposed
-ADR 0064 and proposed ADR 0065. It is not the active implementation program
-until the owner explicitly accepts or revises those ADRs.
+ADR 0064 is accepted as the PythTIG architecture direction. ADR 0065 is
+provisionally accepted for Phase 1 verifier experimentation; its exact binary
+record layout, numeric IDs, opcode set, and limits are not permanent stable ABI
+until the Phase 1 encoder, decoder, verifier, and negative corpus pass and the
+owner explicitly freezes the format.
 
-The docs-only Phase 0 adoption branch may modify documentation and scoped
-`AGENTS.md` files only. Do not implement the PythTIG verifier, runtime,
-compiler, Task Steward, native backend, marker-contract scripts, CI behavior,
-session cutover, or production boot behavior during Phase 0.
-
-If PythTIG is adopted later:
+This adoption status does not make PythTIG the active implementation program.
+Do not implement the PythTIG verifier, runtime, compiler, Task Steward, native
+backend, marker-contract scripts, CI behavior, session cutover, or production
+boot behavior until the owner explicitly invokes the corresponding phase.
 
 - PythCore may accept typed graph packages and typed syscalls only; it must not
   parse Pyth source, human command text, semantic prompts, or agent policy.

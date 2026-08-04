@@ -18,14 +18,21 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
-## Proposed PythTIG Adoption Branch (2026-08-04)
+## PythTIG Owner Adoption Status (2026-08-04)
 
 The former branch `docs/pythtig-phase0-from-physical-evidence` imported the
 proposed Pyth Native Typed Instruction Graph program as docs-only Phase 0
 adoption material on top of `agent/physical-evidence-terminal`. That proposal
 material is now merged into `main` after the ADR 0063 evidence-terminal
-implementation merge. PythTIG is proposed architecture pending owner adoption,
-not the active implementation program.
+implementation merge.
+
+Owner review accepted ADR 0064 as the PythTIG architecture direction. ADR 0065
+is provisionally accepted for Phase 1 verifier experimentation only: its exact
+binary record layout, numeric IDs, opcode set, and package limits are not
+permanent stable ABI until the first encoder, decoder, verifier, and negative
+corpus pass and the owner explicitly freezes the format. PythTIG is still not
+implemented, and it is not the active implementation program until the owner
+explicitly invokes the next phase.
 
 Imported proposal artifacts live under:
 
@@ -36,7 +43,7 @@ docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
 docs/superpowers/plans/2026-08-03-pyth-tig-phase-*.md
 ```
 
-The proposed PythTIG ADRs are renumbered against the live repository:
+The PythTIG ADRs are renumbered against the live repository:
 
 ```text
 ADR 0064: Pyth Native Typed Instruction Graph
@@ -48,7 +55,7 @@ and records the full reconciliation in
 `docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement the
 PythTIG verifier, runtime, compiler, Task Steward, native backend,
 marker-contract scripts, CI behavior, or boot behavior from this proposal until
-the owner explicitly adopts or revises ADR 0064 and ADR 0065.
+the owner explicitly invokes the corresponding phase.
 
 ## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
 

@@ -1,7 +1,7 @@
 # ADR 0064: Pyth Native Typed Instruction Graph
 
 Date: 2026-08-04
-Status: Proposed
+Status: Accepted
 
 ## Context
 
@@ -46,10 +46,13 @@ contain no hardware-controller instructions. Hardware backends may expose typed
 services through PythCore, but they may not change package bytes or graph
 semantics.
 
-This ADR is proposed architecture pending owner adoption. It does not authorize
+This ADR accepts the PythTIG architecture direction only. It does not authorize
 Phase 1 implementation, runtime launch behavior, compiler work, Task Steward
 behavior, native code generation, package management, networking, AI authority,
-or default-session cutover.
+or default-session cutover. ADR 0065 remains provisionally accepted for Phase 1
+format experimentation; exact package bytes are not permanent stable ABI until
+the first encoder, decoder, verifier, and negative corpus pass and the owner
+explicitly freezes the format.
 
 ## References
 

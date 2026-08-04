@@ -1,13 +1,14 @@
-# PythTIG / Convergent Architecture Proposal
+# PythTIG / Convergent Architecture
 
-Status: proposed architecture pending owner adoption.
+Status: ADR 0064 accepted as architecture direction; ADR 0065 provisionally
+accepted for Phase 1 verifier experimentation.
 
-This directory contains the docs-only Phase 0 adoption artifacts for the
-proposed Pyth Native Typed Instruction Graph program. It does not make PythTIG
-the active implementation program, and it does not authorize verifier, runtime,
-compiler, Task Steward, native backend, or boot behavior changes.
+This directory contains the docs-only Phase 0 adoption artifacts for the Pyth
+Native Typed Instruction Graph program. It does not make PythTIG the active
+implementation program, and it does not authorize verifier, runtime, compiler,
+Task Steward, native backend, or boot behavior changes.
 
-Authoritative proposal documents:
+Authoritative PythTIG documents:
 
 - `docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md`
 - `docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md`
@@ -20,4 +21,6 @@ Authoritative proposal documents:
 - `docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`
 
 The accepted roadmap and current boot/object-shell behavior remain unchanged
-until the owner explicitly adopts or revises the proposed architecture.
+until the owner explicitly invokes a PythTIG implementation phase. ADR 0065's
+exact package bytes remain provisional until Phase 1 evidence supports a format
+freeze.

@@ -2,9 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development for each phase plan. Use superpowers:using-git-worktrees before implementation, superpowers:test-driven-development for every behavior change, and superpowers:verification-before-completion before every completion claim. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Proposed architecture pending owner adoption. This plan is not the
-active implementation program until the owner accepts or revises ADR 0064 and
-ADR 0065 after Phase 0 review.
+**Status:** Accepted future execution-model program, pending explicit phase
+invocation. ADR 0064 is accepted as the architecture direction. ADR 0065 is
+provisionally accepted for Phase 1 verifier experimentation and is not frozen as
+permanent stable ABI until Phase 1 evidence exists and the owner freezes it.
 
 **Goal:** Deliver PythTIG version 1 from canonical graph package through shared verification, ring-3 execution, typed object capability use, custom source compilation, deterministic Task Steward behavior, native x86-64 lowering, reboot recovery, and cross-target evidence.
 

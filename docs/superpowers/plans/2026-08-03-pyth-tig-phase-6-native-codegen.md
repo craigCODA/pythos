@@ -1,6 +1,8 @@
 # PythTIG Phase 6 Native x86-64 Code Generation Implementation Plan
 
-**Status:** Proposed future phase pending owner adoption of ADR 0064 and ADR 0065. Do not implement this plan until Phase 0 is reviewed and the owner explicitly invokes this phase.
+**Status:** Accepted future phase pending prior PythTIG phase evidence and
+explicit owner invocation. Do not implement this plan until the owner explicitly
+invokes this phase.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. The interpreter is the semantic oracle. Every native case requires differential evidence.
 

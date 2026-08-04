@@ -1,13 +1,15 @@
 # ADR 0065: Pyth Graph Package ABI
 
 Date: 2026-08-04
-Status: Proposed
+Status: Provisionally Accepted for Phase 1
 
 ## Context
 
 The host compiler, PythCore loader, ring-3 interpreter, native code generator,
-and verification tools require one stable canonical package contract before any
-PythTIG behavior can be implemented.
+and verification tools require one canonical package contract before any
+PythTIG behavior can be implemented. The owner has accepted ADR 0064's
+architecture direction, while keeping this byte-level ABI provisional until the
+first encoder, decoder, verifier, and negative corpus exercise the format.
 
 The original PythTIG handoff proposed ADR 0054 for this decision. The live
 repository already uses ADR 0054 for the polling AHCI block backend, so this
@@ -27,7 +29,7 @@ PythTIG version 1 packages are canonical, little-endian byte streams with:
 - a deterministic 64-bit integrity checksum with the checksum field treated as
   zero.
 
-The proposed package bounds are:
+The Phase 1 candidate package bounds are:
 
 ```text
 maximum package bytes       131072
@@ -40,7 +42,7 @@ maximum runtime values      1024
 maximum executed nodes      65536 per invocation
 ```
 
-The proposed stable primitive type set is:
+The Phase 1 candidate primitive type set is:
 
 ```text
 0x0000 Unit
@@ -58,14 +60,14 @@ The proposed stable primitive type set is:
 0x000C ErrorCode
 ```
 
-The proposed opcode families cover structural nodes, constants, pure
+The Phase 1 candidate opcode families cover structural nodes, constants, pure
 arithmetic/boolean operations, control terminators, and typed host operations
 for system logging, object operations, task/proposal operations, graph
 relationship queries, relevance assertions, capability requests, and later
 command input/result operations.
 
 The shared verifier must reject invalid packages before ring-3 entry. Its
-proposed pass order is:
+candidate pass order is:
 
 1. Header, version, reserved fields, offsets, alignment, and total-length
    validation.
@@ -88,15 +90,19 @@ be zero unless a later accepted ADR assigns them.
 ## Consequences
 
 Record sizes, offsets, numeric type IDs, opcode IDs, verifier error identities,
-version behavior, canonicalization, and checksum behavior become ABI once this
-proposal is accepted.
+version behavior, canonicalization, and checksum behavior remain Phase 1
+candidate ABI until the host-side encoder, decoder, verifier, and negative
+corpus pass against real packages. Any Phase 1 change to those bytes must update
+this ADR in the same branch before merge. They become permanent stable ABI only
+after the Phase 1 evidence exists and the owner explicitly freezes the format.
 
 The compiler may not invent semantics that the shared verifier does not
 understand. The runtime and native backend may not execute graph behavior that
 the package ABI and verifier do not describe.
 
-This ADR is proposed architecture pending owner adoption. It does not authorize
-Phase 1 implementation or any boot/runtime behavior changes.
+This ADR authorizes no boot/runtime behavior changes by itself. Phase 1 may
+begin only after explicit owner invocation, and Phase 1 remains verifier/format
+work only unless a later accepted plan says otherwise.
 
 ## References
 

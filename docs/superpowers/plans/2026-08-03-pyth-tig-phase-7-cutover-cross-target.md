@@ -1,6 +1,8 @@
 # PythTIG Phase 7 Cutover and Cross-Target Acceptance Implementation Plan
 
-**Status:** Proposed future phase pending owner adoption of ADR 0064 and ADR 0065. Do not implement this plan until Phase 0 is reviewed and the owner explicitly invokes this phase.
+**Status:** Accepted future phase pending prior PythTIG phase evidence and
+explicit owner invocation. Do not implement this plan until the owner explicitly
+invokes this phase.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. This phase changes the default normal-boot composition only after all earlier acceptance commands pass in the same worktree.
 

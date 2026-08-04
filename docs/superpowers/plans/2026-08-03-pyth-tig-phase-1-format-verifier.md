@@ -1,6 +1,9 @@
 # PythTIG Phase 1 Format and Verifier Implementation Plan
 
-**Status:** Proposed future phase pending owner adoption of ADR 0064 and ADR 0065. Do not implement this plan until Phase 0 is reviewed and the owner explicitly invokes this phase.
+**Status:** Accepted future Phase 1 plan, pending explicit owner invocation.
+ADR 0065 is provisionally accepted for this phase; exact package bytes are not
+permanent stable ABI until this phase's encoder, decoder, verifier, and
+negative corpus pass and the owner freezes the format.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Enforce red-green-refactor for every code change.
 
@@ -12,7 +15,9 @@
 
 ## Global Constraints
 
-- ADR 0065 sizes and numeric codes are exact.
+- ADR 0065 sizes and numeric codes are Phase 1 candidates. Any format change
+  made while implementing this verifier must update ADR 0065 in the same branch
+  before merge.
 - Unknown opcodes, types, flags, major versions, and nonzero reserved fields are rejected.
 - Capability values cannot be constants.
 - Effectful opcodes require one non-forking Effect chain.
@@ -21,7 +26,7 @@
 
 ---
 
-### Task 1: Define stable types, opcodes, and record layouts
+### Task 1: Define candidate types, opcodes, and record layouts
 
 **Files:**
 - Create: `shared/src/pyth_tig/mod.rs`
@@ -44,7 +49,7 @@ mod tests {
     use crate::pyth_tig::{opcode::Opcode, types::PythType};
 
     #[test]
-    fn v1_layouts_and_codes_are_stable() {
+    fn v1_layouts_and_codes_are_recorded() {
         assert_eq!(PYTH_TIG_MAGIC, *b"PYTHTIG1");
         assert_eq!(PYTH_TIG_MAJOR, 1);
         assert_eq!(PYTH_TIG_MINOR, 0);
@@ -65,14 +70,18 @@ mod tests {
 - [ ] **Step 2: Run RED**
 
 ```powershell
-cargo test -p pythos-shared pyth_tig::format::tests::v1_layouts_and_codes_are_stable
+cargo test -p pythos-shared pyth_tig::format::tests::v1_layouts_and_codes_are_recorded
 ```
 
 Expected: FAIL because the module does not exist.
 
-- [ ] **Step 3: Implement exact enums and records**
+- [ ] **Step 3: Implement recorded enums and records**
 
-Implement the types and opcodes exactly as Sections 6 through 8 of the design spec. Use `#[repr(u16)]` for `PythType` and `Opcode`, `TryFrom<u16>` with explicit `UnknownType` and `UnknownOpcode` errors, and `#[repr(C)]` for every record.
+Implement the types and opcodes recorded in Sections 6 through 8 of the design
+spec, or update ADR 0065 and the spec in the same branch if the first corpus
+shows the layout needs revision before the owner ABI freeze. Use `#[repr(u16)]`
+for `PythType` and `Opcode`, `TryFrom<u16>` with explicit `UnknownType` and
+`UnknownOpcode` errors, and `#[repr(C)]` for every record.
 
 Export in `shared/src/pyth_tig/mod.rs`:
 
@@ -341,7 +350,12 @@ impl Opcode {
 }
 ```
 
-Use exact signatures from ADR 0065. `SystemLog` consumes `[Effect, Capability, Utf8]` and returns `Effect`. Object mutations consume `[Effect, Capability, ...]` and return typed result plus effect through the node's prescribed result convention recorded in `auxiliary0`; do not encode hidden extra results.
+Use the current provisional signatures from ADR 0065. `SystemLog` consumes
+`[Effect, Capability, Utf8]` and returns `Effect`. Object mutations consume
+`[Effect, Capability, ...]` and return typed result plus effect through the
+node's prescribed result convention recorded in `auxiliary0`; do not encode
+hidden extra results. If the first verifier corpus proves a signature should
+change before freeze, update ADR 0065 in the same branch.
 
 For v1, every effectful host operation returns `Effect`; typed host data is written into a following `HostResult` structural node identified by `auxiliary0`. Add `HostResult` as opcode `0x0008`, with verifier rules that it immediately follows and references one effectful producer. This avoids multi-result node ambiguity.
 

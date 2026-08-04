@@ -1,6 +1,6 @@
 # PythTIG Phase 0 Adoption and Reconciliation Plan
 
-**Status:** Proposed architecture pending owner adoption
+**Status:** Complete; superseded by owner adoption status on 2026-08-04
 **Date reconciled:** 2026-08-04
 **Branch:** `docs/pythtig-phase0-adoption`
 
@@ -62,12 +62,12 @@ Phase 0 may modify only documentation and `AGENTS.md` instruction files.
 2. Import the reconciled master plan and future phase plans under
    `docs/superpowers/plans/`.
 3. Import the acceptance contract under `docs/pyth-tig/acceptance/`.
-4. Create proposed ADR 0064 for the Pyth native typed instruction graph.
-5. Create proposed ADR 0065 for the Pyth graph package ABI.
+4. Create ADR 0064 for the Pyth native typed instruction graph.
+5. Create ADR 0065 for the Pyth graph package ABI.
 6. Merge the PythTIG guardrails into the root `AGENTS.md` without weakening
    existing PythOS rules.
 7. Add scoped PythTIG `AGENTS.md` files only as future guardrails. These files
-   do not authorize implementation before owner adoption.
+   do not authorize implementation before explicit phase invocation.
 8. Update `docs/ROADMAP.md` to list PythTIG as a proposed program, not the
    active implementation sequence.
 9. Update `docs/HANDOVER.md` with the proposed adoption branch and unresolved
@@ -94,13 +94,13 @@ terminal evidence in the reconciliation report.
 
 Phase 0 exits when:
 
-- the proposal docs are imported as proposed architecture only;
-- ADR 0064 and ADR 0065 exist with `Status: Proposed`;
+- the proposal docs are imported as docs-only architecture material;
+- ADR 0064 exists with `Status: Accepted`;
+- ADR 0065 exists with `Status: Provisionally Accepted for Phase 1`;
 - `docs/ROADMAP.md`, `docs/HANDOVER.md`, and `AGENTS.md` preserve the current
   accepted roadmap and behavior;
 - the preserved acceptance suite has fresh command results recorded;
 - a docs-only commit exists on the isolated branch;
-- Phase 1 is still blocked on owner adoption.
+- Phase 1 is still blocked on explicit owner invocation.
 
-Phase 1 may not begin until the owner explicitly accepts or revises the
-architecture decisions after review.
+Phase 1 may not begin until the owner explicitly invokes it after review.

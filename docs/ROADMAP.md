@@ -11,11 +11,14 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
-## Proposed Program Pending Owner Adoption: PythTIG
+## Accepted Future Program Pending Phase Invocation: PythTIG
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is
-imported as proposed architecture for owner review. It is recorded in proposed
-ADR 0064 and proposed ADR 0065 and documented under:
+accepted as the future execution-model architecture direction by ADR 0064.
+ADR 0065 is provisionally accepted for Phase 1 verifier experimentation; exact
+package bytes remain unfrozen until the first encoder, decoder, verifier, and
+negative corpus pass and the owner explicitly freezes the format. The program
+is documented under:
 
 ```text
 docs/pyth-tig/
@@ -23,15 +26,15 @@ docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md
 docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
 ```
 
-This section preserves the current roadmap. PythTIG is not the active
-implementation program until the owner explicitly accepts or revises the
-proposal after Phase 0 review. Do not implement graph packages, verifier
-behavior, runtime behavior, `pythc`, Task Steward behavior, native lowering, or
-normal-boot cutover from this proposal by momentum.
+This section preserves the current roadmap and accepted behavior. PythTIG is
+not the active implementation program until the owner explicitly invokes the
+next phase. Do not implement graph packages, verifier behavior, runtime
+behavior, `pythc`, Task Steward behavior, native lowering, or normal-boot
+cutover from this documentation by momentum.
 
-If adopted, the proposed first implementation phase is the canonical typed
-instruction graph package and shared verifier. That work must begin in a fresh
-isolated worktree with tests first.
+The proposed first implementation phase is the smallest canonical typed
+instruction graph package and shared verifier slice. That work must begin in a
+fresh isolated worktree with tests first.
 
 ## How To Read This File
 

@@ -1,8 +1,11 @@
 # PythTIG Test and Evidence Matrix
 
-Status: proposed pending owner adoption.
+Status: accepted future-program evidence matrix, pending implementation.
 
-Every command is run from a clean phase worktree with fresh build artifacts. Exact command options may be reconciled in Phase 0 when the live tree differs, but the behavior and terminal contracts remain binding.
+Every command is run from a clean phase worktree with fresh build artifacts.
+Exact command options may be reconciled when the live tree differs. ADR 0065
+format details remain provisional until the Phase 1 encoder, decoder, verifier,
+and negative corpus pass and the owner freezes the package ABI.
 
 | Area | Command | Required terminal evidence | Core proof |
 |---|---|---|---|

@@ -1,6 +1,6 @@
 # PythTIG Version 1 Definition of Done
 
-Status: proposed pending owner adoption.
+Status: accepted future-program completion contract, pending implementation.
 
 PythTIG version 1 is complete only when every item below is supported by fresh evidence from the merged branch.
 

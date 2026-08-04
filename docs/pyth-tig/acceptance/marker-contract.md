@@ -1,8 +1,8 @@
 # PythTIG Acceptance Marker Contract
 
-**Status:** Proposed marker namespace pending owner adoption. No runtime may
-emit these markers until the corresponding implementation phase is explicitly
-authorized and verified.
+**Status:** Reserved marker namespace for accepted future PythTIG phases. No
+runtime may emit these markers until the corresponding implementation phase is
+explicitly authorized and verified.
 
 **Namespace:** `PYTHOS:PYTHTIG:`
 

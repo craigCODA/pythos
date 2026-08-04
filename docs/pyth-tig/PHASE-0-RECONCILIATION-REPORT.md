@@ -4,10 +4,12 @@ Date: 2026-08-04
 
 ## Status
 
-PythTIG is imported as proposed architecture pending owner adoption. This branch
-contains documentation and AGENTS guardrails only. It does not implement the
-verifier, runtime, compiler, Task Steward, native backend, marker-contract
-scripts, CI behavior, session cutover, or production boot behavior.
+PythTIG Phase 0 is merged. Owner review accepted ADR 0064 as the architecture
+direction and provisionally accepted ADR 0065 for Phase 1 verifier
+experimentation. This repository still contains documentation and AGENTS
+guardrails only for PythTIG. It does not implement the verifier, runtime,
+compiler, Task Steward, native backend, marker-contract scripts, CI behavior,
+session cutover, or production boot behavior.
 
 ## Worktree
 
@@ -39,7 +41,7 @@ scripts, CI behavior, session cutover, or production boot behavior.
 
 ## AGENTS Rules
 
-- Root `AGENTS.md` is extended with proposed PythTIG guardrails.
+- Root `AGENTS.md` records PythTIG adoption guardrails.
 - `shared/src/pyth_tig/AGENTS.md`
 - `core/src/pyth_tig/AGENTS.md`
 - `user/pyth-runtime/AGENTS.md`
@@ -49,7 +51,7 @@ scripts, CI behavior, session cutover, or production boot behavior.
 
 These scoped files reserve future rules only. They do not create source
 modules, require directories to exist yet, or authorize implementation before
-owner adoption.
+explicit phase invocation.
 
 ## Renamed ADRs
 
@@ -67,10 +69,13 @@ at ADR 0064 on this branch.
 
 ## Corrected Assumptions
 
-- The original PythTIG handoff is a proposal package, not an executable
+- The original PythTIG handoff was a proposal package, not an executable
   implementation branch.
-- PythTIG is proposed architecture pending owner adoption, not the active
-  implementation program.
+- PythTIG is now accepted as an architecture direction through ADR 0064, but is
+  not the active implementation program.
+- ADR 0065's package ABI is provisionally accepted for Phase 1 verifier
+  experimentation only; exact bytes are not permanent stable ABI until Phase 1
+  evidence exists and the owner freezes the format.
 - The physical-evidence review baseline was `agent/physical-evidence-terminal`,
   not the older `main` snapshot.
 - After the merge sequence, ADR 0063's implementation files, Cargo features,
@@ -144,8 +149,8 @@ Normal boot path:
   `agent/physical-evidence-terminal` was resolved by first merging the
   main-only claim correction, then merging the ADR 0063 implementation, then
   merging this PythTIG docs-only proposal.
-- Remaining decisions are owner adoption decisions for ADR 0064 and ADR 0065,
-  not Git conflicts.
+- Remaining decisions are Phase 1 invocation and ABI-freeze decisions, not Git
+  conflicts.
 
 ## Baseline Test Results
 
@@ -186,19 +191,17 @@ with `--no-virtio-blk --sdhci --emmc`, and captured
 
 ## Proposed First Implementation Phase
 
-If the owner adopts or revises ADR 0064 and ADR 0065, the first implementation
-phase is Phase 1: canonical typed instruction graph package and shared
-verifier.
+If the owner invokes PythTIG implementation, the first implementation phase is
+Phase 1: the smallest canonical typed instruction graph package and shared
+verifier slice.
 
 Phase 1 must begin in a fresh isolated worktree and with tests first.
 
 ## Decisions Still Requiring Owner Approval
 
-- Whether to adopt PythTIG as the active execution-model program.
-- Whether ADR 0064's interpreter-first graph execution direction is accepted,
-  revised, or rejected.
-- Whether ADR 0065's package ABI, type/opcode set, bounds, and verifier passes
-  are accepted, revised, or rejected.
+- Whether to invoke PythTIG Phase 1 as the next active implementation phase.
+- Whether the first Phase 1 implementation corpus proves ADR 0065's package ABI,
+  type/opcode set, bounds, and verifier passes as written or requires revision.
+- Whether to freeze ADR 0065 as permanent stable ABI after Phase 1 evidence.
 - Whether PythTIG should sit alongside, precede, or replace the current
   Phase 12 package/application work.
-- Whether to treat PythTIG Phase 1 as the next active implementation phase.

@@ -1,6 +1,6 @@
 # Pyth Native Typed Instruction Graph Design
 
-**Status:** Proposed for owner review
+**Status:** ADR 0064 accepted; ADR 0065 provisional for Phase 1
 **Date:** 2026-08-03
 **Imported/reconciled:** 2026-08-04 on `docs/pythtig-phase0-adoption`
 **Program label:** PythOS Convergent Architecture Program
@@ -8,11 +8,14 @@
 
 ## Reconciliation note
 
-This document is imported as proposed architecture pending owner adoption. It
-does not make PythTIG the active implementation program. The original handoff
+This document is imported as the accepted ADR 0064 architecture direction. It
+does not make PythTIG the active implementation program. ADR 0065's package
+format details are provisionally accepted for Phase 1 verifier experimentation
+and are not permanent stable ABI until the Phase 1 encoder, decoder, verifier,
+and negative corpus pass and the owner freezes the format. The original handoff
 was not reconciled against the live private repository; the live ADR sequence
-already uses ADR 0053 and ADR 0054, so this proposal is recorded as ADR 0064
-and ADR 0065.
+already uses ADR 0053 and ADR 0054, so this program is recorded as ADR 0064 and
+ADR 0065.
 
 ## 1. Purpose
 
@@ -100,7 +103,7 @@ PythTIG is an SSA-like typed instruction graph with explicit basic blocks.
 - Capability values can originate only from validated imports or capability-returning host operations. A graph cannot construct a capability from an integer.
 - Graphs are immutable after package validation.
 
-## 6. Stable primitive types
+## 6. Phase 1 primitive type candidates
 
 ```text
 0x0000 Unit
@@ -120,7 +123,7 @@ PythTIG is an SSA-like typed instruction graph with explicit basic blocks.
 
 Version 1 does not expose raw addresses, arbitrary aggregates, user-defined layouts, or direct mutable memory.
 
-## 7. Stable opcode families
+## 7. Phase 1 opcode families
 
 ### Structural and constants
 
@@ -295,7 +298,10 @@ The shared verifier runs in both the host compiler and PythCore. It performs the
 11. Resource-budget validation.
 12. Canonical-encoding validation and checksum verification.
 
-A verifier error is a stable typed error code. The loader emits one bounded rejection marker and never launches the package.
+A verifier error is a typed deterministic error code. Permanent verifier error
+identities are frozen only after Phase 1 evidence supports the package ABI
+freeze. The loader emits one bounded rejection marker and never launches the
+package.
 
 ## 10. Ring-3 runtime
 
@@ -339,7 +345,9 @@ program NAME principal HEX {
 }
 ```
 
-Version 1 has one entry function, `main`, and no user-defined calls or recursion. Intrinsic names map one-to-one to stable host opcodes.
+Version 1 has one entry function, `main`, and no user-defined calls or
+recursion. Intrinsic names map one-to-one to the Phase 1 host opcode set once
+ADR 0065 is frozen.
 
 Compiler pipeline:
 
