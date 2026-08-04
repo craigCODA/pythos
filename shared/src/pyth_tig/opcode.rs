@@ -74,7 +74,8 @@ impl Opcode {
 
     pub const fn signature(self) -> OpcodeSignature {
         use PythType::{
-            Bool, Bytes, Effect, ErrorCode, I64, ObjectId, ProposalId, TaskId, U64, Unit, Utf8,
+            Bool, Bytes, Capability, Effect, ErrorCode, I64, ObjectId, ProposalId, TaskId, U64,
+            Unit, Utf8,
         };
 
         match self {
@@ -97,38 +98,64 @@ impl Opcode {
             Self::Jump => terminator_sig(Unit),
             Self::Branch => terminator_with_inputs([Bool], Unit),
             Self::Return => terminator_sig(Unit),
-            Self::SystemLog => host_sig([Effect, Utf8], RESOURCE_SYSTEM_LOG, RIGHTS_READ),
-            Self::ObjectCreate => {
-                host_sig([Effect, Utf8], RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE)
+            Self::SystemLog => {
+                host_sig([Effect, Capability, Utf8], RESOURCE_SYSTEM_LOG, RIGHTS_READ)
             }
-            Self::ObjectQuery => host_sig([Effect, Utf8], RESOURCE_OBJECT_WORKSPACE, RIGHTS_QUERY),
-            Self::ObjectInspect => host_sig([Effect, ObjectId], RESOURCE_OBJECT, RIGHTS_READ),
-            Self::ObjectRevise => {
-                host_sig([Effect, ObjectId, Bytes], RESOURCE_OBJECT, RIGHTS_REVISE)
+            Self::ObjectCreate => host_sig(
+                [Effect, Capability, Utf8],
+                RESOURCE_OBJECT_WORKSPACE,
+                RIGHTS_CREATE,
+            ),
+            Self::ObjectQuery => host_sig(
+                [Effect, Capability, Utf8],
+                RESOURCE_OBJECT_WORKSPACE,
+                RIGHTS_QUERY,
+            ),
+            Self::ObjectInspect => {
+                host_sig([Effect, Capability, ObjectId], RESOURCE_OBJECT, RIGHTS_READ)
             }
-            Self::ObjectHistory => host_sig([Effect, ObjectId], RESOURCE_OBJECT, RIGHTS_READ),
-            Self::TaskActiveRead => host_sig([Effect], RESOURCE_TASK, RIGHTS_READ),
-            Self::TaskProposalEmit => {
-                host_sig([Effect, TaskId, U64, Utf8], RESOURCE_TASK, RIGHTS_APPEND)
+            Self::ObjectRevise => host_sig(
+                [Effect, Capability, ObjectId, Bytes],
+                RESOURCE_OBJECT,
+                RIGHTS_REVISE,
+            ),
+            Self::ObjectHistory => {
+                host_sig([Effect, Capability, ObjectId], RESOURCE_OBJECT, RIGHTS_READ)
             }
-            Self::TaskProposalApprove => {
-                host_sig([Effect, ProposalId], RESOURCE_TASK, RIGHTS_APPROVE)
-            }
+            Self::TaskActiveRead => host_sig([Effect, Capability], RESOURCE_TASK, RIGHTS_READ),
+            Self::TaskProposalEmit => host_sig(
+                [Effect, Capability, TaskId, U64],
+                RESOURCE_TASK,
+                RIGHTS_APPEND,
+            ),
+            Self::TaskProposalApprove => host_sig(
+                [Effect, Capability, ProposalId],
+                RESOURCE_TASK,
+                RIGHTS_APPROVE,
+            ),
             Self::TaskSuspend | Self::TaskRevive => {
-                host_sig([Effect, TaskId], RESOURCE_TASK, RIGHTS_CONTROL)
+                host_sig([Effect, Capability, TaskId], RESOURCE_TASK, RIGHTS_CONTROL)
             }
-            Self::TaskContextRead => host_sig([Effect, TaskId], RESOURCE_TASK, RIGHTS_READ),
-            Self::GraphQueryRelated => host_sig([Effect, ObjectId], RESOURCE_GRAPH, RIGHTS_QUERY),
+            Self::TaskContextRead => {
+                host_sig([Effect, Capability, TaskId], RESOURCE_TASK, RIGHTS_READ)
+            }
+            Self::GraphQueryRelated => {
+                host_sig([Effect, Capability, ObjectId], RESOURCE_GRAPH, RIGHTS_QUERY)
+            }
             Self::RelevanceAssertionEmit => host_sig(
-                [Effect, ObjectId, ObjectId, U64],
+                [Effect, Capability, ObjectId, ObjectId],
                 RESOURCE_GRAPH,
                 RIGHTS_APPEND,
             ),
-            Self::CapabilityRequestEmit => host_sig([Effect, Utf8], RESOURCE_TASK, RIGHTS_APPEND),
-            Self::CommandRead => host_sig([Effect], RESOURCE_COMMAND, RIGHTS_READ),
-            Self::CommandResultEmit => {
-                host_sig([Effect, ErrorCode, Utf8], RESOURCE_COMMAND, RIGHTS_APPEND)
+            Self::CapabilityRequestEmit => {
+                host_sig([Effect, Capability, Utf8], RESOURCE_TASK, RIGHTS_APPEND)
             }
+            Self::CommandRead => host_sig([Effect, Capability], RESOURCE_COMMAND, RIGHTS_READ),
+            Self::CommandResultEmit => host_sig(
+                [Effect, Capability, ErrorCode, Utf8],
+                RESOURCE_COMMAND,
+                RIGHTS_APPEND,
+            ),
         }
     }
 }

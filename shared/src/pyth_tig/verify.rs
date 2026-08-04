@@ -608,7 +608,7 @@ fn count_values(inputs: [u32; 4]) -> usize {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CapabilityOrigin {
     None,
-    HostResult(u32),
+    Import(u16),
 }
 
 fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
@@ -625,20 +625,26 @@ fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
             .expect("known type validation already accepted every node result type");
         result_types[node_index] = actual_result;
 
-        if actual_result == PythType::Capability && !matches!(opcode, Opcode::HostResult) {
+        if actual_result == PythType::Capability
+            && !matches!(opcode, Opcode::BlockParam | Opcode::HostResult)
+        {
             return Err(VerifyError::CapabilityOriginInvalid {
                 node: node_index as u32,
             });
         }
 
         match opcode {
-            Opcode::HostResult => {
-                verify_host_result(package, node_index, &node, actual_result)?;
+            Opcode::BlockParam => {
+                verify_opcode_signature(package, node_index, &node, &result_types)?;
                 if actual_result == PythType::Capability {
-                    capability_origins[node_index] = CapabilityOrigin::HostResult(node.input0);
+                    let import_slot = verify_import_block_param(package, node_index, &node)?;
+                    capability_origins[node_index] = CapabilityOrigin::Import(import_slot);
                 }
             }
-            Opcode::Jump | Opcode::Return => {}
+            Opcode::HostResult => {
+                verify_host_result(package, node_index, &node, actual_result)?;
+            }
+            Opcode::Jump => {}
             _ => {
                 verify_opcode_signature(package, node_index, &node, &result_types)?;
             }
@@ -679,7 +685,14 @@ fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
             }
             current_effect = node_index as u32;
 
-            verify_host_import(package, node_index as u32, &node, opcode)?;
+            verify_host_import(
+                package,
+                node_index as u32,
+                &node,
+                opcode,
+                &result_types,
+                &capability_origins,
+            )?;
         }
 
         verify_capability_inputs(node_index, &node, &result_types, &capability_origins)?;
@@ -772,8 +785,38 @@ fn opcode_accepts_result(opcode: Opcode, actual: PythType, expected: PythType) -
         (
             Opcode::ConstU64,
             PythType::ObjectId | PythType::RevisionId | PythType::TaskId | PythType::ProposalId
-        )
+        ) | (Opcode::BlockParam, _)
     )
+}
+
+fn verify_import_block_param(
+    package: &PythGraphPackage<'_>,
+    node_index: usize,
+    node: &crate::pyth_tig::NodeRecord,
+) -> Result<u16, VerifyError> {
+    // Phase 1 provisional convention: an entry-block `BlockParam` with
+    // `result_type = Capability` and `auxiliary0 = import_slot` materializes a
+    // declared capability import as an SSA value.
+    if u32::from(node.block_index) != package.header().entry_block {
+        return Err(VerifyError::CapabilityOriginInvalid {
+            node: node_index as u32,
+        });
+    }
+
+    let import_slot =
+        u16::try_from(node.auxiliary0).map_err(|_| VerifyError::CapabilityImportMissing {
+            node: node_index as u32,
+            import_slot: u16::MAX,
+        })?;
+    let import = find_import(package, import_slot).ok_or(VerifyError::CapabilityImportMissing {
+        node: node_index as u32,
+        import_slot,
+    })?;
+    if import.expected_type != PythType::Capability.code() {
+        return Err(VerifyError::ImportTypeMismatch { import_slot });
+    }
+
+    Ok(import_slot)
 }
 
 fn verify_host_result(
@@ -815,7 +858,11 @@ fn verify_host_result(
         0 => PythType::ErrorCode,
         1 => PythType::ObjectId,
         2 => PythType::RevisionId,
-        3 => PythType::Capability,
+        3 => {
+            return Err(VerifyError::HostResultInvalid {
+                node: node_index as u32,
+            });
+        }
         4 => PythType::Utf8,
         _ => {
             return Err(VerifyError::HostResultInvalid {
@@ -837,16 +884,31 @@ fn verify_host_import(
     node_index: u32,
     node: &crate::pyth_tig::NodeRecord,
     opcode: Opcode,
+    result_types: &[PythType; MAX_GRAPH_NODES],
+    capability_origins: &[CapabilityOrigin; MAX_GRAPH_NODES],
 ) -> Result<(), VerifyError> {
     let signature = opcode.signature();
     let Some(required_resource_kind) = signature.required_resource_kind else {
         return Ok(());
     };
-    let import_slot =
-        u16::try_from(node.auxiliary0).map_err(|_| VerifyError::CapabilityImportMissing {
+
+    let capability_input = node.input1;
+    let capability_index = usize::try_from(capability_input)
+        .map_err(|_| VerifyError::CapabilityOriginInvalid { node: node_index })?;
+    if result_types[capability_index] != PythType::Capability {
+        return Err(VerifyError::TypeMismatch {
             node: node_index,
-            import_slot: u16::MAX,
-        })?;
+            input: 1,
+            expected: PythType::Capability,
+            actual: result_types[capability_index],
+        });
+    }
+
+    let CapabilityOrigin::Import(import_slot) = capability_origins[capability_index] else {
+        return Err(VerifyError::CapabilityOriginInvalid {
+            node: capability_input,
+        });
+    };
     let import = find_import(package, import_slot).ok_or(VerifyError::CapabilityImportMissing {
         node: node_index,
         import_slot,
@@ -984,8 +1046,47 @@ mod tests {
         assert_eq!(
             verify_bytes(&test_support::object_revise_with_read_only_import()),
             Err(VerifyError::ImportRightsInsufficient {
-                node: 3,
+                node: 4,
                 import_slot: 0,
+            })
+        );
+    }
+
+    #[test]
+    fn verifier_requires_host_ops_to_consume_declared_capability_values() {
+        assert_eq!(
+            verify_bytes(&test_support::system_log_without_capability_input()),
+            Err(VerifyError::TypeMismatch {
+                node: 2,
+                input: 1,
+                expected: PythType::Capability,
+                actual: PythType::Utf8,
+            })
+        );
+
+        assert!(verify_bytes(&test_support::system_log_with_import_capability()).is_ok());
+    }
+
+    #[test]
+    fn verifier_rejects_capability_host_result_from_non_capability_producer() {
+        assert_eq!(
+            verify_bytes(&test_support::system_log_capability_host_result()),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_malformed_terminator_inputs() {
+        assert_eq!(
+            verify_bytes(&test_support::package_with_return_value()),
+            Err(VerifyError::ValueNotAvailable { node: 1, input: 0 })
+        );
+
+        assert_eq!(
+            verify_bytes(&test_support::package_with_jump_argument_count_mismatch()),
+            Err(VerifyError::BlockArgumentCountMismatch {
+                source: 0,
+                target: 1,
             })
         );
     }
