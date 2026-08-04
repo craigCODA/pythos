@@ -101,6 +101,7 @@ PythTIG is an SSA-like typed instruction graph with explicit basic blocks.
 - Effectful operations consume and produce a single `Effect` token. This makes side-effect order explicit and prevents hidden reordering. Typed data returned by a host operation is extracted by immediately following `HostResult` nodes that reference that producer; the effectful producer itself still has one graph result, the next `Effect` token.
 - Loops are control-flow back edges to blocks with parameters. Runtime instruction budgets bound loop execution.
 - Capability values can originate only from validated imports or capability-returning host operations. A graph cannot construct a capability from an integer.
+- In the Phase 1 candidate ABI, a declared import is materialized as a graph value only by an entry-block `BlockParam` with `result_type = Capability` and `auxiliary0 = import_slot`. Host operations consume that capability through normal graph inputs; a hidden per-op import slot does not grant authority. `HostResult` capability values are rejected until an accepted per-op result schema defines a capability-returning host operation.
 - Graphs are immutable after package validation.
 
 ## 6. Phase 1 primitive type candidates
@@ -317,6 +318,15 @@ maximum executed nodes      65536 per invocation
 ```
 
 The checksum is the repository's deterministic 64-bit integrity digest with the header checksum field treated as zero. It is an integrity binding inside the trusted bundle, not a cryptographic signature claim.
+
+Phase 1 import materialization convention: an entry-block `BlockParam` whose
+result type is `Capability` uses `auxiliary0` as the declared capability-import
+slot. The verifier binds that node's value provenance to the import slot after
+checking the import record exists and has expected type `Capability`. Effectful
+host operations consume the capability value as an ordinary SSA input and use
+its import provenance for resource-kind and rights checks. `HostResult` typed
+fields are accepted only when a documented per-op result schema permits the
+requested field; Phase 1 defines no capability-returning `HostResult`.
 
 ## 9. Verification pipeline
 

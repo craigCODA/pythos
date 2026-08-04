@@ -357,7 +357,19 @@ node's prescribed result convention recorded in `auxiliary0`; do not encode
 hidden extra results. If the first verifier corpus proves a signature should
 change before freeze, update ADR 0065 in the same branch.
 
-For v1, every effectful host operation returns `Effect`; typed host data is written into a following `HostResult` structural node identified by `auxiliary0`. Add `HostResult` as opcode `0x0008`, with verifier rules that it immediately follows and references one effectful producer. This avoids multi-result node ambiguity.
+For v1, a declared capability import is materialized as an SSA value only by an
+entry-block `BlockParam` whose `result_type` is `Capability` and whose
+`auxiliary0` is the import slot. Host operations consume that value through
+normal graph inputs and use its import provenance for resource-kind and rights
+checks. They must not acquire authority from a hidden per-op import slot.
+
+For v1, every effectful host operation returns `Effect`; typed host data is
+written into a following `HostResult` structural node identified by
+`auxiliary0`. Add `HostResult` as opcode `0x0008`, with verifier rules that it
+immediately follows and references one effectful producer. This avoids
+multi-result node ambiguity. A `HostResult` field is valid only when a per-op
+host-result schema documents that field for the referenced producer. Phase 1
+defines no capability-returning `HostResult`.
 
 - [ ] **Step 4: Implement semantic passes**
 
@@ -375,7 +387,9 @@ ImportRightsInsufficient { node: u32, import_slot: u16 },
 HostResultInvalid { node: u32 },
 ```
 
-Track capability provenance as `Import(slot)` or `HostResult(node)`. Integer constants and arithmetic results can never be reinterpreted as `Capability`.
+Track capability provenance as `Import(slot)`, and add `HostResult(node)` only
+for a later documented capability-returning host operation. Integer constants
+and arithmetic results can never be reinterpreted as `Capability`.
 
 - [ ] **Step 5: Run GREEN**
 

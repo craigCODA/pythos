@@ -105,6 +105,16 @@ for system logging, object operations, task/proposal operations, graph
 relationship queries, relevance assertions, capability requests, and later
 command input/result operations.
 
+Capability imports become graph values only through the Phase 1 candidate import
+materialization convention: an entry-block `BlockParam` node with
+`result_type = Capability` and `auxiliary0 = import_slot` names a declared
+`CapabilityImportRecord`. The verifier validates that the import slot exists,
+that the import's expected type is `Capability`, and that host operations consume
+that capability as an ordinary SSA input. Host operations must not gain
+authority from a hidden per-op import slot. `HostResult` typed fields remain
+closed unless a per-op result schema is documented and verified; Phase 1 defines
+no capability-returning host-result field.
+
 The shared verifier must reject invalid packages before ring-3 entry. Its
 candidate pass order is:
 
