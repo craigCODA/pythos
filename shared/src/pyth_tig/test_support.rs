@@ -28,6 +28,10 @@ const MINIMAL_LOG_PACKAGE_LEN: usize = HEADER_SIZE
     + 3 * NODE_RECORD_SIZE
     + IMPORT_RECORD_SIZE
     + 5;
+const TERMINATED_PACKAGE_LEN: usize = HEADER_SIZE + BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE;
+const ORPHAN_NODE_PACKAGE_LEN: usize = HEADER_SIZE + BLOCK_RECORD_SIZE + 3 * NODE_RECORD_SIZE;
+const UNREACHABLE_BLOCK_PACKAGE_LEN: usize =
+    HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
 
 struct BlockSpec {
     block_id: u32,
@@ -67,6 +71,11 @@ pub struct EmptyPackage {
     bytes: [u8; HEADER_SIZE],
 }
 
+#[repr(align(8))]
+pub struct FixturePackage<const LEN: usize> {
+    bytes: [u8; LEN],
+}
+
 impl core::ops::Deref for AlignedPackage {
     type Target = [u8];
 
@@ -86,6 +95,20 @@ impl core::ops::Deref for EmptyPackage {
 
     fn deref(&self) -> &Self::Target {
         &self.bytes
+    }
+}
+
+impl<const LEN: usize> core::ops::Deref for FixturePackage<LEN> {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.bytes
+    }
+}
+
+impl<const LEN: usize> core::ops::DerefMut for FixturePackage<LEN> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bytes
     }
 }
 
@@ -314,6 +337,216 @@ pub fn package_with_use_before_definition() -> AlignedPackage {
     package
 }
 
+pub fn structurally_valid_terminated_package() -> FixturePackage<TERMINATED_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; TERMINATED_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 2, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 7,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn package_with_orphan_node() -> FixturePackage<ORPHAN_NODE_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; ORPHAN_NODE_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 3, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 1,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 2,
+        },
+    );
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn package_with_unreachable_block() -> FixturePackage<UNREACHABLE_BLOCK_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; UNREACHABLE_BLOCK_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 2, 4, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 1,
+            first_node: 2,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 3,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 1,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::AddU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 1,
+            inputs: [0, 0, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 3 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 1,
+            inputs: [2, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
 pub fn empty_package() -> EmptyPackage {
     let mut package = EmptyPackage {
         bytes: [0u8; HEADER_SIZE],
@@ -420,6 +653,44 @@ fn write_import_record(bytes: &mut [u8], offset: usize, spec: ImportSpec) {
     write_u16(bytes, offset + 16, spec.expected_type);
     write_u16(bytes, offset + 18, spec.import_slot);
     write_u32(bytes, offset + 20, 0);
+}
+
+fn initialize_graph_header(
+    bytes: &mut [u8],
+    type_count: usize,
+    block_count: usize,
+    node_count: usize,
+    import_count: usize,
+    constant_pool_len: usize,
+    string_table_len: usize,
+) {
+    let types_offset = HEADER_SIZE;
+    let blocks_offset = types_offset + type_count * TYPE_RECORD_SIZE;
+    let nodes_offset = blocks_offset + block_count * BLOCK_RECORD_SIZE;
+    let imports_offset = nodes_offset + node_count * NODE_RECORD_SIZE;
+    let constant_pool_offset = imports_offset + import_count * IMPORT_RECORD_SIZE;
+    let string_table_offset = constant_pool_offset + constant_pool_len;
+    let package_len = string_table_offset + string_table_len;
+    assert_eq!(package_len, bytes.len());
+
+    bytes[0..8].copy_from_slice(&PYTH_TIG_MAGIC);
+    write_u16(bytes, 8, PYTH_TIG_MAJOR);
+    write_u16(bytes, 10, PYTH_TIG_MINOR);
+    write_u64(bytes, 16, 0x5059_5448_5449_4703);
+    write_u64(bytes, 24, 0x5059_5448_5052_4E03);
+    write_u32(bytes, 32, 0);
+    write_u32(bytes, 36, type_count as u32);
+    write_u32(bytes, 40, block_count as u32);
+    write_u32(bytes, 44, node_count as u32);
+    write_u32(bytes, 48, import_count as u32);
+    write_u32(bytes, 52, constant_pool_len as u32);
+    write_u32(bytes, 56, string_table_len as u32);
+    write_u32(bytes, 60, types_offset as u32);
+    write_u32(bytes, 64, blocks_offset as u32);
+    write_u32(bytes, 68, nodes_offset as u32);
+    write_u32(bytes, 72, imports_offset as u32);
+    write_u32(bytes, 76, constant_pool_offset as u32);
+    write_u32(bytes, 80, string_table_offset as u32);
 }
 
 fn refresh_checksum(bytes: &mut [u8]) {

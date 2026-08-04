@@ -61,6 +61,7 @@ pub fn verify_package<'a>(
         &mut node_blocks,
     )?;
     verify_control_flow(package, block_starts, block_ends)?;
+    verify_reachable_blocks(package)?;
     verify_value_availability(package, node_blocks)?;
 
     Ok(VerifiedGraph { package: *package })
@@ -171,6 +172,18 @@ fn verify_block_ranges(
         }
     }
 
+    for (node_index, node_block) in node_blocks.iter().enumerate().take(node_count) {
+        if *node_block == usize::MAX {
+            let node = package
+                .nodes()
+                .get(node_index)
+                .ok_or(VerifyError::InvalidBlockRange { block: 0 })?;
+            return Err(VerifyError::InvalidBlockRange {
+                block: u32::from(node.block_index),
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -225,6 +238,77 @@ fn verify_control_flow(
                     block: block.block_id,
                 });
             }
+        }
+    }
+
+    Ok(())
+}
+
+fn verify_reachable_blocks(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
+    let block_count = package.blocks().len();
+    let entry = usize::try_from(package.header().entry_block).map_err(|_| {
+        VerifyError::InvalidControlTarget {
+            block: package.header().entry_block,
+            target: package.header().entry_block,
+        }
+    })?;
+    if entry >= block_count {
+        return Err(VerifyError::InvalidControlTarget {
+            block: package.header().entry_block,
+            target: package.header().entry_block,
+        });
+    }
+
+    let mut reachable = 0u128;
+    let mut pending = block_bit(entry);
+    while pending != 0 {
+        let block_index = pending.trailing_zeros() as usize;
+        pending &= !block_bit(block_index);
+        if (reachable & block_bit(block_index)) != 0 {
+            continue;
+        }
+        reachable |= block_bit(block_index);
+
+        let block = package
+            .blocks()
+            .get(block_index)
+            .expect("validated reachable block index remains decodable");
+        let terminator_index =
+            usize::try_from(block.terminator_node).map_err(|_| VerifyError::InvalidBlockRange {
+                block: block.block_id,
+            })?;
+        let terminator =
+            package
+                .nodes()
+                .get(terminator_index)
+                .ok_or(VerifyError::InvalidBlockRange {
+                    block: block.block_id,
+                })?;
+        let opcode = Opcode::try_from(terminator.opcode)
+            .expect("known opcode validation already accepted every node opcode");
+
+        match opcode {
+            Opcode::Jump => {
+                pending |= block_bit(terminator.auxiliary0 as usize);
+            }
+            Opcode::Branch => {
+                pending |= block_bit(terminator.auxiliary0 as usize);
+                pending |= block_bit(terminator.auxiliary1 as usize);
+            }
+            Opcode::Return => {}
+            _ => {}
+        }
+    }
+
+    for block_index in 0..block_count {
+        if (reachable & block_bit(block_index)) == 0 {
+            let block = package
+                .blocks()
+                .get(block_index)
+                .expect("validated unreachable block index remains decodable");
+            return Err(VerifyError::InvalidBlockRange {
+                block: block.block_id,
+            });
         }
     }
 
@@ -493,6 +577,33 @@ mod tests {
         assert_eq!(
             verify_bytes(&use_before),
             Err(VerifyError::ValueNotAvailable { node: 1, input: 0 })
+        );
+    }
+
+    #[test]
+    fn verifier_accepts_structurally_valid_terminated_graph() {
+        let package = test_support::structurally_valid_terminated_package();
+
+        assert!(verify_bytes(&package).is_ok());
+    }
+
+    #[test]
+    fn verifier_rejects_orphan_node_outside_block_ranges() {
+        let package = test_support::package_with_orphan_node();
+
+        assert_eq!(
+            verify_bytes(&package),
+            Err(VerifyError::InvalidBlockRange { block: 0 })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_unreachable_block_before_dominance_checks() {
+        let package = test_support::package_with_unreachable_block();
+
+        assert_eq!(
+            verify_bytes(&package),
+            Err(VerifyError::InvalidBlockRange { block: 1 })
         );
     }
 }
