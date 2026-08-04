@@ -4,6 +4,7 @@ members = [
     "boot",
     "core",
     "shared",
+    "tools/pyth-tig-tool",
     "user/shell",
 ]
 
@@ -12,4 +13,3 @@ edition = "2024"
 license = "Apache-2.0 OR MIT"
 publish = false
 rust-version = "1.93.1"
-
