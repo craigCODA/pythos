@@ -1,8 +1,4 @@
-use pythos_shared::pyth_tig::{
-    opcode::{RESOURCE_OBJECT, RIGHTS_READ},
-    types::PythType,
-    verify::verify_bytes,
-};
+use pythos_shared::pyth_tig::{opcode::RESOURCE_SYSTEM_LOG, types::PythType, verify::verify_bytes};
 
 use crate::encode;
 
@@ -133,8 +129,8 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
             encode::system_log(0),
             encode::ret(),
         ],
-        RIGHTS_READ,
-        RESOURCE_OBJECT,
+        0,
+        RESOURCE_SYSTEM_LOG,
         PythType::Capability.code(),
     );
     cases.push((
