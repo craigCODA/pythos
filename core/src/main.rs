@@ -58,6 +58,8 @@ mod process_context;
 mod process_launch;
 mod process_model;
 mod ps2;
+mod pyth_graph_loader;
+mod pyth_runtime_launch;
 mod qemu_exit;
 mod resource_quotas;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]

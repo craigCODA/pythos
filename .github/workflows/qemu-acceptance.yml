@@ -47,10 +47,13 @@ jobs:
       - name: PythTIG format harness
         run: python scripts/test-pyth-tig-format.py
 
-      - name: User shell ELF
+      - name: User and PythTIG ELFs
         run: |
           python scripts/build-user-shell.py
           python scripts/verify-user-elf.py
+          python scripts/build-pyth-runtime.py
+          python scripts/verify-pyth-runtime-elf.py
+          python scripts/build-pyth-graph.py
 
       - name: Clippy
         run: |

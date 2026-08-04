@@ -22,6 +22,17 @@ pub struct ActiveUserProcess {
     copy_map: UserCopyMap,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PythRuntimeCopyMapSpec {
+    pub stack: user_stacks::UserStackRegion,
+    pub bootstrap_user_ptr: u64,
+    pub bootstrap_len: u64,
+    pub package_user_ptr: u64,
+    pub package_len: u64,
+    pub result_user_ptr: u64,
+    pub result_len: u64,
+}
+
 impl ActiveUserProcess {
     pub const fn new(service_id: ServiceId, principal_id: u64, program_digest: u64) -> Self {
         Self {
@@ -59,6 +70,20 @@ impl ActiveUserProcess {
             principal_id,
             program_digest,
             copy_map_from_validated_launch(image, stack, bootstrap_user_ptr)?,
+        ))
+    }
+
+    pub fn from_pyth_runtime_launch(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        copy_map: PythRuntimeCopyMapSpec,
+    ) -> Result<Self, UserCopyError> {
+        Ok(Self::from_copy_map(
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map_from_pyth_runtime_launch(copy_map)?,
         ))
     }
 
@@ -118,6 +143,17 @@ pub fn copy_map_from_validated_launch(
         true,
         false,
     )?;
+    Ok(map)
+}
+
+pub fn copy_map_from_pyth_runtime_launch(
+    spec: PythRuntimeCopyMapSpec,
+) -> Result<UserCopyMap, UserCopyError> {
+    let mut map = UserCopyMap::new();
+    map.add_mapping(spec.stack.stack_start, spec.stack.stack_len, true, true)?;
+    map.add_mapping(spec.bootstrap_user_ptr, spec.bootstrap_len, true, false)?;
+    map.add_mapping(spec.package_user_ptr, spec.package_len, true, false)?;
+    map.add_mapping(spec.result_user_ptr, spec.result_len, true, true)?;
     Ok(map)
 }
 

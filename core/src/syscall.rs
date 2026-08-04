@@ -71,6 +71,8 @@ const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
 const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
 const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00);
 const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const PYTH_GRAPH_SYSTEM_LOG_RESOURCE: ResourceId = ResourceId::new(0x5059_5447_4C4F_4700);
 const SYSCALL_MESSAGE_TYPE: u16 = 0x88;
 const SYSCALL_PAYLOAD: [u8; 4] = [0x53, 0x43, 0x41, 0x4C];
 const BOUNDARY_MESSAGE_TYPE: u16 = 0x89;
@@ -542,6 +544,20 @@ pub fn grant_system_control_capability(
             process.service_id(),
             SYSTEM_CONTROL_RESOURCE,
             RightsMask::new(RightsMask::WRITE),
+        )
+    })?;
+    Ok(pack_syscall_capability(handle))
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+pub fn grant_pyth_graph_system_log_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    let handle = with_syscall_capabilities(|table| {
+        table.grant(
+            process.service_id(),
+            PYTH_GRAPH_SYSTEM_LOG_RESOURCE,
+            RightsMask::new(RightsMask::LOG),
         )
     })?;
     Ok(pack_syscall_capability(handle))

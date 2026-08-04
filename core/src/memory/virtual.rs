@@ -355,6 +355,34 @@ pub struct RetainedUserAddressSpace {
     root_table_phys: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct UserPayloadMapping {
+    pub user_ptr: u64,
+    pub physical: u64,
+    pub byte_len: u64,
+    pub writable: bool,
+}
+
+impl UserPayloadMapping {
+    pub const fn read_only(user_ptr: u64, physical: u64, byte_len: u64) -> Self {
+        Self {
+            user_ptr,
+            physical,
+            byte_len,
+            writable: false,
+        }
+    }
+
+    pub const fn read_write(user_ptr: u64, physical: u64, byte_len: u64) -> Self {
+        Self {
+            user_ptr,
+            physical,
+            byte_len,
+            writable: true,
+        }
+    }
+}
+
 impl RetainedUserAddressSpace {
     pub const fn root_table_phys(&self) -> u64 {
         self.root_table_phys
@@ -415,7 +443,7 @@ impl UserAddressSpace {
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
-        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, None, &[])
+        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, &[], &[])
     }
 
     pub fn build_with_user_elf_and_bootstrap(
@@ -426,12 +454,17 @@ impl UserAddressSpace {
         bootstrap_user_ptr: u64,
         bootstrap_physical: u64,
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        let payload_mappings = [UserPayloadMapping::read_only(
+            bootstrap_user_ptr,
+            bootstrap_physical,
+            PAGE_SIZE,
+        )];
         Self::build_with_user_elf_inner(
             allocator,
             boot_info,
             image,
             elf_bytes,
-            Some((bootstrap_user_ptr, bootstrap_physical)),
+            &payload_mappings,
             &[],
         )
     }
@@ -445,12 +478,35 @@ impl UserAddressSpace {
         bootstrap_physical: u64,
         supervisor_mappings: &[Option<(u64, u64, u64)>],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        let payload_mappings = [UserPayloadMapping::read_only(
+            bootstrap_user_ptr,
+            bootstrap_physical,
+            PAGE_SIZE,
+        )];
         Self::build_with_user_elf_inner(
             allocator,
             boot_info,
             image,
             elf_bytes,
-            Some((bootstrap_user_ptr, bootstrap_physical)),
+            &payload_mappings,
+            supervisor_mappings,
+        )
+    }
+
+    pub fn build_with_user_elf_payloads_and_supervisor_mappings(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+        user_payload_mappings: &[UserPayloadMapping],
+        supervisor_mappings: &[Option<(u64, u64, u64)>],
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        Self::build_with_user_elf_inner(
+            allocator,
+            boot_info,
+            image,
+            elf_bytes,
+            user_payload_mappings,
             supervisor_mappings,
         )
     }
@@ -460,7 +516,7 @@ impl UserAddressSpace {
         boot_info: &PythBootInfo,
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
-        bootstrap_mapping: Option<(u64, u64)>,
+        user_payload_mappings: &[UserPayloadMapping],
         supervisor_mappings: &[Option<(u64, u64, u64)>],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
@@ -484,18 +540,26 @@ impl UserAddressSpace {
             )?;
             segment_index += 1;
         }
-        if let Some((bootstrap_user_ptr, bootstrap_physical)) = bootstrap_mapping {
+        let mut payload_index = 0usize;
+        while payload_index < user_payload_mappings.len() {
+            let mapping = user_payload_mappings[payload_index];
             remember_user_payload_frame(
-                bootstrap_physical,
+                mapping.physical,
                 &mut user_elf_frames,
                 &mut user_elf_frame_count,
             )?;
+            let flags = if mapping.writable {
+                PTE_WRITE | PTE_NO_EXECUTE
+            } else {
+                PTE_NO_EXECUTE
+            };
             tables.map_user_physical_range(
-                bootstrap_user_ptr,
-                bootstrap_physical,
-                PAGE_SIZE,
-                PTE_NO_EXECUTE,
+                mapping.user_ptr,
+                mapping.physical,
+                mapping.byte_len,
+                flags,
             )?;
+            payload_index += 1;
         }
 
         tables.map_allocated_table_frames()?;
@@ -573,8 +637,22 @@ impl UserAddressSpace {
     }
 
     pub fn validate_user_bootstrap_mapping(&self, bootstrap_user_ptr: u64) -> Result<(), VmError> {
-        let entry = user_leaf_entry_from_root(self.root_table_phys, bootstrap_user_ptr)?;
-        if entry & PTE_WRITE != 0 || entry & PTE_NO_EXECUTE == 0 {
+        self.validate_user_payload_mapping(bootstrap_user_ptr, false)
+    }
+
+    pub fn validate_user_payload_mapping(
+        &self,
+        user_ptr: u64,
+        writable: bool,
+    ) -> Result<(), VmError> {
+        let entry = user_leaf_entry_from_root(self.root_table_phys, user_ptr)?;
+        if writable && entry & PTE_WRITE == 0 {
+            return Err(VmError::UserAccessViolation);
+        }
+        if !writable && entry & PTE_WRITE != 0 {
+            return Err(VmError::UserAccessViolation);
+        }
+        if entry & PTE_NO_EXECUTE == 0 {
             return Err(VmError::UserAccessViolation);
         }
         Ok(())

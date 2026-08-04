@@ -23,7 +23,10 @@ hardware-probe-emmc-write = ["hardware-probe"]
 sdhci-emmc-backend = []
 
 [dependencies]
-pythos-shared = { path = "../shared" }
+pythos-shared = { path = "../shared", features = ["pyth-tig"] }
+
+[dev-dependencies]
+pythos-shared = { path = "../shared", features = ["pyth-tig-test-support"] }
 
 [[bin]]
 name = "pythcore"

@@ -261,6 +261,40 @@ pub fn enter_persistent_user_process(
 }
 
 #[cfg(not(test))]
+pub fn enter_pyth_graph_runtime(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    bootstrap_user_ptr: u64,
+    package_digest: u64,
+) -> ! {
+    process_context::bind_current_process(process);
+    tss::set_ring0_stack(kernel_trap_stack_top());
+    serial::write_str("PYTHOS:PYTHTIG:RUNTIME_ENTER package:");
+    serial::write_hex_u64_value(package_digest);
+    serial::write_str("\r\n");
+    PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+    // SAFETY:
+    // 1. Invariant: `entry` is the validated `pyth-runtime.elf` entry point,
+    //    `user_stack_top` is a guarded user stack, and `bootstrap_user_ptr`
+    //    names the read-only Pyth graph bootstrap block.
+    // 2. Established by: PythTIG normal init validates the runtime ELF,
+    //    package, payload mappings, and retained user root before activation.
+    // 3. Lifetime: the graph runtime root and payload pages are retained for
+    //    the one-shot runtime invocation.
+    // 4. Pointer ownership: the CPU consumes user RIP/RSP/RDI by value.
+    // 5. Alignment: entry and stack are canonical user addresses; bootstrap is
+    //    page-aligned and satisfies the block's ABI alignment.
+    // 6. Mapped length: the root maps the runtime ELF, one stack, bootstrap,
+    //    package, result page, kernel trap stack, and syscall path.
+    // 7. Concurrency: Phase 2 launches one graph runtime process on one CPU.
+    // 8. Violation: bad descriptors or mappings fault through containment.
+    unsafe {
+        ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
+    }
+}
+
+#[cfg(not(test))]
 enum ExpectedUserTrap {
     Breakpoint,
     Fault(u64),

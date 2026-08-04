@@ -10,7 +10,8 @@ use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
 use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
 use crate::{
-    architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
+    architecture, kernel_stacks, pyth_runtime_launch, runtime_loader, serial, syscall, tasks,
+    user_elf, user_stacks,
 };
 use pythos_shared::boot_protocol::PythBootInfo;
 use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
@@ -24,6 +25,7 @@ pub struct NormalBootSubstrate {
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
+    pub pyth_runtime_launch: pyth_runtime_launch::PreparedPythRuntimeLaunch,
 }
 
 pub struct PreparedShellLaunch {
@@ -76,6 +78,7 @@ pub enum NormalInitError {
     ShellProgram,
     ShellAddressSpace,
     ShellBootstrap,
+    PythRuntimeLaunch,
 }
 
 #[cfg(not(test))]
@@ -174,6 +177,12 @@ pub fn initialize_normal_substrate(
         bootstrap_kernel_ptr: bootstrap_frame,
         stack_region: user_stacks::regions()[0],
     };
+    let pyth_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch(
+        boot_info,
+        physical_memory,
+        &supervisor_mappings,
+    )
+    .map_err(|_| NormalInitError::PythRuntimeLaunch)?;
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -227,6 +236,7 @@ pub fn initialize_normal_substrate(
         kernel_address_space,
         block_device,
         shell_launch,
+        pyth_runtime_launch,
     })
 }
 

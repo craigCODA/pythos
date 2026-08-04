@@ -98,6 +98,12 @@ pub(crate) fn after_line_written_for_test(line: &str) {
 pub fn write_hex_u64(label: &str, value: u64) {
     write_str(label);
     write_str("0x");
+    write_hex_u64_value(value);
+    write_str("\r\n");
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_hex_u64_value(value: u64) {
     for shift in (0..64).step_by(4).rev() {
         let digit = ((value >> shift) & 0xF) as u8;
         let byte = if digit < 10 {
@@ -107,7 +113,25 @@ pub fn write_hex_u64(label: &str, value: u64) {
         };
         write_byte(byte);
     }
-    write_str("\r\n");
+}
+
+#[cfg_attr(test, allow(dead_code))]
+pub fn write_dec_u64_value(mut value: u64) {
+    let mut bytes = [0u8; 20];
+    let mut index = bytes.len();
+    if value == 0 {
+        write_byte(b'0');
+        return;
+    }
+    while value != 0 {
+        index -= 1;
+        bytes[index] = b'0' + (value % 10) as u8;
+        value /= 10;
+    }
+    while index < bytes.len() {
+        write_byte(bytes[index]);
+        index += 1;
+    }
 }
 
 pub fn write_str(value: &str) {
