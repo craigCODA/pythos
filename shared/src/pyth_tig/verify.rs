@@ -264,7 +264,13 @@ fn verify_control_flow(
         match opcode {
             Opcode::Jump => {
                 validate_target(package, block.block_id, terminator.auxiliary0)?;
-                validate_jump_arity(package, &terminator, block.block_id, terminator.auxiliary0)?;
+                validate_jump_arity(
+                    package,
+                    terminator_index,
+                    &terminator,
+                    block.block_id,
+                    terminator.auxiliary0,
+                )?;
             }
             Opcode::Branch => {
                 validate_target(package, block.block_id, terminator.auxiliary0)?;
@@ -389,6 +395,7 @@ fn validate_target(
 
 fn validate_jump_arity(
     package: &PythGraphPackage<'_>,
+    terminator_index: usize,
     terminator: &crate::pyth_tig::NodeRecord,
     source: u32,
     target: u32,
@@ -410,6 +417,79 @@ fn validate_jump_arity(
     if provided != usize::from(target_block.parameter_count) {
         return Err(VerifyError::BlockArgumentCountMismatch { source, target });
     }
+
+    let inputs = [
+        terminator.input0,
+        terminator.input1,
+        terminator.input2,
+        terminator.input3,
+    ];
+    let first_target_node =
+        usize::try_from(target_block.first_node).map_err(|_| VerifyError::InvalidBlockRange {
+            block: target_block.block_id,
+        })?;
+    for (input_index, input) in inputs
+        .iter()
+        .copied()
+        .enumerate()
+        .take(usize::from(target_block.parameter_count))
+    {
+        if input == NO_VALUE {
+            return Err(VerifyError::ValueNotAvailable {
+                node: terminator_index as u32,
+                input: input_index as u8,
+            });
+        }
+
+        let parameter_index =
+            first_target_node
+                .checked_add(input_index)
+                .ok_or(VerifyError::InvalidBlockRange {
+                    block: target_block.block_id,
+                })?;
+        let parameter =
+            package
+                .nodes()
+                .get(parameter_index)
+                .ok_or(VerifyError::InvalidBlockRange {
+                    block: target_block.block_id,
+                })?;
+        if Opcode::try_from(parameter.opcode)
+            .expect("known opcode validation already accepted every node opcode")
+            != Opcode::BlockParam
+        {
+            return Err(VerifyError::InvalidBlockRange {
+                block: target_block.block_id,
+            });
+        }
+
+        let producer_index =
+            usize::try_from(input).map_err(|_| VerifyError::ValueNotAvailable {
+                node: terminator_index as u32,
+                input: input_index as u8,
+            })?;
+        let producer =
+            package
+                .nodes()
+                .get(producer_index)
+                .ok_or(VerifyError::ValueNotAvailable {
+                    node: terminator_index as u32,
+                    input: input_index as u8,
+                })?;
+        let actual = PythType::try_from(producer.result_type)
+            .expect("known type validation already accepted every node result type");
+        let expected = PythType::try_from(parameter.result_type)
+            .expect("known type validation already accepted every node result type");
+        if actual != expected {
+            return Err(VerifyError::TypeMismatch {
+                node: terminator_index as u32,
+                input: input_index as u8,
+                expected,
+                actual,
+            });
+        }
+    }
+
     Ok(())
 }
 
@@ -1091,6 +1171,19 @@ mod tests {
             Err(VerifyError::BlockArgumentCountMismatch {
                 source: 0,
                 target: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_jump_argument_type_mismatch() {
+        assert_eq!(
+            verify_bytes(&test_support::package_with_jump_argument_type_mismatch()),
+            Err(VerifyError::TypeMismatch {
+                node: 1,
+                input: 0,
+                expected: PythType::U64,
+                actual: PythType::Bool,
             })
         );
     }

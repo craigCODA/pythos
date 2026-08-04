@@ -47,6 +47,8 @@ const LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 6 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 5;
 const JUMP_ARGUMENT_COUNT_MISMATCH_PACKAGE_LEN: usize =
     HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE;
+const JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN: usize =
+    HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
 
 struct BlockSpec {
     block_id: u32,
@@ -865,6 +867,86 @@ pub fn package_with_jump_argument_count_mismatch()
         },
     );
     write_return(&mut package.bytes, nodes_offset + NODE_RECORD_SIZE, 1);
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn package_with_jump_argument_type_mismatch()
+-> FixturePackage<JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 2, 4, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 1,
+            first_node: 2,
+            node_count: 2,
+            parameter_count: 1,
+            flags: 0,
+            terminator_node: 3,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstBool.code(),
+            result_type: PythType::Bool.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 1,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Jump.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 1,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::BlockParam.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 1,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 3 * NODE_RECORD_SIZE, 1);
     refresh_checksum(&mut package.bytes);
     package
 }
