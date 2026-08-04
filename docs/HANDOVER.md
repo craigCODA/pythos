@@ -18,6 +18,38 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## Proposed PythTIG Adoption Branch (2026-08-04)
+
+The former branch `docs/pythtig-phase0-from-physical-evidence` imported the
+proposed Pyth Native Typed Instruction Graph program as docs-only Phase 0
+adoption material on top of `agent/physical-evidence-terminal`. That proposal
+material is now merged into `main` after the ADR 0063 evidence-terminal
+implementation merge. PythTIG is proposed architecture pending owner adoption,
+not the active implementation program.
+
+Imported proposal artifacts live under:
+
+```text
+docs/pyth-tig/
+docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md
+docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
+docs/superpowers/plans/2026-08-03-pyth-tig-phase-*.md
+```
+
+The proposed PythTIG ADRs are renumbered against the live repository:
+
+```text
+ADR 0064: Pyth Native Typed Instruction Graph
+ADR 0065: Pyth Graph Package ABI
+```
+
+This merge keeps the ADR 0063 evidence-terminal implementation baseline intact
+and records the full reconciliation in
+`docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement the
+PythTIG verifier, runtime, compiler, Task Steward, native backend,
+marker-contract scripts, CI behavior, or boot behavior from this proposal until
+the owner explicitly adopts or revises ADR 0064 and ADR 0065.
+
 ## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
 
 ADR 0062 adds an opt-in polling single-block PIO SDHCI/eMMC backend behind the

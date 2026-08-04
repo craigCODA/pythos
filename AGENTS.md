@@ -27,6 +27,30 @@ Do not claim full security where only logical isolation exists.
 
 AI remains outside the trusted core.
 
+## Proposed PythTIG / Convergent Architecture Guardrails
+
+PythTIG is proposed architecture pending owner adoption, recorded in proposed
+ADR 0064 and proposed ADR 0065. It is not the active implementation program
+until the owner explicitly accepts or revises those ADRs.
+
+The docs-only Phase 0 adoption branch may modify documentation and scoped
+`AGENTS.md` files only. Do not implement the PythTIG verifier, runtime,
+compiler, Task Steward, native backend, marker-contract scripts, CI behavior,
+session cutover, or production boot behavior during Phase 0.
+
+If PythTIG is adopted later:
+
+- PythCore may accept typed graph packages and typed syscalls only; it must not
+  parse Pyth source, human command text, semantic prompts, or agent policy.
+- Graph programs must not contain raw pointers, direct hardware instructions,
+  or fabricated capability values.
+- Semantic relevance must never grant authority.
+- Invalid packages must fail before ring-3 entry.
+- The existing Rust object shell and proof runtime remain fallback paths until
+  a future cutover gate passes with fresh evidence.
+- Hardware-specific behavior stays behind PythCore typed service contracts and
+  must not alter PythTIG package bytes or graph semantics.
+
 ADR 0051/0052 additionally authorize creating `user/shell` and `user/probes`
 for the first ring-3 object/capability shell slice only. This does not
 authorize general ring-3 applications, package management, networking, AI, or
