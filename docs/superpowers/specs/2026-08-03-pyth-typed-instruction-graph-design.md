@@ -481,7 +481,7 @@ The proposed marker namespace is `PYTHOS:PYTHTIG:`. Marker details live in
 PythTIG version 1 is complete when:
 
 1. `pythc` compiles the accepted source subset into canonical packages.
-2. The shared verifier rejects malformed, ill-typed, capability-forged, effect-invalid, and over-budget graphs.
+2. The shared decoder/verifier pipeline rejects malformed, ill-typed, capability-forged, effect-invalid, and over-limit graph packages.
 3. PythCore launches the generic runtime in ring 3 with read-only package and capability imports.
 4. Graph programs perform typed object operations without bypassing PythCore.
 5. Task Steward emits explainable proposals but cannot establish task authority.

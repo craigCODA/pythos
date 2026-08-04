@@ -139,18 +139,14 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
         "ImportRightsInsufficient { node: 3, import_slot: 0 }",
     ));
 
-    let mut node_budget_exceeded = valid_fixture.to_vec();
+    let mut node_count_limit = valid_fixture.to_vec();
     encode::write_u32(
-        &mut node_budget_exceeded,
+        &mut node_count_limit,
         encode::HEADER_NODE_COUNT_OFFSET,
         1025,
     );
-    encode::refresh_checksum(&mut node_budget_exceeded);
-    cases.push((
-        "node budget exceeded",
-        node_budget_exceeded,
-        "Decode(CountLimit)",
-    ));
+    encode::refresh_checksum(&mut node_count_limit);
+    cases.push(("node count limit", node_count_limit, "Decode(CountLimit)"));
 
     for (name, bytes, expected) in cases {
         let error = match verify_bytes(&bytes) {

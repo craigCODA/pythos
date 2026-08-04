@@ -7,7 +7,7 @@ negative corpus pass and the owner freezes the format.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Enforce red-green-refactor for every code change.
 
-**Goal:** Implement the canonical PythTIG package ABI, no-alloc decoder, deterministic encoder tool, and shared verifier that rejects malformed, ill-typed, effect-invalid, capability-forged, and over-budget graphs.
+**Goal:** Implement the canonical PythTIG package ABI, no-alloc decoder, deterministic encoder tool, and shared verifier pipeline that rejects malformed, ill-typed, effect-invalid, capability-forged, and over-limit graph packages.
 
 **Architecture:** All semantic constants and validation live in `pythos-shared` so PythCore and host tools use the same implementation. A small host tool builds canonical fixtures and mutation cases. No runtime launch exists in this phase.
 
@@ -267,6 +267,10 @@ pub enum VerifyError {
 `VerifiedGraph` stores only a `PythGraphPackage` and has no public constructor.
 
 Implement block ranges, exactly-one-last-terminator, control targets, block-argument arity, and a bounded dominance analysis using fixed arrays sized by ABI maxima.
+The `ResourceBudgetExceeded` verifier error is a defense-in-depth result for
+direct `verify_package` contexts. The public CLI and `verify_bytes` path must
+reject over-limit package record counts during decode as `Decode(CountLimit)`
+before a `VerifiedGraph` can exist.
 
 - [ ] **Step 4: Run GREEN**
 
@@ -495,16 +499,16 @@ The encoder calculates aligned offsets, zeroes reserved fields, computes checksu
 
 ```text
 bad magic                   Decode(BadMagic)
-unknown major               Decode(UnsupportedVersion)
+unknown major               Decode(UnsupportedMajor)
 section overlap             Decode(SectionOverlap)
 checksum mismatch           Decode(ChecksumMismatch)
-missing terminator          MissingTerminator
-bad control target          InvalidControlTarget
-type mismatch               TypeMismatch
-effect fork                 EffectFork
-capability constant         CapabilityOriginInvalid
-insufficient rights         ImportRightsInsufficient
-node budget exceeded        ResourceBudgetExceeded
+missing terminator          MissingTerminator { block: 0 }
+bad control target          InvalidControlTarget { block: 0, target: 9 }
+type mismatch               TypeMismatch { node: 3, input: 0, expected: U64, actual: Bool }
+effect fork                 EffectFork { producer: 0 }
+capability constant         CapabilityOriginInvalid { node: 1 }
+insufficient rights         ImportRightsInsufficient { node: 3, import_slot: 0 }
+node count limit            Decode(CountLimit)
 ```
 
 Print `PYTH_TIG_MUTATION_SUITE_OK` only after every mutation produces its expected error.
