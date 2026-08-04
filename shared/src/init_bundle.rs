@@ -8,6 +8,7 @@ pub const TYPE_USER_ELF: u32 = 0x0000_0002;
 /// ADR 0051/0052: a named user-program manifest record (see
 /// `crate::user_program_manifest`), distinct from the ordinal `TYPE_USER_ELF`.
 pub const TYPE_NAMED_USER_ELF: u32 = 0x0000_0003;
+pub const TYPE_PYTH_GRAPH_PACKAGE: u32 = 0x0000_0004;
 const HEADER_RESERVED_OFFSET: usize = 26;
 const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
@@ -20,6 +21,7 @@ pub enum RecordType {
     RuntimePayload,
     UserElf,
     NamedUserElf,
+    PythGraphPackage,
 }
 
 impl RecordType {
@@ -28,6 +30,7 @@ impl RecordType {
             TYPE_RUNTIME_PAYLOAD => Some(Self::RuntimePayload),
             TYPE_USER_ELF => Some(Self::UserElf),
             TYPE_NAMED_USER_ELF => Some(Self::NamedUserElf),
+            TYPE_PYTH_GRAPH_PACKAGE => Some(Self::PythGraphPackage),
             _ => None,
         }
     }
@@ -295,6 +298,28 @@ mod tests {
             b"named-manifest"
         );
         // Existing ordinal lookups are unaffected by the new record type.
+        assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
+    }
+
+    #[test]
+    fn pyth_graph_package_record_is_addressable_without_disturbing_existing_types() {
+        let bundle = build_bundle(&[
+            (TYPE_RUNTIME_PAYLOAD, b"runtime"),
+            (TYPE_USER_ELF, b"elf"),
+            (TYPE_NAMED_USER_ELF, b"named-manifest"),
+            (TYPE_PYTH_GRAPH_PACKAGE, b"graph-manifest"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(
+            parsed.record(RecordType::PythGraphPackage).unwrap().bytes(),
+            b"graph-manifest"
+        );
+        assert_eq!(
+            parsed.record(RecordType::NamedUserElf).unwrap().bytes(),
+            b"named-manifest"
+        );
         assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
     }
 

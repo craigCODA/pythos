@@ -5,6 +5,8 @@ pub mod evidence_log;
 pub mod init_bundle;
 pub mod init_pak;
 pub mod object_shell_abi;
+pub mod pyth_graph_manifest;
+pub mod pyth_runtime_abi;
 #[cfg(any(test, feature = "pyth-tig"))]
 pub mod pyth_tig;
 pub mod qemu_exit;
