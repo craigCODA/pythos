@@ -44,20 +44,23 @@
             <h2>Current Proof</h2>
             <p class="lede">
               PythOS reached its Phase 10 storage path on a disposable O2 Micro
-              <code>1217:8620</code> SDHCI/eMMC laptop target, then rendered a
-              five-page evidence terminal showing the ordered acceptance-marker
-              stream with zero dropped markers. The result is target-specific
-              physical evidence, not a generic storage-support claim.
+              <code>1217:8620</code> SDHCI/eMMC laptop target. The site carries
+              a five-page evidence-terminal gallery showing the ordered
+              acceptance-marker stream with zero dropped markers, but
+              <code>main</code> cannot currently regenerate or verify that
+              terminal artifact because the implementation remains unmerged.
+              The result is target-specific physical evidence, not a generic
+              storage-support claim.
             </p>
             <div class="fact-list">
               <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
               <p class="fact"><strong>Storage path</strong> QEMU-backed virtio-blk, polling AHCI, and polling SDHCI/eMMC acceptance coverage.</p>
-              <p class="fact"><strong>Evidence terminal</strong> <span class="mark">count 00000139</span>, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>.</p>
+              <p class="fact"><strong>Evidence gallery</strong> <span class="mark">count 00000139</span>, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>; generator absent from <code>main</code>.</p>
             </div>
           </div>
           <figure>
             <img class="evidence-img" src="evidence/2026-08-02-evidence-terminal-page-5.jpg" alt="PythOS physical evidence terminal final page showing Phase 10 and milestone completion">
-            <figcaption class="caption">Final evidence-terminal page from the physical O2 Micro 1217:8620 target.</figcaption>
+            <figcaption class="caption">Final evidence-terminal gallery page from the physical O2 Micro 1217:8620 target.</figcaption>
           </figure>
         </div>
       </section>
@@ -69,10 +72,11 @@
             <h2>Five Pages, Zero Drops</h2>
           </div>
           <p class="lede">
-            PythOS emits a bounded evidence terminal during acceptance runs. The
-            captured Phase 10 run produced 139 ordered markers across five
-            terminal pages, with zero dropped markers and a recorded CRC. The
-            marker stream covers loader handoff, kernel initialization,
+            Main carries bounded evidence-terminal gallery frames from the
+            captured Phase 10 path: 139 ordered markers across five terminal
+            pages, with zero dropped markers and a recorded CRC. The generator,
+            feature flag, and QEMU harness are not present on <code>main</code>.
+            The marker stream covers loader handoff, kernel initialization,
             capability enforcement, scheduler behavior, IPC, object persistence,
             crash recovery, storage authorization, adversarial storage checks,
             SDHCI/eMMC acceptance, and framebuffer readiness.

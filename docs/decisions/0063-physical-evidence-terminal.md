@@ -3,6 +3,19 @@
 Date: 2026-08-02
 Status: Accepted
 
+## Implementation Status on Main
+
+This ADR is accepted as design, and `main` carries the five 2026-08-02
+evidence-terminal gallery frames. As of 2026-08-04, `main` does not contain the
+`evidence_log.rs` or `evidence_terminal.rs` implementation files, an
+`evidence-terminal` Cargo feature, or `scripts/test-evidence-terminal.py`.
+
+The implementation remains on unmerged branch
+`agent/physical-evidence-terminal`. That branch reports QEMU acceptance at
+implementation commit `5e73e73` and treats physical validation as the next
+step. The committed gallery frames are therefore retained as physical artifact
+evidence, not as a reproducible acceptance path from `main`.
+
 ## Context
 
 ADR 0062 proved the polling SDHCI/eMMC backend through QEMU acceptance and

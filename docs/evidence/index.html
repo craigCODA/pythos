@@ -35,14 +35,15 @@
       <section class="band" id="evidence-terminal">
         <div class="content">
           <div class="section-head">
-            <p class="kicker">Physical evidence terminal</p>
+            <p class="kicker">Physical evidence gallery</p>
             <h2>139 Ordered Markers Across Five Pages</h2>
           </div>
           <p class="lede">
-            PythOS emits a bounded evidence terminal during acceptance runs. The
-            captured Phase 10 physical run produced 139 ordered markers across
-            five terminal pages, with zero dropped markers and a recorded CRC.
-            The marker stream covers loader handoff, kernel initialization,
+            Main carries bounded evidence-terminal gallery frames from the
+            captured Phase 10 physical path: 139 ordered markers across five
+            terminal pages, with zero dropped markers and a recorded CRC. The
+            generator, feature flag, and QEMU harness are not present on
+            <code>main</code>. The marker stream covers loader handoff, kernel initialization,
             capability enforcement, scheduler behavior, IPC, object persistence,
             crash recovery, storage authorization, adversarial storage checks,
             SDHCI/eMMC acceptance, and framebuffer readiness.
@@ -54,10 +55,11 @@
             <span><strong>crc</strong> 176F4C6E</span>
           </div>
           <p class="boundary-note">
-            These markers are acceptance evidence for the captured milestone
-            path. They are not a claim that every named subsystem is
-            production-complete, portable, interrupt-driven, or broadly supported
-            across hardware.
+            These markers are artifact evidence for the captured milestone path.
+            They are not a reproducible acceptance path from <code>main</code>,
+            and they are not a claim that every named subsystem is
+            production-complete, portable, interrupt-driven, or broadly
+            supported across hardware.
           </p>
           <div class="gallery">
             <figure class="tile">

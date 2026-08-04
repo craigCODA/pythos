@@ -1,12 +1,14 @@
 # PythOS Handover
 
-Current boundary: Phase 10 SDHCI/eMMC physical evidence is recorded for the
-disposable O2 Micro `1217:8620` target. The opt-in `sdhci-emmc-backend` path is
-verified in QEMU through the existing storage and object-shell flows. Two
-2026-08-01 physical boot artifacts reached the final Phase 10 backend panel,
-and the 2026-08-02 follow-up evidence-terminal run rendered 139 ordered
-markers across five framebuffer pages with zero dropped markers and CRC
-`176F4C6E`.
+Current boundary: Phase 10 SDHCI/eMMC physical backend-panel evidence is
+recorded for the disposable O2 Micro `1217:8620` target. The opt-in
+`sdhci-emmc-backend` path is verified in QEMU through the existing storage and
+object-shell flows. Two 2026-08-01 physical boot artifacts reached the final
+Phase 10 backend panel. Main also carries five 2026-08-02 evidence-terminal
+gallery images showing 139 ordered markers, zero dropped markers, and CRC
+`176F4C6E`, but `main` cannot currently regenerate or verify that terminal
+artifact because the implementing code and harness remain only on
+`agent/physical-evidence-terminal`.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -108,8 +110,9 @@ it to other SDHCI/eMMC controllers or to interactive physical shell use.
 
 ## Physical Evidence Terminal (2026-08-02)
 
-ADR 0063 adds an opt-in framebuffer evidence terminal for serial-less physical
-capture. The current physical evidence-terminal artifact shows:
+ADR 0063 specifies an opt-in framebuffer evidence terminal for serial-less
+physical capture. The implementation is not present on `main`. The committed
+gallery artifact shows:
 
 ```text
 PythOS Evidence Terminal
@@ -130,9 +133,17 @@ Committed screen frames:
 - `docs/evidence/2026-08-02-evidence-terminal-page-4.jpg`
 - `docs/evidence/2026-08-02-evidence-terminal-page-5.jpg`
 
-This is acceptance evidence for the captured milestone path, not a claim that
-every named subsystem marker is production-complete, portable, interrupt-driven,
-or broadly supported across hardware. COM1 remains the automated QEMU oracle.
+`main` cannot regenerate or automatically verify these five frames: the
+evidence-log sources, `evidence-terminal` Cargo feature, and
+`scripts/test-evidence-terminal.py` harness are absent from `main` and remain
+on branch `agent/physical-evidence-terminal`. That branch reports QEMU
+acceptance at implementation commit `5e73e73` and treats physical validation as
+the next step. The gallery is retained as physical artifact evidence, not as a
+reproducible `main` acceptance path.
+
+This is evidence for the captured milestone path, not a claim that every named
+subsystem marker is production-complete, portable, interrupt-driven, or broadly
+supported across hardware. COM1 remains the automated QEMU oracle.
 
 ## Branch `object-shell` (2026-07-27, unmerged)
 

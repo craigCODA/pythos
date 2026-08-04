@@ -97,8 +97,8 @@ disposable O2 Micro `1217:8620` target.
 
 ## Evidence Terminal Follow-up
 
-On 2026-08-02, the follow-up physical evidence-terminal run rendered the full
-acceptance-marker stream across five framebuffer pages:
+On 2026-08-02, `main` gained five evidence-terminal gallery frames showing the
+captured acceptance-marker stream across five framebuffer pages:
 
 ```text
 PythOS Evidence Terminal
@@ -115,15 +115,23 @@ The five committed screen frames are:
 - [Evidence terminal page 4/5](../evidence/2026-08-02-evidence-terminal-page-4.jpg)
 - [Evidence terminal page 5/5](../evidence/2026-08-02-evidence-terminal-page-5.jpg)
 
-The terminal evidence shows the captured path through loader handoff, kernel
+The terminal frames show the captured path through loader handoff, kernel
 initialization, capability gates, scheduler and IPC checks, object persistence,
 crash recovery, adversarial storage checks, SDHCI/eMMC acceptance, framebuffer
 readiness, and `PYTHOS:CORE:MILESTONE_1_COMPLETE`.
 
-These markers are acceptance evidence for the captured milestone path. They are
-not a claim that every named subsystem is production-complete, portable,
-interrupt-driven, or broadly supported across hardware. ADR 0063 records the
-evidence-terminal design and its scope boundary.
+`main` cannot currently regenerate or automatically verify these frames. It
+does not contain the evidence-log sources, the `evidence-terminal` Cargo
+feature, or `scripts/test-evidence-terminal.py`; that implementation remains
+on unmerged branch `agent/physical-evidence-terminal`. The branch reported QEMU
+acceptance at implementation commit `5e73e73` while treating physical
+validation as the next step. These frames are retained as physical artifact
+evidence for the captured milestone path, not as reproducible acceptance from
+`main`.
+
+These markers are not a claim that every named subsystem is production-complete,
+portable, interrupt-driven, or broadly supported across hardware. ADR 0063
+records the evidence-terminal design and its scope boundary.
 
 ## QEMU Acceptance Backing This Image
 

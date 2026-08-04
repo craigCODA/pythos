@@ -66,13 +66,17 @@ capacity 000000000747C000</code></pre>
             <h2>Evidence Terminal</h2>
           </div>
           <p class="lede">
-            The follow-up physical evidence-terminal run rendered the full
-            acceptance-marker stream across five framebuffer pages:
+            Main carries five evidence-terminal gallery frames showing the
+            captured acceptance-marker stream across five framebuffer pages:
             <code>count 00000139</code>, <code>drop 00000000</code>, and
-            <code>crc 176F4C6E</code>. It shows the captured path through loader
-            handoff, kernel initialization, capability gates, scheduler and IPC
-            checks, object persistence, crash recovery, adversarial storage
-            checks, SDHCI/eMMC acceptance, framebuffer readiness, and
+            <code>crc 176F4C6E</code>. The generator, feature flag, and QEMU
+            harness are not present on <code>main</code>; the implementation
+            remains on unmerged branch
+            <code>agent/physical-evidence-terminal</code>. The frames show the
+            captured path through loader handoff, kernel initialization,
+            capability gates, scheduler and IPC checks, object persistence,
+            crash recovery, adversarial storage checks, SDHCI/eMMC acceptance,
+            framebuffer readiness, and
             <code>PYTHOS:CORE:MILESTONE_1_COMPLETE</code>.
           </p>
           <p class="boundary-note">
