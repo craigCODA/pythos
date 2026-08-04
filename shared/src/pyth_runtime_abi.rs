@@ -4,6 +4,10 @@ pub const PYTH_GRAPH_BOOTSTRAP_MAGIC: u64 = 0x3154_4F4F_4247_5950;
 pub const PYTH_GRAPH_RUNTIME_ABI_MAJOR: u16 = 1;
 pub const PYTH_GRAPH_RUNTIME_ABI_MINOR: u16 = 0;
 pub const MAX_PYTH_GRAPH_IMPORTS: usize = 32;
+pub const GRAPH_EXIT_OK: u16 = 0;
+pub const GRAPH_EXIT_RUNTIME_ERROR: u16 = 1;
+pub const GRAPH_EXIT_BUDGET_EXHAUSTED: u16 = 2;
+pub const GRAPH_RESULT_UNIT: u16 = 0x0000;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -53,6 +57,10 @@ mod tests {
         assert_eq!(PYTH_GRAPH_RUNTIME_ABI_MAJOR, 1);
         assert_eq!(PYTH_GRAPH_RUNTIME_ABI_MINOR, 0);
         assert_eq!(MAX_PYTH_GRAPH_IMPORTS, 32);
+        assert_eq!(GRAPH_EXIT_OK, 0);
+        assert_eq!(GRAPH_EXIT_RUNTIME_ERROR, 1);
+        assert_eq!(GRAPH_EXIT_BUDGET_EXHAUSTED, 2);
+        assert_eq!(GRAPH_RESULT_UNIT, 0);
         assert_eq!(core::mem::size_of::<PythGraphCapabilityBinding>(), 24);
         assert_eq!(core::mem::size_of::<PythGraphBootstrapBlock>(), 816);
         assert_eq!(core::mem::size_of::<GraphExitRecord>(), 32);

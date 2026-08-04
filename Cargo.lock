@@ -28,6 +28,13 @@ name = "pythos-shared"
 version = "0.1.0"
 
 [[package]]
+name = "pythos-user-pyth-runtime"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
+
+[[package]]
 name = "pythos-user-shell"
 version = "0.1.0"
 dependencies = [

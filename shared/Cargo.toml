@@ -12,3 +12,4 @@ path = "src/lib.rs"
 [features]
 default = []
 pyth-tig = []
+pyth-tig-test-support = ["pyth-tig"]
