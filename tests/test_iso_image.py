@@ -35,12 +35,18 @@ def build_init_pak_with_phase2_programs(module) -> bytes:
         shell = temp_path / "pythos-user-shell"
         runtime = temp_path / "pythos-user-pyth-runtime"
         graph = temp_path / "hello.tig"
+        budget_graph = temp_path / "budget.tig"
+        invalid_graph = temp_path / "invalid.tig"
         shell.write_bytes(b"\x7fELFshell")
         runtime.write_bytes(b"\x7fELFpyth-runtime")
         graph.write_bytes(b"PYTHTIG1hello")
+        budget_graph.write_bytes(b"PYTHTIG1budget")
+        invalid_graph.write_bytes(b"PYTHTIG1invalid")
         module.SHELL_ELF = shell
         module.PYTH_RUNTIME_ELF = runtime
         module.PYTH_GRAPH_PACKAGE = graph
+        module.PYTH_BUDGET_GRAPH_PACKAGE = budget_graph
+        module.PYTH_INVALID_GRAPH_PACKAGE = invalid_graph
         return module.build_default_init_pak()
 
 
@@ -49,7 +55,7 @@ class IsoImageTest(unittest.TestCase):
         for module in (load_build_image_module(), load_build_iso_module()):
             init_pak = build_init_pak_with_phase2_programs(module)
             payload = init_pak[module.INIT_PAK_HEADER_LEN :]
-            record_count = 8
+            record_count = 10
             table_start = module.INIT_BUNDLE_HEADER_LEN
 
             self.assertEqual(payload[:16], b"PYTHOS_BUNDLE_V0")
@@ -73,6 +79,8 @@ class IsoImageTest(unittest.TestCase):
                     module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
                     module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
                     module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
@@ -85,6 +93,8 @@ class IsoImageTest(unittest.TestCase):
                     module.RUNTIME_PAYLOAD_MAGIC,
                     module.NAMED_USER_PROGRAM_MAGIC,
                     module.NAMED_USER_PROGRAM_MAGIC,
+                    module.NAMED_PYTH_GRAPH_MAGIC,
+                    module.NAMED_PYTH_GRAPH_MAGIC,
                     module.NAMED_PYTH_GRAPH_MAGIC,
                     b"\x7fELF",
                     b"\x7fELF",
@@ -113,6 +123,21 @@ class IsoImageTest(unittest.TestCase):
                 payload[graph_name_start : graph_name_start + len(b"hello.tig")],
                 b"hello.tig",
             )
+            for graph_index, expected_name in (
+                (4, b"budget.tig"),
+                (5, b"invalid.tig"),
+            ):
+                graph_entry = table_start + graph_index * module.INIT_BUNDLE_RECORD_LEN
+                graph_start = int.from_bytes(
+                    payload[graph_entry + 8 : graph_entry + 16], "little"
+                )
+                graph_name_start = graph_start + module.NAMED_PYTH_GRAPH_HEADER_LEN
+                self.assertEqual(
+                    payload[
+                        graph_name_start : graph_name_start + len(expected_name)
+                    ],
+                    expected_name,
+                )
 
     def test_iso_contains_el_torito_uefi_boot_catalog(self) -> None:
         build_iso = load_build_iso_module()
@@ -124,15 +149,21 @@ class IsoImageTest(unittest.TestCase):
             shell = temp_path / "pythos-user-shell"
             runtime = temp_path / "pythos-user-pyth-runtime"
             graph = temp_path / "hello.tig"
+            budget_graph = temp_path / "budget.tig"
+            invalid_graph = temp_path / "invalid.tig"
             output = temp_path / "pythos.iso"
             loader.write_bytes(b"MZ" + bytes(4094))
             kernel.write_bytes(b"\x7fELF" + bytes(4092))
             shell.write_bytes(b"\x7fELFshell")
             runtime.write_bytes(b"\x7fELFpyth-runtime")
             graph.write_bytes(b"PYTHTIG1hello")
+            budget_graph.write_bytes(b"PYTHTIG1budget")
+            invalid_graph.write_bytes(b"PYTHTIG1invalid")
             build_iso.SHELL_ELF = shell
             build_iso.PYTH_RUNTIME_ELF = runtime
             build_iso.PYTH_GRAPH_PACKAGE = graph
+            build_iso.PYTH_BUDGET_GRAPH_PACKAGE = budget_graph
+            build_iso.PYTH_INVALID_GRAPH_PACKAGE = invalid_graph
 
             build_iso.build_iso(output, loader, kernel)
             iso = output.read_bytes()

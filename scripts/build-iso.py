@@ -14,6 +14,8 @@ PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
 SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
 PYTH_RUNTIME_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-pyth-runtime"
 PYTH_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "hello.tig"
+PYTH_BUDGET_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "budget.tig"
+PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
 DEFAULT_OUTPUT = ROOT / "target" / "pythos.iso"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -35,6 +37,8 @@ MAX_NAMED_PYTH_GRAPH_NAME_LEN = 32
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
+BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
+INVALID_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_00FF
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -203,6 +207,10 @@ def build_default_init_pak() -> bytes:
         raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
     if not PYTH_GRAPH_PACKAGE.exists():
         raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
+    if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
+        raise SystemExit(f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}")
+    if not PYTH_INVALID_GRAPH_PACKAGE.exists():
+        raise SystemExit(f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}")
     return build_init_pak(
         build_init_bundle(
             [
@@ -227,6 +235,22 @@ def build_default_init_pak() -> bytes:
                         b"hello.tig",
                         HELLO_GRAPH_PRINCIPAL_ID,
                         PYTH_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"budget.tig",
+                        BUDGET_GRAPH_PRINCIPAL_ID,
+                        PYTH_BUDGET_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"invalid.tig",
+                        INVALID_GRAPH_PRINCIPAL_ID,
+                        PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
                 (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),

@@ -38,33 +38,29 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 qemu_exit::panic();
             }
         };
-    if pyth_graph_mode == pyth_runtime_launch::PythGraphBootMode::LaunchHello {
-        pyth_runtime_launch::emit_package_valid_marker(&substrate.pyth_runtime_launch);
-        pyth_runtime_launch::emit_bootstrap_bound_marker(&substrate.pyth_runtime_launch);
-        // SAFETY:
-        // 1. Invariant: the retained graph runtime address space maps the
-        //    validated runtime ELF, guarded stack, read-only bootstrap/package
-        //    pages, writable result page, and kernel syscall/fault path.
-        // 2. Established by: `initialize_normal_substrate` builds and
-        //    validates this root before activating the normal kernel root.
-        // 3. Lifetime: the root and payload frames are retained for this
-        //    one-shot graph runtime invocation.
-        // 4. Pointer ownership: the CPU borrows the graph page-table root.
-        // 5. Alignment: the root was allocated as a 4 KiB page-table frame.
-        // 6. Mapped length: one complete hierarchy covers runtime ELF, stack,
-        //    bootstrap, package, result, trap stack, and syscall path.
-        // 7. Concurrency: Phase 2 graph runtime launches one process on one CPU.
-        // 8. Violation: incomplete mappings fault through user containment.
-        unsafe {
-            substrate.pyth_runtime_launch.address_space.activate();
+    match pyth_graph_mode {
+        pyth_runtime_launch::PythGraphBootMode::LaunchHello => {
+            let Some(launch) = substrate.pyth_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            launch_pyth_graph_runtime(launch);
         }
-        user_mode::enter_pyth_graph_runtime(
-            substrate.pyth_runtime_launch.process,
-            substrate.pyth_runtime_launch.entry,
-            substrate.pyth_runtime_launch.user_stack_top(),
-            substrate.pyth_runtime_launch.bootstrap_user_ptr,
-            substrate.pyth_runtime_launch.package_digest,
-        );
+        pyth_runtime_launch::PythGraphBootMode::LaunchBudget => {
+            let Some(launch) = substrate.pyth_budget_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            launch_pyth_graph_runtime(launch);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchInvalid => {
+            let Some(code) = substrate.pyth_invalid_graph_rejection else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            pyth_runtime_launch::emit_package_rejected_marker(code);
+        }
+        pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
         serial::write_line("PYTHOS:PANIC");
@@ -136,6 +132,36 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         substrate.shell_launch.entry,
         substrate.shell_launch.user_stack_top(),
         substrate.shell_launch.bootstrap_user_ptr,
+    );
+}
+
+#[cfg(not(test))]
+fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLaunch) -> ! {
+    pyth_runtime_launch::emit_package_valid_marker(launch);
+    pyth_runtime_launch::emit_bootstrap_bound_marker(launch);
+    // SAFETY:
+    // 1. Invariant: the retained graph runtime address space maps the
+    //    validated runtime ELF, guarded stack, read-only bootstrap/package
+    //    pages, writable result page, and kernel syscall/fault path.
+    // 2. Established by: `initialize_normal_substrate` builds and validates
+    //    this root before activating the normal kernel root.
+    // 3. Lifetime: the root and payload frames are retained for this one-shot
+    //    graph runtime invocation.
+    // 4. Pointer ownership: the CPU borrows the graph page-table root.
+    // 5. Alignment: the root was allocated as a 4 KiB page-table frame.
+    // 6. Mapped length: one complete hierarchy covers runtime ELF, stack,
+    //    bootstrap, package, result, trap stack, and syscall path.
+    // 7. Concurrency: Phase 2 graph runtime launches one process on one CPU.
+    // 8. Violation: incomplete mappings fault through user containment.
+    unsafe {
+        launch.address_space.activate();
+    }
+    user_mode::enter_pyth_graph_runtime(
+        launch.process,
+        launch.entry,
+        launch.user_stack_top(),
+        launch.bootstrap_user_ptr,
+        launch.package_digest,
     );
 }
 

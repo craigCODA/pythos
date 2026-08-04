@@ -41,7 +41,7 @@ const IDENTITY_MAP_END: u64 = 512 * ONE_GIB;
 /// 4 GiB, mapped with 2 MiB pages (bounded by the table pool).
 const IDENTITY_MAP_FALLBACK_END: u64 = 4 * ONE_GIB;
 const TABLE_POOL_PAGES: usize = 64;
-const STACK_PAGES: usize = 16;
+const STACK_PAGES: usize = 32;
 const ENTRY_COUNT: usize = 512;
 
 const PTE_PRESENT: u64 = 1 << 0;
@@ -378,4 +378,19 @@ fn allocate_zeroed_pages(system_table: *mut EfiSystemTable, pages: usize) -> Res
         ptr::write_bytes(physical as *mut u8, 0, total_len);
     }
     Ok(physical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bootstrap_stack_keeps_guard_and_has_phase_2_headroom() {
+        assert_eq!(STACK_PAGES, 32);
+        let virt_bottom = STACK_REGION_VIRT_BASE + PAGE_SIZE;
+        let virt_top = virt_bottom + STACK_PAGES as u64 * PAGE_SIZE;
+
+        assert_eq!(virt_bottom - PAGE_SIZE, STACK_REGION_VIRT_BASE);
+        assert_eq!(virt_top - virt_bottom, 128 * 1024);
+    }
 }

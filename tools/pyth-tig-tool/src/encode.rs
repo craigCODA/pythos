@@ -61,6 +61,31 @@ pub(crate) fn minimal_log_package() -> Vec<u8> {
     )
 }
 
+pub(crate) fn budget_loop_package() -> Vec<u8> {
+    build_log_package(
+        &[effect_start(), jump(0)],
+        RIGHTS_READ,
+        RESOURCE_SYSTEM_LOG,
+        PythType::Capability.code(),
+    )
+}
+
+pub(crate) fn invalid_effect_fork_package() -> Vec<u8> {
+    build_log_package(
+        &[
+            effect_start(),
+            import_capability(),
+            const_utf8(5),
+            system_log(0),
+            system_log(0),
+            ret(),
+        ],
+        RIGHTS_READ,
+        RESOURCE_SYSTEM_LOG,
+        PythType::Capability.code(),
+    )
+}
+
 pub(crate) fn build_log_package(
     nodes: &[NodeSpec],
     import_rights: u64,

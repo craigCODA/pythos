@@ -14,7 +14,7 @@ const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
 const RECORD_RESERVED_OFFSET: usize = 28;
 const RECORD_RESERVED_LEN: usize = 4;
-const MAX_RECORDS: usize = 8;
+const MAX_RECORDS: usize = 16;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RecordType {
@@ -342,6 +342,37 @@ mod tests {
             b"second"
         );
         assert_eq!(parsed.record_at(RecordType::UserElf, 2), None);
+    }
+
+    #[test]
+    fn phase_2_runtime_bundle_record_count_is_admitted() {
+        let bundle = build_bundle(&[
+            (TYPE_RUNTIME_PAYLOAD, b"runtime"),
+            (TYPE_NAMED_USER_ELF, b"shell"),
+            (TYPE_NAMED_USER_ELF, b"pyth-runtime"),
+            (TYPE_PYTH_GRAPH_PACKAGE, b"hello"),
+            (TYPE_PYTH_GRAPH_PACKAGE, b"budget"),
+            (TYPE_PYTH_GRAPH_PACKAGE, b"invalid"),
+            (TYPE_USER_ELF, b"fault-breakpoint"),
+            (TYPE_USER_ELF, b"fault-ud2"),
+            (TYPE_USER_ELF, b"fault-bad-pointer"),
+            (TYPE_USER_ELF, b"fault-hardware"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(parsed.record_count(), 10);
+        assert_eq!(
+            parsed
+                .record_at(RecordType::PythGraphPackage, 2)
+                .unwrap()
+                .bytes(),
+            b"invalid"
+        );
+        assert_eq!(
+            parsed.record_at(RecordType::UserElf, 3).unwrap().bytes(),
+            b"fault-hardware"
+        );
     }
 
     #[test]

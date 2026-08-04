@@ -25,7 +25,9 @@ pub struct NormalBootSubstrate {
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
-    pub pyth_runtime_launch: pyth_runtime_launch::PreparedPythRuntimeLaunch,
+    pub pyth_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    pub pyth_budget_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    pub pyth_invalid_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
 }
 
 pub struct PreparedShellLaunch {
@@ -78,7 +80,6 @@ pub enum NormalInitError {
     ShellProgram,
     ShellAddressSpace,
     ShellBootstrap,
-    PythRuntimeLaunch,
 }
 
 #[cfg(not(test))]
@@ -182,7 +183,19 @@ pub fn initialize_normal_substrate(
         physical_memory,
         &supervisor_mappings,
     )
-    .map_err(|_| NormalInitError::PythRuntimeLaunch)?;
+    .ok();
+    let pyth_budget_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph(
+        boot_info,
+        physical_memory,
+        &supervisor_mappings,
+        pyth_runtime_launch::BUDGET_GRAPH_NAME,
+        pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
+    )
+    .ok();
+    let pyth_invalid_graph_rejection = pyth_runtime_launch::detect_pyth_graph_rejection(
+        boot_info,
+        pyth_runtime_launch::INVALID_GRAPH_NAME,
+    );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -237,6 +250,8 @@ pub fn initialize_normal_substrate(
         block_device,
         shell_launch,
         pyth_runtime_launch,
+        pyth_budget_runtime_launch,
+        pyth_invalid_graph_rejection,
     })
 }
 

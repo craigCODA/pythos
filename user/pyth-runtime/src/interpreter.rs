@@ -42,10 +42,15 @@ pub enum RuntimeError {
 pub struct Interpreter<'a> {
     graph: VerifiedGraph<'a>,
     imports: &'a [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
-    values: [Option<Value>; MAX_RUNTIME_VALUES],
+    values: &'a mut [Option<Value>; MAX_RUNTIME_VALUES],
     budget: u64,
     executed_nodes: u64,
     last_node: u32,
+}
+
+enum BlockOutcome {
+    Return,
+    Jump(usize),
 }
 
 impl<'a> Interpreter<'a> {
@@ -53,11 +58,13 @@ impl<'a> Interpreter<'a> {
         graph: VerifiedGraph<'a>,
         imports: &'a [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
         budget: u64,
+        values: &'a mut [Option<Value>; MAX_RUNTIME_VALUES],
     ) -> Self {
+        values.fill(None);
         Self {
             graph,
             imports,
-            values: [None; MAX_RUNTIME_VALUES],
+            values,
             budget,
             executed_nodes: 0,
             last_node: NO_VALUE,
@@ -74,9 +81,14 @@ impl<'a> Interpreter<'a> {
 
     fn execute_inner(&mut self, host: &mut impl Host) -> Result<(), RuntimeError> {
         let package = *self.graph.package();
-        let entry_block = usize::try_from(package.header().entry_block)
+        let mut block_index = usize::try_from(package.header().entry_block)
             .map_err(|_| RuntimeError::InvalidBlock)?;
-        self.execute_block(&package, entry_block, host)
+        loop {
+            match self.execute_block(&package, block_index, host)? {
+                BlockOutcome::Return => return Ok(()),
+                BlockOutcome::Jump(target) => block_index = target,
+            }
+        }
     }
 
     fn execute_block(
@@ -84,7 +96,7 @@ impl<'a> Interpreter<'a> {
         package: &PythGraphPackage<'a>,
         block_index: usize,
         host: &mut impl Host,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<BlockOutcome, RuntimeError> {
         let block = package
             .blocks()
             .get(block_index)
@@ -102,7 +114,17 @@ impl<'a> Interpreter<'a> {
             if Opcode::try_from(node.opcode).map_err(|_| RuntimeError::UnsupportedOpcode)?
                 == Opcode::Return
             {
-                return Ok(());
+                return Ok(BlockOutcome::Return);
+            }
+            if Opcode::try_from(node.opcode).map_err(|_| RuntimeError::UnsupportedOpcode)?
+                == Opcode::Jump
+            {
+                let target =
+                    usize::try_from(node.auxiliary0).map_err(|_| RuntimeError::InvalidBlock)?;
+                if package.blocks().get(target).is_none() {
+                    return Err(RuntimeError::InvalidBlock);
+                }
+                return Ok(BlockOutcome::Jump(target));
             }
         }
 
@@ -136,6 +158,7 @@ impl<'a> Interpreter<'a> {
             Opcode::EffectStart => self.store_value(node_index, Value::Effect(node_index as u64)),
             Opcode::ConstUtf8 => self.execute_const_utf8(package, node_index, &node),
             Opcode::SystemLog => self.execute_system_log(package, node_index, &node, host),
+            Opcode::Jump => Ok(()),
             Opcode::Return => Ok(()),
             _ => Err(RuntimeError::UnsupportedOpcode),
         }
@@ -338,13 +361,35 @@ mod tests {
             log_count: 0,
         };
         let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
 
-        let exit = Interpreter::new(verified, &imports, 64).execute(&mut host);
+        let exit = Interpreter::new(verified, &imports, 64, &mut values).execute(&mut host);
 
         assert_eq!(exit.status, GRAPH_EXIT_OK);
         assert_eq!(exit.executed_nodes, 5);
         assert_eq!(exit.result_type, GRAPH_RESULT_UNIT);
         assert_eq!(host.log_count, 1);
         assert_eq!(&host.logs[0][..5], b"hello");
+    }
+
+    #[test]
+    fn self_jump_graph_exits_on_instruction_budget() {
+        let bytes = test_support::self_jump_budget_loop();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+        };
+        let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 3, &mut values).execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_BUDGET_EXHAUSTED);
+        assert_eq!(exit.error_code, RuntimeError::BudgetExhausted.code());
+        assert_eq!(exit.executed_nodes, 3);
+        assert_eq!(exit.last_node, 1);
+        assert_eq!(host.log_count, 0);
     }
 }

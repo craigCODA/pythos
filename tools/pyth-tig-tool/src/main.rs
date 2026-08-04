@@ -26,13 +26,15 @@ fn run() -> Result<(), String> {
     match command.as_str() {
         "emit-minimal-log" => {
             let bytes = encode::minimal_log_package();
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)
-                    .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-            }
-            fs::write(&path, bytes)
-                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-            Ok(())
+            write_package(&path, bytes)
+        }
+        "emit-budget-loop" => {
+            let bytes = encode::budget_loop_package();
+            write_package(&path, bytes)
+        }
+        "emit-invalid-effect-fork" => {
+            let bytes = encode::invalid_effect_fork_package();
+            write_package(&path, bytes)
         }
         "verify" => {
             let bytes = fs::read(&path)
@@ -50,6 +52,14 @@ fn run() -> Result<(), String> {
     }
 }
 
+fn write_package(path: &PathBuf, bytes: Vec<u8>) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+    }
+    fs::write(path, bytes).map_err(|error| format!("failed to write {}: {error}", path.display()))
+}
+
 fn usage() -> String {
-    "usage: pyth-tig-tool <emit-minimal-log|verify|mutate-suite> <path>".to_string()
+    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|verify|mutate-suite> <path>".to_string()
 }

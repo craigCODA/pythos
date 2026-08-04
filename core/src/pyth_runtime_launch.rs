@@ -22,13 +22,17 @@ use pythos_shared::{
         MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR,
         PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock, PythGraphCapabilityBinding,
     },
-    pyth_tig::verify::VerifiedGraph,
+    pyth_tig::verify::{VerifiedGraph, VerifyError},
 };
 
 pub const PYTH_RUNTIME_PROGRAM_NAME: &[u8] = b"pyth-runtime.elf";
 pub const HELLO_GRAPH_NAME: &[u8] = b"hello.tig";
+pub const BUDGET_GRAPH_NAME: &[u8] = b"budget.tig";
+pub const INVALID_GRAPH_NAME: &[u8] = b"invalid.tig";
 pub const PYTH_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5448_5254_0001;
 pub const HELLO_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0001;
+pub const BUDGET_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0002;
+pub const INVALID_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_00FF;
 pub const PYTH_GRAPH_BOOTSTRAP_USER_PTR: u64 = 0x0000_0000_7100_0000;
 pub const PYTH_GRAPH_PACKAGE_USER_PTR: u64 = 0x0000_0000_7100_1000;
 pub const PYTH_GRAPH_RESULT_USER_PTR: u64 = 0x0000_0000_7100_2000;
@@ -37,6 +41,8 @@ pub const PYTH_GRAPH_CONTROL_SECTOR: u64 = 96;
 pub const PYTH_GRAPH_CONTROL_MAGIC: &[u8; 8] = b"PYTGCTL1";
 pub const PYTH_GRAPH_CONTROL_DEFAULT: u16 = 0;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_HELLO: u16 = 1;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_INVALID: u16 = 2;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_BUDGET: u16 = 3;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythRuntimeLaunchError {
@@ -55,6 +61,35 @@ pub enum PythRuntimeLaunchError {
 pub enum PythGraphBootMode {
     DefaultShell,
     LaunchHello,
+    LaunchInvalid,
+    LaunchBudget,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PythGraphRejectCode {
+    BadInitPak,
+    BadInitBundle,
+    BadGraphPayload,
+    MissingGraphPayload,
+    DuplicateGraphName,
+    DuplicateGraphPrincipal,
+    VerifyEffectFork,
+    VerifyOther,
+}
+
+impl PythGraphRejectCode {
+    pub const fn stable_code(self) -> &'static str {
+        match self {
+            Self::BadInitPak => "BAD_INIT_PAK",
+            Self::BadInitBundle => "BAD_INIT_BUNDLE",
+            Self::BadGraphPayload => "BAD_GRAPH_PAYLOAD",
+            Self::MissingGraphPayload => "MISSING_GRAPH_PAYLOAD",
+            Self::DuplicateGraphName => "DUPLICATE_GRAPH_NAME",
+            Self::DuplicateGraphPrincipal => "DUPLICATE_GRAPH_PRINCIPAL",
+            Self::VerifyEffectFork => "VERIFY_EFFECT_FORK",
+            Self::VerifyOther => "VERIFY_OTHER",
+        }
+    }
 }
 
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
@@ -144,6 +179,23 @@ pub fn prepare_pyth_runtime_launch(
     physical_memory: &mut PhysicalMemory,
     supervisor_mappings: &[Option<(u64, u64, u64)>],
 ) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_runtime_launch_for_graph(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        HELLO_GRAPH_NAME,
+        HELLO_GRAPH_PRINCIPAL_ID,
+    )
+}
+
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+pub fn prepare_pyth_runtime_launch_for_graph(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph_name: &[u8],
+    expected_graph_principal_id: u64,
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
     let runtime_manifest =
         runtime_loader::load_named_user_program(boot_info, PYTH_RUNTIME_PROGRAM_NAME)
             .map_err(|_| PythRuntimeLaunchError::RuntimeProgram)?;
@@ -153,9 +205,9 @@ pub fn prepare_pyth_runtime_launch(
     let runtime_image = user_elf::validate(runtime_manifest.elf())
         .map_err(|_| PythRuntimeLaunchError::RuntimeProgram)?;
 
-    let graph = pyth_graph_loader::load_named_pyth_graph(boot_info, HELLO_GRAPH_NAME)
+    let graph = pyth_graph_loader::load_named_pyth_graph(boot_info, graph_name)
         .map_err(|_| PythRuntimeLaunchError::GraphPackage)?;
-    if graph.manifest.principal_id() != HELLO_GRAPH_PRINCIPAL_ID {
+    if graph.manifest.principal_id() != expected_graph_principal_id {
         return Err(PythRuntimeLaunchError::GraphPackage);
     }
     let package = graph.manifest.package();
@@ -252,6 +304,17 @@ pub fn prepare_pyth_runtime_launch(
 }
 
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+pub fn detect_pyth_graph_rejection(
+    boot_info: &'static PythBootInfo,
+    graph_name: &[u8],
+) -> Option<PythGraphRejectCode> {
+    match pyth_graph_loader::load_named_pyth_graph(boot_info, graph_name) {
+        Ok(_) => None,
+        Err(error) => Some(rejection_code_for_load_error(error)),
+    }
+}
+
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 pub fn read_and_clear_pyth_graph_control_sector(
     device: BlockDeviceInfo,
 ) -> Result<PythGraphBootMode, PythRuntimeLaunchError> {
@@ -283,6 +346,13 @@ pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_hex_u64_value(launch.graph_principal_id);
     serial::write_str(" imports:");
     serial::write_dec_u64_value(u64::from(launch.import_count));
+    serial::write_str("\r\n");
+}
+
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+pub fn emit_package_rejected_marker(code: PythGraphRejectCode) {
+    serial::write_str("PYTHOS:PYTHTIG:PACKAGE_REJECTED error:");
+    serial::write_str(code.stable_code());
     serial::write_str("\r\n");
 }
 
@@ -350,8 +420,37 @@ pub fn decode_and_clear_pyth_graph_control_sector(
     sector.fill(0);
     match mode {
         PYTH_GRAPH_CONTROL_LAUNCH_HELLO => PythGraphBootMode::LaunchHello,
+        PYTH_GRAPH_CONTROL_LAUNCH_INVALID => PythGraphBootMode::LaunchInvalid,
+        PYTH_GRAPH_CONTROL_LAUNCH_BUDGET => PythGraphBootMode::LaunchBudget,
         PYTH_GRAPH_CONTROL_DEFAULT => PythGraphBootMode::DefaultShell,
         _ => PythGraphBootMode::DefaultShell,
+    }
+}
+
+pub fn rejection_code_for_load_error(
+    error: crate::pyth_graph_loader::PythGraphLoadError,
+) -> PythGraphRejectCode {
+    match error {
+        crate::pyth_graph_loader::PythGraphLoadError::BadInitPak => PythGraphRejectCode::BadInitPak,
+        crate::pyth_graph_loader::PythGraphLoadError::BadInitBundle => {
+            PythGraphRejectCode::BadInitBundle
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::BadGraphPayload => {
+            PythGraphRejectCode::BadGraphPayload
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::MissingGraphPayload => {
+            PythGraphRejectCode::MissingGraphPayload
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::DuplicateGraphName => {
+            PythGraphRejectCode::DuplicateGraphName
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::DuplicateGraphPrincipal => {
+            PythGraphRejectCode::DuplicateGraphPrincipal
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::Verify(VerifyError::EffectFork {
+            ..
+        }) => PythGraphRejectCode::VerifyEffectFork,
+        crate::pyth_graph_loader::PythGraphLoadError::Verify(_) => PythGraphRejectCode::VerifyOther,
     }
 }
 
@@ -464,6 +563,41 @@ mod tests {
         assert_eq!(
             decode_and_clear_pyth_graph_control_sector(&mut sector),
             PythGraphBootMode::DefaultShell
+        );
+    }
+
+    #[test]
+    fn pyth_graph_control_sector_selects_negative_launch_modes() {
+        let mut invalid = [0u8; crate::block_device::SECTOR_SIZE];
+        invalid[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        invalid[8..10].copy_from_slice(&PYTH_GRAPH_CONTROL_LAUNCH_INVALID.to_le_bytes());
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut invalid),
+            PythGraphBootMode::LaunchInvalid
+        );
+        assert_eq!(invalid, [0u8; crate::block_device::SECTOR_SIZE]);
+
+        let mut budget = [0u8; crate::block_device::SECTOR_SIZE];
+        budget[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        budget[8..10].copy_from_slice(&PYTH_GRAPH_CONTROL_LAUNCH_BUDGET.to_le_bytes());
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut budget),
+            PythGraphBootMode::LaunchBudget
+        );
+        assert_eq!(budget, [0u8; crate::block_device::SECTOR_SIZE]);
+    }
+
+    #[test]
+    fn pyth_graph_rejection_codes_are_stable() {
+        assert_eq!(
+            rejection_code_for_load_error(crate::pyth_graph_loader::PythGraphLoadError::Verify(
+                VerifyError::EffectFork { producer: 0 }
+            )),
+            PythGraphRejectCode::VerifyEffectFork
+        );
+        assert_eq!(
+            PythGraphRejectCode::VerifyEffectFork.stable_code(),
+            "VERIFY_EFFECT_FORK"
         );
     }
 }

@@ -18,7 +18,7 @@ const TWO_MIB: u64 = 2 * 1024 * 1024;
 const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
-const MAX_USER_ELF_FRAMES: usize = 32;
+const MAX_USER_ELF_FRAMES: usize = 64;
 
 const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITE: u64 = 1 << 1;
@@ -1510,6 +1510,7 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
 // mapping's actual effect on real AHCI hardware is proven functionally by
 // Task E's QEMU integration test.
 const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
+const _: () = assert!(MAX_USER_ELF_FRAMES >= 31 + 3);
 #[cfg(feature = "evidence-terminal")]
 pub fn evidence_log_supervisor_mapping(boot_info: &PythBootInfo) -> Option<(u64, u64, u64)> {
     if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {

@@ -49,6 +49,8 @@ const JUMP_ARGUMENT_COUNT_MISMATCH_PACKAGE_LEN: usize =
     HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE;
 const JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN: usize =
     HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
+const SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 5;
 
 struct BlockSpec {
     block_id: u32,
@@ -680,6 +682,49 @@ pub fn system_log_with_import_capability() -> FixturePackage<LOG_WITH_IMPORT_CAP
         bytes: [0u8; LOG_WITH_IMPORT_CAPABILITY_PACKAGE_LEN],
     };
     initialize_log_with_import_capability_package(&mut package.bytes);
+    package
+}
+
+pub fn self_jump_budget_loop() -> FixturePackage<SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 2, 1, 0, 5);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Jump.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_system_log_import(&mut package.bytes, imports_offset, 5, RIGHTS_READ);
+    package.bytes[string_table_offset..string_table_offset + 5].copy_from_slice(b"hello");
+    refresh_checksum(&mut package.bytes);
     package
 }
 

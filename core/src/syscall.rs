@@ -47,6 +47,12 @@ use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use pythos_shared::pyth_runtime_abi::{
+    GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR, GRAPH_MAX_LOG_BYTES,
+    GRAPH_RESULT_UNIT, GraphExitRecord,
+};
+use pythos_shared::pyth_runtime_abi::{SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG};
 
 pub const SYSCALL_ABI_MAJOR: u16 = 1;
 pub const SYSCALL_ABI_MINOR: u16 = 0;
@@ -171,6 +177,8 @@ enum SyscallDispatchKind {
     ConsoleWriteByte,
     ObjectRequest,
     SystemReboot,
+    PythGraphLog,
+    PythGraphExit,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -238,6 +246,22 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         introduced_minor: 0,
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::SystemReboot,
+    },
+    SyscallEntry {
+        number: SYSCALL_PYTH_GRAPH_LOG,
+        name: "SYSCALL_PYTH_GRAPH_LOG",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::PythGraphLog,
+    },
+    SyscallEntry {
+        number: SYSCALL_PYTH_GRAPH_EXIT,
+        name: "SYSCALL_PYTH_GRAPH_EXIT",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::PythGraphExit,
     },
 ];
 
@@ -468,6 +492,8 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::ConsoleWriteByte => dispatch_console_write(args),
         SyscallDispatchKind::ObjectRequest => dispatch_object_request(args),
         SyscallDispatchKind::SystemReboot => dispatch_system_reboot(args),
+        SyscallDispatchKind::PythGraphLog => dispatch_pyth_graph_log(args),
+        SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
     }
 }
 
@@ -808,6 +834,118 @@ fn dispatch_system_reboot_for_caller(
     #[cfg(test)]
     Ok(SYSCALL_OK)
 }
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_pyth_graph_log(args: SyscallArgs) -> Result<u64, SyscallError> {
+    if args.arg2 == 0 || args.arg2 > GRAPH_MAX_LOG_BYTES || args.arg3 != 0 || args.arg4 != 0 {
+        return Err(SyscallError::BadResult);
+    }
+    let caller = process_context::current_caller()?;
+    validate_syscall_capability(
+        caller,
+        PackedCapability::from_raw(args.arg0),
+        PYTH_GRAPH_SYSTEM_LOG_RESOURCE,
+        RightsMask::new(RightsMask::LOG),
+    )?;
+    let copy_map = caller.copy_map();
+    copy_map.validate_range(args.arg1, args.arg2, UserCopyAccess::Read)?;
+    let text_len = usize::try_from(args.arg2).map_err(|_| SyscallError::BadResult)?;
+    // SAFETY:
+    // 1. Invariant: `arg1..arg1+arg2` names a readable user buffer in the
+    //    active graph runtime process.
+    // 2. Established by: nonzero length, `GRAPH_MAX_LOG_BYTES` cap, and the
+    //    active `UserCopyMap` read validation immediately above.
+    // 3. Lifetime: the slice is used only during this syscall and is not
+    //    retained.
+    // 4. Pointer ownership: user space owns the bytes; PythCore only reads
+    //    them to validate the host-operation boundary.
+    // 5. Alignment: byte slices require alignment 1.
+    // 6. Mapped length: `UserCopyMap` validated exactly `arg2` bytes.
+    // 7. Concurrency: Phase 2 runs one graph runtime on one CPU.
+    // 8. Violation: stale copy-map state could fault while reading user text.
+    let _text = unsafe { slice::from_raw_parts(args.arg1 as *const u8, text_len) };
+    #[cfg(not(test))]
+    serial::write_line("PYTHOS:PYTHTIG:PROGRAM_LOG");
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(all(not(test), feature = "verify"))]
+fn dispatch_pyth_graph_log(_args: SyscallArgs) -> Result<u64, SyscallError> {
+    Err(SyscallError::BadResult)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
+    if args.arg0 != crate::pyth_runtime_launch::PYTH_GRAPH_RESULT_USER_PTR
+        || args.arg1 != size_of::<GraphExitRecord>() as u64
+        || args.arg2 != 0
+        || args.arg3 != 0
+        || args.arg4 != 0
+    {
+        return Err(SyscallError::BadResult);
+    }
+    let caller = process_context::current_caller()?;
+    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID {
+        return Err(SyscallError::BadResult);
+    }
+    let copy_map = caller.copy_map();
+    validate_user_buffer(
+        &copy_map,
+        args.arg0,
+        args.arg1,
+        align_of::<GraphExitRecord>(),
+        UserCopyAccess::Read,
+    )?;
+    let exit_ptr = args.arg0 as *const GraphExitRecord;
+    // SAFETY:
+    // 1. Invariant: `exit_ptr` names a readable `GraphExitRecord` in the active
+    //    graph runtime result page.
+    // 2. Established by: exact pointer/size checks, natural alignment, and
+    //    `UserCopyMap` read validation above.
+    // 3. Lifetime: the record is copied once and not retained.
+    // 4. Pointer ownership: the runtime owns the writable result page; PythCore
+    //    reads the final record at the explicit exit syscall.
+    // 5. Alignment: checked against `GraphExitRecord` alignment above.
+    // 6. Mapped length: `UserCopyMap` validated the exact record size.
+    // 7. Concurrency: Phase 2 graph runtime has one active thread.
+    // 8. Violation: bad result mapping could fault or report a forged status.
+    let exit = unsafe { exit_ptr.read() };
+    validate_graph_exit_record(exit)?;
+    emit_graph_exit_marker(exit);
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(all(not(test), feature = "verify"))]
+fn dispatch_pyth_graph_exit(_args: SyscallArgs) -> Result<u64, SyscallError> {
+    Err(SyscallError::BadResult)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError> {
+    if exit.result_type != GRAPH_RESULT_UNIT || exit.reserved0 != 0 || exit.reserved1 != 0 {
+        return Err(SyscallError::BadResult);
+    }
+    match exit.status {
+        GRAPH_EXIT_OK if exit.error_code == 0 => Ok(()),
+        GRAPH_EXIT_RUNTIME_ERROR | GRAPH_EXIT_BUDGET_EXHAUSTED => Ok(()),
+        _ => Err(SyscallError::BadResult),
+    }
+}
+
+#[cfg(all(not(test), not(feature = "verify")))]
+fn emit_graph_exit_marker(exit: GraphExitRecord) {
+    if exit.status == GRAPH_EXIT_BUDGET_EXHAUSTED {
+        serial::write_str("PYTHOS:PYTHTIG:BUDGET_EXHAUSTED node:");
+        serial::write_dec_u64_value(u64::from(exit.last_node));
+        serial::write_str("\r\n");
+    }
+    serial::write_str("PYTHOS:PYTHTIG:RUNTIME_EXIT status:");
+    serial::write_dec_u64_value(u64::from(exit.status));
+    serial::write_str("\r\n");
+}
+
+#[cfg(test)]
+fn emit_graph_exit_marker(_exit: GraphExitRecord) {}
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 fn dispatch_object_request_to_service(
@@ -1355,6 +1493,20 @@ mod tests {
     }
 
     #[test]
+    fn pyth_graph_syscall_numbers_are_registered() {
+        assert_eq!(SYSCALL_PYTH_GRAPH_LOG, 0x5059_0200);
+        assert_eq!(SYSCALL_PYTH_GRAPH_EXIT, 0x5059_0201);
+        assert_eq!(
+            lookup_syscall(SYSCALL_PYTH_GRAPH_LOG).unwrap().name,
+            "SYSCALL_PYTH_GRAPH_LOG"
+        );
+        assert_eq!(
+            lookup_syscall(SYSCALL_PYTH_GRAPH_EXIT).unwrap().name,
+            "SYSCALL_PYTH_GRAPH_EXIT"
+        );
+    }
+
+    #[test]
     fn abi_info_dispatch_does_not_require_proof_expectation() {
         let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
@@ -1408,6 +1560,81 @@ mod tests {
         assert_eq!(
             dispatch(SyscallArgs::for_number(SYSCALL_SYSTEM_LOG_PROOF)),
             Ok(SYSCALL_OK)
+        );
+    }
+
+    #[test]
+    fn pyth_graph_log_requires_runtime_capability_and_readable_text() {
+        let runtime = pyth_runtime_process();
+        let intruder = ActiveUserProcess::new(ServiceId::from_raw(0x99), 0xAA, 0xBB);
+        reset_syscall_capabilities_for_test();
+        let log_capability = grant_pyth_graph_system_log_capability(runtime).unwrap();
+        let text = *b"hello";
+        let mut copy_map = UserCopyMap::new();
+        map_slice(&mut copy_map, &text, true, false);
+        process_context::bind_current_process(runtime.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(graph_log_args(
+                log_capability,
+                text.as_ptr() as u64,
+                text.len() as u64
+            )),
+            Ok(SYSCALL_OK)
+        );
+        process_context::bind_current_process(intruder.with_copy_map(copy_map));
+        assert_eq!(
+            dispatch(graph_log_args(
+                log_capability,
+                text.as_ptr() as u64,
+                text.len() as u64
+            )),
+            Err(SyscallError::Capability(CapabilityError::WrongHolder))
+        );
+        process_context::bind_current_process(runtime.with_copy_map(UserCopyMap::new()));
+        assert_eq!(
+            dispatch(graph_log_args(
+                log_capability,
+                text.as_ptr() as u64,
+                text.len() as u64
+            )),
+            Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
+        );
+    }
+
+    #[test]
+    fn pyth_graph_exit_requires_runtime_result_pointer_and_valid_record() {
+        let runtime = pyth_runtime_process();
+        let exit = GraphExitRecord {
+            status: GRAPH_EXIT_OK,
+            error_code: 0,
+            last_node: 4,
+            executed_nodes: 5,
+            result_type: GRAPH_RESULT_UNIT,
+            reserved0: 0,
+            reserved1: 0,
+            result_raw: 0,
+        };
+        process_context::bind_current_process(runtime.with_copy_map(UserCopyMap::new()));
+
+        assert_eq!(
+            dispatch_pyth_graph_exit(SyscallArgs {
+                number: SYSCALL_PYTH_GRAPH_EXIT,
+                arg0: &exit as *const GraphExitRecord as u64,
+                arg1: size_of::<GraphExitRecord>() as u64,
+                arg2: 0,
+                arg3: 0,
+                arg4: 0,
+            }),
+            Err(SyscallError::BadResult)
+        );
+        assert_eq!(validate_graph_exit_record(exit), Ok(()));
+
+        let mut bad = exit;
+        bad.reserved1 = 1;
+        assert_eq!(
+            validate_graph_exit_record(bad),
+            Err(SyscallError::BadResult)
         );
     }
 
@@ -1832,5 +2059,24 @@ mod tests {
                 .count()
         })
         .unwrap()
+    }
+
+    fn pyth_runtime_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_5447_5254_0001),
+            crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID,
+            0x1234,
+        )
+    }
+
+    fn graph_log_args(capability: PackedCapability, ptr: u64, len: u64) -> SyscallArgs {
+        SyscallArgs {
+            number: SYSCALL_PYTH_GRAPH_LOG,
+            arg0: capability.raw(),
+            arg1: ptr,
+            arg2: len,
+            arg3: 0,
+            arg4: 0,
+        }
     }
 }

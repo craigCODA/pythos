@@ -8,6 +8,9 @@ pub const GRAPH_EXIT_OK: u16 = 0;
 pub const GRAPH_EXIT_RUNTIME_ERROR: u16 = 1;
 pub const GRAPH_EXIT_BUDGET_EXHAUSTED: u16 = 2;
 pub const GRAPH_RESULT_UNIT: u16 = 0x0000;
+pub const SYSCALL_PYTH_GRAPH_LOG: u64 = 0x5059_0200;
+pub const SYSCALL_PYTH_GRAPH_EXIT: u64 = 0x5059_0201;
+pub const GRAPH_MAX_LOG_BYTES: u64 = 256;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -61,6 +64,9 @@ mod tests {
         assert_eq!(GRAPH_EXIT_RUNTIME_ERROR, 1);
         assert_eq!(GRAPH_EXIT_BUDGET_EXHAUSTED, 2);
         assert_eq!(GRAPH_RESULT_UNIT, 0);
+        assert_eq!(SYSCALL_PYTH_GRAPH_LOG, 0x5059_0200);
+        assert_eq!(SYSCALL_PYTH_GRAPH_EXIT, 0x5059_0201);
+        assert_eq!(GRAPH_MAX_LOG_BYTES, 256);
         assert_eq!(core::mem::size_of::<PythGraphCapabilityBinding>(), 24);
         assert_eq!(core::mem::size_of::<PythGraphBootstrapBlock>(), 816);
         assert_eq!(core::mem::size_of::<GraphExitRecord>(), 32);

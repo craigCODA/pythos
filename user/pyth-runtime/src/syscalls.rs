@@ -1,15 +1,14 @@
 use crate::interpreter::{Host, HostError};
-use core::mem::size_of;
+use core::{mem::size_of, ptr};
 use pythos_shared::{
     object_shell_abi::{PackedCapability, SYSCALL_OK},
     pyth_runtime_abi::{
-        MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR,
-        PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock,
+        GraphExitRecord, MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC,
+        PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock,
+        SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG,
     },
     pyth_tig::format::MAX_PACKAGE_BYTES,
 };
-
-const SYSCALL_SYSTEM_LOG_PROOF: u64 = 0x5059_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum BootstrapError {
@@ -26,15 +25,28 @@ pub enum BootstrapError {
     MissingImport,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExitNotifyError {
+    Failed,
+}
+
 pub struct GraphSyscallHost;
 
 impl Host for GraphSyscallHost {
-    fn system_log(&mut self, _capability: PackedCapability, _text: &[u8]) -> Result<(), HostError> {
-        // SAFETY: matches syscall5's contract. The current Task 2 runtime ELF
-        // only has access to the existing ADR 0038 proof syscall. The real
-        // graph-specific log/exit bridge is added in the Phase 2 acceptance
-        // task before this runtime is launched by PythCore.
-        let result = unsafe { syscall5(SYSCALL_SYSTEM_LOG_PROOF, 0, 0, 0, 0, 0) };
+    fn system_log(&mut self, capability: PackedCapability, text: &[u8]) -> Result<(), HostError> {
+        // SAFETY: matches syscall5's contract. `text` is a live package-backed
+        // UTF-8 slice for the duration of the syscall and PythCore validates
+        // the active process copy map before reading it.
+        let result = unsafe {
+            syscall5(
+                SYSCALL_PYTH_GRAPH_LOG,
+                capability.raw(),
+                text.as_ptr() as u64,
+                text.len() as u64,
+                0,
+                0,
+            )
+        };
         if result == SYSCALL_OK {
             Ok(())
         } else {
@@ -54,6 +66,27 @@ impl Host for GraphSyscallHost {
 pub unsafe fn bootstrap_graph(
     ptr: *const PythGraphBootstrapBlock,
 ) -> Result<PythGraphBootstrapBlock, BootstrapError> {
+    let mut block = empty_bootstrap_block();
+    unsafe {
+        bootstrap_graph_into(ptr, &mut block)?;
+    }
+    Ok(block)
+}
+
+/// Validate and copy the read-only graph bootstrap block into caller-owned
+/// storage without placing the 816-byte ABI block on the user stack.
+///
+/// # Safety
+///
+/// The caller must pass exactly the pointer PythCore placed in the runtime's
+/// entry register. It must point to a readable, page-mapped
+/// `PythGraphBootstrapBlock` initialized for this process and valid for the
+/// duration of this call. `out` must be the runtime's exclusive bootstrap
+/// storage for this invocation.
+pub unsafe fn bootstrap_graph_into(
+    ptr: *const PythGraphBootstrapBlock,
+    out: &mut PythGraphBootstrapBlock,
+) -> Result<(), BootstrapError> {
     if ptr.is_null() {
         return Err(BootstrapError::NullPointer);
     }
@@ -63,9 +96,9 @@ pub unsafe fn bootstrap_graph(
     //    `# Safety` contract.
     // 2. Established by: the graph runtime launch ABI maps the block
     //    read-only and passes it as `_start`'s first argument.
-    // 3. Lifetime: this is a single read; the returned block is an owned copy.
+    // 3. Lifetime: this is a single copy; `out` owns the copied block.
     // 4. Pointer ownership: PythCore owns the mapping; this runtime only
-    //    reads it.
+    //    reads it and writes its own storage.
     // 5. Alignment: PythCore maps the block at page alignment, which satisfies
     //    `PythGraphBootstrapBlock`'s 8-byte alignment.
     // 6. Mapped length: at least `size_of::<PythGraphBootstrapBlock>()` bytes
@@ -74,7 +107,13 @@ pub unsafe fn bootstrap_graph(
     //    the bootstrap mapping.
     // 8. Violation: invalid pointers fault or produce a copied block rejected
     //    by the magic/version/reserved/bounds checks below.
-    let block = unsafe { ptr.read() };
+    unsafe {
+        ptr::copy_nonoverlapping(ptr, out as *mut PythGraphBootstrapBlock, 1);
+    }
+    validate_bootstrap(out)
+}
+
+fn validate_bootstrap(block: &PythGraphBootstrapBlock) -> Result<(), BootstrapError> {
     if block.magic != PYTH_GRAPH_BOOTSTRAP_MAGIC {
         return Err(BootstrapError::BadMagic);
     }
@@ -114,13 +153,22 @@ pub unsafe fn bootstrap_graph(
             return Err(BootstrapError::MissingImport);
         }
     }
-    Ok(block)
+    Ok(())
 }
 
 pub fn import_table(
     block: &PythGraphBootstrapBlock,
 ) -> Result<[PackedCapability; MAX_PYTH_GRAPH_IMPORTS], BootstrapError> {
     let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+    import_table_into(block, &mut imports)?;
+    Ok(imports)
+}
+
+pub fn import_table_into(
+    block: &PythGraphBootstrapBlock,
+    imports: &mut [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
+) -> Result<(), BootstrapError> {
+    imports.fill(PackedCapability::from_raw(0));
     for binding in block.imports[..usize::from(block.import_count)].iter() {
         let slot = usize::from(binding.import_slot);
         if slot >= MAX_PYTH_GRAPH_IMPORTS || binding.capability.raw() == 0 {
@@ -128,7 +176,7 @@ pub fn import_table(
         }
         imports[slot] = binding.capability;
     }
-    Ok(imports)
+    Ok(())
 }
 
 /// Build a read-only package byte slice from a validated bootstrap block.
@@ -169,10 +217,7 @@ pub unsafe fn package_bytes<'a>(
 ///
 /// The result pointer in `block` must refer to a writable, user-mapped
 /// `GraphExitRecord` slot provided by PythCore for this invocation.
-pub unsafe fn write_exit_record(
-    block: &PythGraphBootstrapBlock,
-    exit: &pythos_shared::pyth_runtime_abi::GraphExitRecord,
-) {
+pub unsafe fn write_exit_record(block: &PythGraphBootstrapBlock, exit: &GraphExitRecord) {
     // SAFETY:
     // 1. Invariant: `result_ptr` identifies a writable
     //    `GraphExitRecord`-sized mapping for this process.
@@ -190,7 +235,29 @@ pub unsafe fn write_exit_record(
     // 8. Violation: a bad result pointer faults and is contained by the user
     //    fault path.
     unsafe {
-        (block.result_ptr as *mut pythos_shared::pyth_runtime_abi::GraphExitRecord).write(*exit);
+        (block.result_ptr as *mut GraphExitRecord).write(*exit);
+    }
+}
+
+pub fn notify_exit(block: &PythGraphBootstrapBlock) -> Result<(), ExitNotifyError> {
+    // SAFETY: matches syscall5's contract. `result_ptr` names the writable
+    // exit-record mapping from the already validated bootstrap block, and the
+    // runtime wrote exactly one `GraphExitRecord` there immediately before
+    // notifying PythCore.
+    let result = unsafe {
+        syscall5(
+            SYSCALL_PYTH_GRAPH_EXIT,
+            block.result_ptr,
+            size_of::<GraphExitRecord>() as u64,
+            0,
+            0,
+            0,
+        )
+    };
+    if result == SYSCALL_OK {
+        Ok(())
+    } else {
+        Err(ExitNotifyError::Failed)
     }
 }
 
@@ -201,11 +268,11 @@ unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5
     //    `arg1..arg5` are placed in PythCore's x86-64 syscall ABI order.
     // 2. Established by: every call site in this module passes fixed ABI
     //    arguments for that syscall.
-    // 3. Lifetime: pointer arguments, when later added, must stay valid for
-    //    the syscall duration; this Task 2 proof call passes no pointers.
+    // 3. Lifetime: pointer arguments passed by graph log/exit calls remain
+    //    valid for the synchronous syscall duration.
     // 4. Pointer ownership: this wrapper does not dereference pointers.
     // 5. Alignment: pointer alignment is a caller/kernel validation concern;
-    //    no pointer is used in this Task 2 call.
+    //    this wrapper only places raw argument values into registers.
     // 6. Mapped length: PythCore validates pointer lengths for syscalls that
     //    accept pointers; no pointer length is forwarded here.
     // 7. Concurrency: the v1 runtime is single-threaded.
@@ -231,7 +298,33 @@ unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5
 }
 
 pub const fn expected_result_size() -> usize {
-    size_of::<pythos_shared::pyth_runtime_abi::GraphExitRecord>()
+    size_of::<GraphExitRecord>()
+}
+
+pub const fn empty_capability_binding()
+-> pythos_shared::pyth_runtime_abi::PythGraphCapabilityBinding {
+    pythos_shared::pyth_runtime_abi::PythGraphCapabilityBinding {
+        import_slot: 0,
+        resource_kind: 0,
+        reserved0: 0,
+        rights: 0,
+        capability: PackedCapability::from_raw(0),
+    }
+}
+
+pub const fn empty_bootstrap_block() -> PythGraphBootstrapBlock {
+    PythGraphBootstrapBlock {
+        magic: 0,
+        abi_major: 0,
+        abi_minor: 0,
+        import_count: 0,
+        reserved0: 0,
+        package_ptr: 0,
+        package_len: 0,
+        instruction_budget: 0,
+        result_ptr: 0,
+        imports: [empty_capability_binding(); MAX_PYTH_GRAPH_IMPORTS],
+    }
 }
 
 #[cfg(test)]
@@ -281,9 +374,21 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_validation_can_copy_into_caller_storage() {
+        let bootstrap = valid_bootstrap();
+        let mut copied = empty_bootstrap_block();
+
+        unsafe { bootstrap_graph_into(&raw const bootstrap, &mut copied) }.unwrap();
+
+        assert_eq!(copied, bootstrap);
+    }
+
+    #[test]
     fn import_table_maps_bindings_by_import_slot() {
         let bootstrap = valid_bootstrap();
-        let imports = import_table(&bootstrap).unwrap();
+        let mut imports = [PackedCapability::from_raw(99); MAX_PYTH_GRAPH_IMPORTS];
+
+        import_table_into(&bootstrap, &mut imports).unwrap();
 
         assert_eq!(imports[0], PackedCapability::from_parts(7, 1));
         assert_eq!(imports[1], PackedCapability::from_raw(0));

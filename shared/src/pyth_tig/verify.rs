@@ -84,6 +84,18 @@ impl<'a> VerifiedGraph<'a> {
     pub const fn package(&self) -> &PythGraphPackage<'a> {
         &self.package
     }
+
+    /// Wrap a package that PythCore already accepted through `verify_package`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must prove this exact package byte sequence was accepted by
+    /// the PythCore admission verifier before ring-3 entry and is still mapped
+    /// read-only for the runtime invocation. This bypasses verifier checks and
+    /// must not be used for untrusted bytes.
+    pub const unsafe fn assume_kernel_verified_package(package: &PythGraphPackage<'a>) -> Self {
+        Self { package: *package }
+    }
 }
 
 pub fn verify_bytes(bytes: &[u8]) -> Result<VerifiedGraph<'_>, VerifyError> {
@@ -1133,6 +1145,18 @@ mod tests {
         );
 
         assert!(verify_bytes(&test_support::system_log_with_import_capability()).is_ok());
+    }
+
+    #[test]
+    fn kernel_verified_package_constructor_preserves_admitted_package() {
+        let bytes = test_support::system_log_with_import_capability();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+
+        // SAFETY: this test mirrors the runtime handoff after the same package
+        // has been accepted by `verify_package`.
+        let verified = unsafe { VerifiedGraph::assume_kernel_verified_package(&package) };
+
+        assert_eq!(verified.package(), &package);
     }
 
     #[test]
