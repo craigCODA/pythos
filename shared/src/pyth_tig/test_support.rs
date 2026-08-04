@@ -728,6 +728,27 @@ pub fn system_log_without_capability_input() -> FixturePackage<LOG_WITHOUT_CAPAB
 
 pub fn system_log_capability_host_result() -> FixturePackage<LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN>
 {
+    system_log_host_result(PythType::Capability, 3)
+}
+
+pub fn system_log_object_id_host_result() -> FixturePackage<LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN>
+{
+    system_log_host_result(PythType::ObjectId, 1)
+}
+
+pub fn system_log_revision_id_host_result() -> FixturePackage<LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN>
+{
+    system_log_host_result(PythType::RevisionId, 2)
+}
+
+pub fn system_log_utf8_host_result() -> FixturePackage<LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN> {
+    system_log_host_result(PythType::Utf8, 4)
+}
+
+fn system_log_host_result(
+    result_type: PythType,
+    field: u32,
+) -> FixturePackage<LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN> {
     let mut package = FixturePackage {
         bytes: [0u8; LOG_CAPABILITY_HOST_RESULT_PACKAGE_LEN],
     };
@@ -776,11 +797,11 @@ pub fn system_log_capability_host_result() -> FixturePackage<LOG_CAPABILITY_HOST
         nodes_offset + 4 * NODE_RECORD_SIZE,
         NodeSpec {
             opcode: Opcode::HostResult.code(),
-            result_type: PythType::Capability.code(),
+            result_type: result_type.code(),
             flags: 0,
             block_index: 0,
             inputs: [3, NO_VALUE, NO_VALUE, NO_VALUE],
-            auxiliary0: 3,
+            auxiliary0: field,
             auxiliary1: 0,
             immediate: 0,
         },

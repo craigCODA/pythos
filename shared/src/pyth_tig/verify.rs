@@ -854,29 +854,17 @@ fn verify_host_result(
         });
     }
 
-    let expected = match node.auxiliary0 {
-        0 => PythType::ErrorCode,
-        1 => PythType::ObjectId,
-        2 => PythType::RevisionId,
-        3 => {
-            return Err(VerifyError::HostResultInvalid {
-                node: node_index as u32,
-            });
-        }
-        4 => PythType::Utf8,
-        _ => {
-            return Err(VerifyError::HostResultInvalid {
-                node: node_index as u32,
-            });
-        }
-    };
-    if actual_result != expected {
+    if host_result_field_type(producer_opcode, node.auxiliary0) != Some(actual_result) {
         return Err(VerifyError::HostResultInvalid {
             node: node_index as u32,
         });
     }
 
     Ok(())
+}
+
+fn host_result_field_type(_producer_opcode: Opcode, _field: u32) -> Option<PythType> {
+    None
 }
 
 fn verify_host_import(
@@ -1071,6 +1059,22 @@ mod tests {
     fn verifier_rejects_capability_host_result_from_non_capability_producer() {
         assert_eq!(
             verify_bytes(&test_support::system_log_capability_host_result()),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_undocumented_host_result_fields_from_system_log() {
+        assert_eq!(
+            verify_bytes(&test_support::system_log_object_id_host_result()),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::system_log_revision_id_host_result()),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::system_log_utf8_host_result()),
             Err(VerifyError::HostResultInvalid { node: 4 })
         );
     }
