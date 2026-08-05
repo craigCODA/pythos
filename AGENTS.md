@@ -27,6 +27,27 @@ Do not claim full security where only logical isolation exists.
 
 AI remains outside the trusted core.
 
+## Interface Model Guardrails
+
+ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,
+0024, 0049, and 0053.
+
+PythOS must not adopt applications, windows, launchers, desktops, settings
+panels, widgets, or conventional file navigation as its authoritative user
+model.
+
+Rendering primitives may visually resemble familiar controls, but they must
+project typed objects, task state, semantic relationships, executable tool
+objects, and capability-permitted actions.
+
+Semantic relevance never grants authority. Visible controls never bypass the
+object service or capability system.
+
+No further launcher, widget, window-shell, desktop, or first-party application
+development is authorized until the owner explicitly accepts a post-ADR-0066
+implementation phase. Existing Phase 5 marker names and object-kind codes are
+compatibility evidence, not authorization to extend the superseded model.
+
 ## PythTIG / Convergent Architecture Guardrails
 
 ADR 0064 is accepted as the PythTIG architecture direction. ADR 0065 is

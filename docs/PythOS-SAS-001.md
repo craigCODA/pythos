@@ -24,7 +24,12 @@ work.
 
 ## Vision
 
-PythOS is a graphical operating system whose primary system and application language is Python. Python is not the first instruction executed by the processor. PythOS uses a deliberately small native foundation for firmware handoff, processor control, memory ownership, virtual memory, interrupts, scheduling, IPC primitives, capability validation, hardware access primitives, and Python runtime bootstrap.
+PythOS is a graphical operating system whose primary system and tool language
+is Python. Python is not the first instruction executed by the processor.
+PythOS uses a deliberately small native foundation for firmware handoff,
+processor control, memory ownership, virtual memory, interrupts, scheduling,
+IPC primitives, capability validation, hardware access primitives, and Python
+runtime bootstrap.
 
 Everything reasonably possible above that boundary belongs in isolated system services, primarily in Python.
 
@@ -37,13 +42,14 @@ Hardware
 -> PythCore native executive
 -> Python runtime environment
 -> Python system services
--> Graphical shell
--> Applications, workspaces, semantic objects, automation, and optional AI
+-> Typed task and object environment
+-> Typed objects, executable tool objects, semantic relationships, projections,
+   automation, and optional AI
 ```
 
 ```text
-Applications
-Workspace Environment
+Typed Task And Object Environment
+Executable Tool Objects
 Python Services
 Python Runtime Environment
 PythCore Native Executive
@@ -52,19 +58,34 @@ Hardware
 
 ## Binding Principles
 
-PythOS is an operating system first. Boot, storage, desktop operation, settings, application launch, recovery, and shutdown must remain deterministic and functional without AI, cloud connectivity, semantic indexing, voice recognition, internet access, or AI-generated commands.
+PythOS is an operating system first. Boot, storage, task operation,
+policy/object inspection, tool invocation, recovery, and shutdown must remain
+deterministic and functional without AI, cloud connectivity, semantic indexing,
+voice recognition, internet access, or AI-generated commands.
 
 PythCore is a small trusted computing base. It contains only mechanisms that require privilege and protection. It does not contain semantic search, local language models, ordinary applications, workspace policy, application-specific logic, document parsing, natural-language interpretation, package recommendations, or AI agents.
 
 System functionality is service based. Mature services have identity, dependencies, capabilities, lifecycle state, message inboxes, resource limits, restart policy, versioned interfaces, and health reporting.
 
-Boot is progressive. Class 0 is the native survival core. Class 1 is the visible shell. Class 2 is the essential environment. Class 3 is optional or heavy services. The desktop must not block on optional services.
+Boot is progressive. Class 0 is the native survival core. Class 1 is the
+visible task environment. Class 2 is the essential object/tool environment.
+Class 3 is optional or heavy services. The active task environment must not
+block on optional services.
 
 Authority is capability based. PythOS rejects broad ambient authority. Language models may propose actions but may not invoke privileged kernel operations, install software, access arbitrary objects, access all user data, obtain unrestricted network access, control hardware, modify security policy, or manufacture capabilities.
 
 Files are payloads, not the whole identity of information. PythOS eventually exposes typed semantic objects with object IDs, schema versions, metadata, payload references, relations, revision parents, capability policy, and integrity data.
 
-Workspaces represent ongoing work. A workspace groups objects, tasks, applications, permissions, window state, automation context, assistant context, and recent activity.
+Task environments represent ongoing work. A task environment groups typed
+objects, tasks, executable tool objects, permissions, projection state,
+automation context, assistant context, and recent activity.
+
+ADR 0066 is binding for the interface model. PythOS must not adopt
+applications, windows, launchers, desktops, settings panels, widgets, or
+conventional file navigation as its authoritative user model. Rendering
+primitives may visually resemble familiar controls, but they must project typed
+objects, task state, semantic relationships, executable tool objects, and
+capability-permitted actions.
 
 The system must be inspectable without AI explanation. Boot phases, service transitions, capability requests, crashes, storage transactions, package changes, update activation, recovery actions, and security-relevant denials should be recorded and exposed.
 
@@ -74,7 +95,10 @@ Boundary A is the UEFI loader. It starts as an x86-64 EFI application, initializ
 
 Boundary B is PythCore. It owns physical page ownership, page allocation, virtual address spaces, descriptor tables, exceptions, interrupt dispatch, timer support, task scheduling, context switching, system calls, IPC, capabilities, runtime bootstrap, panic diagnostics, and controlled hardware primitives.
 
-Boundary C is the initial system runtime. It eventually provides embedded Python, service registration, dependency resolution, service lifecycles, display service, input service, audio service, shell, object storage, workspaces, settings, and applications.
+Boundary C is the initial system runtime. It eventually provides embedded
+Python, service registration, dependency resolution, service lifecycles,
+display service, input service, audio service, object storage, typed task
+environments, policy/object inspection, and executable tool objects.
 
 Do not blur these boundaries.
 
