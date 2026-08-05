@@ -92,29 +92,39 @@ replay-sensitive state.
 | `ButtonWidget` / `TextFieldWidget` as toolkit model | Superseded if treated as conventional widget toolkit. Useful only as typed action-control fixtures. | `widgets.rs` self-test and typed-object encode/decode tests. | `PYTHOS:CORE:WIDGET:BUTTON`, `PYTHOS:CORE:WIDGET:TEXT_FIELD`, `PYTHOS:CORE:WIDGETS_READY`. | `ObjectKind` codes `6` and `7` are durable. | Replace with typed action controls after tests prove object-backed capability checks and old kind-code readability. |
 | First-party desktop application set | Superseded user-model authority. The four fixed projections remain proof fixtures. | `register_first_party_apps()`, `render_shell_screen()`, workspace/object-browser/persistence proofs. | `PYTHOS:CORE:APP:*` and `PYTHOS:CORE:PHASE_5_COMPLETE`. | IDs `0x7201..0x7204`, kind codes `1`, `3`, `4`, `5`, layout fields `0x100..0x103`, persisted snapshots. | Retire only after replacements exist for task initiation, service inspection, console/recovery, and policy inspection. |
 
-## Cross-Cutting Compatibility Contracts
+## Cross-cutting authoritative compatibility dependencies
+
+This section is not a fifth interface-model bucket. It identifies
+already-authoritative PythOS contracts that constrain all four migration
+buckets. The four interface migration buckets remain: retained presentation
+substrate; adapted into task surfaces, object projections, or typed action
+controls; demoted to diagnostic or compatibility fixtures; and retired only
+after a proven replacement exists.
+
+Presentation substrate means rendering, input, fonts, composition, pointer,
+framebuffer, diagnostics, console, and evidence projection. Authoritative
+substrate means typed identity, object formats, relationships, revisions,
+persistence, capabilities, syscalls, initialization, replay, and execution
+authority. Authoritative substrate is not classified as a visual interface
+component by this report. Affected rows below are described as retained authoritative typed-object/capability substrate, frozen compatibility
+dependency, not a presentation component, and not authorized for renaming,
+replacement, or migration by this report.
 
 ### Complete Reviewed Compatibility Matrix
 
-The `Retained presentation substrate` bucket below also contains retained
-cross-cutting compatibility substrate. Those rows do not grant presentation
-authority to persistence or ABI code; they record that the mechanism remains
-part of the accepted foundation and cannot be changed by interface terminology
-work.
-
 | Component/path | Bucket | Current role | Frozen contract | Consumers | Replacement boundary |
 | --- | --- | --- | --- | --- | --- |
-| `core/src/typed_object_format.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Canonical fixed-size typed-object encoder/decoder. | `PYOB` version 1, 120-byte records, all `ObjectKind` codes, header/field offsets, four 24-byte field slots, and old-record readability. | Module unit tests; `scripts/test-boot.py`; `tests/boot_core_handoff.py`; persistence, object service, checkpoint, dynamic-store, and shell flows. | A terminology migration may add source aliases but cannot change encoded kinds, field layout, or decode behavior without a format migration. |
-| `core/src/object_relationships.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Bounded typed relationship store and workspace-membership authority data. | `RelationshipKind`, source/target identities, `SHELL_WORKSPACE_OBJECT_ID`, `EXTERNAL_WORKSPACE_OBJECT_ID`, and accepted relationship queries. | Module unit tests; `scripts/test-boot.py`; object browser, persistence, object service, checkpoint restore, and object-shell queries. | Preserve relationship meaning and records; projection naming must not rewrite ownership or membership edges. |
-| `core/src/revision_history.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Bounded current/prior revision chains with timestamp and writer provenance. | Object ID, revision number, timestamp ticks, writer `ServiceId`, typed-object payload, capacities, and monotonic restore behavior. | Module unit tests; `scripts/test-boot.py`; persistent objects, object service, checkpoint, browser/history, and shell history. | Replacement must restore the same chains and provenance before old revision storage can be retired. |
+| `core/src/typed_object_format.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Canonical fixed-size typed-object encoder/decoder. | `PYOB` version 1, 120-byte records, all `ObjectKind` codes, header/field offsets, four 24-byte field slots, and old-record readability. | Module unit tests; `scripts/test-boot.py`; `tests/boot_core_handoff.py`; persistence, object service, checkpoint, dynamic-store, and shell flows. | Not authorized for renaming, replacement, or migration by this report; any format change needs a separate versioned migration with old-record readability. |
+| `core/src/object_relationships.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Bounded typed relationship store and workspace-membership authority data. | `RelationshipKind`, source/target identities, `SHELL_WORKSPACE_OBJECT_ID`, `EXTERNAL_WORKSPACE_OBJECT_ID`, and accepted relationship queries. | Module unit tests; `scripts/test-boot.py`; object browser, persistence, object service, checkpoint restore, and object-shell queries. | Not authorized for renaming, replacement, or migration by this report; projection naming must not rewrite ownership or membership edges. |
+| `core/src/revision_history.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Bounded current/prior revision chains with timestamp and writer provenance. | Object ID, revision number, timestamp ticks, writer `ServiceId`, typed-object payload, capacities, and monotonic restore behavior. | Module unit tests; `scripts/test-boot.py`; persistent objects, object service, checkpoint, browser/history, and shell history. | Not authorized for renaming, replacement, or migration by this report; replacement must restore the same chains and provenance before old revision storage can be retired. |
 | `core/src/persistent_objects.rs` | Demoted to diagnostic or compatibility fixture | Phase 7 fixed workspace-snapshot and torn-write proof. | Sectors 30-32, `PY7OBJ01`/`PY7CTL01`, version 1, commit/checksum/layout fields, relationship codes, and reboot/torn-write markers. | Module unit tests; `scripts/test-persistent-storage.py`; `tests/test_persistent_object_storage.py`; `scripts/test-boot.py`; AHCI/SDHCI/evidence harnesses. | Keep as a compatibility proof until a replacement preserves readable Phase 7 state and reboot/torn-write acceptance. |
-| `core/src/object_service.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Capability-scoped typed-object authority, query, inspection, revision, and restore service. | Stable workspace/object identities, note IDs, `ObjectKind::Note`, text field ID, snapshot semantics, holder-bound capabilities, and restore/rebind behavior. Runtime capability handles are deliberately not serialized. | Module unit tests; `core/src/syscall.rs`; retained normal-boot service; `scripts/test-object-shell.py`; checkpoint/reboot paths. | Task/object projections may call this service; visible controls never bypass it. Any replacement must prove restored authority and old-object readability. |
+| `core/src/object_service.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Capability-scoped typed-object authority, query, inspection, revision, and restore service. | Stable workspace/object identities, note IDs, `ObjectKind::Note`, text field ID, snapshot semantics, holder-bound capabilities, and restore/rebind behavior. Runtime capability handles are deliberately not serialized. | Module unit tests; `core/src/syscall.rs`; retained normal-boot service; `scripts/test-object-shell.py`; checkpoint/reboot paths. | Not authorized for renaming, replacement, or migration by this report; task/object projections may call this service, but visible controls never bypass it. |
 | `core/src/object_service_checkpoint.rs` | Retired only after proven replacement exists | ADR 0052 two-slot retained object-service checkpoint and highest-generation recovery. | Slot sectors 192-250, magic/version/commit/checksum rules, record sizes/offsets, generation alternation, relationship and revision table layouts. | Module unit tests; `core/src/object_service.rs`; `core/src/retained_services.rs`; `scripts/test-object-shell.py` reboot path. | Retire only after a migration reads both old slots, preserves torn-slot recovery, and restores equivalent object-service state. |
-| `core/src/dynamic_object_store.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Allocator-backed bounded typed-object identity/extent store. | `MAX_DYNAMIC_OBJECTS = 9`, object identity uniqueness, extent/bitmap restore, deletion/reuse behavior, and typed `ObjectKind` payloads. | Module unit tests; object service; storage adversarial proofs; `scripts/test-boot.py`; normal-fast-boot source contract. | Interface renaming cannot change dynamic object IDs or allocator restore semantics; replacement must preserve identity-to-extent recovery. |
+| `core/src/dynamic_object_store.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Allocator-backed bounded typed-object identity/extent store. | `MAX_DYNAMIC_OBJECTS = 9`, object identity uniqueness, extent/bitmap restore, deletion/reuse behavior, and typed `ObjectKind` payloads. | Module unit tests; object service; storage adversarial proofs; `scripts/test-boot.py`; normal-fast-boot source contract. | Not authorized for renaming, replacement, or migration by this report; replacement must preserve identity-to-extent recovery. |
 | `core/src/storage_adversarial.rs` | Demoted to diagnostic or compatibility fixture | Phase 10 storage acceptance proof for create/delete reuse, quota denial, and torn allocator replay. | Exact three proof markers, committed-prefix replay/rollback behavior, and suite-ready ordering. | Module unit tests; `scripts/test-boot.py`; `tests/test_boot_marker_contract.py`; `tests/boot_core_handoff.py`. | Keep until equivalent adversarial coverage proves any replacement storage path. |
-| `shared/src/object_shell_abi.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Shared ring-3 typed request/response, bootstrap, capability, console, and reboot ABI. | Every syscall/op/status number, `SYSCALL_OK`, `NO_BYTE`, packed capability encoding, struct size, alignment, field offset, and fixed capacity. | `pythos-shared` unit tests; `core/src/syscall.rs`; `core/src/normal_init.rs`; all `user/shell/src/*`; normal/object-shell harnesses. | ABI remains frozen until an explicit versioned replacement and backward handler exist. |
-| `core/src/normal_init.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Builds shell process/address space and maps the read-only bootstrap capability block. | `SHELL_BOOTSTRAP_USER_PTR`, 168-byte bootstrap representation, `rdi` handoff, read-only user mapping, and `NORMAL_INIT:SYSCALL_READY`. | Normal boot; address-space/process/syscall code; normal-fast-boot and shell harnesses. | A new primary interface may replace shell launch only after preserving bootstrap compatibility or introducing an explicit versioned launch migration. |
-| `core/src/syscall.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Validates packed capabilities and dispatches typed console/object/reboot operations. | Syscall numbers/results, COM2 and system-control resource identities, request/response copy boundaries, holder checks, reboot markers and behavior. | `pythos-core` unit tests; ring-3 shell; COM2/object-shell/reboot harnesses. | New projections reuse typed syscalls or pass a separate ABI migration; no visible control gains direct authority. |
+| `shared/src/object_shell_abi.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Shared ring-3 typed request/response, bootstrap, capability, console, and reboot ABI. | Every syscall/op/status number, `SYSCALL_OK`, `NO_BYTE`, packed capability encoding, struct size, alignment, field offset, and fixed capacity. | `pythos-shared` unit tests; `core/src/syscall.rs`; `core/src/normal_init.rs`; all `user/shell/src/*`; normal/object-shell harnesses. | Not authorized for renaming, replacement, or migration by this report; ABI remains frozen until an explicit versioned replacement and backward handler exist. |
+| `core/src/normal_init.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Builds shell process/address space and maps the read-only bootstrap capability block. | `SHELL_BOOTSTRAP_USER_PTR`, 168-byte bootstrap representation, `rdi` handoff, read-only user mapping, and the full normal-init marker set. | Normal boot; address-space/process/syscall code; `scripts/test-normal-fast-boot.py`; shell harnesses. | Not authorized for renaming, replacement, or migration by this report; a new primary interface may replace shell launch only after preserving bootstrap compatibility or introducing an explicit versioned launch migration. |
+| `core/src/syscall.rs` | Retained authoritative typed-object/capability substrate; frozen compatibility dependency; not a presentation component | Validates packed capabilities and dispatches typed console/object/reboot operations. | General syscall numbers/results, object-shell syscall numbers, resource identities, request/response copy boundaries, holder checks, proof markers, reboot markers, and behavior. | `pythos-core` unit tests; ring-3 shell; COM2/object-shell/reboot harnesses. | Not authorized for renaming, replacement, or migration by this report; new projections reuse typed syscalls or pass a separate ABI migration. |
 | `core/src/serial.rs` | Retained presentation substrate | COM1 evidence oracle and PythCore-owned COM2 interactive transport. | COM2 base `0x2F8`, UART setup sequence, nonblocking read, blocking write, and `COM2_READY` acceptance. | Serial unit tests; normal boot; syscall console bridge; COM2/object-shell harnesses. | Retain transport independently of whether the ring-3 shell remains primary. |
 | `user/shell/src/commands.rs` | Adapted into task surfaces, object projections, or typed action controls | Parses bounded human commands into typed ABI requests entirely in ring 3. | Grammar, operation mapping, `MAX_TEXT_LEN = 16`, decimal object IDs, and rejection behavior. | User-shell unit tests; `user/shell/src/main.rs`; `scripts/test-object-shell.py`. | May become recovery/direct-control parsing after task projections replace it as primary; PythCore must never parse this grammar. |
 | `user/shell/src/syscalls.rs` | Adapted into task surfaces, object projections, or typed action controls | Validates bootstrap data, packs syscall arguments, caches returned capabilities, and presents typed results. | Syscall register convention, `SYSCALL_OK`/`NO_BYTE`, request/result buffers, authority selection, query buffer, and reboot call behavior. | User-shell unit tests; shell main; COM2/object-shell harnesses. | Preserve as compatibility client or replace with another client that proves the same ABI and denial behavior. |
@@ -131,8 +141,7 @@ work.
 
 #### `core/src/typed_object_format.rs`
 
-Classification: retained cross-cutting compatibility substrate in the
-`Retained presentation substrate` bucket. This is the canonical object record
+Classification: cross-cutting authoritative compatibility dependency, outside the four interface migration buckets. This is not presentation substrate. This is the canonical object record
 format, not an interface-label convenience.
 
 The exact little-endian 120-byte (`RECORD_SIZE`) record is:
@@ -162,13 +171,13 @@ consumes `PYTHOS:CORE:OBJECT:STABLE_ID`,
 `core/src/main.rs`, `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`.
 
 Migration boundary: preserve every encoded kind value and the readable format.
-A future source-level canonical name or compatibility alias must not silently
-renumber a kind, reorder a field, alter reserved-byte validation, or make an
-old record unreadable.
+A later, separately approved terminology decision must not silently renumber a
+kind, reorder a field, alter reserved-byte validation, or make an old record
+unreadable.
 
 #### `core/src/object_relationships.rs`
 
-Classification: retained cross-cutting compatibility substrate. The live
+Classification: cross-cutting authoritative compatibility dependency, outside the four interface migration buckets. The live
 relationship identity is the ordered tuple `source: ObjectId`,
 `kind: RelationshipKind`, `target: ObjectId`. Kind semantics are `Blocks`,
 `CreatedBy`, `DependsOn`, and `BelongsTo`; the Phase 7 serialized codes are
@@ -192,7 +201,7 @@ interface terminology migration.
 
 #### `core/src/revision_history.rs`
 
-Classification: retained cross-cutting compatibility substrate. A
+Classification: cross-cutting authoritative compatibility dependency, outside the four interface migration buckets. A
 `RevisionRecord` carries `object_id: ObjectId`, `revision: u64`,
 `timestamp_ticks: u64`, `writer: ServiceId`, and the complete
 `TypedObjectRecord`. `MAX_REVISIONS = MAX_QUERY_RESULTS`, and the retained
@@ -233,16 +242,33 @@ The exact success/recovery markers are
 `PYTHOS:CORE:OBJECT_STORE:PERSISTED`,
 `PYTHOS:CORE:OBJECT_STORE:RESTORED`,
 `PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW`, and
-`PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED`; error markers are also frozen.
+`PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED`.
+
+The emitted error markers are defined by
+`core/src/persistent_objects.rs::write_error()` and reached from the
+`core/src/main.rs` persistent-object self-test failure path:
+
+| Exact marker | Emitter function/module | Triggering condition | Test/harness consumer(s) | Compatibility status | Required migration treatment |
+| --- | --- | --- | --- | --- | --- |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:INVALID_QUEUE` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::Block(BlockDeviceError::InvalidQueue)` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:DMA_ADDRESS` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::Block(BlockDeviceError::DmaAddress)` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_FAILED` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::Block(BlockDeviceError::RequestFailed)` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_TIMEOUT` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::Block(BlockDeviceError::Timeout)` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:BLOCK` | `core/src/persistent_objects.rs::write_error()` | Any other `PersistentObjectError::Block(_)` variant | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:TORN_WRITE` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::TornWrite` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:BAD_SNAPSHOT` | `core/src/persistent_objects.rs::write_error()` | `PersistentObjectError::BadSnapshot` | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR` | `core/src/persistent_objects.rs::write_error()` | Fallback for any other persistent-object error variant | No active script/test assertion found by source search; emitted as serial/evidence failure output. | Accepted emitted failure contract. | Preserve exact string or add a versioned compatibility mapping before replacement. |
+
 Module unit tests pin round trip, missing-commit rejection, and control-sector
 arming. `scripts/test-persistent-storage.py` performs reboot and killed-write
 acceptance; `tests/test_persistent_object_storage.py`, `scripts/test-boot.py`,
 `scripts/test-ahci-block-device.py`, `scripts/test-sdhci-emmc-block-device.py`,
-and `scripts/test-evidence-terminal.py` consume portions of the contract.
+and `scripts/test-evidence-terminal.py` consume portions of the success,
+recovery, and storage-format contract.
 
 #### `core/src/object_service.rs`
 
-Classification: retained cross-cutting compatibility substrate. It owns typed
+Classification: cross-cutting authoritative compatibility dependency, outside the four interface migration buckets. It owns typed
 object operations and capability validation. Fixed stored identities include
 `OBJECT_SERVICE_BASE_SECTOR = 96`, `OBJECT_SERVICE_BLOCK_COUNT = 12`,
 `FIRST_SHELL_NOTE_ID = 1042`, `KNOWN_EXTERNAL_NOTE_ID = 2001`,
@@ -299,7 +325,7 @@ path.
 
 #### `core/src/dynamic_object_store.rs`
 
-Classification: retained cross-cutting compatibility substrate. It maps each
+Classification: cross-cutting authoritative compatibility dependency, outside the four interface migration buckets. It maps each
 `TypedObjectRecord` identity to one `BlockExtent` and restores from the
 allocator bitmap plus `DynamicObjectRecord { object, extent }` records.
 `MAX_DYNAMIC_OBJECTS = MAX_QUERY_RESULTS + 1 = 9`; the proof store uses
@@ -332,7 +358,7 @@ Its exact markers are
 `scripts/test-boot.py`, `tests/test_boot_marker_contract.py`, and
 `tests/boot_core_handoff.py` consume the acceptance contract.
 
-Across all eight modules, interface terminology changes cannot silently alter
+Across all reviewed authoritative and compatibility modules, interface terminology changes cannot silently alter
 encoded `ObjectKind` values, old object readability, relationship records,
 revision chains, checkpoint sectors or record layouts, object-service restore
 behavior, dynamic-object identities, or adversarial-storage acceptance.
@@ -386,6 +412,14 @@ PYTHOS:CORE:OBJECT_STORE:PERSISTED
 PYTHOS:CORE:OBJECT_STORE:RESTORED
 PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW
 PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED
+PYTHOS:CORE:OBJECT_STORE:ERROR:INVALID_QUEUE
+PYTHOS:CORE:OBJECT_STORE:ERROR:DMA_ADDRESS
+PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_FAILED
+PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_TIMEOUT
+PYTHOS:CORE:OBJECT_STORE:ERROR:BLOCK
+PYTHOS:CORE:OBJECT_STORE:ERROR:TORN_WRITE
+PYTHOS:CORE:OBJECT_STORE:ERROR:BAD_SNAPSHOT
+PYTHOS:CORE:OBJECT_STORE:ERROR
 PYTHOS:CORE:DYNAMIC_OBJECT:CREATED
 PYTHOS:CORE:DYNAMIC_OBJECT:DELETED
 PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY
@@ -393,10 +427,28 @@ PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE
 PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED
 PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
 PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
+PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY
+PYTHOS:CORE:NORMAL_INIT:RING3_READY
+PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY
+PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY
+PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY
+PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY
+PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY
+PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY
 PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY
 PYTHOS:CORE:LAUNCHER:CLICK_CONFIRMED
 PYTHOS:CORE:COM2_READY
-PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY
+PYTHOS:CORE:SYSCALL:MSRS_READY
+PYTHOS:CORE:SYSCALL:ENTER
+PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK
+PYTHOS:CORE:SYSCALL:SYSTEM_LOG
+PYTHOS:CORE:SYSCALL:RETURN
+PYTHOS:CORE:SYSCALL_ENTRY_READY
+PYTHOS:CORE:SYSCALL_ABI:VERSIONED
+PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH
+PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED
+PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY
+PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED
 PYTHOS:SHELL:RING3_ENTER
 PYTHOS:SHELL:READY
 PYTHOS:SHELL:REBOOT_REQUESTED
@@ -425,6 +477,14 @@ The newly reviewed marker consumers and migration rules are:
 | `PYTHOS:CORE:OBJECT_STORE:RESTORED` | `core/src/persistent_objects.rs` | Same storage harnesses plus `tests/test_persistent_object_storage.py` | Yes | Replacement must prove reboot readability before renaming/removal. |
 | `PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW` | `core/src/persistent_objects.rs` | `scripts/test-persistent-storage.py` | Yes | Preserve killed-mid-commit orchestration until a new crash window is accepted. |
 | `PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED` | `core/src/persistent_objects.rs` | `scripts/test-persistent-storage.py`; `tests/test_persistent_object_storage.py` | Yes | Replacement must prove torn-tail rejection and prior-state recovery. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:INVALID_QUEUE` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:DMA_ADDRESS` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_FAILED` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_TIMEOUT` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:BLOCK` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:TORN_WRITE` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR:BAD_SNAPSHOT` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
+| `PYTHOS:CORE:OBJECT_STORE:ERROR` | `core/src/persistent_objects.rs::write_error()` via `core/src/main.rs` persistent-object self-test failure | No active script/test assertion found by source search | Yes | Preserve exact failure marker or add versioned compatibility mapping. |
 | `PYTHOS:CORE:DYNAMIC_OBJECT:CREATED` | `core/src/dynamic_object_store.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve dynamic identity/allocation proof. |
 | `PYTHOS:CORE:DYNAMIC_OBJECT:DELETED` | `core/src/dynamic_object_store.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve deletion/extent release proof. |
 | `PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY` | `core/src/main.rs` | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; `tests/test_boot_marker_contract.py` | Yes | Replacement requires equivalent bounded-count acceptance. |
@@ -433,7 +493,26 @@ The newly reviewed marker consumers and migration rules are:
 | `PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED` | `core/src/storage_adversarial.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve committed-prefix replay and rollback coverage. |
 | `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` | `core/src/main.rs` | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; `tests/test_boot_marker_contract.py` | Yes | Replacement requires the complete adversarial suite. |
 | `PYTHOS:CORE:COM2_READY` | `core/src/normal_boot.rs` after `serial::init_com2()` | `scripts/test-com2-shell-transport.py`; `scripts/test-object-shell.py` | Yes | Preserve cold-init-before-transport ordering. |
-| `PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY` | `core/src/normal_init.rs` after syscall initialization | `scripts/test-normal-fast-boot.py` and normal-boot source-contract tests | Yes | Preserve syscall readiness before shell entry. |
+| `PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY` | `core/src/normal_init.rs` after memory/VM substrate setup | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string and readiness ordering before shell execution. |
+| `PYTHOS:CORE:NORMAL_INIT:RING3_READY` | `core/src/normal_init.rs` after ring-3 substrate setup | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string and readiness ordering before shell execution. |
+| `PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY` | `core/src/normal_init.rs` after interrupt/timer setup | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string and readiness ordering before shell execution. |
+| `PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY` | `core/src/normal_init.rs` after task/process setup | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string and readiness ordering before shell execution. |
+| `PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY` | `core/src/normal_init.rs` after syscall initialization | `scripts/test-normal-fast-boot.py` | Yes | Preserve syscall readiness before shell entry. |
+| `PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY` | `core/src/normal_init.rs` after user-stack setup | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string and readiness ordering before shell execution. |
+| `PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` | `core/src/normal_init.rs` after block-device availability check | `scripts/test-normal-fast-boot.py`; `scripts/test-hardware-probe.py`; `scripts/test-emmc-write-probe.py` | Yes | Preserve exact string before storage-dependent normal boot acceptance. |
+| `PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY` | `core/src/normal_boot.rs` after `initialize_normal_substrate()` succeeds | `scripts/test-normal-fast-boot.py` | Yes | Preserve exact string before launcher readiness and shell launch. |
+| `PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY` | `core/src/normal_boot.rs` after launcher screen readiness | `scripts/test-normal-fast-boot.py`; `scripts/test-normal-boot-interactive.py`; `scripts/test-com2-shell-transport.py`; `scripts/test-object-shell.py` | Yes | Preserve launcher-gate marker until replacement task entry has accepted compatibility coverage. |
+| `PYTHOS:CORE:SYSCALL:MSRS_READY` | `core/src/syscall.rs` syscall self-test after MSR configuration proof | `scripts/test-boot.py` | Yes | Preserve exact proof marker or replace only through a versioned syscall acceptance migration. |
+| `PYTHOS:CORE:SYSCALL:ENTER` | `core/src/syscall.rs` syscall proof entry path | `scripts/test-boot.py` | Yes | Preserve exact proof marker or replace only through a versioned syscall acceptance migration. |
+| `PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK` | `core/src/syscall.rs` syscall proof capability check | `scripts/test-boot.py` | Yes | Preserve exact proof marker or replace only through a versioned syscall acceptance migration. |
+| `PYTHOS:CORE:SYSCALL:SYSTEM_LOG` | `core/src/syscall.rs` syscall proof system-log operation | `scripts/test-boot.py` | Yes | Preserve exact proof marker or replace only through a versioned syscall acceptance migration. |
+| `PYTHOS:CORE:SYSCALL:RETURN` | `core/src/syscall.rs` syscall proof return path | `scripts/test-boot.py` | Yes | Preserve exact proof marker or replace only through a versioned syscall acceptance migration. |
+| `PYTHOS:CORE:SYSCALL_ENTRY_READY` | `core/src/main.rs` after syscall entry self-test | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py` | Yes | Preserve ordered syscall-entry readiness evidence. |
+| `PYTHOS:CORE:SYSCALL_ABI:VERSIONED` | `core/src/main.rs` after general syscall ABI version proof | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py` source-contract scan | Yes | Preserve exact marker or migrate through a versioned syscall ABI contract. |
+| `PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH` | `core/src/main.rs` after known-dispatch proof | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py` source-contract scan | Yes | Preserve exact marker or migrate through a versioned syscall ABI contract. |
+| `PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED` | `core/src/main.rs` after unknown-syscall denial proof | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py` source-contract scan | Yes | Preserve exact marker or migrate through a versioned syscall ABI contract. |
+| `PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY` | `core/src/main.rs` after complete general syscall ABI proof | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; `tests/test_boot_marker_contract.py` | Yes | Preserve complete ABI-proof ordering before any syscall migration. |
+| `PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED` | `core/src/syscall.rs` when caller identity does not match a holder-bound object capability | No active script/test assertion found by source search | Yes | Preserve exact denial evidence or add source-backed compatibility tests before replacement. |
 | `PYTHOS:SHELL:RING3_ENTER` | `core/src/user_mode.rs` shell launch path | normal interactive, COM2, object-shell, hardware-probe, and eMMC harnesses | Yes | Replacement must prove ring-3 entry or explicitly migrate the launch contract. |
 | `PYTHOS:SHELL:READY` | `user/shell/src/main.rs` over COM2 | `scripts/test-com2-shell-transport.py`; `scripts/test-object-shell.py` | Yes | Preserve the accepted shell transport banner while shell compatibility remains. |
 | `PYTHOS:SHELL:REBOOT_REQUESTED` | `core/src/syscall.rs` after system-control capability validation | reboot acceptance through `scripts/test-object-shell.py` serial flow | Yes | Do not emit before authority validation; replacement requires an explicit reboot marker decision. |
@@ -511,7 +590,7 @@ Do not change these values in a terminology migration:
 
 ### Ring-3 Object-Shell ABI Contracts
 
-`shared/src/object_shell_abi.rs` is retained cross-cutting compatibility
+`shared/src/object_shell_abi.rs` is a retained authoritative object-shell ABI compatibility
 substrate. Do not change these exact values without a separate versioned ABI
 migration:
 
@@ -544,6 +623,41 @@ migration:
 | COM2 hardware identity in `core/src/serial.rs` | base `0x2F8`, line-status port `0x2FD` |
 | `MAX_TEXT_LEN` in `user/shell/src/commands.rs` | `16` |
 | `MAX_LINE_LEN` in `user/shell/src/line_editor.rs` | `96` |
+
+#### General Syscall Numeric Contract
+
+`core/src/syscall.rs` is retained authoritative syscall/capability substrate,
+not a presentation component. Width and signedness are part of the contract
+where the source defines them as `u16`, `u32`, `u64`, `ResourceId` wrapping a
+`u64`, byte arrays, or byte slices.
+
+| Exact symbol | Exact value and width | Role | Callers and consumers | Migration rule |
+| --- | --- | --- | --- | --- |
+| `SYSCALL_ABI_MAJOR` | `1` as `u16` | Version field in the general syscall ABI proof. | `abi_info_result()`, `run_general_abi_self_test()`, syscall unit tests; readiness observed through `core/src/main.rs`, `scripts/test-boot.py`, `scripts/test-normal-fast-boot.py`, and `tests/test_boot_marker_contract.py`. | Freeze until a versioned syscall ABI migration is accepted. |
+| `SYSCALL_ABI_MINOR` | `0` as `u16` | Version field in the general syscall ABI proof. | `abi_info_result()`, `run_general_abi_self_test()`, syscall unit tests; readiness observed through the general syscall ABI markers. | Freeze until a versioned syscall ABI migration is accepted. |
+| `SYSCALL_ABI_INFO` | `0x5059_0000` as `u64` | Side-effect-free ABI-info syscall number. | `SYSCALL_TABLE`, `dispatch()`, `run_general_abi_self_test()`, syscall unit tests. | Do not renumber; add a versioned dispatch entry only in a later ABI migration. |
+| `SYSCALL_SYSTEM_LOG_PROOF` | `0x5059_0001` as `u64` | Known-dispatch proof syscall number. | `SYSCALL_TABLE`, `dispatch()`, `run_general_abi_self_test()`, syscall unit tests. | Do not renumber; keep proof behavior until a replacement proof is accepted. |
+| `SYSCALL_ABI_INFO_MAGIC` | `0x5059_0000_0000` as `u64` | High bits of the `SYSCALL_ABI_INFO` return value. | `abi_info_result()`, `run_general_abi_self_test()`, syscall unit tests. | Preserve return encoding and width. |
+| `SYSCALL_ERROR_UNSUPPORTED_NUMBER` | `0xBAD0_0001` as `u64` | Dispatch result for unsupported syscall numbers. | `dispatch()`, `run_general_abi_self_test()` unknown-denial proof, syscall unit tests. | Preserve exact error value or version the dispatch ABI. |
+| `SYSCALL_ERROR_DISPATCH` | `0xBAD0_0002` as `u64` | Dispatch result for non-specific syscall dispatch errors. | `dispatch()` error mapping and syscall unit tests. | Preserve exact error value or version the dispatch ABI. |
+| `SYSCALL_ERROR_UNEXPECTED` | `0xBAD0_0003` as `u64` | Dispatch result for an unexpected syscall path. | `dispatch()` error mapping and syscall unit tests. | Preserve exact error value or version the dispatch ABI. |
+| `IA32_EFER` | `0xC000_0080` as `u32` | MSR selector used to enable syscall entry. | `configure_gate()` in `core/src/syscall.rs`. | Do not change outside a CPU syscall-entry ABI migration. |
+| `IA32_STAR` | `0xC000_0081` as `u32` | MSR selector for syscall segment setup. | `configure_gate()` and `syscall_star_value()` in `core/src/syscall.rs`. | Do not change outside a CPU syscall-entry ABI migration. |
+| `IA32_LSTAR` | `0xC000_0082` as `u32` | MSR selector for syscall entry address. | `configure_gate()` in `core/src/syscall.rs`. | Do not change outside a CPU syscall-entry ABI migration. |
+| `IA32_FMASK` | `0xC000_0084` as `u32` | MSR selector for masked flags on syscall entry. | `configure_gate()` in `core/src/syscall.rs`. | Do not change outside a CPU syscall-entry ABI migration. |
+| `EFER_SYSCALL_ENABLE` | `1 << 0` as `u64` | Bit enabling x86-64 syscall entry. | `configure_gate()` in `core/src/syscall.rs`; proof markers consumed by `scripts/test-boot.py`. | Preserve exact bit expression and proof ordering. |
+| `RFLAGS_INTERRUPT_ENABLE` | `1 << 9` as `u64` | Flag bit included in the syscall-entry mask. | `SYSCALL_RFLAGS_MASK` and `configure_gate()`. | Preserve unless a CPU syscall-entry migration proves equivalent masking. |
+| `RFLAGS_DIRECTION` | `1 << 10` as `u64` | Flag bit included in the syscall-entry mask. | `SYSCALL_RFLAGS_MASK` and `configure_gate()`. | Preserve unless a CPU syscall-entry migration proves equivalent masking. |
+| `SYSCALL_RFLAGS_MASK` | `RFLAGS_INTERRUPT_ENABLE | RFLAGS_DIRECTION` as `u64` | IA32_FMASK value for syscall entry. | `configure_gate()` writes `IA32_FMASK`; proof markers consumed by `scripts/test-boot.py`. | Preserve exact source expression and behavior. |
+| `IPC_SYSCALL_RESOURCE` | `0x5359_5343_4950_4300` as `ResourceId::new(u64)` | Capability resource for syscall IPC and boundary proofs. | `run_capability_gated_ipc_bridge()`, `run_boundary_capability_self_test()`, syscall unit tests. | Do not change resource identity or holder checks. |
+| `HARDWARE_PORT_RESOURCE` | `0x4841_5244_504F_5254` as `ResourceId::new(u64)` | Wrong-resource denial target in the boundary proof. | `run_boundary_capability_self_test()` and syscall unit tests. | Preserve denial identity or version the boundary proof. |
+| `CONSOLE_COM2_RESOURCE` | `0x434F_4D32_434F_4E00` as `ResourceId::new(u64)` | Console read/write capability resource. | `grant_shell_capabilities()`, console dispatch, user shell, COM2/object-shell harnesses. | Do not change without backward capability handling. |
+| `SYSTEM_CONTROL_RESOURCE` | `0x5359_5354_4354_524C` as `ResourceId::new(u64)` | Reboot capability resource. | `grant_shell_capabilities()`, `dispatch_system_reboot_for_caller()`, user shell, `scripts/test-object-shell.py`. | Preserve reboot authority boundary and marker ordering. |
+| `SYSCALL_MESSAGE_TYPE` | `0x88` as `u16` | IPC message type in the syscall bridge proof. | `run_capability_gated_ipc_bridge()` and syscall unit tests. | Preserve proof payload unless a versioned proof replaces it. |
+| `SYSCALL_PAYLOAD` | `[0x53, 0x43, 0x41, 0x4C]` as `[u8; 4]` | IPC payload bytes for the syscall bridge proof. | `run_capability_gated_ipc_bridge()` and syscall unit tests. | Preserve byte-for-byte proof payload unless a versioned proof replaces it. |
+| `BOUNDARY_MESSAGE_TYPE` | `0x89` as `u16` | IPC message type in the boundary-capability proof. | `run_boundary_capability_self_test()` and syscall unit tests. | Preserve proof payload unless a versioned proof replaces it. |
+| `BOUNDARY_PAYLOAD` | `[0x42, 0x4F, 0x55, 0x4E]` as `[u8; 4]` | IPC payload bytes for the boundary-capability proof. | `run_boundary_capability_self_test()` and syscall unit tests. | Preserve byte-for-byte proof payload unless a versioned proof replaces it. |
+| `SYSCALL_LOG_MESSAGE` | `b"PythOS [HISS] We Are Woken"` as `&[u8]` | System-log proof payload. | `run_system_log_bridge()`, `handle_system_log_proof()`, `run_general_abi_self_test()`, syscall unit tests. | Preserve exact proof bytes unless a versioned proof replaces them. |
 
 `PackedCapability` is an aligned 8-byte `#[repr(C)]` value. Bits `0..31`
 hold the table slot and bits `32..63` hold the generation. It is an opaque
@@ -718,14 +832,31 @@ This branch must not:
 * change marker strings or test expectations;
 * change persistent checkpoint, journal, object-service, or replay formats;
 * remove the normal-boot launcher compatibility gate;
+* add production aliases or compatibility shims;
 * add a new task surface implementation;
 * claim evidence-terminal publication status beyond the existing ADR 0063
   reconciliation boundary.
 
 ## Recommended Next Branch After Review
 
-After owner acceptance of this report, a later migration branch may write a
-specific compatibility ADR and add source-level aliases beside the old names.
-That later branch should prove old serialized records, boot markers, normal
-boot, object shell, persistent storage, and replay behavior still work before
-any old name is removed.
+The first implementation slice is a compatibility-freeze test branch. It may
+add or strengthen tests and test fixtures only. It may not add production
+aliases, rename symbols, remove code, migrate markers, alter ABI values, change
+durable formats, or change replay behavior.
+
+Recommended branch: `test/interface-compatibility-freeze`.
+
+Permitted scope is limited to tests pinning:
+
+* typed-object kind encoding and decoding;
+* old object and workspace record readability;
+* relationship and revision identities;
+* object-service checkpoint and reboot replay;
+* persistent-object failure markers;
+* general and object-shell syscall numeric contracts;
+* packed ABI struct sizes and offsets;
+* COM2 and normal-init marker behavior;
+* shell transport and reboot contracts;
+* evidence-log and evidence-terminal capture contracts.
+
+Production code changes require a later, separately approved branch.
