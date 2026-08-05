@@ -259,5 +259,18 @@ class BootMarkerContractTest(unittest.TestCase):
         )
 
 
+def load_tests(loader, tests, pattern):
+    compatibility_path = ROOT / "tests" / "test_interface_compatibility_freeze.py"
+    spec = importlib.util.spec_from_file_location(
+        "interface_compatibility_freeze_tests", compatibility_path
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    tests.addTests(loader.loadTestsFromModule(module))
+    return tests
+
+
 if __name__ == "__main__":
     unittest.main()
