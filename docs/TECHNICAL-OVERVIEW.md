@@ -8,10 +8,12 @@ persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
 SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has target-specific
 physical panel evidence on the confirmed disposable O2 Micro `1217:8620`
-target. ADR 0063's evidence-terminal implementation is present on `main` and
-is QEMU-accepted through `scripts\test-evidence-terminal.py`; the repository
-also carries five evidence-terminal gallery images showing 139 ordered markers,
-zero dropped markers, and CRC `176F4C6E`.
+target. ADR 0063 defines the evidence-terminal acceptance contract and its
+repository-state boundaries. The reproducible evidence terminal remains listed
+under "Not yet claimed" until its implementation, harness, documentation, and
+accepted branch state are reconciled together. Recommended follow-up: reconcile
+ADR 0063, README, the status table, and dedicated evidence-terminal
+documentation in a separate evidence-terminal status pass.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
