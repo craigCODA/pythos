@@ -144,7 +144,24 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
         normal_init = source("core/src/normal_init.rs")
         normal_boot = source("core/src/normal_boot.rs")
         fast_boot = source("scripts/test-normal-fast-boot.py")
-        for marker in self.fixture["normal_init_markers"]:
+        emission_order = self.fixture["normal_init_emission_order"]
+        normal_init_order = emission_order[:-1]
+        substrate_ready = emission_order[-1]
+
+        self.assert_in_order(
+            normal_init,
+            normal_init_order,
+            "normal-init source emission order",
+        )
+
+        self.assertIn(substrate_ready, normal_boot)
+        self.assertIn("initialize_normal_substrate", normal_boot)
+        self.assertLess(
+            normal_boot.index("initialize_normal_substrate"),
+            normal_boot.index(substrate_ready),
+        )
+
+        for marker in emission_order:
             emitter = normal_boot if marker.endswith("SUBSTRATE_READY") else normal_init
             self.assertIn(marker, emitter)
             self.assertIn(marker, fast_boot)
