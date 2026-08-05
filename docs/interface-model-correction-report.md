@@ -76,6 +76,32 @@ codes. Existing numeric identities remain stable:
 | 9 | `ObjectBrowserWindow` | Stable old numeric identity; later source rename needs alias/migration. |
 | 10 | `Note` | Stable. |
 
+### Fixed Object And Layout Identifiers
+
+Default migration rule for every identifier in this section:
+
+```text
+Preserve the numeric value and existing readable format. A future terminology
+migration may introduce a new source-level canonical name or compatibility
+alias, but must not silently renumber the identifier or make existing
+persistent state unreadable.
+```
+
+| Current symbolic name | Fixed value | Source location | Compatibility role | Migration rule |
+| --- | --- | --- | --- | --- |
+| `WORKSPACE_SESSION_OBJECT_ID` | `0x7401` | `core/src/workspace_objects.rs:18` | Serialized as the `WorkspaceSession` `ObjectId`, persisted through the Phase 7 checkpoint path, referenced by object-browser/persistent-object/object-service code, and used as cross-component workspace identity. | Default. |
+| `WORKSPACE_SCHEMA_VERSION` | `1` | `core/src/workspace_objects.rs:20` | Serialized in the `WorkspaceSession` typed-object record, persisted with the record, and used by decode/validation tests as the schema boundary for existing layout fields. | Default. |
+| `FIELD_LAUNCHER_LAYOUT` | `0x100` | `core/src/workspace_objects.rs:21` | Serialized as the `WorkspaceSession` field identifier for the launcher-era projection layout and persisted in existing readable workspace records. | Default. |
+| `FIELD_SERVICE_MONITOR_LAYOUT` | `0x101` | `core/src/workspace_objects.rs:22` | Serialized as the `WorkspaceSession` field identifier for the service-monitor projection layout and persisted in existing readable workspace records. | Default. |
+| `FIELD_PYTHON_CONSOLE_LAYOUT` | `0x102` | `core/src/workspace_objects.rs:23` | Serialized as the `WorkspaceSession` field identifier for the Python-console projection layout and persisted in existing readable workspace records. | Default. |
+| `FIELD_SETTINGS_PANEL_LAYOUT` | `0x103` | `core/src/workspace_objects.rs:24` | Serialized as the `WorkspaceSession` field identifier for the settings-panel-era projection layout and persisted in existing readable workspace records. | Default. |
+| `LAYOUT_FIELD_LEN` | `16` | `core/src/workspace_objects.rs:25` | Serialized as the expected bounded layout payload length, persisted in existing workspace fields, and enforced by decode validation. | Default. |
+| `ShellAppKind::Launcher` paired `ResourceId` / `ObjectId` | `0x7201` | `core/src/shell_apps.rs:174-177` | Used as both launcher-era resource identity and object identity, serialized inside `FIELD_LAUNCHER_LAYOUT`, persisted through workspace layout records, and referenced by layout tests. | Default. |
+| `ShellAppKind::ServiceMonitor` paired `ResourceId` / `ObjectId` | `0x7202` | `core/src/shell_apps.rs:192-195` | Used as both diagnostic projection resource identity and object identity, serialized inside `FIELD_SERVICE_MONITOR_LAYOUT`, persisted through workspace layout records, and referenced by object relationship/browser checks. | Default. |
+| `ShellAppKind::PythonConsole` paired `ResourceId` / `ObjectId` | `0x7203` | `core/src/shell_apps.rs:210-213` | Used as both console projection resource identity and object identity, serialized inside `FIELD_PYTHON_CONSOLE_LAYOUT`, persisted through workspace layout records, and referenced by layout validation. | Default. |
+| `ShellAppKind::SettingsPanel` paired `ResourceId` / `ObjectId` | `0x7204` | `core/src/shell_apps.rs:228-231` | Used as both policy-inspection projection resource identity and object identity, serialized inside `FIELD_SETTINGS_PANEL_LAYOUT`, persisted through workspace layout records, and referenced by persistent-object and object-browser relationship checks. | Default. |
+| `OBJECT_BROWSER_WINDOW_ID` | `0x7501` | `core/src/object_browser.rs:22` | Used as the fixed object-browser projection identity and referenced by object-browser construction/proof code. It is not currently persisted by the Phase 7 checkpoint path. | Default. |
+
 ### Serialized Formats
 
 * ADR 0022 `PYOB` typed-object records: object id, object kind code, schema
@@ -106,12 +132,34 @@ PYTHOS:CORE:APP:SERVICE_MONITOR
 PYTHOS:CORE:APP:PYTHON_CONSOLE
 PYTHOS:CORE:APP:SETTINGS_PANEL
 PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT
+PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY
+PYTHOS:CORE:LAUNCHER:CLICK_CONFIRMED
 ```
 
 The `scripts/test-boot.py`, `scripts/test-normal-fast-boot.py`, and
 `tests/test_boot_marker_contract.py` contracts consume these names. A later
 marker rename would require an explicit compatibility strategy, not a global
 replacement.
+
+ADR 0053's launcher-era normal-boot contract is also consumed by:
+
+```text
+scripts/test-normal-fast-boot.py
+scripts/test-normal-boot-interactive.py
+scripts/test-com2-shell-transport.py
+scripts/test-object-shell.py
+```
+
+`core/src/normal_boot.rs` emits `PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY`.
+`core/src/launcher_screen.rs` emits `PYTHOS:CORE:LAUNCHER:CLICK_CONFIRMED`.
+`scripts/test-object-shell.py` waits for the launcher-ready marker, injects the
+QMP click through `scripts/launcher_click.py`, then waits for
+`PYTHOS:SHELL:RING3_ENTER`.
+
+ADR 0066 supersedes the launcher authority model, but it does not authorize
+immediate deletion or renaming of these markers or harness expectations. Any
+later replacement requires an explicit compatibility/migration decision and
+preserved acceptance coverage.
 
 ### Replay And Recovery Formats
 
