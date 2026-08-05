@@ -1,0 +1,135 @@
+{
+  "phase5_tail_markers": {
+    "window-interaction": [
+      "PYTHOS:CORE:POINTER_CURSOR_READY",
+      "PYTHOS:CORE:WINDOW_FOCUS_READY",
+      "PYTHOS:CORE:MOVABLE_WINDOWS_READY"
+    ],
+    "widgets": [
+      "PYTHOS:CORE:WIDGET:BUTTON",
+      "PYTHOS:CORE:WIDGET:TEXT_FIELD",
+      "PYTHOS:CORE:WIDGETS_READY"
+    ],
+    "phase-5-complete": [
+      "PYTHOS:CORE:APP:LAUNCHER",
+      "PYTHOS:CORE:APP:SERVICE_MONITOR",
+      "PYTHOS:CORE:APP:PYTHON_CONSOLE",
+      "PYTHOS:CORE:APP:SETTINGS_PANEL",
+      "PYTHOS:CORE:PHASE_5_COMPLETE"
+    ],
+    "workspace-objects": [
+      "PYTHOS:CORE:WORKSPACE:SESSION_OBJECT",
+      "PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT",
+      "PYTHOS:CORE:WORKSPACE_OBJECTS_READY"
+    ],
+    "object-browser": [
+      "PYTHOS:CORE:OBJECT_BROWSER:LIST",
+      "PYTHOS:CORE:OBJECT_BROWSER:DETAIL",
+      "PYTHOS:CORE:OBJECT_BROWSER_READY"
+    ]
+  },
+  "normal_init_markers": [
+    "PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY",
+    "PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY",
+    "PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY",
+    "PYTHOS:CORE:NORMAL_INIT:RING3_READY",
+    "PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY",
+    "PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY",
+    "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
+    "PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY"
+  ],
+  "launcher_markers": [
+    "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY",
+    "PYTHOS:CORE:LAUNCHER:CLICK_CONFIRMED"
+  ],
+  "syscall_proof_markers": [
+    "PYTHOS:CORE:SYSCALL:MSRS_READY",
+    "PYTHOS:CORE:SYSCALL:ENTER",
+    "PYTHOS:CORE:SYSCALL:CAPABILITY_CHECK",
+    "PYTHOS:CORE:SYSCALL:SYSTEM_LOG",
+    "PYTHOS:CORE:SYSCALL:RETURN",
+    "PYTHOS:CORE:SYSCALL_ABI:VERSIONED",
+    "PYTHOS:CORE:SYSCALL_ABI:KNOWN_DISPATCH",
+    "PYTHOS:CORE:SYSCALL_ABI:UNKNOWN_DENIED",
+    "PYTHOS:CORE:GENERAL_SYSCALL_ABI_READY",
+    "PYTHOS:CORE:OBJECT_SYSCALL:CALLER_DENIED"
+  ],
+  "object_store_error_markers": [
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:INVALID_QUEUE",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:DMA_ADDRESS",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_FAILED",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:REQUEST_TIMEOUT",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:BLOCK",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:TORN_WRITE",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR:BAD_SNAPSHOT",
+    "PYTHOS:CORE:OBJECT_STORE:ERROR"
+  ],
+  "object_kind_codes": {
+    "ApplicationLauncherWindow": 1,
+    "BootIdentitySurface": 2,
+    "ServiceMonitorWindow": 3,
+    "PythonConsoleWindow": 4,
+    "SettingsPanelWindow": 5,
+    "ButtonWidget": 6,
+    "TextFieldWidget": 7,
+    "WorkspaceSession": 8,
+    "ObjectBrowserWindow": 9,
+    "Note": 10
+  },
+  "shell_apps": [
+    {
+      "kind": "Launcher",
+      "task_id": 120,
+      "resource": "0x7201",
+      "object_id": "0x7201",
+      "object_kind": "ApplicationLauncherWindow"
+    },
+    {
+      "kind": "ServiceMonitor",
+      "task_id": 121,
+      "resource": "0x7202",
+      "object_id": "0x7202",
+      "object_kind": "ServiceMonitorWindow"
+    },
+    {
+      "kind": "PythonConsole",
+      "task_id": 122,
+      "resource": "0x7203",
+      "object_id": "0x7203",
+      "object_kind": "PythonConsoleWindow"
+    },
+    {
+      "kind": "SettingsPanel",
+      "task_id": 123,
+      "resource": "0x7204",
+      "object_id": "0x7204",
+      "object_kind": "SettingsPanelWindow"
+    }
+  ],
+  "launcher_click": {
+    "QMP_PORT": 4488,
+    "_MOVE_STEPS": 10,
+    "_STEP_DX": 30,
+    "_STEP_DY": -38
+  },
+  "taxonomy": {
+    "authoritative_paths": [
+      "core/src/typed_object_format.rs",
+      "core/src/object_relationships.rs",
+      "core/src/revision_history.rs",
+      "core/src/object_service.rs",
+      "core/src/dynamic_object_store.rs",
+      "shared/src/object_shell_abi.rs",
+      "core/src/normal_init.rs",
+      "core/src/syscall.rs"
+    ],
+    "presentation_paths": [
+      "core/src/serial.rs",
+      "shared/src/evidence_log.rs",
+      "Evidence fields in `shared/src/boot_protocol.rs`",
+      "core/src/evidence_log.rs",
+      "core/src/evidence_terminal.rs",
+      "core/src/framebuffer.rs"
+    ]
+  }
+}
