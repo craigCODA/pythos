@@ -38,7 +38,7 @@ replay-sensitive state.
 | Category | Meaning |
 | --- | --- |
 | Retained presentation substrate | Mechanism needed to receive input, render pixels/text, compose projections, or expose evidence/diagnostics without owning user authority. |
-| Adapted into task/object projection model | Existing behavior has useful mechanics but must be reframed as task surfaces, object projections, executable tool objects, or typed action controls. |
+| Adapted into task surfaces, object projections, or typed action controls | Existing behavior has useful mechanics but must be reframed as task surfaces, object projections, executable tool objects, or typed action controls. |
 | Demoted to diagnostic or compatibility fixture | Existing behavior remains useful for tests, recovery, diagnostics, or historical acceptance, but must not become the live user model. |
 | Retired only after proven replacement exists | Existing authority vocabulary or structure should disappear only after a replacement and compatibility migration are proven. |
 
@@ -58,7 +58,7 @@ replay-sensitive state.
 | `core/src/cinematic_boot.rs` | Boot visual/audio sync presentation surface. No task/workspace authority. | Normal boot and verification boot call the Phase 6 boot-visual path; uses compositor/shell-object presentation binding for a boot identity surface. | Emits `PYTHOS:CORE:BOOT_VISUAL:FRAME` and `PYTHOS:CORE:BOOT_SYNC:AUDIO` through Phase 6 acceptance. | Uses fixed self-test `BootIdentitySurface` object IDs beginning at `0x6000`. `ObjectKind::BootIdentitySurface` serial code `2` is durable if serialized elsewhere. | Retain as boot/evidence presentation. It must not become a desktop hero or launcher surface. |
 | `core/src/evidence_log.rs` and `core/src/evidence_terminal.rs` | Evidence capture and terminal rendering surface. Diagnostic/evidence authority only. | `core/src/main.rs` gates these under `evidence-terminal`; framebuffer terminal helpers draw the final transcript. | `scripts/test-evidence-terminal.py` consumes `PYTHOS:CORE:EVIDENCE_TERMINAL_READY`, rejects `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED`, and validates a PPM screendump. | `EVIDENCE_LOG_KERNEL_VIRT = 0xFFFF_C000_1003_0000`, evidence-log boot metadata, evidence markers, and screenshot harness expectations are compatibility/evidence contracts. Evidence-terminal publication status remains deferred to ADR 0063 and dedicated reconciliation docs. | Retain as evidence/diagnostic surface. Do not use it as proof of general interface acceptance outside ADR 0063. |
 
-### Adapted Into Task/Object Projection Model
+### Adapted Into Task Surfaces, Object Projections, Or Typed Action Controls
 
 | Component | Current authority role | Callers | Tests and markers | Durable identifiers, serialized state, replay dependencies | Proposed replacement boundary |
 | --- | --- | --- | --- | --- | --- |
@@ -93,6 +93,249 @@ replay-sensitive state.
 | First-party desktop application set | Superseded user-model authority. The four fixed projections remain proof fixtures. | `register_first_party_apps()`, `render_shell_screen()`, workspace/object-browser/persistence proofs. | `PYTHOS:CORE:APP:*` and `PYTHOS:CORE:PHASE_5_COMPLETE`. | IDs `0x7201..0x7204`, kind codes `1`, `3`, `4`, `5`, layout fields `0x100..0x103`, persisted snapshots. | Retire only after replacements exist for task initiation, service inspection, console/recovery, and policy inspection. |
 
 ## Cross-Cutting Compatibility Contracts
+
+### Complete Reviewed Compatibility Matrix
+
+The `Retained presentation substrate` bucket below also contains retained
+cross-cutting compatibility substrate. Those rows do not grant presentation
+authority to persistence or ABI code; they record that the mechanism remains
+part of the accepted foundation and cannot be changed by interface terminology
+work.
+
+| Component/path | Bucket | Current role | Frozen contract | Consumers | Replacement boundary |
+| --- | --- | --- | --- | --- | --- |
+| `core/src/typed_object_format.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Canonical fixed-size typed-object encoder/decoder. | `PYOB` version 1, 120-byte records, all `ObjectKind` codes, header/field offsets, four 24-byte field slots, and old-record readability. | Module unit tests; `scripts/test-boot.py`; `tests/boot_core_handoff.py`; persistence, object service, checkpoint, dynamic-store, and shell flows. | A terminology migration may add source aliases but cannot change encoded kinds, field layout, or decode behavior without a format migration. |
+| `core/src/object_relationships.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Bounded typed relationship store and workspace-membership authority data. | `RelationshipKind`, source/target identities, `SHELL_WORKSPACE_OBJECT_ID`, `EXTERNAL_WORKSPACE_OBJECT_ID`, and accepted relationship queries. | Module unit tests; `scripts/test-boot.py`; object browser, persistence, object service, checkpoint restore, and object-shell queries. | Preserve relationship meaning and records; projection naming must not rewrite ownership or membership edges. |
+| `core/src/revision_history.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Bounded current/prior revision chains with timestamp and writer provenance. | Object ID, revision number, timestamp ticks, writer `ServiceId`, typed-object payload, capacities, and monotonic restore behavior. | Module unit tests; `scripts/test-boot.py`; persistent objects, object service, checkpoint, browser/history, and shell history. | Replacement must restore the same chains and provenance before old revision storage can be retired. |
+| `core/src/persistent_objects.rs` | Demoted to diagnostic or compatibility fixture | Phase 7 fixed workspace-snapshot and torn-write proof. | Sectors 30-32, `PY7OBJ01`/`PY7CTL01`, version 1, commit/checksum/layout fields, relationship codes, and reboot/torn-write markers. | Module unit tests; `scripts/test-persistent-storage.py`; `tests/test_persistent_object_storage.py`; `scripts/test-boot.py`; AHCI/SDHCI/evidence harnesses. | Keep as a compatibility proof until a replacement preserves readable Phase 7 state and reboot/torn-write acceptance. |
+| `core/src/object_service.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Capability-scoped typed-object authority, query, inspection, revision, and restore service. | Stable workspace/object identities, note IDs, `ObjectKind::Note`, text field ID, snapshot semantics, holder-bound capabilities, and restore/rebind behavior. Runtime capability handles are deliberately not serialized. | Module unit tests; `core/src/syscall.rs`; retained normal-boot service; `scripts/test-object-shell.py`; checkpoint/reboot paths. | Task/object projections may call this service; visible controls never bypass it. Any replacement must prove restored authority and old-object readability. |
+| `core/src/object_service_checkpoint.rs` | Retired only after proven replacement exists | ADR 0052 two-slot retained object-service checkpoint and highest-generation recovery. | Slot sectors 192-250, magic/version/commit/checksum rules, record sizes/offsets, generation alternation, relationship and revision table layouts. | Module unit tests; `core/src/object_service.rs`; `core/src/retained_services.rs`; `scripts/test-object-shell.py` reboot path. | Retire only after a migration reads both old slots, preserves torn-slot recovery, and restores equivalent object-service state. |
+| `core/src/dynamic_object_store.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Allocator-backed bounded typed-object identity/extent store. | `MAX_DYNAMIC_OBJECTS = 9`, object identity uniqueness, extent/bitmap restore, deletion/reuse behavior, and typed `ObjectKind` payloads. | Module unit tests; object service; storage adversarial proofs; `scripts/test-boot.py`; normal-fast-boot source contract. | Interface renaming cannot change dynamic object IDs or allocator restore semantics; replacement must preserve identity-to-extent recovery. |
+| `core/src/storage_adversarial.rs` | Demoted to diagnostic or compatibility fixture | Phase 10 storage acceptance proof for create/delete reuse, quota denial, and torn allocator replay. | Exact three proof markers, committed-prefix replay/rollback behavior, and suite-ready ordering. | Module unit tests; `scripts/test-boot.py`; `tests/test_boot_marker_contract.py`; `tests/boot_core_handoff.py`. | Keep until equivalent adversarial coverage proves any replacement storage path. |
+| `shared/src/object_shell_abi.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Shared ring-3 typed request/response, bootstrap, capability, console, and reboot ABI. | Every syscall/op/status number, `SYSCALL_OK`, `NO_BYTE`, packed capability encoding, struct size, alignment, field offset, and fixed capacity. | `pythos-shared` unit tests; `core/src/syscall.rs`; `core/src/normal_init.rs`; all `user/shell/src/*`; normal/object-shell harnesses. | ABI remains frozen until an explicit versioned replacement and backward handler exist. |
+| `core/src/normal_init.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Builds shell process/address space and maps the read-only bootstrap capability block. | `SHELL_BOOTSTRAP_USER_PTR`, 168-byte bootstrap representation, `rdi` handoff, read-only user mapping, and `NORMAL_INIT:SYSCALL_READY`. | Normal boot; address-space/process/syscall code; normal-fast-boot and shell harnesses. | A new primary interface may replace shell launch only after preserving bootstrap compatibility or introducing an explicit versioned launch migration. |
+| `core/src/syscall.rs` | Retained presentation substrate (cross-cutting compatibility substrate) | Validates packed capabilities and dispatches typed console/object/reboot operations. | Syscall numbers/results, COM2 and system-control resource identities, request/response copy boundaries, holder checks, reboot markers and behavior. | `pythos-core` unit tests; ring-3 shell; COM2/object-shell/reboot harnesses. | New projections reuse typed syscalls or pass a separate ABI migration; no visible control gains direct authority. |
+| `core/src/serial.rs` | Retained presentation substrate | COM1 evidence oracle and PythCore-owned COM2 interactive transport. | COM2 base `0x2F8`, UART setup sequence, nonblocking read, blocking write, and `COM2_READY` acceptance. | Serial unit tests; normal boot; syscall console bridge; COM2/object-shell harnesses. | Retain transport independently of whether the ring-3 shell remains primary. |
+| `user/shell/src/commands.rs` | Adapted into task surfaces, object projections, or typed action controls | Parses bounded human commands into typed ABI requests entirely in ring 3. | Grammar, operation mapping, `MAX_TEXT_LEN = 16`, decimal object IDs, and rejection behavior. | User-shell unit tests; `user/shell/src/main.rs`; `scripts/test-object-shell.py`. | May become recovery/direct-control parsing after task projections replace it as primary; PythCore must never parse this grammar. |
+| `user/shell/src/syscalls.rs` | Adapted into task surfaces, object projections, or typed action controls | Validates bootstrap data, packs syscall arguments, caches returned capabilities, and presents typed results. | Syscall register convention, `SYSCALL_OK`/`NO_BYTE`, request/result buffers, authority selection, query buffer, and reboot call behavior. | User-shell unit tests; shell main; COM2/object-shell harnesses. | Preserve as compatibility client or replace with another client that proves the same ABI and denial behavior. |
+| `user/shell/src/capability_map.rs` | Adapted into task surfaces, object projections, or typed action controls | Bounded user-space cache of per-object capabilities. | Capacity 8, object-ID-to-capability association, no workspace fallback, and oldest-entry eviction. | User-shell unit tests and object-shell command dispatch. | Future task controls may use another cache, but must not confuse identity with authority or serialize runtime handles. |
+| `user/shell/src/line_editor.rs` | Demoted to diagnostic or compatibility fixture | Bounded COM2 line editing for the recovery/direct-control shell. | `MAX_LINE_LEN = 96`, CR/LF behavior, overflow rejection, and no truncated-prefix execution. | User-shell unit tests; shell main; COM2/object-shell harnesses. | Keep while COM2 shell remains an accepted recovery surface. |
+| `user/shell/src/main.rs` and `user/shell/src/lib.rs` | Adapted into task surfaces, object projections, or typed action controls | Ring-3 shell entry loop and module boundary; emits shell readiness over COM2. | Bootstrap pointer in `rdi`, `PYTHOS:SHELL:READY`, prompt/transport behavior, typed command dispatch, and reboot request path. | Build/ELF verification scripts; normal boot; COM2/object-shell and hardware-probe harnesses. | The shell may cease to be primary only after a proven task/object replacement; its accepted recovery path remains available until then. |
+| `shared/src/evidence_log.rs` | Retained presentation substrate | Shared binary evidence-log format, append/drop accounting, snapshot validation, and CRC. | Exact 64 KiB format, 32-byte header order, `PYLOG001`, version 1, 128-byte line limit, newline encoding, drop semantics, and CRC-32/ISO-HDLC. | Shared unit tests; boot/core evidence-log adapters; serial mirror; evidence terminal and acceptance harness. | Interface terminology cannot alter this binary format or make old logs unreadable. |
+| Evidence fields in `shared/src/boot_protocol.rs` | Retained presentation substrate | Loader-to-PythCore handoff for the evidence-log allocation. | ABI minor 3; flag `0x0000_0001`; physical pointer, exact length, flags order/types; 4 KiB alignment and absent-zero rules. | Shared unit tests; `boot/src/boot_info.rs`; `core/src/evidence_log.rs`; VM mappings. | Any boot-ABI revision must preserve old handoff validation or explicitly version the migration. |
+| `core/src/evidence_log.rs` | Retained presentation substrate | Attaches/rebases the shared log and mirrors accepted markers into it. | `EVIDENCE_LOG_KERNEL_VIRT`, exact boot length/flag checks, append and validated snapshot behavior. | Core unit tests; serial mirror; VM mapping; `core/src/main.rs`; evidence terminal. | Retain as evidence infrastructure; interface migration cannot expose it to CPL3 or alter captured marker bytes. |
+| `core/src/evidence_terminal.rs` | Retained presentation substrate | Paginated, bounded rendering of the captured evidence log. | Geometry, prefixes, pagination, status format, 99-page ceiling, timing/dwell constants, and ready/drop completion rules. | Core unit tests; `core/src/main.rs`; `scripts/test-evidence-terminal.py`. | Retain as diagnostic/evidence surface. Its accepted capture behavior is outside interface terminology migration. |
+| `core/src/framebuffer.rs` evidence-terminal surface and `scripts/test-evidence-terminal.py` | Retained presentation substrate | Validated direct-pixel terminal rendering and QEMU PPM capture oracle. | 32-bpp validated framebuffer formats/pitch/bounds, terminal colors, 8x8 glyph geometry, PPM path/sequence, minimum dimensions, marker order, and glyph-structure checks. | Framebuffer/core unit tests; evidence-terminal QEMU harness. | Rendering backend may change only with equivalent binary log and capture acceptance. |
+
+### Typed-Object Serialization And Replay Inventory
+
+#### `core/src/typed_object_format.rs`
+
+Classification: retained cross-cutting compatibility substrate in the
+`Retained presentation substrate` bucket. This is the canonical object record
+format, not an interface-label convenience.
+
+The exact little-endian 120-byte (`RECORD_SIZE`) record is:
+
+| Offset | Size | Meaning |
+| --- | --- | --- |
+| `0` | 4 | `MAGIC = "PYOB"` |
+| `4` | 2 | `FORMAT_VERSION = 1` |
+| `6` | 2 | record length, fixed at `120` |
+| `8` | 8 | `ObjectId` raw value |
+| `16` | 2 | encoded `ObjectKind` value |
+| `18` | 2 | schema version |
+| `20` | 2 | field count, at most `MAX_FIELDS = 4` |
+| `22` | 2 | reserved zero |
+| `24 + n * 24` | 2 | field identifier |
+| `26 + n * 24` | 2 | field version |
+| `28 + n * 24` | 2 | field value length, at most `16` |
+| `30 + n * 24` | 2 | reserved zero |
+| `32 + n * 24` | 16 | zero-padded field value |
+
+`HEADER_SIZE = 24`, `FIELD_SLOT_SIZE = 24`, and
+`FIELD_VALUE_CAPACITY = 16` are fixed. Encoded `ObjectKind` values `1..10`
+remain exactly as listed in the durable object-kind table below. Unit tests in
+this module pin round trips and malformed records; `scripts/test-boot.py`
+consumes `PYTHOS:CORE:OBJECT:STABLE_ID`,
+`PYTHOS:CORE:OBJECT:VERSIONED_FIELDS`, and the completion marker emitted by
+`core/src/main.rs`, `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY`.
+
+Migration boundary: preserve every encoded kind value and the readable format.
+A future source-level canonical name or compatibility alias must not silently
+renumber a kind, reorder a field, alter reserved-byte validation, or make an
+old record unreadable.
+
+#### `core/src/object_relationships.rs`
+
+Classification: retained cross-cutting compatibility substrate. The live
+relationship identity is the ordered tuple `source: ObjectId`,
+`kind: RelationshipKind`, `target: ObjectId`. Kind semantics are `Blocks`,
+`CreatedBy`, `DependsOn`, and `BelongsTo`; the Phase 7 serialized codes are
+respectively `1`, `2`, `3`, and `4` in `persistent_objects.rs`.
+
+Fixed cross-component workspace identities are
+`SHELL_WORKSPACE_OBJECT_ID = 0x5059_5753_4845_4C01` and
+`EXTERNAL_WORKSPACE_OBJECT_ID = 0x5059_5753_4558_5401`.
+`OBJECT_SERVICE_RELATIONSHIP_OBJECTS = MAX_QUERY_RESULTS + 3` and
+`OBJECT_SERVICE_RELATIONSHIPS = MAX_QUERY_RESULTS + 1` bound the retained
+service store. The checkpoint persists each workspace-membership record in a
+24-byte slot: active flag at `+0`, object ID at `+8`, workspace ID at `+16`.
+
+Module unit tests cover unknown endpoints, query semantics, duplicate denial,
+workspace separation, and capacity. `scripts/test-boot.py` consumes
+`PYTHOS:CORE:OBJECT:RELATIONSHIP`,
+`PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY`, and
+`PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` (the final marker is emitted by
+`core/src/main.rs`). Relationship records and meaning must survive any
+interface terminology migration.
+
+#### `core/src/revision_history.rs`
+
+Classification: retained cross-cutting compatibility substrate. A
+`RevisionRecord` carries `object_id: ObjectId`, `revision: u64`,
+`timestamp_ticks: u64`, `writer: ServiceId`, and the complete
+`TypedObjectRecord`. `MAX_REVISIONS = MAX_QUERY_RESULTS`, and the retained
+object service allows `OBJECT_SERVICE_CURRENT_OBJECTS = MAX_QUERY_RESULTS + 1`.
+
+The checkpoint revision table uses 160-byte records: active flag `+0`, object
+ID `+8`, revision `+16`, timestamp `+24`, writer identity `+32`, and the
+120-byte typed object at `+40`. Current revisions precede prior revisions in
+the table. Restore rejects duplicate current identities, prior revisions with
+no current object, non-monotonic history, and malformed typed records.
+
+Module unit tests pin retained prior versions, timestamp/writer provenance,
+rejection behavior, and capacity. `scripts/test-boot.py` consumes
+`PYTHOS:CORE:OBJECT:REVISION_RETAINED`,
+`PYTHOS:CORE:OBJECT:REVISION_PROVENANCE`, and
+`PYTHOS:CORE:REVISION_HISTORY_READY`. Interface terminology must not truncate,
+reparent, reorder, or detach revision chains from writer provenance.
+
+#### `core/src/persistent_objects.rs`
+
+Classification: demoted compatibility fixture. It stores the Phase 7
+workspace proof at `CONTROL_SECTOR = 30`, `SNAPSHOT_SECTOR = 31`, and
+`TORN_SECTOR = 32`. The fixed format uses `SNAPSHOT_MAGIC = "PY7OBJ01"`,
+`CONTROL_MAGIC = "PY7CTL01"`, `SNAPSHOT_VERSION = 1`,
+`CONTROL_ARM_TORN = 1`, and `COMMIT_MARKER = 0x5059_434D`.
+
+The snapshot sector places the typed object at offset `24`; relationship
+source follows at `24 + RECORD_SIZE`, then target `+8`, relationship kind
+`+16`, prior-revision count `+24`, current revision `+32`, current timestamp
+`+40`, and writer identity `+48`. The commit marker is at offset `12`; the
+FNV-1a-style checksum is at offset `16` and excludes bytes `16..20`. Existing
+checks require workspace object `0x7401`, schema 1, a `DependsOn` edge to
+`0x7204`, prior count 1, current revision 2, timestamp 420, and writer identity
+1.
+
+The exact success/recovery markers are
+`PYTHOS:CORE:OBJECT_STORE:CREATED`,
+`PYTHOS:CORE:OBJECT_STORE:PERSISTED`,
+`PYTHOS:CORE:OBJECT_STORE:RESTORED`,
+`PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW`, and
+`PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED`; error markers are also frozen.
+Module unit tests pin round trip, missing-commit rejection, and control-sector
+arming. `scripts/test-persistent-storage.py` performs reboot and killed-write
+acceptance; `tests/test_persistent_object_storage.py`, `scripts/test-boot.py`,
+`scripts/test-ahci-block-device.py`, `scripts/test-sdhci-emmc-block-device.py`,
+and `scripts/test-evidence-terminal.py` consume portions of the contract.
+
+#### `core/src/object_service.rs`
+
+Classification: retained cross-cutting compatibility substrate. It owns typed
+object operations and capability validation. Fixed stored identities include
+`OBJECT_SERVICE_BASE_SECTOR = 96`, `OBJECT_SERVICE_BLOCK_COUNT = 12`,
+`FIRST_SHELL_NOTE_ID = 1042`, `KNOWN_EXTERNAL_NOTE_ID = 2001`,
+`SHELL_WORKSPACE_OBJECT_ID`, `EXTERNAL_WORKSPACE_OBJECT_ID`,
+`ObjectKind::Note = 10`, and `FIELD_TEXT = 1`. Shell/intruder task and program
+identities establish runtime authority but are not persistent object IDs.
+
+Snapshots encode allocator bitmap/extents, object records, `BelongsTo`
+workspace relationships, current revisions, and prior revisions. Runtime
+capability handles are intentionally excluded; after restore, the service
+reconstructs relationships/revisions, computes the next note ID, and rebinds
+holder-scoped capabilities by query. Module unit tests explicitly prove that
+handles are not serialized and that a restored shell regains authority through
+a workspace query. `core/src/syscall.rs`, retained services, and
+`scripts/test-object-shell.py` consume this behavior.
+
+This module emits no serial marker directly; its accepted behavior is observed
+through syscall responses, object-shell transport results, checkpoint/reboot
+behavior, and the consuming harnesses.
+
+Migration boundary: object IDs identify but do not authorize. Interface
+renaming cannot alter restore behavior, make old objects unreadable, serialize
+ephemeral handles, or bypass capability validation.
+
+#### `core/src/object_service_checkpoint.rs`
+
+Classification: retirement-gated compatibility substrate. Slot A occupies
+header/object/relationship/revision/commit sectors
+`192/193..200/201..204/205..216/217`; slot B uses
+`224/225..232/233..236/237..248/249`; `OBJECT_SERVICE_TORN_SECTOR = 250`.
+Table lengths are 8, 4, and 12 sectors. Magic/version contracts are
+`CHECKPOINT_MAGIC = "PY52OBJ1"`, `COMMIT_MAGIC = "PY52DONE"`, and
+`CHECKPOINT_VERSION = 1`.
+
+The header stores magic `+0`, version `+8`, slot `+10`, object count `+12`,
+relationship count `+14`, revision count `+16`, reserved zero `+18`,
+generation `+24`, table/commit sectors at `+32/+40/+48/+56`, checksum at
+`+64`, and allocated bitmap at `+72`. Object records are 152 bytes (active
+`+0`, extent start `+8`, extent length `+16`, typed object `+24`);
+relationship records are 24 bytes; revision records are 160 bytes. The 64-bit
+FNV-1a checksum excludes the checksum field and the commit sector. Odd
+generations use slot A, even generations slot B; restore selects the highest
+fully committed valid generation and rejects stale/torn commit combinations.
+
+Unit tests pin full slot round trip, highest-generation choice, torn inactive
+slot handling, reused-slot torn rewrite rejection, and the header/commit
+probe. `core/src/object_service.rs`, `core/src/retained_services.rs`, and the
+object-shell reboot harness consume the checkpoint. Checkpoint sectors,
+record layouts, and restore selection cannot change silently.
+
+This module emits no serial marker directly. Its contract is consumed by
+object-service restore/persist behavior and the object-shell reboot acceptance
+path.
+
+#### `core/src/dynamic_object_store.rs`
+
+Classification: retained cross-cutting compatibility substrate. It maps each
+`TypedObjectRecord` identity to one `BlockExtent` and restores from the
+allocator bitmap plus `DynamicObjectRecord { object, extent }` records.
+`MAX_DYNAMIC_OBJECTS = MAX_QUERY_RESULTS + 1 = 9`; the proof store uses
+`DYNAMIC_OBJECT_BASE_SECTOR = 96`. Duplicate IDs are denied, deletion releases
+the exact extent, and restore must not lose identity-to-extent association.
+
+Module unit tests cover multi-object creation, release/reuse, duplicate denial,
+lookup, restore, and capacity. The emitted markers are
+`PYTHOS:CORE:DYNAMIC_OBJECT:CREATED` and
+`PYTHOS:CORE:DYNAMIC_OBJECT:DELETED`; `core/src/main.rs` emits
+`PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY`. `scripts/test-boot.py`,
+`tests/test_boot_marker_contract.py`, object service, checkpoint, and storage
+adversarial proofs consume these contracts.
+
+#### `core/src/storage_adversarial.rs`
+
+Classification: diagnostic/compatibility fixture. It proves four rounds of
+create/delete/reuse over dynamic IDs `0x8200..0x8203` and
+`0x8300..0x8303`, quota denial for task 97, and allocator-journal recovery
+with one replayed and one rolled-back record and committed bitmap `0b11`.
+Those IDs are bounded proof identities, while their encoded `ObjectKind`
+values and allocator/replay semantics are frozen dependencies.
+
+Its exact markers are
+`PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE`,
+`PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED`,
+`PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED`, and the
+`core/src/main.rs` completion marker
+`PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY`. Module unit tests,
+`scripts/test-boot.py`, `tests/test_boot_marker_contract.py`, and
+`tests/boot_core_handoff.py` consume the acceptance contract.
+
+Across all eight modules, interface terminology changes cannot silently alter
+encoded `ObjectKind` values, old object readability, relationship records,
+revision chains, checkpoint sectors or record layouts, object-service restore
+behavior, dynamic-object identities, or adversarial-storage acceptance.
 
 ### Marker Contracts
 
@@ -129,11 +372,75 @@ PYTHOS:CORE:WORKSPACE_OBJECTS_READY
 PYTHOS:CORE:OBJECT_BROWSER:LIST
 PYTHOS:CORE:OBJECT_BROWSER:DETAIL
 PYTHOS:CORE:OBJECT_BROWSER_READY
+PYTHOS:CORE:OBJECT:STABLE_ID
+PYTHOS:CORE:OBJECT:VERSIONED_FIELDS
+PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY
+PYTHOS:CORE:OBJECT:RELATIONSHIP
+PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY
+PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY
+PYTHOS:CORE:OBJECT:REVISION_RETAINED
+PYTHOS:CORE:OBJECT:REVISION_PROVENANCE
+PYTHOS:CORE:REVISION_HISTORY_READY
+PYTHOS:CORE:OBJECT_STORE:CREATED
+PYTHOS:CORE:OBJECT_STORE:PERSISTED
+PYTHOS:CORE:OBJECT_STORE:RESTORED
+PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW
+PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED
+PYTHOS:CORE:DYNAMIC_OBJECT:CREATED
+PYTHOS:CORE:DYNAMIC_OBJECT:DELETED
+PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY
+PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE
+PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED
+PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
+PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
 PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY
 PYTHOS:CORE:LAUNCHER:CLICK_CONFIRMED
+PYTHOS:CORE:COM2_READY
+PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY
 PYTHOS:SHELL:RING3_ENTER
 PYTHOS:SHELL:READY
+PYTHOS:SHELL:REBOOT_REQUESTED
+PYTHOS:CORE:SYSTEM:REBOOTING
+PYTHOS:CORE:FRAMEBUFFER_READY
+PYTHOS:CORE:MILESTONE_1_COMPLETE
+PYTHOS:CORE:EVIDENCE_TERMINAL_READY
+PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED
 ```
+
+The newly reviewed marker consumers and migration rules are:
+
+| Exact marker | Emitter | Consumer(s) | Frozen now | Migration requirement |
+| --- | --- | --- | --- | --- |
+| `PYTHOS:CORE:OBJECT:STABLE_ID` | `core/src/typed_object_format.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve until a format migration proves stable identity and accepted marker replacement. |
+| `PYTHOS:CORE:OBJECT:VERSIONED_FIELDS` | `core/src/typed_object_format.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve versioned-field acceptance and old-record readability. |
+| `PYTHOS:CORE:TYPED_OBJECT_FORMAT_READY` | `core/src/main.rs` after typed-format self-test | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; boot handoff and marker-contract tests | Yes | Replacement marker requires equivalent ordered format coverage. |
+| `PYTHOS:CORE:OBJECT:RELATIONSHIP` | `core/src/object_relationships.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve relationship insertion proof. |
+| `PYTHOS:CORE:OBJECT:RELATIONSHIP_QUERY` | `core/src/object_relationships.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve typed query proof. |
+| `PYTHOS:CORE:OBJECT_RELATIONSHIPS_READY` | `core/src/main.rs` after relationship self-test | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; boot handoff tests | Yes | Replacement requires equivalent relationship and query acceptance. |
+| `PYTHOS:CORE:OBJECT:REVISION_RETAINED` | `core/src/revision_history.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve prior-version retention proof. |
+| `PYTHOS:CORE:OBJECT:REVISION_PROVENANCE` | `core/src/revision_history.rs` | `scripts/test-boot.py`; boot handoff slice tests | Yes | Preserve timestamp/writer provenance proof. |
+| `PYTHOS:CORE:REVISION_HISTORY_READY` | `core/src/main.rs` after revision self-test | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; boot handoff tests | Yes | Replacement requires equivalent chain/provenance acceptance. |
+| `PYTHOS:CORE:OBJECT_STORE:CREATED` | `core/src/persistent_objects.rs` | `scripts/test-persistent-storage.py`; AHCI/SDHCI persistence harnesses | Yes | Preserve first-write versus restore distinction. |
+| `PYTHOS:CORE:OBJECT_STORE:PERSISTED` | `core/src/persistent_objects.rs` | `scripts/test-boot.py`; persistent, AHCI, SDHCI, hardware-probe, eMMC, and evidence-terminal harnesses | Yes | Replacement must retain durable-write acceptance. |
+| `PYTHOS:CORE:OBJECT_STORE:RESTORED` | `core/src/persistent_objects.rs` | Same storage harnesses plus `tests/test_persistent_object_storage.py` | Yes | Replacement must prove reboot readability before renaming/removal. |
+| `PYTHOS:CORE:OBJECT_STORE:KILL_WINDOW` | `core/src/persistent_objects.rs` | `scripts/test-persistent-storage.py` | Yes | Preserve killed-mid-commit orchestration until a new crash window is accepted. |
+| `PYTHOS:CORE:OBJECT_STORE:TORN_WRITE_RECOVERED` | `core/src/persistent_objects.rs` | `scripts/test-persistent-storage.py`; `tests/test_persistent_object_storage.py` | Yes | Replacement must prove torn-tail rejection and prior-state recovery. |
+| `PYTHOS:CORE:DYNAMIC_OBJECT:CREATED` | `core/src/dynamic_object_store.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve dynamic identity/allocation proof. |
+| `PYTHOS:CORE:DYNAMIC_OBJECT:DELETED` | `core/src/dynamic_object_store.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve deletion/extent release proof. |
+| `PYTHOS:CORE:DYNAMIC_OBJECT_COUNT_READY` | `core/src/main.rs` | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; `tests/test_boot_marker_contract.py` | Yes | Replacement requires equivalent bounded-count acceptance. |
+| `PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE` | `core/src/storage_adversarial.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve repeated create/delete/reuse coverage. |
+| `PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED` | `core/src/storage_adversarial.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve non-mutating denial coverage. |
+| `PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED` | `core/src/storage_adversarial.rs` | `scripts/test-boot.py`; boot handoff tests | Yes | Preserve committed-prefix replay and rollback coverage. |
+| `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` | `core/src/main.rs` | `scripts/test-boot.py`; `scripts/test-normal-fast-boot.py`; `tests/test_boot_marker_contract.py` | Yes | Replacement requires the complete adversarial suite. |
+| `PYTHOS:CORE:COM2_READY` | `core/src/normal_boot.rs` after `serial::init_com2()` | `scripts/test-com2-shell-transport.py`; `scripts/test-object-shell.py` | Yes | Preserve cold-init-before-transport ordering. |
+| `PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY` | `core/src/normal_init.rs` after syscall initialization | `scripts/test-normal-fast-boot.py` and normal-boot source-contract tests | Yes | Preserve syscall readiness before shell entry. |
+| `PYTHOS:SHELL:RING3_ENTER` | `core/src/user_mode.rs` shell launch path | normal interactive, COM2, object-shell, hardware-probe, and eMMC harnesses | Yes | Replacement must prove ring-3 entry or explicitly migrate the launch contract. |
+| `PYTHOS:SHELL:READY` | `user/shell/src/main.rs` over COM2 | `scripts/test-com2-shell-transport.py`; `scripts/test-object-shell.py` | Yes | Preserve the accepted shell transport banner while shell compatibility remains. |
+| `PYTHOS:SHELL:REBOOT_REQUESTED` | `core/src/syscall.rs` after system-control capability validation | reboot acceptance through `scripts/test-object-shell.py` serial flow | Yes | Do not emit before authority validation; replacement requires an explicit reboot marker decision. |
+| `PYTHOS:CORE:SYSTEM:REBOOTING` | `core/src/syscall.rs` immediately before `qemu_exit::reboot_qemu()` | `scripts/test-object-shell.py` | Yes | Preserve request-to-execution ordering and second-boot acceptance. |
+| `PYTHOS:CORE:FRAMEBUFFER_READY` | `core/src/main.rs` after framebuffer rendering | `scripts/test-boot.py`; `scripts/test-evidence-terminal.py`; marker-contract tests | Yes | Evidence-terminal capture must still follow accepted framebuffer readiness. |
+| `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` | `core/src/main.rs` after final render when `dropped == 0` | `scripts/test-evidence-terminal.py`; QEMU success-marker handling | Yes | Replacement requires zero-drop completion plus equivalent capture evidence. |
+| `PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED` | `core/src/main.rs` when snapshot reports dropped lines | `scripts/test-evidence-terminal.py` as a forbidden failure marker | Yes | Must remain a failure contract unless an explicit evidence-format migration replaces it. |
 
 ### Harness Contracts
 
@@ -204,24 +511,185 @@ Do not change these values in a terminology migration:
 
 ### Ring-3 Object-Shell ABI Contracts
 
-Do not change these values without a separate ABI migration:
+`shared/src/object_shell_abi.rs` is retained cross-cutting compatibility
+substrate. Do not change these exact values without a separate versioned ABI
+migration:
 
-| Identity | Value |
+| Contract | Exact value |
 | --- | --- |
-| `OBJECT_SHELL_ABI_MAJOR` | `1` |
-| `OBJECT_SHELL_ABI_MINOR` | `0` |
-| `FIELD_TEXT` | `1` |
-| `SHELL_BOOTSTRAP_MAGIC` | `0x3154_4F4F_4259_5350` |
-| `MAX_SHELL_OBJECT_CAPS` | `8` |
-| `MAX_QUERY_RESULTS` | `8` |
+| `OBJECT_SHELL_ABI_MAJOR` / `OBJECT_SHELL_ABI_MINOR` | `1` / `0` |
 | `SYSCALL_CONSOLE_READ_BYTE` | `0x5059_0100` |
 | `SYSCALL_CONSOLE_WRITE_BYTE` | `0x5059_0101` |
 | `SYSCALL_OBJECT_REQUEST` | `0x5059_0120` |
 | `SYSCALL_SYSTEM_REBOOT` | `0x5059_0130` |
-| `ObjectShellRequest` size | `80` |
-| `ObjectShellResponse` size | `64` |
-| `ObjectListEntry` size | `16` |
-| `BootstrapCapabilityBlock` size | `168` |
+| `SYSCALL_OK` | `0x5059_004F` |
+| `NO_BYTE` | `u64::MAX` |
+| `OBJECT_KIND_NOTE` | `10` |
+| `FIELD_TEXT` | `1` |
+| `OP_CREATE_OBJECT` | `1` |
+| `OP_QUERY_OBJECTS` | `2` |
+| `OP_INSPECT_OBJECT` | `3` |
+| `OP_REVISE_FIELD` | `4` |
+| `OP_GET_HISTORY` | `5` |
+| `STATUS_OK` | `0` |
+| `STATUS_DENIED` | `1` |
+| `STATUS_NOT_FOUND` | `2` |
+| `STATUS_BAD_REQUEST` | `3` |
+| `STATUS_BUFFER_TOO_SMALL` | `4` |
+| `SHELL_BOOTSTRAP_MAGIC` | `0x3154_4F4F_4259_5350` |
+| `MAX_SHELL_OBJECT_CAPS` / `MAX_QUERY_RESULTS` | `8` / `8` |
+| `SHELL_BOOTSTRAP_USER_PTR` in `core/src/normal_init.rs` | `0x0000_0000_7000_0000` |
+| `CONSOLE_COM2_RESOURCE` in `core/src/syscall.rs` | `0x434F_4D32_434F_4E00` |
+| `SYSTEM_CONTROL_RESOURCE` in `core/src/syscall.rs` | `0x5359_5354_4354_524C` |
+| COM2 hardware identity in `core/src/serial.rs` | base `0x2F8`, line-status port `0x2FD` |
+| `MAX_TEXT_LEN` in `user/shell/src/commands.rs` | `16` |
+| `MAX_LINE_LEN` in `user/shell/src/line_editor.rs` | `96` |
+
+`PackedCapability` is an aligned 8-byte `#[repr(C)]` value. Bits `0..31`
+hold the table slot and bits `32..63` hold the generation. It is an opaque
+holder-bound handle, never a pointer or serialized object identity.
+
+The stable `#[repr(C)]` wire layouts are:
+
+| Type | Size/alignment | Fixed fields and offsets |
+| --- | --- | --- |
+| `PackedCapability` | 8 bytes / 8 | raw packed value at `0` |
+| `ObjectListEntry` | 16 bytes / 8 | `object_id: u64` at `0`; `capability` at `8` |
+| `BootstrapCapabilityBlock` | 168 bytes / 8 | `magic` `0`; ABI major `8`; ABI minor `10`; object count `12`; reserved zero `14`; console `16`; workspace `24`; system control `32`; eight object entries at `40` |
+| `ObjectShellRequest` | 80 bytes / 8 | ABI major `0`; ABI minor `2`; operation `4`; object kind `6`; field ID `8`; reserved zero `10`; authority `16`; object ID `24`; input pointer/length `32/40`; output pointer/length `48/56`; reserved `64/72` |
+| `ObjectShellResponse` | 64 bytes / 8 | status `0`; reserved zero `2`; object kind `4`; field ID `6`; object ID `8`; revision `16`; revision count `24`; bytes written `32`; capability `40`; 16-byte field payload `48` |
+
+`core/src/normal_init.rs` maps one 4 KiB frame containing the 168-byte
+bootstrap block read-only at `SHELL_BOOTSTRAP_USER_PTR`; PythCore transfers its
+pointer in `rdi`. `user/shell/src/syscalls.rs` validates magic, ABI version,
+reserved zero, and object count before copying it. `core/src/syscall.rs`
+copy-validates the 80-byte request and 64-byte response, validates console,
+workspace, object, or system-control authority according to the operation,
+and returns `SYSCALL_OK` only for a completed transport operation. Console
+read returns `NO_BYTE` when COM2 has no byte waiting. Query output is fixed to
+eight 16-byte `ObjectListEntry` values.
+
+The shell command grammar remains entirely in `user/shell/src/commands.rs`:
+`help`, `reboot`, `query kind:note`, `create kind:note`,
+`inspect object:<decimal>`, `revise object:<decimal> text="..."`, and
+`history object:<decimal>`. `user/shell/src/capability_map.rs` associates
+object IDs with real returned capabilities; an unknown object forces a
+workspace re-query and never falls back to the workspace capability.
+
+The reboot contract is capability-gated. `user/shell/src/syscalls.rs` invokes
+`SYSCALL_SYSTEM_REBOOT` with the bootstrap system-control capability.
+`core/src/syscall.rs` requires `WRITE` on `SYSTEM_CONTROL_RESOURCE`, emits
+`PYTHOS:SHELL:REBOOT_REQUESTED`, then
+`PYTHOS:CORE:SYSTEM:REBOOTING`, then executes `qemu_exit::reboot_qemu()`; the
+host-test path returns `SYSCALL_OK`. `scripts/test-object-shell.py` waits for
+the execution marker, observes a second `PYTHOS:SHELL:RING3_ENTER`, and
+rechecks restored shell behavior.
+
+Consumers include the layout/packing tests in `pythos-shared`, object-service
+and syscall unit tests in `pythos-core`, parser/capability/transport tests in
+`pythos-user-shell`, `scripts/build-user-shell.py`,
+`scripts/verify-user-elf.py`, `scripts/test-normal-fast-boot.py`,
+`scripts/test-normal-boot-interactive.py`,
+`scripts/test-com2-shell-transport.py`, and `scripts/test-object-shell.py`.
+
+The ring-3 shell may later be replaced as the primary interface, but its
+current ABI, capability packing, COM2 transport, reboot path, and accepted
+harness behavior remain frozen compatibility contracts until an explicit
+migration contract proves replacement and backward handling.
+
+### Evidence-Log, Boot-Handoff, Terminal, And Framebuffer Contracts
+
+`shared/src/evidence_log.rs` is retained diagnostic/evidence substrate. Its
+binary log is exactly `EVIDENCE_LOG_TOTAL_BYTES = 64 * 1024 = 65536` bytes.
+The `#[repr(C)]` 32-byte `EvidenceLogHeader` is little-endian and ordered as:
+
+| Offset | Size | Field/contract |
+| --- | --- | --- |
+| `0` | 8 | `magic = "PYLOG001"` |
+| `8` | 4 | `version = 1` |
+| `12` | 4 | payload capacity, fixed at `65504` |
+| `16` | 4 | used payload bytes |
+| `20` | 4 | accepted line count |
+| `24` | 4 | dropped-line count |
+| `28` | 4 | CRC-32/ISO-HDLC over exactly `payload[..used]` |
+
+Each accepted line must be ASCII, contain no embedded CR/LF, and contain at
+most `MAX_EVIDENCE_LINE_BYTES = 128` bytes. The append format adds one `LF`,
+increments `used` and `lines`, and recomputes CRC over the accepted payload.
+When the next line does not fit, payload, `used`, and CRC stay unchanged while
+`dropped` saturating-increments and `Full` is returned. Snapshot acceptance
+requires exact total length, magic, version, capacity, used bounds, and CRC.
+The shared unit tests pin all of these rules and the standard CRC check value
+`crc32_iso_hdlc("123456789") = 0xCBF4_3926`.
+
+In `shared/src/boot_protocol.rs`, evidence handoff is part of boot ABI minor
+`PYTH_BOOT_ABI_MINOR = 3`. The evidence fields occur in this exact order near
+the end of `PythBootInfo`: `evidence_log_phys: u64`,
+`evidence_log_len: u32`, `evidence_log_flags: u32`, followed by reserved
+words. `PYTH_EVIDENCE_LOG_FLAG_PRESENT = 0x0000_0001`. Absent metadata
+requires pointer, length, and flags all zero. Present metadata requires a
+nonzero 4 KiB-aligned physical pointer and length exactly 65536; unknown flags
+are rejected. `boot/src/evidence_log.rs` allocates 16 pages and
+`boot/src/boot_info.rs` publishes the pointer/length/flag. `core/src/evidence_log.rs`
+first attaches the physical handoff, then rebases it to the supervisor-only
+`EVIDENCE_LOG_KERNEL_VIRT = 0xFFFF_C000_1003_0000`; VM code preserves this
+mapping in user roots without exposing it to CPL3.
+
+`core/src/evidence_terminal.rs` renders the validated snapshot with these
+fixed contracts:
+
+| Contract | Exact value/behavior |
+| --- | --- |
+| Glyph and scale | `GLYPH_W = 8`, `GLYPH_H = 8`, `SCALE = 1` |
+| Margins and row spacing | `MARGIN_X = 24`, `MARGIN_Y = 24`, `ROW_GAP = 2`; row advance 10 pixels |
+| Chrome/content split | `CHROME_ROWS = 3`; title row 0, status row 1, content begins row 3 |
+| Title | `PythOS Evidence Terminal` |
+| Marker wrapping | first segment prefix `"> "`; continuation prefix `" "` |
+| Status layout | `page 00/00 count 00000000 drop 00000000 crc 00000000`; count/drop/CRC are eight uppercase hex digits |
+| Geometry | columns and rows derive from validated framebuffer dimensions; 800x600 produces 94 columns and 55 rows |
+| Pagination | wrapped rows fill `rows - 3`; an empty transcript is one page; more than 99 pages is rejected |
+| Page/ready dwell | `DWELL_TICKS = 200` for between-page display and final ready capture |
+| Tick fallback bounds | `TICK_PROBE_LIMIT = 1_000_000`; `FALLBACK_SPINS_PER_TICK = 25_000`; calibration is only for the named evidence target |
+
+`core/src/framebuffer.rs` validates the boot framebuffer before drawing,
+requires direct 32-bit pixels (`BYTES_PER_PIXEL = 4`), supports the RGB,
+BGR, and valid bitmask boot formats, honors `pixels_per_scanline`, and bounds
+every write. The terminal surface uses RGB background `(12,16,32)`, title
+`(80,230,150)`, status `(150,200,220)`, and body `(225,230,240)`.
+
+`scripts/test-evidence-terminal.py` is the QEMU capture consumer. It builds
+boot with `evidence-terminal`, core with
+`verify,sdhci-emmc-backend,evidence-terminal`, and uses:
+
+```text
+target/evidence-terminal.log
+target/evidence-terminal.ppm
+target/evidence-terminal-emmc-store.img
+```
+
+The harness uses a fresh 32 MiB eMMC image, a 75-second timeout, and
+`PYTHOS:CORE:EVIDENCE_TERMINAL_READY` as the success marker. On that marker,
+`scripts/run-qemu.py` requests one final QMP `screendump` in binary PPM (`P6`)
+format before QMP quit; it does not contractually capture every intermediate
+page. The accepted PPM is at least 640x480, has max value 255, has a majority
+terminal background, includes all three text colors, and contains structured
+title, status, and body glyph bands. Required ordered completion includes the
+SDHCI/eMMC selection, object/general-storage persistence and restore,
+Phase 10 completion, `PYTHOS:CORE:FRAMEBUFFER_READY`,
+`PYTHOS:CORE:MILESTONE_1_COMPLETE`, and
+`PYTHOS:CORE:EVIDENCE_TERMINAL_READY`. Virtio/AHCI fallback, panic, and
+`PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED` are forbidden; the runner must report
+`QEMU_OUTCOME success`.
+
+The shared log and boot-protocol modules emit no markers themselves.
+`core/src/evidence_log.rs` mirrors source-defined serial markers into the
+binary log, while `core/src/main.rs` owns the terminal ready/drop and
+framebuffer completion markers.
+
+The terminal is retained diagnostic/evidence substrate. Its binary/log format,
+zero-drop completion rule, framebuffer assumptions, pagination and timing
+bounds, final screendump filename/sequence, and accepted capture behavior
+cannot change as part of an interface terminology migration.
 
 ## Proposed Review Decisions
 
