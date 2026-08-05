@@ -18,6 +18,20 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## Interface Model Correction (2026-08-05)
+
+ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,
+0024, 0049, and 0053. PythOS must not adopt applications, windows, launchers,
+desktops, settings panels, widgets, or conventional file navigation as its
+authoritative user model.
+
+Existing Phase 5 marker names, object-kind codes, test-contract names, and
+checkpoint/replay formats remain compatibility evidence only. Retain useful
+input, rendering, font, composition, pointer, diagnostic, console, and
+object-inspection substrate, but do not extend launcher, widget, window-shell,
+desktop, or first-party application work unless a later owner-approved phase
+explicitly authorizes it.
+
 ## PythTIG Owner Adoption Status (2026-08-04)
 
 The former branch `docs/pythtig-phase0-from-physical-evidence` imported the
@@ -258,6 +272,11 @@ build on this branch without re-reading that plan document's Task 12 section
 first.
 
 ## Interactive Object-Shell Launcher (2026-07-28, branch `object-shell`)
+
+ADR 0066 later supersedes ADR 0053's launcher authority model. Treat this
+section as historical and transitional input-gate evidence only; do not extend
+it into a conventional launcher, desktop, application, or window model without
+a new owner-approved phase.
 
 ADR 0053 (see `docs/decisions/0053-interactive-object-shell-launcher.md`)
 closes the interactive-input gate ADR 0047 deferred. Normal boot now: plays
@@ -562,17 +581,16 @@ remain queryable with their original metadata. It does not implement workspace
 objects, object browser work, or sector persistence.
 
 The workspace-objects slice records ADR 0023 and implements the
-`WorkspaceSession` object kind. It captures the Phase 5 launcher, service
-monitor, Python console, and settings panel window object ids plus bounded
-presentation geometry in ADR 0022 fields, then proves the session survives
-through the current revision-history substrate. It does not implement object
-browser work, reboot persistence, or sector persistence.
+`WorkspaceSession` object kind. It captures Phase 5 compatibility projection
+object ids plus bounded presentation geometry in ADR 0022 fields, then proves
+the session survives through the current revision-history substrate. It does
+not implement object browser work, reboot persistence, or sector persistence.
 
 The object-browser slice records ADR 0024 and implements a minimal Phase 5
-app-facing inspection surface over the current object-store substrate. It
-creates a typed object-browser window, lists stored typed objects, inspects a
-typed relationship target, and inspects retained revision counts. It does not
-implement reboot persistence or sector persistence.
+compatibility inspection surface over the current object-store substrate. It
+creates a typed object-browser projection, lists stored typed objects, inspects
+a typed relationship target, and inspects retained revision counts. It does
+not implement reboot persistence or sector persistence.
 
 The save-and-restore-across-reboot slice records ADR 0025 and implements the
 Phase 7 end-to-end persistence proof. PythCore writes the typed workspace
