@@ -1503,6 +1503,14 @@ mod tests {
     }
 
     #[test]
+    fn verifier_accepts_canonical_phase3_object_flow_fixtures() {
+        assert!(verify_bytes(&test_support::object_note_flow_package()).is_ok());
+        assert!(verify_bytes(&test_support::object_restore_package()).is_ok());
+        assert!(verify_bytes(&test_support::object_known_denied_package()).is_ok());
+        assert!(verify_bytes(&test_support::object_forgery_package()).is_ok());
+    }
+
+    #[test]
     fn verifier_rejects_malformed_terminator_inputs() {
         assert_eq!(
             verify_bytes(&test_support::package_with_return_value()),

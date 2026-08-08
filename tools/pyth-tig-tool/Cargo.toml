@@ -7,4 +7,4 @@ publish.workspace = true
 rust-version.workspace = true
 
 [dependencies]
-pythos-shared = { path = "../../shared", features = ["pyth-tig"] }
+pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }

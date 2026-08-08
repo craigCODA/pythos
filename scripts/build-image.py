@@ -20,6 +20,12 @@ PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
 PYTH_UNSUPPORTED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "unsupported.tig"
 PYTH_INVALID_STRING_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid-string.tig"
 PYTH_PARAMETERIZED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "parameterized.tig"
+PYTH_OBJECT_CREATE_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-create.tig"
+PYTH_OBJECT_RESTORE_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-restore.tig"
+PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = (
+    ROOT / "target" / "pyth-tig" / "object-known-denied.tig"
+)
+PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-forgery.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -46,6 +52,10 @@ INVALID_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_00FF
 UNSUPPORTED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0003
 INVALID_STRING_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0004
 PARAMETERIZED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0005
+OBJECT_CREATE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0006
+OBJECT_RESTORE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0007
+OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0008
+OBJECT_FORGERY_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0009
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -226,6 +236,26 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
                 "missing PythTIG parameterized graph package: "
                 f"{PYTH_PARAMETERIZED_GRAPH_PACKAGE}"
             )
+        if not PYTH_OBJECT_CREATE_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG object-create graph package: "
+                f"{PYTH_OBJECT_CREATE_GRAPH_PACKAGE}"
+            )
+        if not PYTH_OBJECT_RESTORE_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG object-restore graph package: "
+                f"{PYTH_OBJECT_RESTORE_GRAPH_PACKAGE}"
+            )
+        if not PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG object-known-denied graph package: "
+                f"{PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE}"
+            )
+        if not PYTH_OBJECT_FORGERY_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG object-forgery graph package: "
+                f"{PYTH_OBJECT_FORGERY_GRAPH_PACKAGE}"
+            )
         records.extend(
             [
                 (
@@ -282,6 +312,38 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
                         b"parameterized.tig",
                         PARAMETERIZED_GRAPH_PRINCIPAL_ID,
                         PYTH_PARAMETERIZED_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"object-create.tig",
+                        OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+                        PYTH_OBJECT_CREATE_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"object-restore.tig",
+                        OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+                        PYTH_OBJECT_RESTORE_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"object-known-denied.tig",
+                        OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+                        PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"object-forgery.tig",
+                        OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+                        PYTH_OBJECT_FORGERY_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
             ]
