@@ -10,7 +10,7 @@ use pythos_shared::pyth_tig::{format::PythGraphPackage, verify::VerifiedGraph};
 #[cfg(not(test))]
 use pythos_shared::{
     object_shell_abi::PackedCapability,
-    pyth_runtime_abi::{MAX_PYTH_GRAPH_IMPORTS, PythGraphBootstrapBlock},
+    pyth_runtime_abi::{HostCallResult, MAX_PYTH_GRAPH_IMPORTS, PythGraphBootstrapBlock},
     pyth_tig::format::MAX_RUNTIME_VALUES,
 };
 #[cfg(not(test))]
@@ -18,6 +18,9 @@ use pythos_user_pyth_runtime::{interpreter::Interpreter, syscalls, value::Value}
 
 #[cfg(not(test))]
 struct RuntimeValueStorage(UnsafeCell<[Option<Value>; MAX_RUNTIME_VALUES]>);
+
+#[cfg(not(test))]
+struct RuntimeHostResultStorage(UnsafeCell<[Option<HostCallResult>; MAX_RUNTIME_VALUES]>);
 
 #[cfg(not(test))]
 struct RuntimeBootstrapStorage(UnsafeCell<PythGraphBootstrapBlock>);
@@ -39,6 +42,23 @@ struct RuntimeImportStorage(UnsafeCell<[PackedCapability; MAX_PYTH_GRAPH_IMPORTS
 // 7. Concurrency: no concurrent runtime thread exists in Phase 2.
 // 8. Violation: concurrent access would corrupt graph value state.
 unsafe impl Sync for RuntimeValueStorage {}
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: the Phase 3 graph runtime executes one graph on one thread
+//    and stores host-call results only by producer node index.
+// 2. Established by: PythCore launches a single ring-3 runtime process and the
+//    runtime exposes no thread creation or reentrant host-callback API.
+// 3. Lifetime: the table is static for the runtime process lifetime.
+// 4. Pointer ownership: `_start` takes the only mutable borrow and passes it
+//    to one interpreter invocation.
+// 5. Alignment: `UnsafeCell` preserves the array's alignment.
+// 6. Mapped length: exactly one `[Option<HostCallResult>; MAX_RUNTIME_VALUES]`
+//    table is accessed.
+// 7. Concurrency: no concurrent runtime thread exists in Phase 3.
+// 8. Violation: concurrent access could let one producer's bounded result be
+//    observed by an unrelated HostResult node.
+unsafe impl Sync for RuntimeHostResultStorage {}
 
 #[cfg(not(test))]
 // SAFETY:
@@ -76,6 +96,10 @@ unsafe impl Sync for RuntimeImportStorage {}
 #[cfg(not(test))]
 static RUNTIME_VALUES: RuntimeValueStorage =
     RuntimeValueStorage(UnsafeCell::new([None; MAX_RUNTIME_VALUES]));
+
+#[cfg(not(test))]
+static RUNTIME_HOST_RESULTS: RuntimeHostResultStorage =
+    RuntimeHostResultStorage(UnsafeCell::new([None; MAX_RUNTIME_VALUES]));
 
 #[cfg(not(test))]
 static RUNTIME_BOOTSTRAP: RuntimeBootstrapStorage =
@@ -132,8 +156,15 @@ pub unsafe extern "C" fn _start(bootstrap_ptr: *const PythGraphBootstrapBlock) -
 
     let mut host = syscalls::GraphSyscallHost;
     let values = runtime_values();
-    let exit = Interpreter::new(verified, &imports, bootstrap.instruction_budget, values)
-        .execute(&mut host);
+    let host_results = runtime_host_results();
+    let exit = Interpreter::new(
+        verified,
+        &imports,
+        bootstrap.instruction_budget,
+        values,
+        host_results,
+    )
+    .execute(&mut host);
     unsafe {
         syscalls::write_exit_record(bootstrap, &exit);
     }
@@ -185,6 +216,23 @@ fn runtime_values() -> &'static mut [Option<Value>; MAX_RUNTIME_VALUES] {
     // 7. Concurrency: no second runtime thread can race this borrow.
     // 8. Violation: a second mutable borrow would allow value-table aliasing.
     unsafe { &mut *RUNTIME_VALUES.0.get() }
+}
+
+#[cfg(not(test))]
+fn runtime_host_results() -> &'static mut [Option<HostCallResult>; MAX_RUNTIME_VALUES] {
+    // SAFETY:
+    // 1. Invariant: the runtime is single-threaded and calls this once per
+    //    process invocation before entering the interpreter.
+    // 2. Established by: `_start` is the only runtime entry and Phase 3 has no
+    //    task creation or reentrant callbacks into runtime code.
+    // 3. Lifetime: table is static and lives through the runtime process.
+    // 4. Pointer ownership: this returns the sole mutable host-result table.
+    // 5. Alignment: `UnsafeCell` preserves array alignment.
+    // 6. Mapped length: exactly one host-result table is exposed.
+    // 7. Concurrency: no runtime thread can race this borrow in Phase 3.
+    // 8. Violation: aliasing could let HostResult extract a stale or unrelated
+    //    producer result.
+    unsafe { &mut *RUNTIME_HOST_RESULTS.0.get() }
 }
 
 #[cfg(not(test))]

@@ -1,11 +1,16 @@
 use crate::interpreter::{Host, HostError};
 use core::{mem::size_of, ptr};
 use pythos_shared::{
-    object_shell_abi::{PackedCapability, SYSCALL_OK},
+    object_shell_abi::{
+        FIELD_TEXT, MAX_QUERY_RESULTS, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR,
+        OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT,
+        OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
+        ObjectShellResponse, PackedCapability, STATUS_OK, SYSCALL_OBJECT_REQUEST, SYSCALL_OK,
+    },
     pyth_runtime_abi::{
-        GraphExitRecord, MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC,
-        PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock,
-        SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG,
+        GraphExitRecord, HostCallResult, MAX_HOST_RESULT_BYTES, MAX_PYTH_GRAPH_IMPORTS,
+        PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR,
+        PythGraphBootstrapBlock, SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG,
     },
     pyth_tig::format::MAX_PACKAGE_BYTES,
 };
@@ -52,6 +57,180 @@ impl Host for GraphSyscallHost {
         } else {
             Err(HostError::Failed)
         }
+    }
+
+    fn object_create(
+        &mut self,
+        capability: PackedCapability,
+        kind: &[u8],
+    ) -> Result<HostCallResult, HostError> {
+        let mut request = base_object_request(OP_CREATE_OBJECT, capability);
+        request.object_kind = object_kind_from_graph(kind)?;
+        let response = send_object_request(&mut request, &mut empty_query_output())?;
+        Ok(result_from_response(response, request.object_id, None))
+    }
+
+    fn object_query(
+        &mut self,
+        capability: PackedCapability,
+        kind: &[u8],
+    ) -> Result<HostCallResult, HostError> {
+        let mut request = base_object_request(OP_QUERY_OBJECTS, capability);
+        request.object_kind = object_kind_from_graph(kind)?;
+        let mut output = empty_query_output();
+        request.output_ptr = output.as_mut_ptr() as u64;
+        request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
+        let response = send_object_request(&mut request, &mut output)?;
+        Ok(result_from_response(response, 0, Some(output[0])))
+    }
+
+    fn object_inspect(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+    ) -> Result<HostCallResult, HostError> {
+        let mut request = base_object_request(OP_INSPECT_OBJECT, capability);
+        request.object_id = object_id;
+        let response = send_object_request(&mut request, &mut empty_query_output())?;
+        Ok(result_from_response(response, object_id, None))
+    }
+
+    fn object_revise(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+        text: &[u8],
+    ) -> Result<HostCallResult, HostError> {
+        if text.len() > MAX_HOST_RESULT_BYTES || text.len() > 16 {
+            return Err(HostError::Failed);
+        }
+        let mut request = base_object_request(OP_REVISE_FIELD, capability);
+        request.object_id = object_id;
+        request.field_id = FIELD_TEXT;
+        request.input_ptr = text.as_ptr() as u64;
+        request.input_len = text.len() as u64;
+        let response = send_object_request(&mut request, &mut empty_query_output())?;
+        Ok(result_from_response(response, object_id, None))
+    }
+
+    fn object_history(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+    ) -> Result<HostCallResult, HostError> {
+        let mut request = base_object_request(OP_GET_HISTORY, capability);
+        request.object_id = object_id;
+        let response = send_object_request(&mut request, &mut empty_query_output())?;
+        let mut result = result_from_response(response, object_id, None);
+        result.revision = response.revision_count;
+        Ok(result)
+    }
+}
+
+fn base_object_request(operation: u16, authority: PackedCapability) -> ObjectShellRequest {
+    ObjectShellRequest {
+        abi_major: OBJECT_SHELL_ABI_MAJOR,
+        abi_minor: OBJECT_SHELL_ABI_MINOR,
+        operation,
+        object_kind: 0,
+        field_id: 0,
+        reserved0: 0,
+        authority,
+        object_id: 0,
+        input_ptr: 0,
+        input_len: 0,
+        output_ptr: 0,
+        output_len: 0,
+        reserved1: 0,
+        reserved2: 0,
+    }
+}
+
+fn object_kind_from_graph(kind: &[u8]) -> Result<u16, HostError> {
+    if kind == b"note" {
+        Ok(OBJECT_KIND_NOTE)
+    } else {
+        Err(HostError::Failed)
+    }
+}
+
+fn send_object_request(
+    request: &mut ObjectShellRequest,
+    _query_output: &mut [ObjectListEntry; MAX_QUERY_RESULTS],
+) -> Result<ObjectShellResponse, HostError> {
+    let mut response = empty_response();
+    // SAFETY: matches syscall5's contract. `request` and `response` are live
+    // stack objects for the duration of the synchronous syscall. Query output,
+    // when requested, is named by fields already written into `request` and is
+    // likewise a live stack object. PythCore validates the active process copy
+    // map before reading or writing any of these user buffers.
+    let result = unsafe {
+        syscall5(
+            SYSCALL_OBJECT_REQUEST,
+            request as *const ObjectShellRequest as u64,
+            size_of::<ObjectShellRequest>() as u64,
+            &mut response as *mut ObjectShellResponse as u64,
+            size_of::<ObjectShellResponse>() as u64,
+            0,
+        )
+    };
+    if result == SYSCALL_OK {
+        Ok(response)
+    } else {
+        Err(HostError::Failed)
+    }
+}
+
+fn result_from_response(
+    response: ObjectShellResponse,
+    fallback_object_id: u64,
+    query_entry: Option<ObjectListEntry>,
+) -> HostCallResult {
+    let mut result = HostCallResult::empty(response.status);
+    result.object_id = if response.object_id != 0 {
+        response.object_id
+    } else {
+        fallback_object_id
+    };
+    result.revision = response.revision;
+    result.capability = response.capability;
+
+    if response.status == STATUS_OK {
+        if let Some(entry) = query_entry
+            && entry.object_id != 0
+        {
+            result.object_id = entry.object_id;
+            result.capability = entry.capability;
+        }
+        if response.bytes_written <= 16 {
+            result.bytes_len = response.bytes_written as u16;
+            result.bytes[..response.bytes_written as usize]
+                .copy_from_slice(&response.field_bytes[..response.bytes_written as usize]);
+        }
+    }
+
+    result
+}
+
+const fn empty_query_output() -> [ObjectListEntry; MAX_QUERY_RESULTS] {
+    [ObjectListEntry {
+        object_id: 0,
+        capability: PackedCapability::from_raw(0),
+    }; MAX_QUERY_RESULTS]
+}
+
+const fn empty_response() -> ObjectShellResponse {
+    ObjectShellResponse {
+        status: pythos_shared::object_shell_abi::STATUS_BAD_REQUEST,
+        reserved0: 0,
+        object_kind: 0,
+        field_id: 0,
+        object_id: 0,
+        revision: 0,
+        revision_count: 0,
+        bytes_written: 0,
+        capability: PackedCapability::from_raw(0),
+        field_bytes: [0; 16],
     }
 }
 

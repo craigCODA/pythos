@@ -62,6 +62,8 @@ const OBJECT_INSPECT_HOST_RESULT_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 6 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 8;
 const OBJECT_CREATE_DYNAMIC_REVISE_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 9 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 5 + 4;
+const OBJECT_NOTE_FLOW_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 11 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 5 + 4;
 
 struct BlockSpec {
     block_id: u32,
@@ -1204,6 +1206,143 @@ pub fn object_create_revise_with_dynamic_capability()
         },
     );
     write_return(&mut package.bytes, nodes_offset + 8 * NODE_RECORD_SIZE, 0);
+    write_object_workspace_import(&mut package.bytes, imports_offset, 4, RIGHTS_CREATE);
+    package.bytes[constant_pool_offset..constant_pool_offset + 5].copy_from_slice(b"hello");
+    package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"note");
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn object_note_flow_package() -> FixturePackage<OBJECT_NOTE_FLOW_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; OBJECT_NOTE_FLOW_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 11, 1, 5, 4);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let constant_pool_offset = read_u32(&package.bytes, 76) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 11,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 10,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_import_capability_param(&mut package.bytes, nodes_offset + NODE_RECORD_SIZE, 0, 0);
+    write_const_utf8(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        0,
+        4,
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 3 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ObjectCreate.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, 1, 2, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 4 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::ObjectId.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [3, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 1,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 5 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::Capability.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [3, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 3,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 6 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstBytes.code(),
+            result_type: PythType::Bytes.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 5,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 7 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ObjectRevise.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [3, 5, 4, 6],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 8 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ObjectInspect.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [7, 5, 4, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 9 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::Utf8.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [8, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 4,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 10 * NODE_RECORD_SIZE, 0);
     write_object_workspace_import(&mut package.bytes, imports_offset, 4, RIGHTS_CREATE);
     package.bytes[constant_pool_offset..constant_pool_offset + 5].copy_from_slice(b"hello");
     package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"note");

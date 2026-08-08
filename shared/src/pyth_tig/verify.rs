@@ -1,12 +1,12 @@
+use crate::pyth_runtime_abi::{
+    HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
+    HOST_RESULT_UTF8,
+};
 use crate::pyth_tig::{
     NO_VALUE,
     format::{MAX_BLOCKS, MAX_GRAPH_NODES, PackageDecodeError, PythGraphPackage},
     opcode::{Opcode, RESOURCE_OBJECT, RIGHTS_READ, RIGHTS_REVISE},
     types::PythType,
-};
-use crate::pyth_runtime_abi::{
-    HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
-    HOST_RESULT_UTF8,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1486,10 +1486,8 @@ mod tests {
             Err(VerifyError::HostResultInvalid { node: 4 })
         );
 
-        let mut malformed_metadata = test_support::object_create_host_result(
-            PythType::ErrorCode,
-            HOST_RESULT_STATUS,
-        );
+        let mut malformed_metadata =
+            test_support::object_create_host_result(PythType::ErrorCode, HOST_RESULT_STATUS);
         test_support::set_node_auxiliary1(&mut malformed_metadata, 4, 1);
         assert_eq!(
             verify_bytes(&malformed_metadata),
@@ -1499,7 +1497,9 @@ mod tests {
 
     #[test]
     fn verifier_tracks_capability_returned_from_object_host_result() {
-        assert!(verify_bytes(&test_support::object_create_revise_with_dynamic_capability()).is_ok());
+        assert!(
+            verify_bytes(&test_support::object_create_revise_with_dynamic_capability()).is_ok()
+        );
     }
 
     #[test]

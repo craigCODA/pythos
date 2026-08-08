@@ -14,4 +14,5 @@ pub enum Value {
     Capability(PackedCapability),
     Effect(u64),
     ErrorCode(u16),
+    HostUtf8 { producer_node: u32, len: u16 },
 }
