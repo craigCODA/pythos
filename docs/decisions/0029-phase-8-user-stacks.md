@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Amended by ADR 0067 for bounded PythTIG Phase 3 runtime stack headroom while
+preserving the guard-page and permission contract.
+
 ## Context
 
 ADR 0026 proved fixed CPL3 execution, ADR 0027 moved that proof under a
@@ -39,4 +42,6 @@ service-isolation work without defining a dynamic process model.
 
 Future slices may allocate stacks to service-local runtimes or terminate and
 reclaim them, but changes to the guard-page layout or stack permission contract
-require an ADR update or a new ADR before implementation.
+require an ADR update or a new ADR before implementation. ADR 0067 increases
+the fixed usable stack extent for Phase 3 while keeping that guard-page
+contract intact.

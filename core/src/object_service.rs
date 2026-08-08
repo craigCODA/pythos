@@ -424,6 +424,24 @@ impl ObjectService {
         self.shell_workspace_capability
     }
 
+    pub fn grant_workspace_capability(
+        &mut self,
+        caller: ActiveUserProcess,
+    ) -> Result<PackedCapability, ObjectServiceError> {
+        match self.quotas.used_blocks(caller.service_id()) {
+            Ok(_) => {}
+            Err(StorageQuotaError::UnknownService) => self
+                .quotas
+                .register(caller.service_id(), MAX_QUERY_RESULTS as u64)?,
+            Err(error) => return Err(error.into()),
+        }
+        Ok(pack_capability(self.capabilities.grant(
+            caller.service_id(),
+            self.shell_workspace,
+            WORKSPACE_RIGHTS,
+        )?))
+    }
+
     fn new_seeded() -> Result<Self, ObjectServiceError> {
         let mut service = Self {
             objects: DynamicObjectStore::new(
@@ -948,6 +966,40 @@ mod tests {
         assert_eq!(
             service.inspect_object(shell, created.object_capability, ObjectId::new(1042)),
             Err(ObjectServiceError::Denied)
+        );
+    }
+
+    #[test]
+    fn pythtig_runtime_workspace_capability_is_holder_bound() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let graph_runtime = ActiveUserProcess::new(
+            crate::service_identity::ServiceId::from_raw(0x5059_5447_5254_0001),
+            crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID,
+            0x5450_5954_4849_4703,
+        );
+
+        let shell_workspace = service.test_shell_workspace_capability();
+        assert_eq!(
+            service.create_object(graph_runtime, shell_workspace, ObjectKind::Note),
+            Err(ObjectServiceError::Denied)
+        );
+
+        let graph_workspace = service
+            .grant_workspace_capability(graph_runtime)
+            .expect("PythTIG runtime receives explicit workspace authority");
+        let created = service
+            .create_object(graph_runtime, graph_workspace, ObjectKind::Note)
+            .unwrap();
+
+        assert_eq!(
+            service.inspect_object(shell, created.object_capability, created.object_id),
+            Err(ObjectServiceError::Denied)
+        );
+        assert!(
+            service
+                .inspect_object(graph_runtime, created.object_capability, created.object_id)
+                .is_ok()
         );
     }
 

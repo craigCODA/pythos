@@ -59,6 +59,30 @@ def build_init_pak_with_phase2_programs(module) -> bytes:
         return module.build_default_init_pak(include_pythtig=True)
 
 
+def build_init_pak_with_phase3_object_programs(module) -> bytes:
+    with tempfile.TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        shell = temp_path / "pythos-user-shell"
+        runtime = temp_path / "pythos-user-pyth-runtime"
+        object_create = temp_path / "object-create.tig"
+        object_restore = temp_path / "object-restore.tig"
+        object_known_denied = temp_path / "object-known-denied.tig"
+        object_forgery = temp_path / "object-forgery.tig"
+        shell.write_bytes(b"\x7fELFshell")
+        runtime.write_bytes(b"\x7fELFpyth-runtime")
+        object_create.write_bytes(b"PYTHTIG1object-create")
+        object_restore.write_bytes(b"PYTHTIG1object-restore")
+        object_known_denied.write_bytes(b"PYTHTIG1object-known-denied")
+        object_forgery.write_bytes(b"PYTHTIG1object-forgery")
+        module.SHELL_ELF = shell
+        module.PYTH_RUNTIME_ELF = runtime
+        module.PYTH_OBJECT_CREATE_GRAPH_PACKAGE = object_create
+        module.PYTH_OBJECT_RESTORE_GRAPH_PACKAGE = object_restore
+        module.PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = object_known_denied
+        module.PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = object_forgery
+        return module.build_default_init_pak(include_pythtig_object_flow=True)
+
+
 def build_init_pak_without_phase2_programs(module) -> bytes:
     with tempfile.TemporaryDirectory() as temp:
         temp_path = Path(temp)
@@ -120,6 +144,27 @@ class IsoImageTest(unittest.TestCase):
 
                 with self.assertRaisesRegex(SystemExit, "missing PythTIG runtime ELF"):
                     module.build_default_init_pak(include_pythtig=True)
+
+    def test_phase3_object_flow_opt_in_requires_runtime_artifact(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                shell = temp_path / "pythos-user-shell"
+                shell.write_bytes(b"\x7fELFshell")
+                module.SHELL_ELF = shell
+                module.PYTH_RUNTIME_ELF = temp_path / "missing-pyth-runtime"
+
+                with self.assertRaisesRegex(SystemExit, "missing PythTIG runtime ELF"):
+                    module.build_default_init_pak(include_pythtig_object_flow=True)
+
+    def test_phase2_and_phase3_object_graph_sets_are_not_co_packaged(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with self.assertRaisesRegex(
+                SystemExit, "select either --with-pythtig or --with-pythtig-object-flow"
+            ):
+                module.build_default_init_pak(
+                    include_pythtig=True, include_pythtig_object_flow=True
+                )
 
     def test_generated_init_pak_contains_inner_bundle_records(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
@@ -205,6 +250,62 @@ class IsoImageTest(unittest.TestCase):
                 (6, b"unsupported.tig"),
                 (7, b"invalid-string.tig"),
                 (8, b"parameterized.tig"),
+            ):
+                graph_entry = table_start + graph_index * module.INIT_BUNDLE_RECORD_LEN
+                graph_start = int.from_bytes(
+                    payload[graph_entry + 8 : graph_entry + 16], "little"
+                )
+                graph_name_start = graph_start + module.NAMED_PYTH_GRAPH_HEADER_LEN
+                self.assertEqual(
+                    payload[
+                        graph_name_start : graph_name_start + len(expected_name)
+                    ],
+                    expected_name,
+                )
+
+    def test_phase3_object_flow_init_pak_contains_bounded_object_graph_set(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            init_pak = build_init_pak_with_phase3_object_programs(module)
+            payload = init_pak[module.INIT_PAK_HEADER_LEN :]
+            record_count = 11
+            table_start = module.INIT_BUNDLE_HEADER_LEN
+
+            self.assertEqual(payload[:16], b"PYTHOS_BUNDLE_V0")
+            self.assertEqual(int.from_bytes(payload[24:26], "little"), record_count)
+            record_types = [
+                int.from_bytes(
+                    payload[
+                        table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN : table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN
+                        + 4
+                    ],
+                    "little",
+                )
+                for index in range(record_count)
+            ]
+            self.assertEqual(
+                record_types,
+                [
+                    module.INIT_BUNDLE_RUNTIME_TYPE,
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                ],
+            )
+
+            for graph_index, expected_name in (
+                (3, b"object-create.tig"),
+                (4, b"object-restore.tig"),
+                (5, b"object-known-denied.tig"),
+                (6, b"object-forgery.tig"),
             ):
                 graph_entry = table_start + graph_index * module.INIT_BUNDLE_RECORD_LEN
                 graph_start = int.from_bytes(

@@ -117,10 +117,21 @@ fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), P
             Ok(Opcode::BlockParam) => {
                 PythType::try_from(node.result_type) == Ok(PythType::Capability)
             }
+            Ok(Opcode::ConstU64) => matches!(
+                PythType::try_from(node.result_type),
+                Ok(PythType::ObjectId | PythType::RevisionId)
+            ),
             Ok(
                 Opcode::EffectStart
+                | Opcode::ConstBytes
                 | Opcode::ConstUtf8
+                | Opcode::HostResult
                 | Opcode::SystemLog
+                | Opcode::ObjectCreate
+                | Opcode::ObjectQuery
+                | Opcode::ObjectInspect
+                | Opcode::ObjectRevise
+                | Opcode::ObjectHistory
                 | Opcode::Jump
                 | Opcode::Return,
             ) => true,
@@ -335,5 +346,17 @@ mod tests {
                 target: 1,
             })
         );
+    }
+
+    #[test]
+    fn loader_accepts_phase3_object_runtime_profile() {
+        let package = test_support::object_note_flow_package();
+        verify::verify_bytes(&package).expect("shared v1 verifier must admit Phase 3 object flow");
+        let bundle = build_named_graph_bundle(b"object.tig", &package);
+
+        let loaded = validate_named_pyth_graph_payload_bytes(&bundle, b"object.tig").unwrap();
+
+        assert_eq!(loaded.manifest.name(), b"object.tig");
+        assert_eq!(loaded.verified.package().header().node_count, 11);
     }
 }

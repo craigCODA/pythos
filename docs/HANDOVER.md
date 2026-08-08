@@ -41,12 +41,11 @@ material is now merged into `main` after the ADR 0063 evidence-terminal
 implementation merge.
 
 Owner review accepted ADR 0064 as the PythTIG architecture direction. ADR 0065
-is provisionally accepted for Phase 1 verifier experimentation only: its exact
-binary record layout, numeric IDs, opcode set, and package limits are not
-permanent stable ABI until the first encoder, decoder, verifier, and negative
-corpus pass and the owner explicitly freezes the format. PythTIG is still not
-implemented, and it is not the active implementation program until the owner
-explicitly invokes the next phase.
+is accepted, and the tested PythTIG version 1 package ABI is frozen as of
+2026-08-08. Phase 2 ring-3 runtime acceptance is complete. Phase 3
+object/capability integration is implemented as an explicit opt-in proof path
+that uses the retained object service; it does not change the default
+production object-shell boot path and does not authorize Phase 4+ work.
 
 Imported proposal artifacts live under:
 
@@ -66,10 +65,10 @@ ADR 0065: Pyth Graph Package ABI
 
 This merge keeps the ADR 0063 evidence-terminal implementation baseline intact
 and records the full reconciliation in
-`docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement the
-PythTIG verifier, runtime, compiler, Task Steward, native backend,
-marker-contract scripts, CI behavior, or boot behavior from this proposal until
-the owner explicitly invokes the corresponding phase.
+`docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement the Pyth
+source language, compiler, Task Steward, native backend, production cutover, or
+later marker/CI behavior from this proposal until the owner explicitly invokes
+the corresponding phase.
 
 ## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
 
