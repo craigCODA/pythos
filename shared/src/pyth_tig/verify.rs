@@ -1,8 +1,12 @@
 use crate::pyth_tig::{
     NO_VALUE,
     format::{MAX_BLOCKS, MAX_GRAPH_NODES, PackageDecodeError, PythGraphPackage},
-    opcode::Opcode,
+    opcode::{Opcode, RESOURCE_OBJECT, RIGHTS_READ, RIGHTS_REVISE},
     types::PythType,
+};
+use crate::pyth_runtime_abi::{
+    HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
+    HOST_RESULT_UTF8,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -703,6 +707,13 @@ fn count_values(inputs: [u32; 4]) -> usize {
 enum CapabilityOrigin {
     None,
     Import(u16),
+    HostResult { resource_kind: u16, rights: u64 },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct HostResultSchema {
+    result_type: PythType,
+    capability_origin: Option<CapabilityOrigin>,
 }
 
 fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
@@ -736,7 +747,15 @@ fn verify_semantics(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
                 }
             }
             Opcode::HostResult => {
-                verify_host_result(package, node_index, &node, actual_result)?;
+                let schema = verify_host_result(package, node_index, &node, actual_result)?;
+                if actual_result == PythType::Capability {
+                    let Some(origin) = schema.capability_origin else {
+                        return Err(VerifyError::HostResultInvalid {
+                            node: node_index as u32,
+                        });
+                    };
+                    capability_origins[node_index] = origin;
+                }
             }
             Opcode::Jump => {}
             _ => {
@@ -918,12 +937,12 @@ fn verify_host_result(
     node_index: usize,
     node: &crate::pyth_tig::NodeRecord,
     actual_result: PythType,
-) -> Result<(), VerifyError> {
+) -> Result<HostResultSchema, VerifyError> {
     let producer_index =
         usize::try_from(node.input0).map_err(|_| VerifyError::HostResultInvalid {
             node: node_index as u32,
         })?;
-    if producer_index + 1 != node_index {
+    if !host_result_is_in_contiguous_projection_run(package, producer_index, node_index) {
         return Err(VerifyError::HostResultInvalid {
             node: node_index as u32,
         });
@@ -948,17 +967,91 @@ fn verify_host_result(
         });
     }
 
-    if host_result_field_type(producer_opcode, node.auxiliary0) != Some(actual_result) {
+    let schema = host_result_field_schema(producer_opcode, node.auxiliary0).ok_or(
+        VerifyError::HostResultInvalid {
+            node: node_index as u32,
+        },
+    )?;
+    if schema.result_type != actual_result {
         return Err(VerifyError::HostResultInvalid {
             node: node_index as u32,
         });
     }
 
-    Ok(())
+    Ok(schema)
 }
 
-fn host_result_field_type(_producer_opcode: Opcode, _field: u32) -> Option<PythType> {
-    None
+fn host_result_is_in_contiguous_projection_run(
+    package: &PythGraphPackage<'_>,
+    producer_index: usize,
+    node_index: usize,
+) -> bool {
+    if producer_index >= node_index {
+        return false;
+    }
+    let Ok(producer_ref) = u32::try_from(producer_index) else {
+        return false;
+    };
+    let mut index = producer_index + 1;
+    while index < node_index {
+        let Some(projector) = package.nodes().get(index) else {
+            return false;
+        };
+        if Opcode::try_from(projector.opcode) != Ok(Opcode::HostResult)
+            || projector.input0 != producer_ref
+        {
+            return false;
+        }
+        index += 1;
+    }
+    true
+}
+
+fn host_result_field_schema(producer_opcode: Opcode, field: u32) -> Option<HostResultSchema> {
+    use PythType::{Capability, ErrorCode, ObjectId, RevisionId, Utf8};
+
+    let result_type = match (producer_opcode, field) {
+        (
+            Opcode::ObjectCreate
+            | Opcode::ObjectQuery
+            | Opcode::ObjectInspect
+            | Opcode::ObjectRevise
+            | Opcode::ObjectHistory,
+            HOST_RESULT_STATUS,
+        ) => ErrorCode,
+        (
+            Opcode::ObjectCreate
+            | Opcode::ObjectQuery
+            | Opcode::ObjectInspect
+            | Opcode::ObjectRevise
+            | Opcode::ObjectHistory,
+            HOST_RESULT_OBJECT_ID,
+        ) => ObjectId,
+        (
+            Opcode::ObjectCreate
+            | Opcode::ObjectInspect
+            | Opcode::ObjectRevise
+            | Opcode::ObjectHistory,
+            HOST_RESULT_REVISION,
+        ) => RevisionId,
+        (Opcode::ObjectCreate | Opcode::ObjectQuery, HOST_RESULT_CAPABILITY) => Capability,
+        (Opcode::ObjectInspect, HOST_RESULT_UTF8) => Utf8,
+        _ => return None,
+    };
+
+    let capability_origin = if result_type == Capability {
+        Some(CapabilityOrigin::HostResult {
+            resource_kind: RESOURCE_OBJECT,
+            rights: RIGHTS_READ | RIGHTS_REVISE,
+        })
+    } else {
+        None
+    };
+
+    Some(HostResultSchema {
+        result_type,
+        capability_origin,
+    })
 }
 
 fn verify_host_import(
@@ -986,25 +1079,42 @@ fn verify_host_import(
         });
     }
 
-    let CapabilityOrigin::Import(import_slot) = capability_origins[capability_index] else {
-        return Err(VerifyError::CapabilityOriginInvalid {
-            node: capability_input,
-        });
-    };
-    let import = find_import(package, import_slot).ok_or(VerifyError::CapabilityImportMissing {
-        node: node_index,
-        import_slot,
-    })?;
-    if import.expected_type != PythType::Capability.code() {
-        return Err(VerifyError::ImportTypeMismatch { import_slot });
-    }
-    if import.resource_kind != required_resource_kind
-        || (import.rights & signature.required_rights) != signature.required_rights
-    {
-        return Err(VerifyError::ImportRightsInsufficient {
-            node: node_index,
-            import_slot,
-        });
+    match capability_origins[capability_index] {
+        CapabilityOrigin::Import(import_slot) => {
+            let import =
+                find_import(package, import_slot).ok_or(VerifyError::CapabilityImportMissing {
+                    node: node_index,
+                    import_slot,
+                })?;
+            if import.expected_type != PythType::Capability.code() {
+                return Err(VerifyError::ImportTypeMismatch { import_slot });
+            }
+            if import.resource_kind != required_resource_kind
+                || (import.rights & signature.required_rights) != signature.required_rights
+            {
+                return Err(VerifyError::ImportRightsInsufficient {
+                    node: node_index,
+                    import_slot,
+                });
+            }
+        }
+        CapabilityOrigin::HostResult {
+            resource_kind,
+            rights,
+        } => {
+            if resource_kind != required_resource_kind
+                || (rights & signature.required_rights) != signature.required_rights
+            {
+                return Err(VerifyError::CapabilityOriginInvalid {
+                    node: capability_input,
+                });
+            }
+        }
+        CapabilityOrigin::None => {
+            return Err(VerifyError::CapabilityOriginInvalid {
+                node: capability_input,
+            });
+        }
     }
     Ok(())
 }
@@ -1176,6 +1286,10 @@ fn node_fields_are_canonical(opcode: Opcode, node: crate::pyth_tig::NodeRecord) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pyth_runtime_abi::{
+        HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
+        HOST_RESULT_UTF8,
+    };
     use crate::pyth_tig::test_support;
 
     #[test]
@@ -1310,6 +1424,82 @@ mod tests {
             verify_bytes(&test_support::system_log_utf8_host_result()),
             Err(VerifyError::HostResultInvalid { node: 4 })
         );
+    }
+
+    #[test]
+    fn verifier_accepts_phase3_object_host_result_fields() {
+        assert!(
+            verify_bytes(&test_support::object_create_host_result(
+                PythType::ErrorCode,
+                HOST_RESULT_STATUS,
+            ))
+            .is_ok()
+        );
+        assert!(
+            verify_bytes(&test_support::object_create_host_result(
+                PythType::ObjectId,
+                HOST_RESULT_OBJECT_ID,
+            ))
+            .is_ok()
+        );
+        assert!(
+            verify_bytes(&test_support::object_create_host_result(
+                PythType::RevisionId,
+                HOST_RESULT_REVISION,
+            ))
+            .is_ok()
+        );
+        assert!(
+            verify_bytes(&test_support::object_create_host_result(
+                PythType::Capability,
+                HOST_RESULT_CAPABILITY,
+            ))
+            .is_ok()
+        );
+        assert!(
+            verify_bytes(&test_support::object_inspect_host_result(
+                PythType::Utf8,
+                HOST_RESULT_UTF8,
+            ))
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_invalid_phase3_host_result_extraction() {
+        assert_eq!(
+            verify_bytes(&test_support::host_result_without_producer()),
+            Err(VerifyError::HostResultInvalid { node: 2 })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::object_create_host_result(
+                PythType::ObjectId,
+                HOST_RESULT_CAPABILITY,
+            )),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+        assert_eq!(
+            verify_bytes(&test_support::object_inspect_host_result(
+                PythType::Capability,
+                HOST_RESULT_CAPABILITY,
+            )),
+            Err(VerifyError::HostResultInvalid { node: 4 })
+        );
+
+        let mut malformed_metadata = test_support::object_create_host_result(
+            PythType::ErrorCode,
+            HOST_RESULT_STATUS,
+        );
+        test_support::set_node_auxiliary1(&mut malformed_metadata, 4, 1);
+        assert_eq!(
+            verify_bytes(&malformed_metadata),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+    }
+
+    #[test]
+    fn verifier_tracks_capability_returned_from_object_host_result() {
+        assert!(verify_bytes(&test_support::object_create_revise_with_dynamic_capability()).is_ok());
     }
 
     #[test]
