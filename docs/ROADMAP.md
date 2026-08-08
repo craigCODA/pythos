@@ -561,14 +561,21 @@ Exception-containment test suite.
 
 None new at this phase. The typed-object question applies starting Phase 7.
 
-## Phase 5: Real Graphical Shell - COMPLETE
+## Phase 5: Presentation Substrate Proofs - COMPLETE
 
 ### Purpose
 
-The current screen is diagnostic output. This phase creates the first actual
-interface, and is the phase where the semantic-versus-presentation separation
-from the Patch/Open Surface vision becomes architecturally relevant, even
-though nothing agent-related is built here.
+The current screen is diagnostic output. This phase proves the machinery needed
+to present typed object and task projections: input delivery, bounded drawing,
+text presentation, surface composition, pointer delivery, diagnostic
+observation, and recovery/evidence console surfaces.
+
+ADR 0066 reclassifies this phase. Phase 5 does not authorize a desktop shell,
+window manager, global application launcher, widget toolkit as the object
+model, settings application, first-party desktop applications, or persistent
+window state as authoritative user state. Existing slice and marker names remain
+compatibility evidence for the already accepted boot trace; do not rename them
+without a separate migration ADR.
 
 ### Preconditions
 
@@ -595,26 +602,27 @@ capability-scoped.
    fields, reserves and maps the font bytes, validates PSF metadata, and emits
    `PYTHOS:CORE:FONT:PSF_LOADED` followed by
    `PYTHOS:CORE:FONT_SYSTEM_READY`.
-5. `compositor`, `surfaces`, `clipping` - COMPLETE. Windowing primitives now
-   create typed drawable objects with separate presentation bindings, compose
-   independently drawn bounded surfaces into a framebuffer target, prove target
-   edge clipping, and emit `PYTHOS:CORE:COMPOSITOR:SURFACE`,
+5. `compositor`, `surfaces`, `clipping` - COMPLETE. Presentation primitives
+   create typed drawable projections with separate presentation bindings,
+   compose independently drawn bounded surfaces into a framebuffer target, prove
+   target edge clipping, and emit `PYTHOS:CORE:COMPOSITOR:SURFACE`,
    `PYTHOS:CORE:COMPOSITOR:CLIP`, and `PYTHOS:CORE:COMPOSITOR_READY`.
-6. `pointer-cursor`, `window-focus`, `movable-windows` - COMPLETE. Standard
-   interaction primitives now prove bounded cursor state, z-order focus
-   selection, and moving the focused window while preserving typed object
+6. `pointer-cursor`, `window-focus`, `movable-windows` - COMPLETE. Compatibility
+   slice names prove bounded cursor state, focus selection over presentation
+   bindings, and movement of a projected surface while preserving typed object
    identity. Emits `PYTHOS:CORE:POINTER_CURSOR_READY`,
    `PYTHOS:CORE:WINDOW_FOCUS_READY`, and
    `PYTHOS:CORE:MOVABLE_WINDOWS_READY`.
-7. `buttons-and-text-fields` - COMPLETE. The minimal native widget set now
-   proves fixed button activation and bounded text-field editing over typed
-   widget objects. Emits `PYTHOS:CORE:WIDGET:BUTTON`,
+7. `buttons-and-text-fields` - COMPLETE. Compatibility slice names prove fixed
+   button activation and bounded text-field editing as typed action controls
+   over typed objects. Emits `PYTHOS:CORE:WIDGET:BUTTON`,
    `PYTHOS:CORE:WIDGET:TEXT_FIELD`, and `PYTHOS:CORE:WIDGETS_READY`.
 8. `application-launcher`, `service-monitor`, `python-console`,
-   `settings-panel` - COMPLETE. The first fixed first-party applications are
-   registered as capability-scoped services with typed windows, a fixed shell
-   screen is rendered through the compositor path, and
-   `PYTHOS:CORE:PHASE_5_COMPLETE` closes the phase boundary.
+   `settings-panel` - COMPLETE. Compatibility slice names prove diagnostic,
+   console, policy-inspection, and task/tool-initiation projections rendered
+   through the compositor path. The `PYTHOS:CORE:APP:*` markers and
+   `PYTHOS:CORE:PHASE_5_COMPLETE` remain boot-evidence labels, not authority to
+   extend a desktop application model.
 
 ### Design Requirement
 
@@ -627,37 +635,44 @@ Presentation, such as position, color, and animation state, must be a separate
 replaceable binding from meaning: what the object is and what actions are valid
 on it. This is not "build the Semantic Canvas now"; it is "do not build a shell
 where meaning only exists as pixels," because retrofitting that separation
-later is far more expensive than building it straight. Concretely: a window has
-a stable object id and a typed kind, such as `service-monitor-window`,
-independent of its current x, y, width, height, or z-order.
+later is far more expensive than building it straight. ADR 0066 corrects the
+authority model: existing terms such as `service-monitor-window` are
+compatibility labels for typed projections and must not become the canonical
+interaction model.
 
 ### Exit Condition
 
-A native or Python-driven desktop shell renders, accepts keyboard and mouse
-input, supports multiple movable and focusable windows through the compositor,
-and runs the four listed first-party applications, each isolated as its own
-capability-scoped service.
+The presentation substrate renders, accepts keyboard and mouse input, composes
+multiple focusable/movable typed projections, proves typed action controls, and
+renders diagnostic, console, policy-inspection, and task/tool-initiation
+surfaces through capability-scoped services.
+
+This exit condition does not establish a desktop shell, window manager, global
+launcher, widget toolkit as the object model, settings application, first-party
+desktop applications, or conventional file navigation.
 
 ### Scope Boundary
 
 Do not add Open Surface, user-authored HTML/CSS/Canvas environments, Patch, any
 agent, any MCP or tool integration, networking, audio, or persistent storage of
-window layout.
+window layout. Do not add desktop-shell, launcher, widget-toolkit, settings-app,
+first-party desktop-app, or conventional file-navigation authority.
 
 ### Required Artifacts
 
-ADR for the typed-object/presentation-binding split. This is the decision the
-architectural test below evaluates; record it explicitly enough that the answer
-is checkable later, not just implied by code.
+ADR 0018 records the typed-object/presentation-binding split. ADR 0066
+supersedes only the desktop-shell authority portions of ADR 0018 and related
+documents while retaining the verified substrate and compatibility evidence.
 
 ### Architectural Test (Non-Binding)
 
-When the GUI is built, ask whether it supports user-authored surfaces instead
-of locking everything into normal windows.
+When the presentation substrate is used, ask whether visible surfaces project
+typed objects, task state, semantic relationships, executable tool objects, and
+capability-permitted actions instead of locking the system into applications,
+windows, widgets, and conventional file navigation.
 
-Answer by inspecting whether the compositor's surface abstraction could host a
-non-native-widget presentation, such as arbitrary drawn content, without kernel
-or compositor changes. Do not build Open Surface itself.
+Answer by inspecting whether the compositor's surface abstraction remains a
+neutral projection mechanism. Do not build Open Surface itself.
 
 ## Phase 6: Cinematic Boot and Voice - COMPLETE
 
@@ -809,14 +824,14 @@ Phase 6 exit condition reproducible.
    workspace objects, object browser work, or sector persistence.
 9. `workspace-objects` - COMPLETE. ADR 0023 defines the first concrete
    persistent object kind, `WorkspaceSession`, and schema version 1 stores the
-   Phase 5 shell window layout in bounded ADR 0022 fields. Emits
+   Phase 5 compatibility projection layout in bounded ADR 0022 fields. Emits
    `PYTHOS:CORE:WORKSPACE:SESSION_OBJECT`,
    `PYTHOS:CORE:WORKSPACE:WINDOW_LAYOUT`, and
    `PYTHOS:CORE:WORKSPACE_OBJECTS_READY`. This slice does not implement object
    browser work, reboot persistence, or sector persistence.
 10. `object-browser` - COMPLETE. ADR 0024 defines a minimal Phase 5
-    app-facing inspection surface over the object-store substrate. It creates
-    a typed object-browser window, lists stored typed objects, inspects typed
+    compatibility inspection surface over the object-store substrate. It creates
+    a typed object-browser projection, lists stored typed objects, inspects typed
     relationships, and inspects retained revision counts. Emits
     `PYTHOS:CORE:OBJECT_BROWSER:LIST`,
     `PYTHOS:CORE:OBJECT_BROWSER:DETAIL`, and

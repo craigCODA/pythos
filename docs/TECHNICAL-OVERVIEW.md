@@ -8,10 +8,12 @@ persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
 SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has target-specific
 physical panel evidence on the confirmed disposable O2 Micro `1217:8620`
-target. Main also carries five evidence-terminal gallery images showing 139
-ordered markers, zero dropped markers, and CRC `176F4C6E`, but the code path
-that generates and verifies that terminal is not present on `main`; it remains
-only on `agent/physical-evidence-terminal`.
+target. ADR 0063 defines the evidence-terminal acceptance contract and its
+repository-state boundaries. The reproducible evidence terminal remains listed
+under "Not yet claimed" until its implementation, harness, documentation, and
+accepted branch state are reconciled together. Recommended follow-up: reconcile
+ADR 0063, README, the status table, and dedicated evidence-terminal
+documentation in a separate evidence-terminal status pass.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -25,7 +27,7 @@ and where the boundary of the work still is.
 | Kernel-owned page tables | Full Python compatibility |
 | Timer and scheduler proofs | Dynamic application platform |
 | Capability enforcement proofs | General filesystem |
-| Bounded GUI and audio proofs | Networking |
+| Bounded presentation and audio proofs | Networking |
 | Phase 10 typed-object storage in QEMU | Scalable object database |
 | Ring-3 object shell in QEMU | Arbitrary third-party programs |
 | Polling AHCI backend in QEMU | Broad physical hardware support |
@@ -35,7 +37,7 @@ and where the boundary of the work still is.
 ## What PythOS Is
 
 PythOS is intended to be a graphical operating system whose primary system and
-application language is Python. Python is not the first instruction executed by
+tool language is Python. Python is not the first instruction executed by
 the processor. A small native executive, PythCore, owns the privileged machinery:
 firmware handoff, page tables, exceptions, interrupts, scheduling, IPC,
 capability validation, syscall entry, and controlled hardware primitives.
@@ -49,8 +51,9 @@ Hardware
 -> PythCore native executive
 -> Python runtime environment (currently a custom-minimal proof runtime)
 -> Python system services (currently bounded service proofs)
--> Graphical shell
--> Applications, workspaces, semantic objects, automation, and optional AI
+-> Typed task and object environment
+-> Typed objects, executable tool objects, semantic relationships, projections,
+   automation, and optional AI
 ```
 
 The project has completed the roadmap's bounded architecture proofs through
@@ -163,14 +166,16 @@ The service-manager proofs add readiness, exception containment, restart, and
 async event delivery. This is still a bounded runtime/service proof, not a
 general Python runtime or package system.
 
-### GUI, Audio, And Persistent Typed Objects
+### Presentation, Audio, And Persistent Typed Objects
 
-Phase 5 adds the first graphical shell proofs: input decoding, typed input
+Phase 5 adds bounded presentation-substrate proofs: input decoding, typed input
 events, a software renderer, PSF font handling, compositor surfaces, pointer
-and window interaction, widgets, and four first-party app windows. ADR 0018 is
-the key design decision: object identity is separated from presentation
-binding, so moving a window mutates presentation state without changing the
-object.
+delivery, focus/movement over projected surfaces, typed action controls, and
+diagnostic or policy-inspection projections. ADR 0018 records the useful
+substrate decision that object identity is separated from presentation binding.
+ADR 0066 supersedes the desktop-shell authority portions of ADR 0018 and
+related documents: the old window/widget/app names remain compatibility marker
+labels, not the authoritative PythOS user model.
 
 Phase 6 adds a bounded cinematic boot/audio path using QEMU AC97 and an explicit
 no-audio fallback. The wake phrase is rendered and synchronized with the boot
@@ -317,6 +322,7 @@ QEMU slice handoff suite.
 PythOS is not currently a general-purpose desktop OS. The following are not
 implemented:
 
+* conventional desktop-shell authority as the user model;
 * general-purpose filesystem allocation;
 * networking;
 * package management;
