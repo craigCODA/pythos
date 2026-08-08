@@ -86,6 +86,15 @@ pub(crate) fn invalid_effect_fork_package() -> Vec<u8> {
     )
 }
 
+pub(crate) fn unsupported_phase2_package() -> Vec<u8> {
+    build_log_package(
+        &[const_u64(), ret()],
+        RIGHTS_READ,
+        RESOURCE_SYSTEM_LOG,
+        PythType::Capability.code(),
+    )
+}
+
 pub(crate) fn build_log_package(
     nodes: &[NodeSpec],
     import_rights: u64,
@@ -173,6 +182,17 @@ pub(crate) fn const_bool() -> NodeSpec {
     NodeSpec {
         opcode: Opcode::ConstBool.code(),
         result_type: PythType::Bool.code(),
+        inputs: [NO_VALUE; 4],
+        auxiliary0: 0,
+        auxiliary1: 0,
+        immediate: 1,
+    }
+}
+
+pub(crate) fn const_u64() -> NodeSpec {
+    NodeSpec {
+        opcode: Opcode::ConstU64.code(),
+        result_type: PythType::U64.code(),
         inputs: [NO_VALUE; 4],
         auxiliary0: 0,
         auxiliary1: 0,

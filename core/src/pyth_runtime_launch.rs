@@ -44,6 +44,7 @@ pub const PYTH_RUNTIME_PROGRAM_NAME: &[u8] = b"pyth-runtime.elf";
 pub const HELLO_GRAPH_NAME: &[u8] = b"hello.tig";
 pub const BUDGET_GRAPH_NAME: &[u8] = b"budget.tig";
 pub const INVALID_GRAPH_NAME: &[u8] = b"invalid.tig";
+pub const UNSUPPORTED_GRAPH_NAME: &[u8] = b"unsupported.tig";
 pub const PYTH_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5448_5254_0001;
 pub const HELLO_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0001;
 pub const BUDGET_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0002;
@@ -58,6 +59,7 @@ pub const PYTH_GRAPH_CONTROL_DEFAULT: u16 = 0;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_HELLO: u16 = 1;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_INVALID: u16 = 2;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_BUDGET: u16 = 3;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_UNSUPPORTED: u16 = 4;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythRuntimeLaunchError {
@@ -78,6 +80,7 @@ pub enum PythGraphBootMode {
     LaunchHello,
     LaunchInvalid,
     LaunchBudget,
+    LaunchUnsupported,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -88,6 +91,7 @@ pub enum PythGraphRejectCode {
     MissingGraphPayload,
     DuplicateGraphName,
     DuplicateGraphPrincipal,
+    UnsupportedPhase2Opcode,
     VerifyEffectFork,
     VerifyOther,
 }
@@ -101,6 +105,7 @@ impl PythGraphRejectCode {
             Self::MissingGraphPayload => "MISSING_GRAPH_PAYLOAD",
             Self::DuplicateGraphName => "DUPLICATE_GRAPH_NAME",
             Self::DuplicateGraphPrincipal => "DUPLICATE_GRAPH_PRINCIPAL",
+            Self::UnsupportedPhase2Opcode => "UNSUPPORTED_PHASE2_OPCODE",
             Self::VerifyEffectFork => "VERIFY_EFFECT_FORK",
             Self::VerifyOther => "VERIFY_OTHER",
         }
@@ -497,6 +502,7 @@ pub fn decode_and_clear_pyth_graph_control_sector(
         PYTH_GRAPH_CONTROL_LAUNCH_HELLO => PythGraphBootMode::LaunchHello,
         PYTH_GRAPH_CONTROL_LAUNCH_INVALID => PythGraphBootMode::LaunchInvalid,
         PYTH_GRAPH_CONTROL_LAUNCH_BUDGET => PythGraphBootMode::LaunchBudget,
+        PYTH_GRAPH_CONTROL_LAUNCH_UNSUPPORTED => PythGraphBootMode::LaunchUnsupported,
         PYTH_GRAPH_CONTROL_DEFAULT => PythGraphBootMode::DefaultShell,
         _ => PythGraphBootMode::DefaultShell,
     }
@@ -521,6 +527,9 @@ pub fn rejection_code_for_load_error(
         }
         crate::pyth_graph_loader::PythGraphLoadError::DuplicateGraphPrincipal => {
             PythGraphRejectCode::DuplicateGraphPrincipal
+        }
+        crate::pyth_graph_loader::PythGraphLoadError::UnsupportedPhase2Opcode { .. } => {
+            PythGraphRejectCode::UnsupportedPhase2Opcode
         }
         crate::pyth_graph_loader::PythGraphLoadError::Verify(VerifyError::EffectFork {
             ..
@@ -659,6 +668,14 @@ mod tests {
             decode_and_clear_pyth_graph_control_sector(&mut budget),
             PythGraphBootMode::LaunchBudget
         );
+
+        let mut unsupported = [0u8; SECTOR_SIZE];
+        unsupported[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        unsupported[8..10].copy_from_slice(&PYTH_GRAPH_CONTROL_LAUNCH_UNSUPPORTED.to_le_bytes());
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut unsupported),
+            PythGraphBootMode::LaunchUnsupported
+        );
         assert_eq!(budget, [0u8; crate::block_device::SECTOR_SIZE]);
     }
 
@@ -673,6 +690,19 @@ mod tests {
         assert_eq!(
             PythGraphRejectCode::VerifyEffectFork.stable_code(),
             "VERIFY_EFFECT_FORK"
+        );
+        assert_eq!(
+            rejection_code_for_load_error(
+                crate::pyth_graph_loader::PythGraphLoadError::UnsupportedPhase2Opcode {
+                    node: 0,
+                    opcode: pythos_shared::pyth_tig::Opcode::ConstU64.code(),
+                }
+            ),
+            PythGraphRejectCode::UnsupportedPhase2Opcode
+        );
+        assert_eq!(
+            PythGraphRejectCode::UnsupportedPhase2Opcode.stable_code(),
+            "UNSUPPORTED_PHASE2_OPCODE"
         );
     }
 }

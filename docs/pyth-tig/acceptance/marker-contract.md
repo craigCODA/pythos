@@ -1,8 +1,8 @@
 # PythTIG Acceptance Marker Contract
 
-**Status:** Reserved marker namespace for accepted future PythTIG phases. No
-runtime may emit these markers until the corresponding implementation phase is
-explicitly authorized and verified.
+**Status:** Phase 1 format and Phase 2 runtime markers are active only in their
+accepted verification paths. Later-phase markers remain reserved until their
+corresponding implementation phase is explicitly authorized and verified.
 
 **Namespace:** `PYTHOS:PYTHTIG:`
 
@@ -15,7 +15,15 @@ PYTHOS:PYTHTIG:PACKAGE_VALID package:<hex> nodes:<decimal> blocks:<decimal>
 PYTHOS:PYTHTIG:PACKAGE_REJECTED error:<stable-code>
 ```
 
-`PACKAGE_VALID` occurs after every shared verifier pass and checksum/canonicalization validation. It occurs before address-space creation. `PACKAGE_REJECTED` is terminal for that package launch and must not be followed by runtime-entry markers for the same invocation.
+`PACKAGE_VALID` occurs only after shared verification, checksum/canonicalization
+validation, and the active runtime-profile check all pass. It occurs before
+address-space creation. `PACKAGE_REJECTED` is terminal for that package launch
+and must not be followed by runtime-entry markers for the same invocation.
+
+Phase 2 stable rejection codes include `VERIFY_EFFECT_FORK` for shared-verifier
+rejection and `UNSUPPORTED_PHASE2_OPCODE` for a well-formed version 1 package
+outside the bounded Phase 2 interpreter profile. Both are emitted before
+package mapping, bootstrap construction, or ring-3 entry.
 
 ## Runtime bootstrap and execution
 

@@ -24,11 +24,13 @@ CONTROL_MAGIC = b"PYTGCTL1"
 CONTROL_LAUNCH_HELLO = 1
 CONTROL_LAUNCH_INVALID = 2
 CONTROL_LAUNCH_BUDGET = 3
+CONTROL_LAUNCH_UNSUPPORTED = 4
 RUNTIME_ELF_ENTRY = 0x0000_0000_0050_0000
 
 HELLO_SUCCESS_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0"
 BUDGET_SUCCESS_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:2"
 INVALID_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
+UNSUPPORTED_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
 FAULT_SUCCESS_MARKER = "PYTHOS:CORE:CRASH:PEER_ALIVE"
 
 PACKAGE_VALID_RE = re.compile(
@@ -212,6 +214,25 @@ def assert_invalid_package_rejected(serial: str) -> None:
     require_single(lines, "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:VERIFY_EFFECT_FORK")
 
 
+def assert_unsupported_profile_rejected(serial: str) -> None:
+    lines = serial_lines(serial)
+    reject_forbidden(
+        lines,
+        (
+            "PYTHOS:PANIC",
+            "PYTHOS:PYTHTIG:PACKAGE_VALID",
+            "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND",
+            "PYTHOS:PYTHTIG:RUNTIME_ENTER",
+            "PYTHOS:PYTHTIG:PROGRAM_LOG",
+            "PYTHOS:PYTHTIG:RUNTIME_EXIT",
+        ),
+    )
+    require_single(
+        lines,
+        "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:UNSUPPORTED_PHASE2_OPCODE",
+    )
+
+
 def assert_budget_exhaustion(serial: str) -> None:
     lines = serial_lines(serial)
     reject_forbidden(
@@ -309,6 +330,11 @@ def main() -> int:
 
     invalid_serial = run_qemu("invalid", CONTROL_LAUNCH_INVALID, INVALID_SUCCESS_MARKER)
     assert_invalid_package_rejected(invalid_serial)
+
+    unsupported_serial = run_qemu(
+        "unsupported", CONTROL_LAUNCH_UNSUPPORTED, UNSUPPORTED_SUCCESS_MARKER
+    )
+    assert_unsupported_profile_rejected(unsupported_serial)
 
     budget_serial = run_qemu("budget", CONTROL_LAUNCH_BUDGET, BUDGET_SUCCESS_MARKER)
     assert_budget_exhaustion(budget_serial)

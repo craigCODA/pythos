@@ -12,6 +12,7 @@ OUTPUT_DIR = ROOT / "target" / "pyth-tig"
 HELLO_OUTPUT = OUTPUT_DIR / "hello.tig"
 BUDGET_OUTPUT = OUTPUT_DIR / "budget.tig"
 INVALID_OUTPUT = OUTPUT_DIR / "invalid.tig"
+UNSUPPORTED_OUTPUT = OUTPUT_DIR / "unsupported.tig"
 TOOL_EXE = ROOT / "target" / "debug" / (
     "pyth-tig-tool.exe" if os.name == "nt" else "pyth-tig-tool"
 )
@@ -62,9 +63,12 @@ def main() -> int:
     verify(BUDGET_OUTPUT)
     emit("emit-invalid-effect-fork", INVALID_OUTPUT)
     verify_rejected(INVALID_OUTPUT, "EffectFork")
+    emit("emit-unsupported-phase2", UNSUPPORTED_OUTPUT)
+    verify(UNSUPPORTED_OUTPUT)
     print(f"PYTH_GRAPH_READY {HELLO_OUTPUT}")
     print(f"PYTH_GRAPH_BUDGET_READY {BUDGET_OUTPUT}")
     print(f"PYTH_GRAPH_INVALID_READY {INVALID_OUTPUT}")
+    print(f"PYTH_GRAPH_UNSUPPORTED_READY {UNSUPPORTED_OUTPUT}")
     return 0
 
 

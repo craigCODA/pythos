@@ -17,6 +17,7 @@ PYTH_RUNTIME_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-u
 PYTH_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "hello.tig"
 PYTH_BUDGET_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "budget.tig"
 PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
+PYTH_UNSUPPORTED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "unsupported.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -40,6 +41,7 @@ PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
 BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
 INVALID_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_00FF
+UNSUPPORTED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0003
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -205,6 +207,11 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
             raise SystemExit(
                 f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}"
             )
+        if not PYTH_UNSUPPORTED_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG unsupported graph package: "
+                f"{PYTH_UNSUPPORTED_GRAPH_PACKAGE}"
+            )
         records.extend(
             [
                 (
@@ -237,6 +244,14 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
                         b"invalid.tig",
                         INVALID_GRAPH_PRINCIPAL_ID,
                         PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"unsupported.tig",
+                        UNSUPPORTED_GRAPH_PRINCIPAL_ID,
+                        PYTH_UNSUPPORTED_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
             ]

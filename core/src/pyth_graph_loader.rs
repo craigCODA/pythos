@@ -4,7 +4,11 @@
 use pythos_shared::{
     boot_protocol::PythBootInfo,
     init_bundle, init_pak, pyth_graph_manifest,
-    pyth_tig::verify::{self, VerifiedGraph, VerifyError},
+    pyth_tig::{
+        opcode::Opcode,
+        types::PythType,
+        verify::{self, VerifiedGraph, VerifyError},
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,6 +19,7 @@ pub enum PythGraphLoadError {
     MissingGraphPayload,
     DuplicateGraphName,
     DuplicateGraphPrincipal,
+    UnsupportedPhase2Opcode { node: u32, opcode: u16 },
     Verify(VerifyError),
 }
 
@@ -54,7 +59,33 @@ pub fn validate_named_pyth_graph_payload_bytes<'a>(
 
     let manifest = selected.ok_or(PythGraphLoadError::MissingGraphPayload)?;
     let verified = verify::verify_bytes(manifest.package()).map_err(PythGraphLoadError::Verify)?;
+    validate_phase2_runtime_profile(&verified)?;
     Ok(LoadedPythGraph { manifest, verified })
+}
+
+fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), PythGraphLoadError> {
+    for (node_index, node) in verified.package().nodes().iter().enumerate() {
+        let supported = match Opcode::try_from(node.opcode) {
+            Ok(Opcode::BlockParam) => {
+                PythType::try_from(node.result_type) == Ok(PythType::Capability)
+            }
+            Ok(
+                Opcode::EffectStart
+                | Opcode::ConstUtf8
+                | Opcode::SystemLog
+                | Opcode::Jump
+                | Opcode::Return,
+            ) => true,
+            _ => false,
+        };
+        if !supported {
+            return Err(PythGraphLoadError::UnsupportedPhase2Opcode {
+                node: u32::try_from(node_index).unwrap_or(u32::MAX),
+                opcode: node.opcode,
+            });
+        }
+    }
+    Ok(())
 }
 
 const MAX_NAMED_GRAPH_RECORDS: usize = 8;
@@ -138,7 +169,7 @@ mod tests {
     use super::*;
     use pythos_shared::{
         init_bundle, pyth_graph_manifest,
-        pyth_tig::{test_support, verify::VerifyError},
+        pyth_tig::{opcode::Opcode, test_support, verify, verify::VerifyError},
     };
     use std::vec::Vec;
 
@@ -224,6 +255,21 @@ mod tests {
             Err(PythGraphLoadError::Verify(VerifyError::EffectFork {
                 producer: 0
             }))
+        );
+    }
+
+    #[test]
+    fn loader_rejects_verifier_valid_opcode_outside_phase2_profile() {
+        let package = test_support::structurally_valid_terminated_package();
+        verify::verify_bytes(&package).expect("shared v1 verifier must admit frozen opcode");
+        let bundle = build_named_graph_bundle(b"unsupported.tig", &package);
+
+        assert_eq!(
+            validate_named_pyth_graph_payload_bytes(&bundle, b"unsupported.tig"),
+            Err(PythGraphLoadError::UnsupportedPhase2Opcode {
+                node: 0,
+                opcode: Opcode::ConstU64.code(),
+            })
         );
     }
 }

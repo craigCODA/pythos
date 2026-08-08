@@ -36,6 +36,10 @@ fn run() -> Result<(), String> {
             let bytes = encode::invalid_effect_fork_package();
             write_package(&path, bytes)
         }
+        "emit-unsupported-phase2" => {
+            let bytes = encode::unsupported_phase2_package();
+            write_package(&path, bytes)
+        }
         "verify" => {
             let bytes = fs::read(&path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -61,5 +65,5 @@ fn write_package(path: &PathBuf, bytes: Vec<u8>) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|verify|mutate-suite> <path>".to_string()
+    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|emit-unsupported-phase2|verify|mutate-suite> <path>".to_string()
 }

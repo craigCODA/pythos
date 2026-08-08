@@ -32,6 +32,8 @@ pub struct NormalBootSubstrate {
     pub pyth_budget_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_invalid_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_unsupported_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
 }
 
 pub struct PreparedShellLaunch {
@@ -203,6 +205,11 @@ pub fn initialize_normal_substrate(
         boot_info,
         pyth_runtime_launch::INVALID_GRAPH_NAME,
     );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_unsupported_graph_rejection = pyth_runtime_launch::detect_pyth_graph_rejection(
+        boot_info,
+        pyth_runtime_launch::UNSUPPORTED_GRAPH_NAME,
+    );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -262,6 +269,8 @@ pub fn initialize_normal_substrate(
         pyth_budget_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_invalid_graph_rejection,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_unsupported_graph_rejection,
     })
 }
 
