@@ -14,6 +14,8 @@ use crate::{
 };
 use crate::{shell_objects::ObjectKind, syscall, user_mode};
 use pythos_shared::boot_protocol::{PythBootInfo, PythFramebufferInfo};
+#[cfg(feature = "pythtig-phase2-test")]
+use pythos_shared::object_shell_abi::PackedCapability;
 use pythos_shared::object_shell_abi::{
     BootstrapCapabilityBlock, MAX_SHELL_OBJECT_CAPS, OBJECT_SHELL_ABI_MAJOR,
     OBJECT_SHELL_ABI_MINOR, ObjectListEntry, SHELL_BOOTSTRAP_MAGIC,
@@ -40,6 +42,12 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 qemu_exit::panic();
             }
         };
+    if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
+    serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
+
     #[cfg(feature = "pythtig-phase2-test")]
     match pyth_graph_mode {
         pyth_runtime_launch::PythGraphBootMode::LaunchHello => {
@@ -84,13 +92,41 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             };
             pyth_runtime_launch::emit_package_rejected_marker(code);
         }
+        pyth_runtime_launch::PythGraphBootMode::LaunchObjectCreate => {
+            let Some(launch) = substrate.pyth_object_create_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchObjectRestore => {
+            let Some(launch) = substrate.pyth_object_restore_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchObjectKnownDenied => {
+            let Some(launch) = substrate.pyth_object_known_denied_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchObjectForgery => {
+            let Some(launch) = substrate.pyth_object_forgery_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = copied_shell_object_capability_for_forgery();
+            pyth_runtime_launch::arm_object_flow_completion_marker();
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
         pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
-    if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
-        serial::write_line("PYTHOS:PANIC");
-        qemu_exit::panic();
-    }
-    serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
 
     serial::init_com2();
     serial::write_line("PYTHOS:CORE:COM2_READY");
@@ -161,12 +197,26 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLaunch) -> ! {
-    pyth_runtime_launch::emit_package_valid_marker(launch);
-    pyth_runtime_launch::emit_bootstrap_bound_marker(launch);
+    launch_pyth_graph_runtime_with_deferred_import(launch, Ok(PackedCapability::from_raw(0)))
+}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+fn launch_pyth_graph_runtime_with_deferred_import(
+    launch: &pyth_runtime_launch::PreparedPythRuntimeLaunch,
+    deferred_capability: Result<PackedCapability, ()>,
+) -> ! {
+    let deferred_capability = match deferred_capability {
+        Ok(capability) => capability,
+        Err(_) => {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+    };
     // SAFETY:
     // 1. Invariant: the retained graph runtime address space maps the
     //    validated runtime ELF, guarded stack, read-only bootstrap/package
-    //    pages, writable result page, and kernel syscall/fault path.
+    //    pages, writable result page, a supervisor-only bootstrap alias, and
+    //    kernel syscall/fault paths.
     // 2. Established by: `initialize_normal_substrate` builds and validates
     //    this root before activating the normal kernel root.
     // 3. Lifetime: the root and payload frames are retained for this one-shot
@@ -174,12 +224,22 @@ fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLa
     // 4. Pointer ownership: the CPU borrows the graph page-table root.
     // 5. Alignment: the root was allocated as a 4 KiB page-table frame.
     // 6. Mapped length: one complete hierarchy covers runtime ELF, stack,
-    //    bootstrap, package, result, trap stack, and syscall path.
-    // 7. Concurrency: Phase 2 graph runtime launches one process on one CPU.
+    //    bootstrap, package, result, trap stack, syscall path, and the
+    //    supervisor-only bootstrap alias.
+    // 7. Concurrency: Phase 3 graph runtime launches one process on one CPU.
     // 8. Violation: incomplete mappings fault through user containment.
     unsafe {
         launch.address_space.activate();
     }
+    if launch
+        .bind_deferred_import_after_activation(deferred_capability)
+        .is_err()
+    {
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
+    pyth_runtime_launch::emit_package_valid_marker(launch);
+    pyth_runtime_launch::emit_bootstrap_bound_marker(launch);
     user_mode::enter_pyth_graph_runtime(
         launch.process,
         launch.entry,
@@ -187,6 +247,30 @@ fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLa
         launch.bootstrap_user_ptr,
         launch.package_digest,
     );
+}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+fn graph_workspace_capability(process: ActiveUserProcess) -> Result<PackedCapability, ()> {
+    retained_services::with_object_service(|service| service.grant_workspace_capability(process))
+        .map_err(|_| ())?
+        .map_err(|_| ())
+}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+fn copied_shell_object_capability_for_forgery() -> Result<PackedCapability, ()> {
+    let capability = retained_services::with_object_service(|service| {
+        let shell = service.shell_caller();
+        let workspace = service.shell_workspace_capability();
+        service
+            .query_objects(shell, workspace, ObjectKind::Note)
+            .map(|entries| entries[0].capability)
+    })
+    .map_err(|_| ())?
+    .map_err(|_| ())?;
+    if capability.raw() == 0 {
+        return Err(());
+    }
+    Ok(capability)
 }
 
 /// Play the boot cinematic and AC97 audio (ADR 0053), reusing the verify

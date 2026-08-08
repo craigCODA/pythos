@@ -159,7 +159,7 @@ pub unsafe extern "C" fn _start(bootstrap_ptr: *const PythGraphBootstrapBlock) -
     let host_results = runtime_host_results();
     let exit = Interpreter::new(
         verified,
-        &imports,
+        imports,
         bootstrap.instruction_budget,
         values,
         host_results,

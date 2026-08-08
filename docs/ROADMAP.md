@@ -26,15 +26,13 @@ docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md
 docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
 ```
 
-This section preserves the current roadmap and accepted behavior. PythTIG is
-not the active implementation program until the owner explicitly invokes the
-next phase. Do not implement graph packages, verifier behavior, runtime
-behavior, `pythc`, Task Steward behavior, native lowering, or normal-boot
-cutover from this documentation by momentum.
-
-The proposed first implementation phase is the smallest canonical typed
-instruction graph package and shared verifier slice. That work must begin in a
-fresh isolated worktree with tests first.
+This section preserves the current roadmap and accepted behavior. PythTIG
+Phase 1 format/verifier work, Phase 2 ring-3 runtime work, and Phase 3
+object/capability integration have been owner-invoked in order. The completed
+proof paths remain opt-in and do not change the default production object-shell
+boot path. Do not implement `pythc`, Task Steward behavior, native lowering, or
+normal-boot cutover from this documentation by momentum; each later phase still
+requires explicit owner invocation.
 
 ## How To Read This File
 

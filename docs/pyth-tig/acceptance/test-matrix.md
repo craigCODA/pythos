@@ -1,7 +1,7 @@
 # PythTIG Test and Evidence Matrix
 
-Status: Phase 1 format and Phase 2 ring-3 runtime rows implemented; later rows
-remain pending explicit phase invocation.
+Status: Phase 1 format, Phase 2 ring-3 runtime, and Phase 3 object/capability
+rows implemented; later rows remain pending explicit phase invocation.
 
 Every command is run from a clean phase worktree with fresh build artifacts.
 Exact command options may be reconciled when the live tree differs. ADR 0065's
@@ -15,7 +15,7 @@ tested version 1 package ABI is frozen as of 2026-08-08.
 | Rust object shell fallback | `python scripts\test-object-shell.py` | `OBJECT_SHELL_TASK8_TEST_OK`, `OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK`, `OBJECT_SHELL_TASK11_STRESS_ADVERSARIAL_OK`, `OBJECT_SHELL_TASK9_REBOOT_TEST_OK`, `OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK` | Existing typed shell remains usable |
 | Package/verifier | `python scripts\test-pyth-tig-format.py` | `PYTH_TIG_FORMAT_TEST_OK` | Canonical valid package and 31 deterministic decoder/verifier mutations |
 | Ring-3 interpreter | `python scripts\test-pyth-graph-runtime.py` | `PYTH_GRAPH_RUNTIME_TEST_OK` | Seven isolated boots prove execution/termination, shared-verifier rejection, opcode/control-flow profile rejection before ring 3, budget termination, and truthful fault safe-idle containment |
-| Object capability flow | `python scripts\test-pyth-graph-object-flow.py` | `PYTH_GRAPH_OBJECT_FLOW_TEST_OK` | Create/revise/inspect/history, known denial, forgery denial, reboot rebind |
+| Object capability flow | `python scripts\test-pyth-graph-object-flow.py` | `PYTH_GRAPH_OBJECT_FLOW_TEST_OK` | Create/revise/inspect/history through retained object service, known-ID denial, wrong-holder forgery denial, reboot query/rebind |
 | Host compiler | `python scripts\test-pythc.py` | `PYTHC_TEST_OK` | Source subset -> canonical verified package; negatives rejected |
 | Task Steward | `python scripts\test-pyth-task-steward.py` | `PYTH_TASK_STEWARD_TEST_OK` | Hybrid proposal flow and authority boundary |
 | Native backend | `python scripts\test-pyth-native-codegen.py` | `PYTH_NATIVE_CODEGEN_TEST_OK` | W^X ELF and interpreter/native differential suite |

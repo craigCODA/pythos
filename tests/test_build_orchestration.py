@@ -139,6 +139,27 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn("pythtig-phase2-test", core_build)
         self.assertIn("--with-pythtig", package)
 
+    def test_pyth_graph_object_flow_uses_test_feature_and_opt_in_bundle(self) -> None:
+        module = load_script("test-pyth-graph-object-flow.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_boot_image()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        package = next(
+            command
+            for command in normalized
+            if "scripts/build-image.py" in command
+        )
+        self.assertIn("pythtig-phase2-test", core_build)
+        self.assertIn("--with-pythtig-object-flow", package)
+
     def test_pyth_graph_runtime_copies_source_esp_for_each_scenario(self) -> None:
         module = load_script("test-pyth-graph-runtime.py")
         calls: list[list[object]] = []
@@ -190,6 +211,51 @@ class BuildOrchestrationTest(unittest.TestCase):
                 str(module.TARGET / "pyth-graph-runtime-invalid-esp").replace(
                     "\\", "/"
                 ),
+            )
+
+    def test_pyth_graph_object_flow_isolates_esp_but_reuses_storage(self) -> None:
+        module = load_script("test-pyth-graph-object-flow.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            module.TARGET = temp_root / "target"
+            module.ESP = temp_root / "source-esp"
+            module.STORAGE_IMAGE = temp_root / "target" / "object-flow.img"
+            boot_file = module.ESP / "EFI" / "BOOT" / "BOOTX64.EFI"
+            boot_file.parent.mkdir(parents=True)
+            boot_file.write_bytes(b"object-flow-isolation")
+            module.prepare_fresh_storage_image(module.STORAGE_IMAGE)
+
+            module.run_qemu("create", module.CONTROL_LAUNCH_OBJECT_CREATE)
+            module.run_qemu("restore", module.CONTROL_LAUNCH_OBJECT_RESTORE)
+
+            create_esp = module.TARGET / "pyth-graph-object-flow-create-esp"
+            restore_esp = module.TARGET / "pyth-graph-object-flow-restore-esp"
+            self.assertTrue(create_esp.is_dir())
+            self.assertTrue(restore_esp.is_dir())
+            self.assertNotEqual(create_esp, restore_esp)
+            self.assertEqual(
+                (create_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"object-flow-isolation",
+            )
+            self.assertEqual(
+                (restore_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"object-flow-isolation",
+            )
+
+            create_command = normalize(calls[0])
+            restore_command = normalize(calls[1])
+            self.assertIn("--storage-image", create_command)
+            self.assertIn("--storage-image", restore_command)
+            self.assertEqual(
+                create_command[create_command.index("--storage-image") + 1],
+                str(module.STORAGE_IMAGE).replace("\\", "/"),
+            )
+            self.assertEqual(
+                restore_command[restore_command.index("--storage-image") + 1],
+                str(module.STORAGE_IMAGE).replace("\\", "/"),
             )
 
     def test_pyth_graph_runtime_negative_assertions_require_pre_entry_rejection(self) -> None:
@@ -248,6 +314,33 @@ class BuildOrchestrationTest(unittest.TestCase):
             exit_only
             + "\nPYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001"
         )
+
+    def test_pyth_graph_object_flow_assertions_require_runtime_entry_and_termination(self) -> None:
+        module = load_script("test-pyth-graph-object-flow.py")
+        valid = "\n".join(
+            (
+                "PYTHOS:LOADER:ENTER",
+                "PYTHOS:PYTHTIG:PACKAGE_VALID package:0000000000000001 nodes:11 blocks:1",
+                "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:5059544847520006 imports:1",
+                "PYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000001",
+                "PYTHOS:PYTHTIG:OBJECT_CREATED object:1042 revision:1",
+                "PYTHOS:PYTHTIG:OBJECT_REVISED object:1042 revision:2",
+                "PYTHOS:PYTHTIG:OBJECT_INSPECTED object:1042 revision:2",
+                "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",
+                "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001",
+            )
+        )
+
+        module.assert_object_create_flow(valid)
+        with self.assertRaises(AssertionError):
+            module.assert_object_create_flow(valid.replace("PYTHOS:LOADER:ENTER\n", ""))
+        with self.assertRaises(AssertionError):
+            module.assert_object_create_flow(
+                valid.replace(
+                    "\nPYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001",
+                    "",
+                )
+            )
 
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")

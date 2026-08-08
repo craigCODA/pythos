@@ -159,6 +159,102 @@ def build_named_pyth_graph(name: bytes, principal_id: int, package: bytes) -> by
     return bytes(header) + name + package
 
 
+def require_file(path: Path, description: str) -> bytes:
+    if not path.exists():
+        raise SystemExit(f"missing {description}: {path}")
+    return path.read_bytes()
+
+
+def pyth_runtime_record() -> tuple[int, bytes]:
+    return (
+        INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+        build_named_user_program(
+            b"pyth-runtime.elf",
+            PYTH_RUNTIME_PRINCIPAL_ID,
+            require_file(PYTH_RUNTIME_ELF, "PythTIG runtime ELF"),
+        ),
+    )
+
+
+def phase2_pyth_graph_records() -> list[tuple[int, bytes]]:
+    graph_specs = [
+        (b"hello.tig", HELLO_GRAPH_PRINCIPAL_ID, PYTH_GRAPH_PACKAGE, "PythTIG graph package"),
+        (
+            b"budget.tig",
+            BUDGET_GRAPH_PRINCIPAL_ID,
+            PYTH_BUDGET_GRAPH_PACKAGE,
+            "PythTIG budget graph package",
+        ),
+        (
+            b"invalid.tig",
+            INVALID_GRAPH_PRINCIPAL_ID,
+            PYTH_INVALID_GRAPH_PACKAGE,
+            "PythTIG invalid graph package",
+        ),
+        (
+            b"unsupported.tig",
+            UNSUPPORTED_GRAPH_PRINCIPAL_ID,
+            PYTH_UNSUPPORTED_GRAPH_PACKAGE,
+            "PythTIG unsupported graph package",
+        ),
+        (
+            b"invalid-string.tig",
+            INVALID_STRING_GRAPH_PRINCIPAL_ID,
+            PYTH_INVALID_STRING_GRAPH_PACKAGE,
+            "PythTIG invalid-string graph package",
+        ),
+        (
+            b"parameterized.tig",
+            PARAMETERIZED_GRAPH_PRINCIPAL_ID,
+            PYTH_PARAMETERIZED_GRAPH_PACKAGE,
+            "PythTIG parameterized graph package",
+        ),
+    ]
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(name, principal_id, require_file(path, description)),
+        )
+        for name, principal_id, path, description in graph_specs
+    ]
+
+
+def phase3_object_pyth_graph_records() -> list[tuple[int, bytes]]:
+    graph_specs = [
+        (
+            b"object-create.tig",
+            OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+            PYTH_OBJECT_CREATE_GRAPH_PACKAGE,
+            "PythTIG object-create graph package",
+        ),
+        (
+            b"object-restore.tig",
+            OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+            PYTH_OBJECT_RESTORE_GRAPH_PACKAGE,
+            "PythTIG object-restore graph package",
+        ),
+        (
+            b"object-known-denied.tig",
+            OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+            PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE,
+            "PythTIG object-known-denied graph package",
+        ),
+        (
+            b"object-forgery.tig",
+            OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+            PYTH_OBJECT_FORGERY_GRAPH_PACKAGE,
+            "PythTIG object-forgery graph package",
+        ),
+    ]
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(name, principal_id, require_file(path, description)),
+        )
+        for name, principal_id, path, description in graph_specs
+    ]
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -196,158 +292,28 @@ def build_user_elf_payload(text: bytes) -> bytes:
     return bytes(elf)
 
 
-def build_default_init_pak(include_pythtig: bool = False) -> bytes:
-    if not SHELL_ELF.exists():
-        raise SystemExit(f"missing shell ELF: {SHELL_ELF}")
+def build_default_init_pak(
+    include_pythtig: bool = False, include_pythtig_object_flow: bool = False
+) -> bytes:
+    if include_pythtig and include_pythtig_object_flow:
+        raise SystemExit(
+            "select either --with-pythtig or --with-pythtig-object-flow, not both; "
+            "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
+        )
+    shell_elf = require_file(SHELL_ELF, "shell ELF")
     records = [
         (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
         (
             INIT_BUNDLE_NAMED_USER_ELF_TYPE,
-            build_named_user_program(
-                b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
-            ),
+            build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, shell_elf),
         ),
     ]
     if include_pythtig:
-        if not PYTH_RUNTIME_ELF.exists():
-            raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
-        if not PYTH_GRAPH_PACKAGE.exists():
-            raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
-        if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}"
-            )
-        if not PYTH_INVALID_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}"
-            )
-        if not PYTH_UNSUPPORTED_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG unsupported graph package: "
-                f"{PYTH_UNSUPPORTED_GRAPH_PACKAGE}"
-            )
-        if not PYTH_INVALID_STRING_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG invalid-string graph package: "
-                f"{PYTH_INVALID_STRING_GRAPH_PACKAGE}"
-            )
-        if not PYTH_PARAMETERIZED_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG parameterized graph package: "
-                f"{PYTH_PARAMETERIZED_GRAPH_PACKAGE}"
-            )
-        if not PYTH_OBJECT_CREATE_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG object-create graph package: "
-                f"{PYTH_OBJECT_CREATE_GRAPH_PACKAGE}"
-            )
-        if not PYTH_OBJECT_RESTORE_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG object-restore graph package: "
-                f"{PYTH_OBJECT_RESTORE_GRAPH_PACKAGE}"
-            )
-        if not PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG object-known-denied graph package: "
-                f"{PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE}"
-            )
-        if not PYTH_OBJECT_FORGERY_GRAPH_PACKAGE.exists():
-            raise SystemExit(
-                "missing PythTIG object-forgery graph package: "
-                f"{PYTH_OBJECT_FORGERY_GRAPH_PACKAGE}"
-            )
-        records.extend(
-            [
-                (
-                    INIT_BUNDLE_NAMED_USER_ELF_TYPE,
-                    build_named_user_program(
-                        b"pyth-runtime.elf",
-                        PYTH_RUNTIME_PRINCIPAL_ID,
-                        PYTH_RUNTIME_ELF.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"hello.tig",
-                        HELLO_GRAPH_PRINCIPAL_ID,
-                        PYTH_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"budget.tig",
-                        BUDGET_GRAPH_PRINCIPAL_ID,
-                        PYTH_BUDGET_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"invalid.tig",
-                        INVALID_GRAPH_PRINCIPAL_ID,
-                        PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"unsupported.tig",
-                        UNSUPPORTED_GRAPH_PRINCIPAL_ID,
-                        PYTH_UNSUPPORTED_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"invalid-string.tig",
-                        INVALID_STRING_GRAPH_PRINCIPAL_ID,
-                        PYTH_INVALID_STRING_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"parameterized.tig",
-                        PARAMETERIZED_GRAPH_PRINCIPAL_ID,
-                        PYTH_PARAMETERIZED_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"object-create.tig",
-                        OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
-                        PYTH_OBJECT_CREATE_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"object-restore.tig",
-                        OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
-                        PYTH_OBJECT_RESTORE_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"object-known-denied.tig",
-                        OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
-                        PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    build_named_pyth_graph(
-                        b"object-forgery.tig",
-                        OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
-                        PYTH_OBJECT_FORGERY_GRAPH_PACKAGE.read_bytes(),
-                    ),
-                ),
-            ]
-        )
+        records.append(pyth_runtime_record())
+        records.extend(phase2_pyth_graph_records())
+    if include_pythtig_object_flow:
+        records.append(pyth_runtime_record())
+        records.extend(phase3_object_pyth_graph_records())
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -391,6 +357,7 @@ def main() -> int:
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
     parser.add_argument("--with-pythtig", action="store_true")
+    parser.add_argument("--with-pythtig-object-flow", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -409,7 +376,8 @@ def main() -> int:
     shutil.copy2(kernel, pythos_dir / "PYTHCORE.ELF")
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(
-        pythos_dir / "INIT.PAK", build_default_init_pak(args.with_pythtig)
+        pythos_dir / "INIT.PAK",
+        build_default_init_pak(args.with_pythtig, args.with_pythtig_object_flow),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 
