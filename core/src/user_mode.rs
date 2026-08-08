@@ -74,6 +74,11 @@ static USER_RETURNED: AtomicBool = AtomicBool::new(false);
 static KERNEL_RECOVERY_RIP: AtomicU64 = AtomicU64::new(0);
 static KERNEL_RECOVERY_RSP: AtomicU64 = AtomicU64::new(0);
 static PERSISTENT_USER_PROCESS_ACTIVE: AtomicBool = AtomicBool::new(false);
+static PERSISTENT_USER_PROCESS_KIND: AtomicU64 = AtomicU64::new(PERSISTENT_KIND_NONE);
+
+const PERSISTENT_KIND_NONE: u64 = 0;
+const PERSISTENT_KIND_OBJECT_SHELL: u64 = 1;
+const PERSISTENT_KIND_PYTH_GRAPH_RUNTIME: u64 = 2;
 
 const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     let mut bytes = [0; USER_PAGE_SIZE];
@@ -166,9 +171,34 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PersistentUserFaultOutcome {
-    pub terminated_principal: u64,
-    pub peer_alive: bool,
+pub enum PersistentUserProcessKind {
+    ObjectShell,
+    PythGraphRuntime,
+}
+
+impl PersistentUserProcessKind {
+    const fn raw(self) -> u64 {
+        match self {
+            Self::ObjectShell => PERSISTENT_KIND_OBJECT_SHELL,
+            Self::PythGraphRuntime => PERSISTENT_KIND_PYTH_GRAPH_RUNTIME,
+        }
+    }
+
+    const fn from_raw(raw: u64) -> Option<Self> {
+        match raw {
+            PERSISTENT_KIND_OBJECT_SHELL => Some(Self::ObjectShell),
+            PERSISTENT_KIND_PYTH_GRAPH_RUNTIME => Some(Self::PythGraphRuntime),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PersistentUserTerminationOutcome {
+    pub terminated_principal: Option<u64>,
+    pub process_kind: Option<PersistentUserProcessKind>,
+    pub was_active: bool,
+    pub safe_idle_ready: bool,
 }
 
 #[cfg(not(test))]
@@ -239,6 +269,10 @@ pub fn enter_persistent_user_process(
     tss::set_ring0_stack(kernel_trap_stack_top());
     serial::write_line("PYTHOS:SHELL:RING3_ENTER");
     PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+    PERSISTENT_USER_PROCESS_KIND.store(
+        PersistentUserProcessKind::ObjectShell.raw(),
+        Ordering::SeqCst,
+    );
     // SAFETY:
     // 1. Invariant: `entry` is the validated `shell.elf` entry point in a
     //    retained user address space, `user_stack_top` names a user-writable
@@ -255,6 +289,44 @@ pub fn enter_persistent_user_process(
     //    one bootstrap block page, kernel trap stack, and kernel fault path.
     // 7. Concurrency: ADR 0051 runs one persistent user process on one CPU.
     // 8. Violation: bad descriptors or mappings fault through user containment.
+    unsafe {
+        ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
+    }
+}
+
+#[cfg(not(test))]
+pub fn enter_pyth_graph_runtime(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    bootstrap_user_ptr: u64,
+    package_digest: u64,
+) -> ! {
+    process_context::bind_current_process(process);
+    tss::set_ring0_stack(kernel_trap_stack_top());
+    serial::write_str("PYTHOS:PYTHTIG:RUNTIME_ENTER package:");
+    serial::write_hex_u64_value(package_digest);
+    serial::write_str("\r\n");
+    PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+    PERSISTENT_USER_PROCESS_KIND.store(
+        PersistentUserProcessKind::PythGraphRuntime.raw(),
+        Ordering::SeqCst,
+    );
+    // SAFETY:
+    // 1. Invariant: `entry` is the validated `pyth-runtime.elf` entry point,
+    //    `user_stack_top` is a guarded user stack, and `bootstrap_user_ptr`
+    //    names the read-only Pyth graph bootstrap block.
+    // 2. Established by: PythTIG normal init validates the runtime ELF,
+    //    package, payload mappings, and retained user root before activation.
+    // 3. Lifetime: the graph runtime root and payload pages are retained for
+    //    the one-shot runtime invocation.
+    // 4. Pointer ownership: the CPU consumes user RIP/RSP/RDI by value.
+    // 5. Alignment: entry and stack are canonical user addresses; bootstrap is
+    //    page-aligned and satisfies the block's ABI alignment.
+    // 6. Mapped length: the root maps the runtime ELF, one stack, bootstrap,
+    //    package, result page, kernel trap stack, and syscall path.
+    // 7. Concurrency: Phase 2 launches one graph runtime process on one CPU.
+    // 8. Violation: bad descriptors or mappings fault through containment.
     unsafe {
         ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
     }
@@ -304,7 +376,14 @@ fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeErro
     }
 }
 
-pub fn handle_user_fault(vector: u64, cs: u64, ss: u64) -> bool {
+pub fn handle_user_fault(
+    vector: u64,
+    cs: u64,
+    ss: u64,
+    rip: u64,
+    rsp: u64,
+    fault_address: u64,
+) -> bool {
     let expected_vector = EXPECTED_USER_FAULT_VECTOR.load(Ordering::SeqCst);
     if expected_vector != 0 && expected_vector == vector && is_user_frame(cs, ss) {
         EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
@@ -322,30 +401,89 @@ pub fn handle_user_fault(vector: u64, cs: u64, ss: u64) -> bool {
         }
     }
     if PERSISTENT_USER_PROCESS_ACTIVE.load(Ordering::SeqCst) && is_user_frame(cs, ss) {
-        return handle_persistent_user_fault();
+        return handle_persistent_user_fault(vector, rip, rsp, fault_address);
     }
     false
 }
 
-pub fn classify_persistent_user_fault_for_test(
-    shell: ActiveUserProcess,
-    peer: ActiveUserProcess,
-) -> PersistentUserFaultOutcome {
-    let _peer_service = peer.service_id();
-    PersistentUserFaultOutcome {
-        terminated_principal: shell.principal_id(),
-        peer_alive: peer.service_id() != shell.service_id(),
+fn transition_persistent_user_process_to_safe_idle() -> PersistentUserTerminationOutcome {
+    let was_active = PERSISTENT_USER_PROCESS_ACTIVE.swap(false, Ordering::SeqCst);
+    let process_kind = PersistentUserProcessKind::from_raw(
+        PERSISTENT_USER_PROCESS_KIND.swap(PERSISTENT_KIND_NONE, Ordering::SeqCst),
+    );
+    let terminated_principal = process_context::current_caller()
+        .ok()
+        .map(|process| process.principal_id());
+    process_context::clear_current_process();
+    let safe_idle_ready = !PERSISTENT_USER_PROCESS_ACTIVE.load(Ordering::SeqCst)
+        && PERSISTENT_USER_PROCESS_KIND.load(Ordering::SeqCst) == PERSISTENT_KIND_NONE
+        && process_context::current_caller().is_err();
+    PersistentUserTerminationOutcome {
+        terminated_principal,
+        process_kind,
+        was_active,
+        safe_idle_ready,
     }
 }
 
-fn handle_persistent_user_fault() -> bool {
-    PERSISTENT_USER_PROCESS_ACTIVE.store(false, Ordering::SeqCst);
+pub fn transition_pyth_graph_runtime_exit(expected_principal: u64) -> bool {
+    let outcome = transition_persistent_user_process_to_safe_idle();
+    outcome.was_active
+        && outcome.safe_idle_ready
+        && outcome.process_kind == Some(PersistentUserProcessKind::PythGraphRuntime)
+        && outcome.terminated_principal == Some(expected_principal)
+}
+
+#[cfg(not(test))]
+pub fn complete_pyth_graph_runtime_exit(expected_principal: u64) -> ! {
+    if transition_pyth_graph_runtime_exit(expected_principal) {
+        serial::write_str("PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:");
+        serial::write_hex_u64_value(expected_principal);
+        serial::write_str("\r\n");
+    } else {
+        serial::write_line("PYTHOS:PYTHTIG:RUNTIME_TERMINATION_FAILED");
+    }
+    persistent_fault_idle();
+}
+
+#[cfg(test)]
+pub(crate) fn activate_persistent_user_process_for_test(
+    process: ActiveUserProcess,
+    process_kind: PersistentUserProcessKind,
+) {
+    process_context::bind_current_process(process);
+    PERSISTENT_USER_PROCESS_KIND.store(process_kind.raw(), Ordering::SeqCst);
+    PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+}
+
+fn handle_persistent_user_fault(_vector: u64, _rip: u64, _rsp: u64, _fault_address: u64) -> bool {
+    let _outcome = transition_persistent_user_process_to_safe_idle();
     #[cfg(not(test))]
     {
-        process_context::clear_current_process();
+        let principal = _outcome.terminated_principal.unwrap_or(0);
         serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
-        serial::write_line("PYTHOS:SHELL:FAULT_TERMINATED");
-        serial::write_line("PYTHOS:CORE:CRASH:PEER_ALIVE");
+        match _outcome.process_kind {
+            Some(PersistentUserProcessKind::ObjectShell) => {
+                serial::write_line("PYTHOS:SHELL:FAULT_TERMINATED");
+            }
+            Some(PersistentUserProcessKind::PythGraphRuntime) => {
+                serial::write_str("PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:");
+                serial::write_hex_u64_value(principal);
+                serial::write_str(" vector:");
+                serial::write_dec_u64_value(_vector);
+                serial::write_str(" rip:");
+                serial::write_hex_u64_value(_rip);
+                serial::write_str(" rsp:");
+                serial::write_hex_u64_value(_rsp);
+                serial::write_str(" cr2:");
+                serial::write_hex_u64_value(_fault_address);
+                serial::write_str("\r\n");
+                if _outcome.was_active && _outcome.safe_idle_ready {
+                    serial::write_line("PYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE");
+                }
+            }
+            None => {}
+        }
         persistent_fault_idle();
     }
     #[cfg(test)]
@@ -520,31 +658,57 @@ mod tests {
     }
 
     #[test]
-    fn persistent_user_fault_terminates_faulting_service() {
+    fn persistent_user_fault_transitions_to_safe_idle() {
         let mut identities = crate::service_identity::ServiceIdentityTable::new();
         let shell_service = identities
             .register_task(crate::tasks::TaskId::new(180))
-            .unwrap();
-        let peer_service = identities
-            .register_task(crate::tasks::TaskId::new(182))
             .unwrap();
         let shell = crate::process_context::ActiveUserProcess::new(
             shell_service,
             pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID,
             0xAA,
         );
-        let peer = crate::process_context::ActiveUserProcess::new(
-            peer_service,
-            0x5059_5045_4552_0001,
-            0xCC,
-        );
-
-        let outcome = classify_persistent_user_fault_for_test(shell, peer);
+        activate_persistent_user_process_for_test(shell, PersistentUserProcessKind::ObjectShell);
+        let outcome = transition_persistent_user_process_to_safe_idle();
 
         assert_eq!(
             outcome.terminated_principal,
-            pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID
+            Some(pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID)
         );
-        assert!(outcome.peer_alive);
+        assert!(outcome.was_active);
+        assert!(outcome.safe_idle_ready);
+        assert_eq!(
+            outcome.process_kind,
+            Some(PersistentUserProcessKind::ObjectShell)
+        );
+    }
+
+    #[test]
+    fn persistent_pyth_graph_fault_transitions_to_safe_idle() {
+        let mut identities = crate::service_identity::ServiceIdentityTable::new();
+        let graph_service = identities
+            .register_task(crate::tasks::TaskId::new(190))
+            .unwrap();
+        let graph = crate::process_context::ActiveUserProcess::new(
+            graph_service,
+            crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID,
+            0xDD,
+        );
+        activate_persistent_user_process_for_test(
+            graph,
+            PersistentUserProcessKind::PythGraphRuntime,
+        );
+        let outcome = transition_persistent_user_process_to_safe_idle();
+
+        assert_eq!(
+            outcome.terminated_principal,
+            Some(crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID)
+        );
+        assert!(outcome.was_active);
+        assert!(outcome.safe_idle_ready);
+        assert_eq!(
+            outcome.process_kind,
+            Some(PersistentUserProcessKind::PythGraphRuntime)
+        );
     }
 }

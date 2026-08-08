@@ -94,6 +94,9 @@ def build_boot_iso() -> None:
     )
     run([sys.executable, "scripts/build-user-shell.py"])
     run([sys.executable, "scripts/verify-user-elf.py"])
+    run([sys.executable, "scripts/build-pyth-runtime.py"])
+    run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
+    run([sys.executable, "scripts/build-pyth-graph.py"])
     run([sys.executable, "scripts/build-iso.py"])
 
 

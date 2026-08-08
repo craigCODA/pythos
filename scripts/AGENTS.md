@@ -2,10 +2,11 @@
 
 **Destination:** `scripts/AGENTS.md`
 
-**Status:** Guardrail for accepted PythTIG architecture. ADR 0065 remains
-provisional until Phase 1 evidence supports an owner format freeze. For now,
-this applies only to PythTIG-related harness edits and does not authorize
-runtime, compiler, or boot-behavior changes before the matching phase.
+**Status:** Guardrail for accepted PythTIG architecture and the frozen ADR 0065
+version 1 ABI. An incompatible format change requires a new accepted ADR and a
+new major package version. This applies only to PythTIG-related harness edits
+and does not authorize runtime, compiler, or boot-behavior changes before the
+matching phase.
 
 ## Purpose
 

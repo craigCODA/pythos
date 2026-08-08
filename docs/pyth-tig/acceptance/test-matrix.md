@@ -1,11 +1,11 @@
 # PythTIG Test and Evidence Matrix
 
-Status: accepted future-program evidence matrix, pending implementation.
+Status: Phase 1 format and Phase 2 ring-3 runtime rows implemented; later rows
+remain pending explicit phase invocation.
 
 Every command is run from a clean phase worktree with fresh build artifacts.
-Exact command options may be reconciled when the live tree differs. ADR 0065
-format details remain provisional until the Phase 1 encoder, decoder, verifier,
-and negative corpus pass and the owner freezes the package ABI.
+Exact command options may be reconciled when the live tree differs. ADR 0065's
+tested version 1 package ABI is frozen as of 2026-08-08.
 
 | Area | Command | Required terminal evidence | Core proof |
 |---|---|---|---|
@@ -13,8 +13,8 @@ and negative corpus pass and the owner freezes the package ABI.
 | Persistent storage | `python scripts\test-persistent-storage.py` | `PERSISTENT_STORAGE_TEST_OK` | Reboot and torn-write recovery preserved |
 | Normal boot | `python scripts\test-normal-fast-boot.py` | `NORMAL_FAST_BOOT_TEST_OK` | Normal/verify split preserved |
 | Rust object shell fallback | `python scripts\test-object-shell.py` | `OBJECT_SHELL_TASK8_TEST_OK`, `OBJECT_SHELL_TASK10_LIFECYCLE_BEFORE_REBOOT_OK`, `OBJECT_SHELL_TASK11_STRESS_ADVERSARIAL_OK`, `OBJECT_SHELL_TASK9_REBOOT_TEST_OK`, `OBJECT_SHELL_TASK10_PERSISTENCE_AFTER_REBOOT_OK` | Existing typed shell remains usable |
-| Package/verifier | `python scripts\test-pyth-tig-format.py` | `PYTH_TIG_FORMAT_TEST_OK` | Canonical valid package and mutation rejection |
-| Ring-3 interpreter | `python scripts\test-pyth-graph-runtime.py` | `PYTH_GRAPH_RUNTIME_TEST_OK` | Verified package executes with bounded runtime |
+| Package/verifier | `python scripts\test-pyth-tig-format.py` | `PYTH_TIG_FORMAT_TEST_OK` | Canonical valid package and 31 deterministic decoder/verifier mutations |
+| Ring-3 interpreter | `python scripts\test-pyth-graph-runtime.py` | `PYTH_GRAPH_RUNTIME_TEST_OK` | Seven isolated boots prove execution/termination, shared-verifier rejection, opcode/control-flow profile rejection before ring 3, budget termination, and truthful fault safe-idle containment |
 | Object capability flow | `python scripts\test-pyth-graph-object-flow.py` | `PYTH_GRAPH_OBJECT_FLOW_TEST_OK` | Create/revise/inspect/history, known denial, forgery denial, reboot rebind |
 | Host compiler | `python scripts\test-pythc.py` | `PYTHC_TEST_OK` | Source subset -> canonical verified package; negatives rejected |
 | Task Steward | `python scripts\test-pyth-task-steward.py` | `PYTH_TASK_STEWARD_TEST_OK` | Hybrid proposal flow and authority boundary |
@@ -45,20 +45,29 @@ The Phase 1 mutation suite must include at least:
 10. unknown type;
 11. unknown opcode;
 12. node assigned to wrong block;
-13. zero or multiple terminators;
-14. bad control target;
-15. wrong block argument count/type;
-16. use before dominance;
-17. opcode input type mismatch;
-18. result type mismatch;
-19. forked or disconnected effect chain;
-20. capability from constant/integer;
-21. import type mismatch;
-22. insufficient import rights;
-23. constant/string range violation;
-24. package/node/block/import/budget limit violation;
-25. noncanonical order/encoding;
-26. checksum mismatch.
+13. multiple terminators;
+14. checksum mismatch;
+15. missing terminator;
+16. bad control target;
+17. wrong block argument count;
+18. use before dominance;
+19. opcode input type mismatch;
+20. result type mismatch;
+21. forked effect chain;
+22. capability from constant/integer;
+23. import type mismatch;
+24. insufficient import rights;
+25. string referenced-range violation;
+26. constant referenced-range violation;
+27. package byte limit violation;
+28. node count limit violation;
+29. block count limit violation;
+30. import count limit violation;
+31. noncanonical node flags/encoding.
+
+The invocation instruction budget is supplied by the kernel bootstrap ABI, not
+encoded in package bytes, so budget exhaustion is exercised by the Phase 2
+runtime QEMU scenario rather than by a package mutation.
 
 ## Runtime scenarios
 
@@ -67,7 +76,11 @@ The Phase 1 mutation suite must include at least:
 - bounded loop completion;
 - node-budget exhaustion;
 - invalid bootstrap rejection;
-- user fault containment;
+- verifier-valid opcode outside the Phase 2 execution profile rejected before ring 3;
+- verifier-valid parameterized jump rejected by the Phase 2 profile before ring 3;
+- malformed string reference rejected by the shared verifier before ring 3;
+- successful and budget graph results followed by actual graph-process termination;
+- user fault containment into a PythCore safe-idle state, with no peer claim;
 - object create/revise/inspect/history;
 - known-object missing-capability denial;
 - wrong-holder copied capability denial;

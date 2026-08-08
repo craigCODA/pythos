@@ -1,6 +1,6 @@
 # Pyth Native Typed Instruction Graph Design
 
-**Status:** ADR 0064 accepted; ADR 0065 provisional for Phase 1
+**Status:** ADR 0064 accepted; ADR 0065 version 1 ABI frozen 2026-08-08
 **Date:** 2026-08-03
 **Imported/reconciled:** 2026-08-04 on `docs/pythtig-phase0-adoption`
 **Program label:** PythOS Convergent Architecture Program
@@ -9,10 +9,10 @@
 ## Reconciliation note
 
 This document is imported as the accepted ADR 0064 architecture direction. It
-does not make PythTIG the active implementation program. ADR 0065's package
-format details are provisionally accepted for Phase 1 verifier experimentation
-and are not permanent stable ABI until the Phase 1 encoder, decoder, verifier,
-and negative corpus pass and the owner freezes the format. The original handoff
+does not make PythTIG the active implementation program. ADR 0065's tested
+version 1 package format is frozen after the Phase 1 encoder, decoder, verifier,
+canonical-format suite, and negative corpus passed and the owner accepted the
+freeze on 2026-08-08. The original handoff
 was not reconciled against the live private repository; the live ADR sequence
 already uses ADR 0053 and ADR 0054, so this program is recorded as ADR 0064 and
 ADR 0065.
@@ -101,7 +101,7 @@ PythTIG is an SSA-like typed instruction graph with explicit basic blocks.
 - Effectful operations consume and produce a single `Effect` token. This makes side-effect order explicit and prevents hidden reordering. Typed data returned by a host operation is extracted by immediately following `HostResult` nodes that reference that producer; the effectful producer itself still has one graph result, the next `Effect` token.
 - Loops are control-flow back edges to blocks with parameters. Runtime instruction budgets bound loop execution.
 - Capability values can originate only from validated imports or capability-returning host operations. A graph cannot construct a capability from an integer.
-- In the Phase 1 candidate ABI, a declared import is materialized as a graph value only by an entry-block `BlockParam` with `result_type = Capability` and `auxiliary0 = import_slot`. Host operations consume that capability through normal graph inputs; a hidden per-op import slot does not grant authority. `HostResult` capability values are rejected until an accepted per-op result schema defines a capability-returning host operation.
+- In the frozen version 1 ABI, a declared import is materialized as a graph value only by an entry-block `BlockParam` with `result_type = Capability` and `auxiliary0 = import_slot`. Host operations consume that capability through normal graph inputs; a hidden per-op import slot does not grant authority. `HostResult` capability values are rejected until an accepted per-op result schema defines a capability-returning host operation.
 - Graphs are immutable after package validation.
 
 ## 6. Phase 1 primitive type candidates
@@ -189,7 +189,7 @@ Version 1 does not expose raw addresses, arbitrary aggregates, user-defined layo
 ### Header
 
 `PythGraphHeader` is exactly 96 bytes and uses little-endian encoding. The
-Phase 1 candidate public layout struct uses `#[repr(C, packed(4))]` so the
+The frozen version 1 public layout struct uses `#[repr(C, packed(4))]` so the
 `checksum` field remains at byte offset 84; plain `#[repr(C)]` would align that
 `u64` field to byte 88 and produce a 104-byte structure on x86-64.
 
@@ -330,20 +330,12 @@ requested field; Phase 1 defines no capability-returning `HostResult`.
 
 ## 9. Verification pipeline
 
-The shared verifier runs in both the host compiler and PythCore. It performs these passes in order:
-
-1. Header, version, reserved fields, offsets, alignment, and total-length validation.
-2. Section non-overlap and count/size validation.
-3. Known type and opcode validation.
-4. Block ownership and exactly-one-terminator validation.
-5. Control target and block-argument count validation.
-6. Dominance and value-availability validation.
-7. Opcode-specific type validation.
-8. Effect-token single-chain validation.
-9. Capability origin, resource kind, and rights validation.
-10. Constant and string pool range validation.
-11. Resource-budget validation.
-12. Canonical-encoding validation and checksum verification.
+The shared decoder/verifier runs in both host tooling and PythCore. The frozen
+version 1 admission order is specified by ADR 0065: checked header/section/
+checksum decoding precedes known type/opcode, block/control-flow, dominance,
+typed/effect/capability, referenced constant/string range, and canonical-record
+validation. Referenced UTF-8 fields must decode as UTF-8, and unused flags,
+auxiliary fields, and immediates must use their canonical zero encoding.
 
 A verifier error is a typed deterministic error code. Permanent verifier error
 identities are frozen only after Phase 1 evidence supports the package ABI

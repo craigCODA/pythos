@@ -27,7 +27,7 @@ const INIT_PAK_PATH: &[u16] = &[
     0,
 ];
 
-const MAX_INIT_PAK_SIZE: usize = 1024 * 1024;
+const MAX_INIT_PAK_SIZE: usize = 4 * 1024 * 1024;
 const PAGE_SIZE: usize = 4096;
 
 pub(crate) struct LoadedInitBundle {
@@ -232,4 +232,15 @@ fn free_pool(boot_services: *mut EfiBootServices, buffer: *mut c_void) {
     // 7. Concurrency: no other loader code accesses the buffer.
     // 8. Violation: freeing a non-pool pointer could corrupt firmware allocator state.
     let _ = unsafe { ((*boot_services).free_pool)(buffer) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn init_pak_loader_ceiling_covers_phase_2_runtime_bundle() {
+        assert_eq!(MAX_INIT_PAK_SIZE, 4 * 1024 * 1024);
+        assert!(MAX_INIT_PAK_SIZE > 2 * 1024 * 1024);
+    }
 }

@@ -74,10 +74,17 @@ def build_verified_user_shell() -> None:
     run([sys.executable, "scripts/verify-user-elf.py"])
 
 
+def build_pyth_graph_artifacts() -> None:
+    run([sys.executable, "scripts/build-pyth-runtime.py"])
+    run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
+    run([sys.executable, "scripts/build-pyth-graph.py"])
+
+
 def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
     build_verified_user_shell()
+    build_pyth_graph_artifacts()
     run([sys.executable, "scripts/build-image.py"])
 
 

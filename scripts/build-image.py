@@ -13,6 +13,13 @@ ESP = ROOT / "image" / "esp"
 BOOT_EFI = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
 PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
 SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
+PYTH_RUNTIME_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-pyth-runtime"
+PYTH_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "hello.tig"
+PYTH_BUDGET_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "budget.tig"
+PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
+PYTH_UNSUPPORTED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "unsupported.tig"
+PYTH_INVALID_STRING_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid-string.tig"
+PYTH_PARAMETERIZED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "parameterized.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -24,10 +31,21 @@ INIT_BUNDLE_RECORD_LEN = 32
 INIT_BUNDLE_RUNTIME_TYPE = 0x0000_0001
 INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
 INIT_BUNDLE_NAMED_USER_ELF_TYPE = 0x0000_0003
+INIT_BUNDLE_PYTH_GRAPH_TYPE = 0x0000_0004
 NAMED_USER_PROGRAM_MAGIC = b"PYUPGM01"
 NAMED_USER_PROGRAM_HEADER_LEN = 40
 MAX_NAMED_PROGRAM_NAME_LEN = 32
+NAMED_PYTH_GRAPH_MAGIC = b"PYTIGM01"
+NAMED_PYTH_GRAPH_HEADER_LEN = 40
+MAX_NAMED_PYTH_GRAPH_NAME_LEN = 32
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
+PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
+HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
+BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
+INVALID_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_00FF
+UNSUPPORTED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0003
+INVALID_STRING_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0004
+PARAMETERIZED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0005
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -114,6 +132,23 @@ def build_named_user_program(name: bytes, principal_id: int, elf: bytes) -> byte
     return bytes(header) + name + elf
 
 
+def build_named_pyth_graph(name: bytes, principal_id: int, package: bytes) -> bytes:
+    if len(name) > MAX_NAMED_PYTH_GRAPH_NAME_LEN:
+        raise ValueError("named Pyth graph name is too long")
+    if len(package) > 0xFFFF_FFFF:
+        raise ValueError("Pyth graph package is too large")
+
+    header = bytearray(NAMED_PYTH_GRAPH_HEADER_LEN)
+    header[0:8] = NAMED_PYTH_GRAPH_MAGIC
+    header[8:10] = (1).to_bytes(2, "little")
+    header[10:12] = (0).to_bytes(2, "little")
+    header[12:14] = len(name).to_bytes(2, "little")
+    header[16:24] = principal_id.to_bytes(8, "little")
+    header[24:32] = digest64(package).to_bytes(8, "little")
+    header[32:36] = len(package).to_bytes(4, "little")
+    return bytes(header) + name + package
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -151,34 +186,123 @@ def build_user_elf_payload(text: bytes) -> bytes:
     return bytes(elf)
 
 
-def build_default_init_pak() -> bytes:
+def build_default_init_pak(include_pythtig: bool = False) -> bytes:
     if not SHELL_ELF.exists():
         raise SystemExit(f"missing shell ELF: {SHELL_ELF}")
-    return build_init_pak(
-        build_init_bundle(
+    records = [
+        (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(
+                b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
+            ),
+        ),
+    ]
+    if include_pythtig:
+        if not PYTH_RUNTIME_ELF.exists():
+            raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
+        if not PYTH_GRAPH_PACKAGE.exists():
+            raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
+        if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}"
+            )
+        if not PYTH_INVALID_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}"
+            )
+        if not PYTH_UNSUPPORTED_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG unsupported graph package: "
+                f"{PYTH_UNSUPPORTED_GRAPH_PACKAGE}"
+            )
+        if not PYTH_INVALID_STRING_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG invalid-string graph package: "
+                f"{PYTH_INVALID_STRING_GRAPH_PACKAGE}"
+            )
+        if not PYTH_PARAMETERIZED_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG parameterized graph package: "
+                f"{PYTH_PARAMETERIZED_GRAPH_PACKAGE}"
+            )
+        records.extend(
             [
-                (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
                 (
                     INIT_BUNDLE_NAMED_USER_ELF_TYPE,
                     build_named_user_program(
-                        b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
-                    ),
-                ),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
-                (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(
-                        b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                        b"pyth-runtime.elf",
+                        PYTH_RUNTIME_PRINCIPAL_ID,
+                        PYTH_RUNTIME_ELF.read_bytes(),
                     ),
                 ),
                 (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"hello.tig",
+                        HELLO_GRAPH_PRINCIPAL_ID,
+                        PYTH_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"budget.tig",
+                        BUDGET_GRAPH_PRINCIPAL_ID,
+                        PYTH_BUDGET_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"invalid.tig",
+                        INVALID_GRAPH_PRINCIPAL_ID,
+                        PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"unsupported.tig",
+                        UNSUPPORTED_GRAPH_PRINCIPAL_ID,
+                        PYTH_UNSUPPORTED_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"invalid-string.tig",
+                        INVALID_STRING_GRAPH_PRINCIPAL_ID,
+                        PYTH_INVALID_STRING_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"parameterized.tig",
+                        PARAMETERIZED_GRAPH_PRINCIPAL_ID,
+                        PYTH_PARAMETERIZED_GRAPH_PACKAGE.read_bytes(),
+                    ),
                 ),
             ]
         )
+    records.extend(
+        [
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(
+                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                ),
+            ),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+            ),
+        ]
     )
+    return build_init_pak(build_init_bundle(records))
 
 
 def build_font_psf() -> bytes:
@@ -204,6 +328,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
+    parser.add_argument("--with-pythtig", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -221,7 +346,9 @@ def main() -> int:
     shutil.copy2(loader, boot_dir / "BOOTX64.EFI")
     shutil.copy2(kernel, pythos_dir / "PYTHCORE.ELF")
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
-    write_binary_if_changed(pythos_dir / "INIT.PAK", build_default_init_pak())
+    write_binary_if_changed(
+        pythos_dir / "INIT.PAK", build_default_init_pak(args.with_pythtig)
+    )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 
     print(f"ESP_READY {ESP}")

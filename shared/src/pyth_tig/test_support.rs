@@ -49,6 +49,8 @@ const JUMP_ARGUMENT_COUNT_MISMATCH_PACKAGE_LEN: usize =
     HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE;
 const JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN: usize =
     HEADER_SIZE + 2 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
+const SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 2 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 5;
 
 struct BlockSpec {
     block_id: u32,
@@ -264,6 +266,27 @@ pub fn minimal_log_package() -> AlignedPackage {
 
 pub fn package_without_terminator() -> AlignedPackage {
     minimal_log_package()
+}
+
+pub fn structurally_valid_package_with_type_table() -> AlignedPackage {
+    let mut package = minimal_log_package();
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Return.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    refresh_checksum(&mut package.bytes);
+    package
 }
 
 pub fn package_with_bad_branch_target() -> AlignedPackage {
@@ -683,6 +706,49 @@ pub fn system_log_with_import_capability() -> FixturePackage<LOG_WITH_IMPORT_CAP
     package
 }
 
+pub fn self_jump_budget_loop() -> FixturePackage<SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; SELF_JUMP_BUDGET_LOOP_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 2, 1, 0, 5);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Jump.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_system_log_import(&mut package.bytes, imports_offset, 5, RIGHTS_READ);
+    package.bytes[string_table_offset..string_table_offset + 5].copy_from_slice(b"hello");
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
 pub fn system_log_without_capability_input() -> FixturePackage<LOG_WITHOUT_CAPABILITY_PACKAGE_LEN> {
     let mut package = FixturePackage {
         bytes: [0u8; LOG_WITHOUT_CAPABILITY_PACKAGE_LEN],
@@ -947,6 +1013,17 @@ pub fn package_with_jump_argument_type_mismatch()
         },
     );
     write_return(&mut package.bytes, nodes_offset + 3 * NODE_RECORD_SIZE, 1);
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn package_with_parameterized_jump() -> FixturePackage<JUMP_ARGUMENT_TYPE_MISMATCH_PACKAGE_LEN>
+{
+    let mut package = package_with_jump_argument_type_mismatch();
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    write_u16(&mut package.bytes, nodes_offset, Opcode::ConstU64.code());
+    write_u16(&mut package.bytes, nodes_offset + 2, PythType::U64.code());
+    write_u64(&mut package.bytes, nodes_offset + 32, 7);
     refresh_checksum(&mut package.bytes);
     package
 }
@@ -1248,6 +1325,77 @@ pub fn set_first_import_reserved(bytes: &mut [u8], reserved: u32) {
 pub fn move_string_table_past_end(bytes: &mut [u8]) {
     let past_end = bytes.len() as u32 + 4;
     write_u32(bytes, STRING_TABLE_OFFSET_OFFSET, past_end);
+    refresh_checksum(bytes);
+}
+
+pub fn set_first_type_flags(bytes: &mut [u8], flags: u16) {
+    let types_offset = read_u32(bytes, 60) as usize;
+    write_u16(bytes, types_offset + 2, flags);
+    refresh_checksum(bytes);
+}
+
+pub fn set_first_type_auxiliary(bytes: &mut [u8], auxiliary: u32) {
+    let types_offset = read_u32(bytes, 60) as usize;
+    write_u32(bytes, types_offset + 4, auxiliary);
+    refresh_checksum(bytes);
+}
+
+pub fn set_first_block_flags(bytes: &mut [u8], flags: u16) {
+    let blocks_offset = read_u32(bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    write_u16(bytes, blocks_offset + 14, flags);
+    refresh_checksum(bytes);
+}
+
+pub fn set_node_flags(bytes: &mut [u8], node_index: usize, flags: u16) {
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+    write_u16(
+        bytes,
+        nodes_offset + node_index * NODE_RECORD_SIZE + 4,
+        flags,
+    );
+    refresh_checksum(bytes);
+}
+
+pub fn set_node_auxiliary1(bytes: &mut [u8], node_index: usize, auxiliary1: u32) {
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+    write_u32(
+        bytes,
+        nodes_offset + node_index * NODE_RECORD_SIZE + 28,
+        auxiliary1,
+    );
+    refresh_checksum(bytes);
+}
+
+pub fn set_node_auxiliary0(bytes: &mut [u8], node_index: usize, auxiliary0: u32) {
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+    write_u32(
+        bytes,
+        nodes_offset + node_index * NODE_RECORD_SIZE + 24,
+        auxiliary0,
+    );
+    refresh_checksum(bytes);
+}
+
+pub fn set_node_immediate(bytes: &mut [u8], node_index: usize, immediate: u64) {
+    let nodes_offset = read_u32(bytes, NODES_OFFSET_OFFSET) as usize;
+    write_u64(
+        bytes,
+        nodes_offset + node_index * NODE_RECORD_SIZE + 32,
+        immediate,
+    );
+    refresh_checksum(bytes);
+}
+
+pub fn set_first_import_name_range(bytes: &mut [u8], offset: u32, len: u16) {
+    let imports_offset = read_u32(bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    write_u32(bytes, imports_offset, offset);
+    write_u16(bytes, imports_offset + 4, len);
+    refresh_checksum(bytes);
+}
+
+pub fn set_first_import_rights(bytes: &mut [u8], rights: u64) {
+    let imports_offset = read_u32(bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    write_u64(bytes, imports_offset + 8, rights);
     refresh_checksum(bytes);
 }
 

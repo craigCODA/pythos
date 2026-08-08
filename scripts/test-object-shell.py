@@ -176,6 +176,12 @@ def build_verified_user_shell() -> None:
     run([sys.executable, "scripts/verify-user-elf.py"])
 
 
+def build_pyth_graph_artifacts() -> None:
+    run([sys.executable, "scripts/build-pyth-runtime.py"])
+    run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
+    run([sys.executable, "scripts/build-pyth-graph.py"])
+
+
 def build_boot_image(config: BackendConfig) -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     core_command = [
@@ -190,6 +196,7 @@ def build_boot_image(config: BackendConfig) -> None:
         core_command += ["--features", ",".join(config.core_features)]
     run(core_command)
     build_verified_user_shell()
+    build_pyth_graph_artifacts()
     if config.build_iso:
         run([sys.executable, "scripts/build-iso.py"])
     else:

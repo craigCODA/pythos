@@ -84,6 +84,18 @@ impl<'a> VerifiedGraph<'a> {
     pub const fn package(&self) -> &PythGraphPackage<'a> {
         &self.package
     }
+
+    /// Wrap a package that PythCore already accepted through `verify_package`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must prove this exact package byte sequence was accepted by
+    /// the PythCore admission verifier before ring-3 entry and is still mapped
+    /// read-only for the runtime invocation. This bypasses verifier checks and
+    /// must not be used for untrusted bytes.
+    pub const unsafe fn assume_kernel_verified_package(package: &PythGraphPackage<'a>) -> Self {
+        Self { package: *package }
+    }
 }
 
 pub fn verify_bytes(bytes: &[u8]) -> Result<VerifiedGraph<'_>, VerifyError> {
@@ -117,6 +129,8 @@ pub fn verify_package<'a>(
     verify_reachable_blocks(package)?;
     verify_value_availability(package, node_blocks)?;
     verify_semantics(package)?;
+    verify_referenced_ranges(package)?;
+    verify_canonical_encoding(package)?;
 
     Ok(VerifiedGraph { package: *package })
 }
@@ -874,7 +888,7 @@ fn verify_import_block_param(
     node_index: usize,
     node: &crate::pyth_tig::NodeRecord,
 ) -> Result<u16, VerifyError> {
-    // Phase 1 provisional convention: an entry-block `BlockParam` with
+    // Frozen v1 convention: an entry-block `BlockParam` with
     // `result_type = Capability` and `auxiliary0 = import_slot` materializes a
     // declared capability import as an SSA value.
     if u32::from(node.block_index) != package.header().entry_block {
@@ -1032,6 +1046,133 @@ fn verify_capability_inputs(
     Ok(())
 }
 
+fn verify_referenced_ranges(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
+    for import in package.imports().iter() {
+        let name = referenced_bytes(
+            package.string_table(),
+            import.name_offset,
+            u32::from(import.name_len),
+        )
+        .ok_or(VerifyError::NonCanonicalEncoding)?;
+        if core::str::from_utf8(name).is_err() {
+            return Err(VerifyError::NonCanonicalEncoding);
+        }
+    }
+
+    for node in package.nodes().iter() {
+        let opcode = Opcode::try_from(node.opcode)
+            .expect("known opcode validation already accepted every node opcode");
+        match opcode {
+            Opcode::ConstBytes => {
+                referenced_bytes(package.constant_pool(), node.auxiliary0, node.auxiliary1)
+                    .ok_or(VerifyError::NonCanonicalEncoding)?;
+            }
+            Opcode::ConstUtf8 => {
+                let text =
+                    referenced_bytes(package.string_table(), node.auxiliary0, node.auxiliary1)
+                        .ok_or(VerifyError::NonCanonicalEncoding)?;
+                if core::str::from_utf8(text).is_err() {
+                    return Err(VerifyError::NonCanonicalEncoding);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+fn referenced_bytes(bytes: &[u8], offset: u32, len: u32) -> Option<&[u8]> {
+    let end = offset.checked_add(len)?;
+    let start = usize::try_from(offset).ok()?;
+    let end = usize::try_from(end).ok()?;
+    bytes.get(start..end)
+}
+
+fn verify_canonical_encoding(package: &PythGraphPackage<'_>) -> Result<(), VerifyError> {
+    for ty in package.types().iter() {
+        if ty.flags != 0 || ty.auxiliary != 0 {
+            return Err(VerifyError::NonCanonicalEncoding);
+        }
+    }
+
+    let mut expected_first_node = 0u32;
+    for block in package.blocks().iter() {
+        if block.flags != 0 || block.first_node != expected_first_node || block.parameter_count > 4
+        {
+            return Err(VerifyError::NonCanonicalEncoding);
+        }
+        expected_first_node = expected_first_node
+            .checked_add(block.node_count)
+            .ok_or(VerifyError::NonCanonicalEncoding)?;
+    }
+
+    for node in package.nodes().iter() {
+        let opcode = Opcode::try_from(node.opcode)
+            .expect("known opcode validation already accepted every node opcode");
+        if node.flags != 0 || !node_fields_are_canonical(opcode, node) {
+            return Err(VerifyError::NonCanonicalEncoding);
+        }
+    }
+
+    for (index, import) in package.imports().iter().enumerate() {
+        if usize::from(import.import_slot) != index
+            || PythType::try_from(import.expected_type).is_err()
+            || !matches!(import.resource_kind, 1..=6)
+            || import.rights & !0x007F != 0
+        {
+            return Err(VerifyError::NonCanonicalEncoding);
+        }
+    }
+
+    Ok(())
+}
+
+fn node_fields_are_canonical(opcode: Opcode, node: crate::pyth_tig::NodeRecord) -> bool {
+    let no_auxiliary = node.auxiliary0 == 0 && node.auxiliary1 == 0;
+    let no_immediate = node.immediate == 0;
+    match opcode {
+        Opcode::BlockParam => {
+            node.auxiliary1 == 0
+                && no_immediate
+                && (node.result_type == PythType::Capability.code() || node.auxiliary0 == 0)
+        }
+        Opcode::ConstBool => no_auxiliary && matches!(node.immediate, 0 | 1),
+        Opcode::ConstU64 | Opcode::ConstI64 => no_auxiliary,
+        Opcode::ConstBytes | Opcode::ConstUtf8 => no_immediate,
+        Opcode::EffectStart => no_auxiliary && no_immediate,
+        Opcode::HostResult => node.auxiliary1 == 0 && no_immediate,
+        Opcode::Jump => node.auxiliary1 == 0 && no_immediate,
+        Opcode::Branch => no_immediate,
+        Opcode::Return => no_auxiliary && no_immediate,
+        Opcode::Eq
+        | Opcode::LessThanU64
+        | Opcode::AddU64
+        | Opcode::SubU64
+        | Opcode::BoolAnd
+        | Opcode::BoolOr
+        | Opcode::BoolNot
+        | Opcode::Select
+        | Opcode::SystemLog
+        | Opcode::ObjectCreate
+        | Opcode::ObjectQuery
+        | Opcode::ObjectInspect
+        | Opcode::ObjectRevise
+        | Opcode::ObjectHistory
+        | Opcode::TaskActiveRead
+        | Opcode::TaskProposalEmit
+        | Opcode::TaskProposalApprove
+        | Opcode::TaskSuspend
+        | Opcode::TaskRevive
+        | Opcode::TaskContextRead
+        | Opcode::GraphQueryRelated
+        | Opcode::RelevanceAssertionEmit
+        | Opcode::CapabilityRequestEmit
+        | Opcode::CommandRead
+        | Opcode::CommandResultEmit => no_auxiliary && no_immediate,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1136,6 +1277,18 @@ mod tests {
     }
 
     #[test]
+    fn kernel_verified_package_constructor_preserves_admitted_package() {
+        let bytes = test_support::system_log_with_import_capability();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+
+        // SAFETY: this test mirrors the runtime handoff after the same package
+        // has been accepted by `verify_package`.
+        let verified = unsafe { VerifiedGraph::assume_kernel_verified_package(&package) };
+
+        assert_eq!(verified.package(), &package);
+    }
+
+    #[test]
     fn verifier_rejects_capability_host_result_from_non_capability_producer() {
         assert_eq!(
             verify_bytes(&test_support::system_log_capability_host_result()),
@@ -1185,6 +1338,79 @@ mod tests {
                 expected: PythType::U64,
                 actual: PythType::Bool,
             })
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_referenced_ranges_before_runtime_entry() {
+        let mut string_range = test_support::system_log_with_import_capability();
+        test_support::set_node_auxiliary1(&mut string_range, 2, 6);
+        assert_eq!(
+            verify_bytes(&string_range),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut import_name = test_support::system_log_with_import_capability();
+        test_support::set_first_import_name_range(&mut import_name, 4, 2);
+        assert_eq!(
+            verify_bytes(&import_name),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut constant_range = test_support::object_revise_with_read_only_import();
+        test_support::set_first_import_rights(
+            &mut constant_range,
+            crate::pyth_tig::opcode::RIGHTS_READ | crate::pyth_tig::opcode::RIGHTS_REVISE,
+        );
+        test_support::set_node_auxiliary1(&mut constant_range, 3, 1);
+        assert_eq!(
+            verify_bytes(&constant_range),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+    }
+
+    #[test]
+    fn verifier_rejects_noncanonical_v1_record_encoding() {
+        let mut type_flags = test_support::structurally_valid_package_with_type_table();
+        test_support::set_first_type_flags(&mut type_flags, 1);
+        assert_eq!(
+            verify_bytes(&type_flags),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut type_auxiliary = test_support::structurally_valid_package_with_type_table();
+        test_support::set_first_type_auxiliary(&mut type_auxiliary, 1);
+        assert_eq!(
+            verify_bytes(&type_auxiliary),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut block_flags = test_support::system_log_with_import_capability();
+        test_support::set_first_block_flags(&mut block_flags, 1);
+        assert_eq!(
+            verify_bytes(&block_flags),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut node_flags = test_support::system_log_with_import_capability();
+        test_support::set_node_flags(&mut node_flags, 2, 1);
+        assert_eq!(
+            verify_bytes(&node_flags),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut unused_immediate = test_support::system_log_with_import_capability();
+        test_support::set_node_immediate(&mut unused_immediate, 4, 1);
+        assert_eq!(
+            verify_bytes(&unused_immediate),
+            Err(VerifyError::NonCanonicalEncoding)
+        );
+
+        let mut unused_block_parameter_auxiliary = test_support::package_with_parameterized_jump();
+        test_support::set_node_auxiliary0(&mut unused_block_parameter_auxiliary, 2, 1);
+        assert_eq!(
+            verify_bytes(&unused_block_parameter_auxiliary),
+            Err(VerifyError::NonCanonicalEncoding)
         );
     }
 }

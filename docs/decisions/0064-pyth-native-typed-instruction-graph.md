@@ -49,10 +49,10 @@ semantics.
 This ADR accepts the PythTIG architecture direction only. It does not authorize
 Phase 1 implementation, runtime launch behavior, compiler work, Task Steward
 behavior, native code generation, package management, networking, AI authority,
-or default-session cutover. ADR 0065 remains provisionally accepted for Phase 1
-format experimentation; exact package bytes are not permanent stable ABI until
-the first encoder, decoder, verifier, and negative corpus pass and the owner
-explicitly freezes the format.
+or default-session cutover. ADR 0065 is accepted, and its tested version 1
+package ABI is frozen after the encoder, decoder, verifier, canonical-format
+suite, and negative corpus passed and the owner accepted the freeze on
+2026-08-08.
 
 ## References
 

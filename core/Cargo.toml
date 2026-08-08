@@ -21,9 +21,15 @@ hardware-probe-emmc-write = ["hardware-probe"]
 # `sdhci-emmc-backend` is an opt-in polling PIO production backend. It is not
 # enabled by default and does not alter the probe gates.
 sdhci-emmc-backend = []
+# Acceptance-only one-shot PythTIG launch control. Normal production builds do
+# not compile sector-96 test selection or prepare graph runtime address spaces.
+pythtig-phase2-test = []
 
 [dependencies]
-pythos-shared = { path = "../shared" }
+pythos-shared = { path = "../shared", features = ["pyth-tig"] }
+
+[dev-dependencies]
+pythos-shared = { path = "../shared", features = ["pyth-tig-test-support"] }
 
 [[bin]]
 name = "pythcore"

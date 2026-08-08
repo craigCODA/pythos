@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -116,6 +117,137 @@ class BuildOrchestrationTest(unittest.TestCase):
         module.build_boot_image(module.backend_config("virtio"))
 
         self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
+
+    def test_pyth_graph_runtime_uses_test_feature_and_opt_in_bundle(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_boot_image()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        package = next(
+            command
+            for command in normalized
+            if "scripts/build-image.py" in command
+        )
+        self.assertIn("pythtig-phase2-test", core_build)
+        self.assertIn("--with-pythtig", package)
+
+    def test_pyth_graph_runtime_copies_source_esp_for_each_scenario(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            module.TARGET = temp_root / "target"
+            module.ESP = temp_root / "source-esp"
+            boot_file = module.ESP / "EFI" / "BOOT" / "BOOTX64.EFI"
+            boot_file.parent.mkdir(parents=True)
+            boot_file.write_bytes(b"scenario-isolation")
+
+            module.run_qemu("success", module.CONTROL_LAUNCH_HELLO, "success")
+            module.run_qemu("invalid", module.CONTROL_LAUNCH_INVALID, "invalid")
+
+            success_esp = module.TARGET / "pyth-graph-runtime-success-esp"
+            invalid_esp = module.TARGET / "pyth-graph-runtime-invalid-esp"
+            self.assertTrue(success_esp.is_dir())
+            self.assertTrue(invalid_esp.is_dir())
+            self.assertEqual(
+                (success_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"scenario-isolation",
+            )
+            self.assertEqual(
+                (invalid_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"scenario-isolation",
+            )
+            self.assertNotEqual(success_esp, invalid_esp)
+
+    def test_pyth_graph_runtime_passes_scenario_esp_to_qemu(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            module.TARGET = temp_root / "target"
+            module.ESP = temp_root / "source-esp"
+            module.ESP.mkdir()
+
+            module.run_qemu("invalid", module.CONTROL_LAUNCH_INVALID, "rejected")
+
+            command = normalize(calls[-1])
+            self.assertIn("--esp", command)
+            esp_index = command.index("--esp")
+            self.assertEqual(
+                command[esp_index + 1],
+                str(module.TARGET / "pyth-graph-runtime-invalid-esp").replace(
+                    "\\", "/"
+                ),
+            )
+
+    def test_pyth_graph_runtime_negative_assertions_require_pre_entry_rejection(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        invalid_string = "\n".join(
+            (
+                "PYTHOS:LOADER:ENTER",
+                "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:VERIFY_NONCANONICAL_ENCODING",
+            )
+        )
+        parameterized = "\n".join(
+            (
+                "PYTHOS:LOADER:ENTER",
+                "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:UNSUPPORTED_PHASE2_CONTROL_FLOW",
+            )
+        )
+
+        module.assert_invalid_string_rejected(invalid_string)
+        module.assert_parameterized_jump_rejected(parameterized)
+        with self.assertRaises(AssertionError):
+            module.assert_parameterized_jump_rejected(
+                parameterized + "\nPYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000000"
+            )
+
+    def test_pyth_graph_fault_assertion_rejects_false_peer_claim(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        prefix = "\n".join(
+            (
+                "PYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000001",
+                "PYTHOS:CORE:CRASH:USER_FAULT",
+                "PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:5059544852540001",
+            )
+        )
+
+        module.assert_fault_contained(
+            prefix + "\nPYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE"
+        )
+        with self.assertRaises(AssertionError):
+            module.assert_fault_contained(prefix + "\nPYTHOS:CORE:CRASH:PEER_ALIVE")
+
+    def test_pyth_graph_success_assertion_requires_termination_transition(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        exit_only = "\n".join(
+            (
+                "PYTHOS:PYTHTIG:PACKAGE_VALID package:0000000000000001 nodes:5 blocks:1",
+                "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:5059544847520001 imports:1",
+                "PYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000001",
+                "PYTHOS:PYTHTIG:PROGRAM_LOG",
+                "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",
+            )
+        )
+
+        with self.assertRaises(AssertionError):
+            module.assert_pyth_tig_success(exit_only)
+        module.assert_pyth_tig_success(
+            exit_only
+            + "\nPYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001"
+        )
 
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")

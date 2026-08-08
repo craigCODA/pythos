@@ -1,6 +1,6 @@
 pub mod format;
 pub mod opcode;
-#[cfg(test)]
+#[cfg(any(test, feature = "pyth-tig-test-support"))]
 pub mod test_support;
 pub mod types;
 pub mod verify;

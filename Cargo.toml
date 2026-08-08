@@ -5,6 +5,7 @@ members = [
     "core",
     "shared",
     "tools/pyth-tig-tool",
+    "user/pyth-runtime",
     "user/shell",
 ]
 
