@@ -15,10 +15,10 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is
 accepted as the future execution-model architecture direction by ADR 0064.
-ADR 0065 is provisionally accepted for Phase 1 verifier experimentation; exact
-package bytes remain unfrozen until the first encoder, decoder, verifier, and
-negative corpus pass and the owner explicitly freezes the format. The program
-is documented under:
+ADR 0065 is accepted, and the tested PythTIG version 1 package ABI is frozen
+after the encoder, decoder, verifier, canonical-format suite, and negative
+corpus passed and the owner accepted the freeze on 2026-08-08. The program is
+documented under:
 
 ```text
 docs/pyth-tig/

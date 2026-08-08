@@ -1,7 +1,7 @@
 # PythTIG / Convergent Architecture
 
-Status: ADR 0064 accepted as architecture direction; ADR 0065 provisionally
-accepted for Phase 1 verifier experimentation.
+Status: ADR 0064 accepted as architecture direction; ADR 0065 accepted and its
+tested PythTIG version 1 ABI frozen on 2026-08-08.
 
 This directory contains the docs-only Phase 0 adoption artifacts for the Pyth
 Native Typed Instruction Graph program. It does not make PythTIG the active
@@ -21,6 +21,6 @@ Authoritative PythTIG documents:
 - `docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`
 
 The accepted roadmap and current boot/object-shell behavior remain unchanged
-until the owner explicitly invokes a PythTIG implementation phase. ADR 0065's
-exact package bytes remain provisional until Phase 1 evidence supports a format
-freeze.
+until the owner explicitly invokes a PythTIG implementation phase. An
+incompatible change to ADR 0065's frozen version 1 package bytes requires a new
+accepted ADR and a new major package version.

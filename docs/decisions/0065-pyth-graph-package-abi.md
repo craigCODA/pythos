@@ -1,15 +1,16 @@
 # ADR 0065: Pyth Graph Package ABI
 
 Date: 2026-08-04
-Status: Provisionally Accepted for Phase 1
+Status: Accepted; PythTIG version 1 ABI frozen 2026-08-08
 
 ## Context
 
 The host compiler, PythCore loader, ring-3 interpreter, native code generator,
 and verification tools require one canonical package contract before any
 PythTIG behavior can be implemented. The owner has accepted ADR 0064's
-architecture direction, while keeping this byte-level ABI provisional until the
-first encoder, decoder, verifier, and negative corpus exercise the format.
+architecture direction. The first encoder, decoder, verifier, and negative
+corpus have now exercised the byte-level ABI and passed the Phase 1 acceptance
+matrix.
 
 The original PythTIG handoff proposed ADR 0054 for this decision. The live
 repository already uses ADR 0054 for the polling AHCI block backend, so this
@@ -29,8 +30,8 @@ PythTIG version 1 packages are canonical, little-endian byte streams with:
 - a deterministic 64-bit integrity checksum with the checksum field treated as
   zero.
 
-The Phase 1 candidate `PythGraphHeader` public layout struct is 96 bytes using
-`#[repr(C, packed(4))]`. This 4-byte packing is part of the candidate layout
+The version 1 `PythGraphHeader` public layout struct is 96 bytes using
+`#[repr(C, packed(4))]`. This 4-byte packing is part of the frozen layout
 contract because the `checksum` field is intentionally at byte offset 84. A
 plain `#[repr(C)]` layout on x86-64 would align that `u64` field to byte 88 and
 produce a 104-byte structure.
@@ -68,7 +69,7 @@ explicit little-endian reads and writes for each field; they must not transmute
 or otherwise treat host struct layout as the on-disk codec. Packed public fields
 also must not be borrowed as if they were naturally aligned.
 
-The Phase 1 candidate package bounds are:
+The version 1 package bounds are:
 
 ```text
 maximum package bytes       131072
@@ -81,7 +82,7 @@ maximum runtime values      1024
 maximum executed nodes      65536 per invocation
 ```
 
-The Phase 1 candidate primitive type set is:
+The version 1 primitive type set is:
 
 ```text
 0x0000 Unit
@@ -99,13 +100,13 @@ The Phase 1 candidate primitive type set is:
 0x000C ErrorCode
 ```
 
-The Phase 1 candidate opcode families cover structural nodes, constants, pure
+The version 1 opcode families cover structural nodes, constants, pure
 arithmetic/boolean operations, control terminators, and typed host operations
 for system logging, object operations, task/proposal operations, graph
 relationship queries, relevance assertions, capability requests, and later
 command input/result operations.
 
-Capability imports become graph values only through the Phase 1 candidate import
+Capability imports become graph values only through the version 1 import
 materialization convention: an entry-block `BlockParam` node with
 `result_type = Capability` and `auxiliary0 = import_slot` names a declared
 `CapabilityImportRecord`. The verifier validates that the import slot exists,
@@ -116,7 +117,7 @@ closed unless a per-op result schema is documented and verified; Phase 1 defines
 no capability-returning host-result field.
 
 The shared verifier must reject invalid packages before ring-3 entry. Its
-candidate pass order is:
+version 1 pass order is:
 
 1. Header, version, reserved fields, offsets, alignment, and total-length
    validation.
@@ -138,12 +139,13 @@ be zero unless a later accepted ADR assigns them.
 
 ## Consequences
 
-Record sizes, offsets, numeric type IDs, opcode IDs, verifier error identities,
-version behavior, canonicalization, and checksum behavior remain Phase 1
-candidate ABI until the host-side encoder, decoder, verifier, and negative
-corpus pass against real packages. Any Phase 1 change to those bytes must update
-this ADR in the same branch before merge. They become permanent stable ABI only
-after the Phase 1 evidence exists and the owner explicitly freezes the format.
+Record sizes, offsets, numeric type IDs, opcode IDs, limits, verifier error
+identities, version behavior, canonicalization, and checksum behavior are the
+stable PythTIG version 1 ABI. The owner froze this ABI on 2026-08-08 after the
+host-side encoder, decoder, verifier, canonical-format tests, and deterministic
+negative mutation corpus passed against real packages. An incompatible change
+requires a new accepted ADR and a new major package version; it must not be
+silently introduced under major version 1.
 
 The compiler may not invent semantics that the shared verifier does not
 understand. The runtime and native backend may not execute graph behavior that

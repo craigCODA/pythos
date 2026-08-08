@@ -51,10 +51,10 @@ compatibility evidence, not authorization to extend the superseded model.
 ## PythTIG / Convergent Architecture Guardrails
 
 ADR 0064 is accepted as the PythTIG architecture direction. ADR 0065 is
-provisionally accepted for Phase 1 verifier experimentation; its exact binary
-record layout, numeric IDs, opcode set, and limits are not permanent stable ABI
-until the Phase 1 encoder, decoder, verifier, and negative corpus pass and the
-owner explicitly freezes the format.
+accepted, and the tested PythTIG version 1 record layouts, numeric IDs, opcode
+set, limits, version behavior, canonicalization, checksum behavior, and
+verifier error identities are frozen. An incompatible change requires a new
+accepted ADR and a new major package version.
 
 This adoption status does not make PythTIG the active implementation program.
 Do not implement the PythTIG verifier, runtime, compiler, Task Steward, native
