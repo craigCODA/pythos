@@ -180,27 +180,33 @@ def build_user_elf_payload(text: bytes) -> bytes:
     return bytes(elf)
 
 
-def build_default_init_pak() -> bytes:
+def build_default_init_pak(include_pythtig: bool = False) -> bytes:
     if not SHELL_ELF.exists():
         raise SystemExit(f"missing shell ELF: {SHELL_ELF}")
-    if not PYTH_RUNTIME_ELF.exists():
-        raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
-    if not PYTH_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
-    if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}")
-    if not PYTH_INVALID_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}")
-    return build_init_pak(
-        build_init_bundle(
+    records = [
+        (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(
+                b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
+            ),
+        ),
+    ]
+    if include_pythtig:
+        if not PYTH_RUNTIME_ELF.exists():
+            raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
+        if not PYTH_GRAPH_PACKAGE.exists():
+            raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
+        if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}"
+            )
+        if not PYTH_INVALID_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}"
+            )
+        records.extend(
             [
-                (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
-                (
-                    INIT_BUNDLE_NAMED_USER_ELF_TYPE,
-                    build_named_user_program(
-                        b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
-                    ),
-                ),
                 (
                     INIT_BUNDLE_NAMED_USER_ELF_TYPE,
                     build_named_user_program(
@@ -233,21 +239,25 @@ def build_default_init_pak() -> bytes:
                         PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
-                (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(
-                        b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
-                ),
             ]
         )
+    records.extend(
+        [
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(
+                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                ),
+            ),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+            ),
+        ]
     )
+    return build_init_pak(build_init_bundle(records))
 
 
 def build_font_psf() -> bytes:
@@ -273,6 +283,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
+    parser.add_argument("--with-pythtig", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -290,7 +301,9 @@ def main() -> int:
     shutil.copy2(loader, boot_dir / "BOOTX64.EFI")
     shutil.copy2(kernel, pythos_dir / "PYTHCORE.ELF")
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
-    write_binary_if_changed(pythos_dir / "INIT.PAK", build_default_init_pak())
+    write_binary_if_changed(
+        pythos_dir / "INIT.PAK", build_default_init_pak(args.with_pythtig)
+    )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 
     print(f"ESP_READY {ESP}")

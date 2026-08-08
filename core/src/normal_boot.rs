@@ -6,10 +6,11 @@
 //! then enters `shell.elf` as the persistent ring-3 program.
 
 use crate::memory::physical::PhysicalMemory;
+#[cfg(feature = "pythtig-phase2-test")]
+use crate::pyth_runtime_launch;
 use crate::{
     audio, boot_assets, cinematic_boot, framebuffer, launcher_screen, normal_init,
-    process_context::ActiveUserProcess, ps2, pyth_runtime_launch, qemu_exit, retained_services,
-    serial,
+    process_context::ActiveUserProcess, ps2, qemu_exit, retained_services, serial,
 };
 use crate::{shell_objects::ObjectKind, syscall, user_mode};
 use pythos_shared::boot_protocol::{PythBootInfo, PythFramebufferInfo};
@@ -29,6 +30,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         }
     };
     let _ = &substrate.kernel_address_space;
+    #[cfg(feature = "pythtig-phase2-test")]
     let pyth_graph_mode =
         match pyth_runtime_launch::read_and_clear_pyth_graph_control_sector(substrate.block_device)
         {
@@ -38,6 +40,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 qemu_exit::panic();
             }
         };
+    #[cfg(feature = "pythtig-phase2-test")]
     match pyth_graph_mode {
         pyth_runtime_launch::PythGraphBootMode::LaunchHello => {
             let Some(launch) = substrate.pyth_runtime_launch.as_ref() else {
@@ -135,7 +138,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     );
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLaunch) -> ! {
     pyth_runtime_launch::emit_package_valid_marker(launch);
     pyth_runtime_launch::emit_bootstrap_bound_marker(launch);

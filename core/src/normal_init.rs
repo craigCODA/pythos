@@ -9,9 +9,10 @@
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
 use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
+#[cfg(feature = "pythtig-phase2-test")]
+use crate::pyth_runtime_launch;
 use crate::{
-    architecture, kernel_stacks, pyth_runtime_launch, runtime_loader, serial, syscall, tasks,
-    user_elf, user_stacks,
+    architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
 };
 use pythos_shared::boot_protocol::PythBootInfo;
 use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
@@ -25,8 +26,11 @@ pub struct NormalBootSubstrate {
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
+    #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_budget_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_invalid_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
 }
 
@@ -178,12 +182,14 @@ pub fn initialize_normal_substrate(
         bootstrap_kernel_ptr: bootstrap_frame,
         stack_region: user_stacks::regions()[0],
     };
+    #[cfg(feature = "pythtig-phase2-test")]
     let pyth_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch(
         boot_info,
         physical_memory,
         &supervisor_mappings,
     )
     .ok();
+    #[cfg(feature = "pythtig-phase2-test")]
     let pyth_budget_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph(
         boot_info,
         physical_memory,
@@ -192,6 +198,7 @@ pub fn initialize_normal_substrate(
         pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
     )
     .ok();
+    #[cfg(feature = "pythtig-phase2-test")]
     let pyth_invalid_graph_rejection = pyth_runtime_launch::detect_pyth_graph_rejection(
         boot_info,
         pyth_runtime_launch::INVALID_GRAPH_NAME,
@@ -249,8 +256,11 @@ pub fn initialize_normal_substrate(
         kernel_address_space,
         block_device,
         shell_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
         pyth_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
         pyth_budget_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
         pyth_invalid_graph_rejection,
     })
 }

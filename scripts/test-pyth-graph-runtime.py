@@ -71,15 +71,26 @@ def build_pyth_graph_artifacts() -> None:
 
 def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "pythos-core",
+            "--target",
+            "x86_64-unknown-none",
+            "--features",
+            "pythtig-phase2-test",
+        ]
+    )
     build_verified_user_shell()
     build_pyth_graph_artifacts()
-    run([sys.executable, "scripts/build-image.py"])
+    run([sys.executable, "scripts/build-image.py", "--with-pythtig"])
 
 
 def rebuild_image_with_current_runtime() -> None:
     run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
-    run([sys.executable, "scripts/build-image.py"])
+    run([sys.executable, "scripts/build-image.py", "--with-pythtig"])
 
 
 def prepare_graph_control_image(path: Path, mode: int) -> None:

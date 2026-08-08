@@ -2,7 +2,12 @@
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
 use crate::block_device::SECTOR_SIZE;
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 use crate::{
     block_device::{self, BlockDeviceInfo},
     memory::{
@@ -12,9 +17,19 @@ use crate::{
     process_context::ActiveUserProcess,
     pyth_graph_loader, runtime_loader, serial, syscall, user_elf, user_stacks,
 };
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 use core::{mem::size_of, ptr};
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 use pythos_shared::{boot_protocol::PythBootInfo, pyth_runtime_abi::GraphExitRecord};
 use pythos_shared::{
     object_shell_abi::PackedCapability,
@@ -92,7 +107,12 @@ impl PythGraphRejectCode {
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub struct PreparedPythRuntimeLaunch {
     pub address_space: RetainedUserAddressSpace,
     pub process: ActiveUserProcess,
@@ -106,7 +126,12 @@ pub struct PreparedPythRuntimeLaunch {
     pub stack_region: user_stacks::UserStackRegion,
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 impl PreparedPythRuntimeLaunch {
     pub const fn user_stack_top(&self) -> u64 {
         self.stack_region.stack_start + self.stack_region.stack_len - 16
@@ -173,7 +198,12 @@ pub fn build_pyth_graph_bootstrap(
     })
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn prepare_pyth_runtime_launch(
     boot_info: &'static PythBootInfo,
     physical_memory: &mut PhysicalMemory,
@@ -188,7 +218,12 @@ pub fn prepare_pyth_runtime_launch(
     )
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn prepare_pyth_runtime_launch_for_graph(
     boot_info: &'static PythBootInfo,
     physical_memory: &mut PhysicalMemory,
@@ -303,7 +338,12 @@ pub fn prepare_pyth_runtime_launch_for_graph(
     })
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn detect_pyth_graph_rejection(
     boot_info: &'static PythBootInfo,
     graph_name: &[u8],
@@ -314,7 +354,12 @@ pub fn detect_pyth_graph_rejection(
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn read_and_clear_pyth_graph_control_sector(
     device: BlockDeviceInfo,
 ) -> Result<PythGraphBootMode, PythRuntimeLaunchError> {
@@ -329,7 +374,12 @@ pub fn read_and_clear_pyth_graph_control_sector(
     Ok(mode)
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn emit_package_valid_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("PYTHOS:PYTHTIG:PACKAGE_VALID package:");
     serial::write_hex_u64_value(launch.package_digest);
@@ -340,7 +390,12 @@ pub fn emit_package_valid_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("\r\n");
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:");
     serial::write_hex_u64_value(launch.graph_principal_id);
@@ -349,14 +404,24 @@ pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("\r\n");
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn emit_package_rejected_marker(code: PythGraphRejectCode) {
     serial::write_str("PYTHOS:PYTHTIG:PACKAGE_REJECTED error:");
     serial::write_str(code.stable_code());
     serial::write_str("\r\n");
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 fn write_package_page(package_frame: u64, package: &[u8]) {
     // SAFETY:
     // 1. Invariant: `package_frame` is a fresh zeroed physical page still
@@ -375,7 +440,12 @@ fn write_package_page(package_frame: u64, package: &[u8]) {
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 fn write_bootstrap_page(bootstrap_frame: u64, bootstrap: &PythGraphBootstrapBlock) {
     // SAFETY:
     // 1. Invariant: `bootstrap_frame` is a fresh zeroed physical page large
@@ -393,7 +463,12 @@ fn write_bootstrap_page(bootstrap_frame: u64, bootstrap: &PythGraphBootstrapBloc
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 fn zero_result_page(result_frame: u64) {
     // SAFETY:
     // 1. Invariant: `result_frame` is a fresh zeroed physical page retained

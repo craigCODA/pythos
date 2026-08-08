@@ -47,10 +47,68 @@ def build_init_pak_with_phase2_programs(module) -> bytes:
         module.PYTH_GRAPH_PACKAGE = graph
         module.PYTH_BUDGET_GRAPH_PACKAGE = budget_graph
         module.PYTH_INVALID_GRAPH_PACKAGE = invalid_graph
+        return module.build_default_init_pak(include_pythtig=True)
+
+
+def build_init_pak_without_phase2_programs(module) -> bytes:
+    with tempfile.TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        shell = temp_path / "pythos-user-shell"
+        shell.write_bytes(b"\x7fELFshell")
+        module.SHELL_ELF = shell
+        module.PYTH_RUNTIME_ELF = temp_path / "missing-pyth-runtime"
+        module.PYTH_GRAPH_PACKAGE = temp_path / "missing-hello.tig"
+        module.PYTH_BUDGET_GRAPH_PACKAGE = temp_path / "missing-budget.tig"
+        module.PYTH_INVALID_GRAPH_PACKAGE = temp_path / "missing-invalid.tig"
         return module.build_default_init_pak()
 
 
 class IsoImageTest(unittest.TestCase):
+    def test_default_init_pak_excludes_phase2_runtime_and_graphs(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            init_pak = build_init_pak_without_phase2_programs(module)
+            payload = init_pak[module.INIT_PAK_HEADER_LEN :]
+            record_count = int.from_bytes(payload[24:26], "little")
+            table_start = module.INIT_BUNDLE_HEADER_LEN
+            record_types = [
+                int.from_bytes(
+                    payload[
+                        table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN : table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN
+                        + 4
+                    ],
+                    "little",
+                )
+                for index in range(record_count)
+            ]
+
+            self.assertEqual(record_count, 6)
+            self.assertEqual(
+                record_types,
+                [
+                    module.INIT_BUNDLE_RUNTIME_TYPE,
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_USER_ELF_TYPE,
+                ],
+            )
+            self.assertNotIn(module.INIT_BUNDLE_PYTH_GRAPH_TYPE, record_types)
+
+    def test_phase2_opt_in_requires_runtime_artifact(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                shell = temp_path / "pythos-user-shell"
+                shell.write_bytes(b"\x7fELFshell")
+                module.SHELL_ELF = shell
+                module.PYTH_RUNTIME_ELF = temp_path / "missing-pyth-runtime"
+
+                with self.assertRaisesRegex(SystemExit, "missing PythTIG runtime ELF"):
+                    module.build_default_init_pak(include_pythtig=True)
+
     def test_generated_init_pak_contains_inner_bundle_records(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             init_pak = build_init_pak_with_phase2_programs(module)

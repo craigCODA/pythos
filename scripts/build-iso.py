@@ -200,27 +200,33 @@ def build_user_elf_payload(text: bytes) -> bytes:
     return bytes(elf)
 
 
-def build_default_init_pak() -> bytes:
+def build_default_init_pak(include_pythtig: bool = False) -> bytes:
     if not SHELL_ELF.exists():
         raise SystemExit(f"missing shell ELF: {SHELL_ELF}")
-    if not PYTH_RUNTIME_ELF.exists():
-        raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
-    if not PYTH_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
-    if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}")
-    if not PYTH_INVALID_GRAPH_PACKAGE.exists():
-        raise SystemExit(f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}")
-    return build_init_pak(
-        build_init_bundle(
+    records = [
+        (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(
+                b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
+            ),
+        ),
+    ]
+    if include_pythtig:
+        if not PYTH_RUNTIME_ELF.exists():
+            raise SystemExit(f"missing PythTIG runtime ELF: {PYTH_RUNTIME_ELF}")
+        if not PYTH_GRAPH_PACKAGE.exists():
+            raise SystemExit(f"missing PythTIG graph package: {PYTH_GRAPH_PACKAGE}")
+        if not PYTH_BUDGET_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG budget graph package: {PYTH_BUDGET_GRAPH_PACKAGE}"
+            )
+        if not PYTH_INVALID_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                f"missing PythTIG invalid graph package: {PYTH_INVALID_GRAPH_PACKAGE}"
+            )
+        records.extend(
             [
-                (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
-                (
-                    INIT_BUNDLE_NAMED_USER_ELF_TYPE,
-                    build_named_user_program(
-                        b"shell.elf", SHELL_PRINCIPAL_ID, SHELL_ELF.read_bytes()
-                    ),
-                ),
                 (
                     INIT_BUNDLE_NAMED_USER_ELF_TYPE,
                     build_named_user_program(
@@ -253,21 +259,25 @@ def build_default_init_pak() -> bytes:
                         PYTH_INVALID_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
-                (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
-                (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(
-                        b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
-                    ),
-                ),
-                (
-                    INIT_BUNDLE_USER_ELF_TYPE,
-                    build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
-                ),
             ]
         )
+    records.extend(
+        [
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
+            (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\x0F\x0B\xF4")),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(
+                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                ),
+            ),
+            (
+                INIT_BUNDLE_USER_ELF_TYPE,
+                build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4"),
+            ),
+        ]
     )
+    return build_init_pak(build_init_bundle(records))
 
 
 def build_font_psf() -> bytes:
@@ -319,12 +329,14 @@ def fat16_layout(total_sectors: int) -> tuple[int, int, int, int]:
         fat_sectors = needed_fat_sectors
 
 
-def pythos_boot_files(loader: Path, kernel: Path) -> dict[str, bytes]:
+def pythos_boot_files(
+    loader: Path, kernel: Path, include_pythtig: bool = False
+) -> dict[str, bytes]:
     return {
         "EFI/BOOT/BOOTX64.EFI": loader.read_bytes(),
         "PYTHOS/PYTHCORE.ELF": kernel.read_bytes(),
         "PYTHOS/BOOT.CFG": b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n",
-        "PYTHOS/INIT.PAK": build_default_init_pak(),
+        "PYTHOS/INIT.PAK": build_default_init_pak(include_pythtig),
         "PYTHOS/FONT.PSF": build_font_psf(),
     }
 
@@ -641,13 +653,18 @@ def build_iso_bytes(esp_image: bytes, iso_files: dict[str, bytes]) -> bytes:
     return bytes(image)
 
 
-def build_iso(output: Path, loader: Path = BOOT_EFI, kernel: Path = PYTHCORE_ELF) -> None:
+def build_iso(
+    output: Path,
+    loader: Path = BOOT_EFI,
+    kernel: Path = PYTHCORE_ELF,
+    include_pythtig: bool = False,
+) -> None:
     if not loader.exists():
         raise SystemExit(f"missing loader: {loader}")
     if not kernel.exists():
         raise SystemExit(f"missing kernel: {kernel}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    files = pythos_boot_files(loader, kernel)
+    files = pythos_boot_files(loader, kernel, include_pythtig)
     esp_image = build_esp_image(files)
     output.write_bytes(build_iso_bytes(esp_image, files))
     print(f"ISO_READY {output}")
@@ -658,8 +675,9 @@ def main() -> int:
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--with-pythtig", action="store_true")
     args = parser.parse_args()
-    build_iso(args.output, args.loader, args.kernel)
+    build_iso(args.output, args.loader, args.kernel, args.with_pythtig)
     return 0
 
 

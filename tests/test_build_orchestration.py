@@ -117,6 +117,27 @@ class BuildOrchestrationTest(unittest.TestCase):
 
         self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
 
+    def test_pyth_graph_runtime_uses_test_feature_and_opt_in_bundle(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_boot_image()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        package = next(
+            command
+            for command in normalized
+            if "scripts/build-image.py" in command
+        )
+        self.assertIn("pythtig-phase2-test", core_build)
+        self.assertIn("--with-pythtig", package)
+
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 
