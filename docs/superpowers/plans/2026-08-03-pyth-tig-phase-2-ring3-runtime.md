@@ -1,8 +1,21 @@
 # PythTIG Phase 2 Ring-3 Runtime Implementation Plan
 
-**Status:** Accepted future phase pending prior PythTIG phase evidence and
-explicit owner invocation. Do not implement this plan until the owner explicitly
-invokes this phase.
+**Status:** Complete 2026-08-08. Phase 3 is not authorized by this completion.
+
+**Completion evidence:** The frozen v1 format/mutation suite, 82 shared tests,
+5 reference-runtime tests, focused PythCore loader/launch tests, default normal
+boot, the object-shell lifecycle/reboot suite, the full milestone boot, and the
+five-case Phase 2 QEMU harness pass. The harness proves success,
+shared-verifier rejection, execution-profile rejection before ring 3, budget
+exhaustion, and contained runtime fault. Default image/ISO packaging excludes
+PythTIG artifacts; the Phase 2 harness opts in with `pythtig-phase2-test` and
+`--with-pythtig`.
+
+The repository-wide `cargo clippy --all-targets -- -D warnings` command remains
+blocked by pre-existing PythCore warning debt and by attempting to lint the
+`no_std` runtime binary for the Windows host. Strict clippy passes for
+`pythos-shared`, `pyth-tig-tool`, and the `pythos-user-pyth-runtime` library.
+No unrelated core lint cleanup is included in this phase.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Use TDD for every runtime, loader, and ABI change.
 
