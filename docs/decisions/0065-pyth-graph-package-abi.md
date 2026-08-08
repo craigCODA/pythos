@@ -116,22 +116,35 @@ authority from a hidden per-op import slot. `HostResult` typed fields remain
 closed unless a per-op result schema is documented and verified; Phase 1 defines
 no capability-returning host-result field.
 
-The shared verifier must reject invalid packages before ring-3 entry. Its
-version 1 pass order is:
+The shared decoder and verifier must reject invalid packages before ring-3
+entry. Their version 1 admission order is:
 
-1. Header, version, reserved fields, offsets, alignment, and total-length
-   validation.
-2. Section non-overlap and count/size validation.
-3. Known type and opcode validation.
-4. Block ownership and exactly-one-terminator validation.
-5. Control target and block-argument count validation.
-6. Dominance and value-availability validation.
-7. Opcode-specific type validation.
-8. Effect-token single-chain validation.
-9. Capability origin, resource kind, and rights validation.
-10. Constant and string pool range validation.
-11. Resource-budget validation.
-12. Canonical-encoding validation and checksum verification.
+1. The decoder validates header magic/version/flags/reserved fields, declared
+   count and byte limits, checked section ranges, record-section alignment,
+   section non-overlap, exact package length, reserved record bytes, and the
+   checksum.
+2. The verifier validates known types and opcodes.
+3. It validates block ownership, contiguous node coverage, reachability, and
+   exactly one final terminator per block.
+4. It validates control targets and block-argument count/type.
+5. It validates dominance and value availability.
+6. It validates opcode-specific types, the single effect chain, capability
+   origin/import/rights, and closed host-result fields.
+7. It validates every referenced constant/string half-open range with checked
+   addition; import names and `ConstUtf8` payloads must also be valid UTF-8.
+8. It validates canonical record encodings.
+
+Canonical version 1 records require zero unassigned type/block/node flags and
+zero unused auxiliary/immediate fields. Blocks must be encoded in block-table
+order with contiguous `first_node` coverage and no more than four parameters.
+Import slots must be dense and equal their record-table index; expected types,
+resource kinds, and rights bits must be known. `ConstBool` immediates are exactly
+zero or one. Opcode-assigned auxiliary fields remain meaningful only where the
+frozen opcode schema assigns them.
+
+Referenced-range or record-canonicalization failures use the frozen
+`NonCanonicalEncoding` verifier identity. Section-range failures and checksum
+failures retain their decoder error identities under `VerifyError::Decode`.
 
 Unknown major versions are rejected. A higher minor version is rejected unless
 all newly set flags and records are explicitly understood. Reserved fields must

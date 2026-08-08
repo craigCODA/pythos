@@ -18,6 +18,8 @@ PYTH_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "hello.tig"
 PYTH_BUDGET_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "budget.tig"
 PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
 PYTH_UNSUPPORTED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "unsupported.tig"
+PYTH_INVALID_STRING_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid-string.tig"
+PYTH_PARAMETERIZED_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "parameterized.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -42,6 +44,8 @@ HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
 BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
 INVALID_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_00FF
 UNSUPPORTED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0003
+INVALID_STRING_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0004
+PARAMETERIZED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0005
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -212,6 +216,16 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
                 "missing PythTIG unsupported graph package: "
                 f"{PYTH_UNSUPPORTED_GRAPH_PACKAGE}"
             )
+        if not PYTH_INVALID_STRING_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG invalid-string graph package: "
+                f"{PYTH_INVALID_STRING_GRAPH_PACKAGE}"
+            )
+        if not PYTH_PARAMETERIZED_GRAPH_PACKAGE.exists():
+            raise SystemExit(
+                "missing PythTIG parameterized graph package: "
+                f"{PYTH_PARAMETERIZED_GRAPH_PACKAGE}"
+            )
         records.extend(
             [
                 (
@@ -252,6 +266,22 @@ def build_default_init_pak(include_pythtig: bool = False) -> bytes:
                         b"unsupported.tig",
                         UNSUPPORTED_GRAPH_PRINCIPAL_ID,
                         PYTH_UNSUPPORTED_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"invalid-string.tig",
+                        INVALID_STRING_GRAPH_PRINCIPAL_ID,
+                        PYTH_INVALID_STRING_GRAPH_PACKAGE.read_bytes(),
+                    ),
+                ),
+                (
+                    INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    build_named_pyth_graph(
+                        b"parameterized.tig",
+                        PARAMETERIZED_GRAPH_PRINCIPAL_ID,
+                        PYTH_PARAMETERIZED_GRAPH_PACKAGE.read_bytes(),
                     ),
                 ),
             ]

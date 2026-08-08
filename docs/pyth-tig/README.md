@@ -3,10 +3,12 @@
 Status: ADR 0064 accepted as architecture direction; ADR 0065 accepted and its
 tested PythTIG version 1 ABI frozen on 2026-08-08.
 
-This directory contains the docs-only Phase 0 adoption artifacts for the Pyth
-Native Typed Instruction Graph program. It does not make PythTIG the active
-implementation program, and it does not authorize verifier, runtime, compiler,
-Task Steward, native backend, or boot behavior changes.
+This directory contains the architecture, frozen Phase 1 package/verifier
+contract, and bounded Phase 2 ring-3 runtime evidence for the Pyth Native Typed
+Instruction Graph program. Phase 2 is an explicit `pythtig-phase2-test` plus
+`--with-pythtig` proof path; it is not the default production boot path and does
+not authorize compiler, Task Steward, native backend, or production cutover
+work.
 
 Authoritative PythTIG documents:
 
@@ -20,7 +22,7 @@ Authoritative PythTIG documents:
 - `docs/pyth-tig/acceptance/definition-of-done.md`
 - `docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`
 
-The accepted roadmap and current boot/object-shell behavior remain unchanged
-until the owner explicitly invokes a PythTIG implementation phase. An
+The default image and ISO remain on the existing object-shell path. An
 incompatible change to ADR 0065's frozen version 1 package bytes requires a new
-accepted ADR and a new major package version.
+accepted ADR and a new major package version. Phase 3 and later behavior remain
+pending explicit owner invocation.

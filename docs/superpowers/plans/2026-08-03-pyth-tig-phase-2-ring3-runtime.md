@@ -2,13 +2,15 @@
 
 **Status:** Complete 2026-08-08. Phase 3 is not authorized by this completion.
 
-**Completion evidence:** The frozen v1 format/mutation suite, 82 shared tests,
+**Completion evidence:** The frozen v1 format/mutation suite, 84 shared tests,
 5 reference-runtime tests, focused PythCore loader/launch tests, default normal
 boot, the object-shell lifecycle/reboot suite, the full milestone boot, and the
-five-case Phase 2 QEMU harness pass. The harness proves success,
-shared-verifier rejection, execution-profile rejection before ring 3, budget
-exhaustion, and contained runtime fault. Default image/ISO packaging excludes
-PythTIG artifacts; the Phase 2 harness opts in with `pythtig-phase2-test` and
+seven-case Phase 2 QEMU harness pass. The harness proves success with an actual
+graph-process termination transition, shared-verifier effect/string rejection,
+opcode and parameterized-control-flow profile rejection before ring 3, budget
+exhaustion followed by termination, and contained runtime fault into a truthful
+PythCore safe-idle state. Default image/ISO packaging excludes PythTIG
+artifacts; the Phase 2 harness opts in with `pythtig-phase2-test` and
 `--with-pythtig`.
 
 The repository-wide `cargo clippy --all-targets -- -D warnings` command remains
@@ -262,9 +264,13 @@ Implement only the Phase 2 opcodes. Every node dispatch decrements budget before
 
 - [ ] **Step 4: Implement no_std entry and syscall host**
 
-`_start` validates the bootstrap magic, ABI version, import count, package pointer/length, instruction budget, and result pointer. It decodes and verifies the package again in user space, executes it, writes `GraphExitRecord`, then calls a bounded graph-exit syscall or spins after returning.
-
-The runtime does not trust PythCore merely because the kernel verified the package; the duplicate user-space verification is defense in depth and semantic reference behavior.
+`_start` validates the bootstrap magic, ABI version, import count, package
+pointer/length, instruction budget, and result pointer. It decodes the exact
+read-only package bytes already admitted by PythCore, wraps them through the
+explicit kernel-verification invariant, executes them, writes
+`GraphExitRecord`, and calls the graph-exit syscall. A successful exit does not
+return to ring 3; PythCore clears the active graph-process state and enters its
+defined safe-idle state. A returned syscall result is an error fallback only.
 
 - [ ] **Step 5: Add linker/build/ELF verification**
 
@@ -364,6 +370,11 @@ Add a test-only boot control sector:
 sector 96
 magic  PYTGCTL1
 mode 1 launch hello.tig through pyth-runtime.elf
+mode 2 select invalid.tig shared-verifier rejection
+mode 3 launch budget.tig
+mode 4 select unsupported.tig opcode-profile rejection
+mode 5 select invalid-string.tig shared-verifier rejection
+mode 6 select parameterized.tig control-flow-profile rejection
 mode 0 default object shell
 ```
 
@@ -425,7 +436,8 @@ PYTHOS:PYTHTIG:PACKAGE_VALID name:hello.tig
 PYTHOS:PYTHTIG:BOOTSTRAP_BOUND
 PYTHOS:PYTHTIG:RUNTIME_ENTER
 PYTHOS:PYTHTIG:PROGRAM_LOG hello
-PYTHOS:PYTHTIG:RUNTIME_EXIT status:0 executed:4
+PYTHOS:PYTHTIG:RUNTIME_EXIT status:0
+PYTHOS:PYTHTIG:RUNTIME_TERMINATED
 ```
 
 5. Rejects `PYTHOS:PANIC`, `PACKAGE_REJECTED`, or timeout as success.
@@ -441,7 +453,12 @@ Expected: FAIL until kernel and runtime marker/report wiring is complete.
 
 - [ ] **Step 3: Finish exit-report syscall and markers**
 
-Add a typed graph-exit syscall to the shared runtime ABI and `core/src/syscall.rs`. It validates the current caller, copies in exactly one `GraphExitRecord`, emits the runtime-exit marker, terminates only the graph process, and exits QEMU successfully only in graph-test mode. Default normal boot remains alive.
+Add a typed graph-exit syscall to the shared runtime ABI and
+`core/src/syscall.rs`. It validates the current caller, copies in exactly one
+`GraphExitRecord`, emits the runtime-exit marker, clears the active graph
+process, emits `RUNTIME_TERMINATED`, and enters the kernel safe-idle state. The
+Phase 2 harness treats that terminal marker as its QEMU success condition.
+Default normal boot remains alive.
 
 - [ ] **Step 4: Run GREEN and preserved tests**
 
@@ -498,8 +515,11 @@ Extend the harness with three separate boots:
 
 ```text
 invalid package       -> PACKAGE_REJECTED and no RUNTIME_ENTER
-loop budget package   -> RUNTIME_EXIT status:budget-exhausted
-fault runtime image   -> USER_FAULT, RUNTIME_FAULT_CONTAINED, peer alive
+invalid string range  -> PACKAGE_REJECTED and no RUNTIME_ENTER
+unsupported opcode    -> PACKAGE_REJECTED and no RUNTIME_ENTER
+parameterized jump    -> PACKAGE_REJECTED and no RUNTIME_ENTER
+loop budget package   -> RUNTIME_EXIT status:budget-exhausted, RUNTIME_TERMINATED
+fault runtime image   -> USER_FAULT, RUNTIME_FAULT_CONTAINED, RUNTIME_FAULT_SAFE_IDLE
 ```
 
 - [ ] **Step 2: Run RED**
@@ -521,7 +541,7 @@ PYTHOS:PYTHTIG:PACKAGE_REJECTED
 PYTHOS:PYTHTIG:BUDGET_EXHAUSTED
 PYTHOS:CORE:CRASH:USER_FAULT
 PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED
-PYTHOS:CORE:CRASH:PEER_ALIVE
+PYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE
 ```
 
 - [ ] **Step 4: Run GREEN**

@@ -910,9 +910,25 @@ fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
     // 7. Concurrency: Phase 2 graph runtime has one active thread.
     // 8. Violation: bad result mapping could fault or report a forged status.
     let exit = unsafe { exit_ptr.read() };
+    finalize_pyth_graph_exit(caller, exit)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn finalize_pyth_graph_exit(
+    caller: ActiveUserProcess,
+    exit: GraphExitRecord,
+) -> Result<u64, SyscallError> {
     validate_graph_exit_record(exit)?;
     emit_graph_exit_marker(exit);
-    Ok(SYSCALL_OK)
+    #[cfg(not(test))]
+    crate::user_mode::complete_pyth_graph_runtime_exit(caller.principal_id());
+    #[cfg(test)]
+    {
+        if !crate::user_mode::transition_pyth_graph_runtime_exit(caller.principal_id()) {
+            return Err(SyscallError::BadResult);
+        }
+        Ok(SYSCALL_OK)
+    }
 }
 
 #[cfg(all(not(test), feature = "verify"))]
@@ -1629,6 +1645,16 @@ mod tests {
             Err(SyscallError::BadResult)
         );
         assert_eq!(validate_graph_exit_record(exit), Ok(()));
+
+        crate::user_mode::activate_persistent_user_process_for_test(
+            runtime,
+            crate::user_mode::PersistentUserProcessKind::PythGraphRuntime,
+        );
+        assert_eq!(finalize_pyth_graph_exit(runtime, exit), Ok(SYSCALL_OK));
+        assert_eq!(
+            process_context::current_caller(),
+            Err(crate::process_context::ProcessContextError::NoActiveProcess)
+        );
 
         let mut bad = exit;
         bad.reserved1 = 1;

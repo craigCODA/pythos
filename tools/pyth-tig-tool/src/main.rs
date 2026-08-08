@@ -40,6 +40,14 @@ fn run() -> Result<(), String> {
             let bytes = encode::unsupported_phase2_package();
             write_package(&path, bytes)
         }
+        "emit-invalid-string-reference" => {
+            let bytes = encode::invalid_string_reference_package();
+            write_package(&path, bytes)
+        }
+        "emit-parameterized-jump" => {
+            let bytes = encode::parameterized_jump_package();
+            write_package(&path, bytes)
+        }
         "verify" => {
             let bytes = fs::read(&path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -65,5 +73,5 @@ fn write_package(path: &PathBuf, bytes: Vec<u8>) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|emit-unsupported-phase2|verify|mutate-suite> <path>".to_string()
+    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|emit-unsupported-phase2|emit-invalid-string-reference|emit-parameterized-jump|verify|mutate-suite> <path>".to_string()
 }

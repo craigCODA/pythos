@@ -38,18 +38,24 @@ def build_init_pak_with_phase2_programs(module) -> bytes:
         budget_graph = temp_path / "budget.tig"
         invalid_graph = temp_path / "invalid.tig"
         unsupported_graph = temp_path / "unsupported.tig"
+        invalid_string_graph = temp_path / "invalid-string.tig"
+        parameterized_graph = temp_path / "parameterized.tig"
         shell.write_bytes(b"\x7fELFshell")
         runtime.write_bytes(b"\x7fELFpyth-runtime")
         graph.write_bytes(b"PYTHTIG1hello")
         budget_graph.write_bytes(b"PYTHTIG1budget")
         invalid_graph.write_bytes(b"PYTHTIG1invalid")
         unsupported_graph.write_bytes(b"PYTHTIG1unsupported")
+        invalid_string_graph.write_bytes(b"PYTHTIG1invalid-string")
+        parameterized_graph.write_bytes(b"PYTHTIG1parameterized")
         module.SHELL_ELF = shell
         module.PYTH_RUNTIME_ELF = runtime
         module.PYTH_GRAPH_PACKAGE = graph
         module.PYTH_BUDGET_GRAPH_PACKAGE = budget_graph
         module.PYTH_INVALID_GRAPH_PACKAGE = invalid_graph
         module.PYTH_UNSUPPORTED_GRAPH_PACKAGE = unsupported_graph
+        module.PYTH_INVALID_STRING_GRAPH_PACKAGE = invalid_string_graph
+        module.PYTH_PARAMETERIZED_GRAPH_PACKAGE = parameterized_graph
         return module.build_default_init_pak(include_pythtig=True)
 
 
@@ -64,6 +70,8 @@ def build_init_pak_without_phase2_programs(module) -> bytes:
         module.PYTH_BUDGET_GRAPH_PACKAGE = temp_path / "missing-budget.tig"
         module.PYTH_INVALID_GRAPH_PACKAGE = temp_path / "missing-invalid.tig"
         module.PYTH_UNSUPPORTED_GRAPH_PACKAGE = temp_path / "missing-unsupported.tig"
+        module.PYTH_INVALID_STRING_GRAPH_PACKAGE = temp_path / "missing-invalid-string.tig"
+        module.PYTH_PARAMETERIZED_GRAPH_PACKAGE = temp_path / "missing-parameterized.tig"
         return module.build_default_init_pak()
 
 
@@ -117,7 +125,7 @@ class IsoImageTest(unittest.TestCase):
         for module in (load_build_image_module(), load_build_iso_module()):
             init_pak = build_init_pak_with_phase2_programs(module)
             payload = init_pak[module.INIT_PAK_HEADER_LEN :]
-            record_count = 11
+            record_count = 13
             table_start = module.INIT_BUNDLE_HEADER_LEN
 
             self.assertEqual(payload[:16], b"PYTHOS_BUNDLE_V0")
@@ -144,6 +152,8 @@ class IsoImageTest(unittest.TestCase):
                     module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
                     module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
                     module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
                     module.INIT_BUNDLE_USER_ELF_TYPE,
@@ -156,6 +166,8 @@ class IsoImageTest(unittest.TestCase):
                     module.RUNTIME_PAYLOAD_MAGIC,
                     module.NAMED_USER_PROGRAM_MAGIC,
                     module.NAMED_USER_PROGRAM_MAGIC,
+                    module.NAMED_PYTH_GRAPH_MAGIC,
+                    module.NAMED_PYTH_GRAPH_MAGIC,
                     module.NAMED_PYTH_GRAPH_MAGIC,
                     module.NAMED_PYTH_GRAPH_MAGIC,
                     module.NAMED_PYTH_GRAPH_MAGIC,
@@ -191,6 +203,8 @@ class IsoImageTest(unittest.TestCase):
                 (4, b"budget.tig"),
                 (5, b"invalid.tig"),
                 (6, b"unsupported.tig"),
+                (7, b"invalid-string.tig"),
+                (8, b"parameterized.tig"),
             ):
                 graph_entry = table_start + graph_index * module.INIT_BUNDLE_RECORD_LEN
                 graph_start = int.from_bytes(
@@ -217,6 +231,8 @@ class IsoImageTest(unittest.TestCase):
             budget_graph = temp_path / "budget.tig"
             invalid_graph = temp_path / "invalid.tig"
             unsupported_graph = temp_path / "unsupported.tig"
+            invalid_string_graph = temp_path / "invalid-string.tig"
+            parameterized_graph = temp_path / "parameterized.tig"
             output = temp_path / "pythos.iso"
             loader.write_bytes(b"MZ" + bytes(4094))
             kernel.write_bytes(b"\x7fELF" + bytes(4092))
@@ -226,12 +242,16 @@ class IsoImageTest(unittest.TestCase):
             budget_graph.write_bytes(b"PYTHTIG1budget")
             invalid_graph.write_bytes(b"PYTHTIG1invalid")
             unsupported_graph.write_bytes(b"PYTHTIG1unsupported")
+            invalid_string_graph.write_bytes(b"PYTHTIG1invalid-string")
+            parameterized_graph.write_bytes(b"PYTHTIG1parameterized")
             build_iso.SHELL_ELF = shell
             build_iso.PYTH_RUNTIME_ELF = runtime
             build_iso.PYTH_GRAPH_PACKAGE = graph
             build_iso.PYTH_BUDGET_GRAPH_PACKAGE = budget_graph
             build_iso.PYTH_INVALID_GRAPH_PACKAGE = invalid_graph
             build_iso.PYTH_UNSUPPORTED_GRAPH_PACKAGE = unsupported_graph
+            build_iso.PYTH_INVALID_STRING_GRAPH_PACKAGE = invalid_string_graph
+            build_iso.PYTH_PARAMETERIZED_GRAPH_PACKAGE = parameterized_graph
 
             build_iso.build_iso(output, loader, kernel)
             iso = output.read_bytes()

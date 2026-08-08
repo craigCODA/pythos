@@ -5,6 +5,7 @@ use pythos_shared::{
     boot_protocol::PythBootInfo,
     init_bundle, init_pak, pyth_graph_manifest,
     pyth_tig::{
+        NO_VALUE,
         opcode::Opcode,
         types::PythType,
         verify::{self, VerifiedGraph, VerifyError},
@@ -20,6 +21,7 @@ pub enum PythGraphLoadError {
     DuplicateGraphName,
     DuplicateGraphPrincipal,
     UnsupportedPhase2Opcode { node: u32, opcode: u16 },
+    UnsupportedPhase2ControlFlow { block: u32, target: u32 },
     Verify(VerifyError),
 }
 
@@ -64,7 +66,53 @@ pub fn validate_named_pyth_graph_payload_bytes<'a>(
 }
 
 fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), PythGraphLoadError> {
-    for (node_index, node) in verified.package().nodes().iter().enumerate() {
+    let package = verified.package();
+    for block in package.blocks().iter() {
+        let terminator_index = usize::try_from(block.terminator_node).map_err(|_| {
+            PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                block: block.block_id,
+                target: u32::MAX,
+            }
+        })?;
+        let terminator = package.nodes().get(terminator_index).ok_or(
+            PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                block: block.block_id,
+                target: u32::MAX,
+            },
+        )?;
+        if Opcode::try_from(terminator.opcode) == Ok(Opcode::Jump) {
+            let target = terminator.auxiliary0;
+            let target_index = usize::try_from(target).map_err(|_| {
+                PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                    block: block.block_id,
+                    target,
+                }
+            })?;
+            let target_block = package.blocks().get(target_index).ok_or(
+                PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                    block: block.block_id,
+                    target,
+                },
+            )?;
+            if target_block.parameter_count != 0
+                || [
+                    terminator.input0,
+                    terminator.input1,
+                    terminator.input2,
+                    terminator.input3,
+                ]
+                .into_iter()
+                .any(|input| input != NO_VALUE)
+            {
+                return Err(PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                    block: block.block_id,
+                    target,
+                });
+            }
+        }
+    }
+
+    for (node_index, node) in package.nodes().iter().enumerate() {
         let supported = match Opcode::try_from(node.opcode) {
             Ok(Opcode::BlockParam) => {
                 PythType::try_from(node.result_type) == Ok(PythType::Capability)
@@ -269,6 +317,22 @@ mod tests {
             Err(PythGraphLoadError::UnsupportedPhase2Opcode {
                 node: 0,
                 opcode: Opcode::ConstU64.code(),
+            })
+        );
+    }
+
+    #[test]
+    fn loader_rejects_verifier_valid_parameterized_jump_before_launch() {
+        let package = test_support::package_with_parameterized_jump();
+        verify::verify_bytes(&package)
+            .expect("shared v1 verifier must admit parameterized control flow");
+        let bundle = build_named_graph_bundle(b"parameterized.tig", &package);
+
+        assert_eq!(
+            validate_named_pyth_graph_payload_bytes(&bundle, b"parameterized.tig"),
+            Err(PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                block: 0,
+                target: 1,
             })
         );
     }

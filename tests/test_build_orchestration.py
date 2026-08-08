@@ -192,6 +192,63 @@ class BuildOrchestrationTest(unittest.TestCase):
                 ),
             )
 
+    def test_pyth_graph_runtime_negative_assertions_require_pre_entry_rejection(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        invalid_string = "\n".join(
+            (
+                "PYTHOS:LOADER:ENTER",
+                "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:VERIFY_NONCANONICAL_ENCODING",
+            )
+        )
+        parameterized = "\n".join(
+            (
+                "PYTHOS:LOADER:ENTER",
+                "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:UNSUPPORTED_PHASE2_CONTROL_FLOW",
+            )
+        )
+
+        module.assert_invalid_string_rejected(invalid_string)
+        module.assert_parameterized_jump_rejected(parameterized)
+        with self.assertRaises(AssertionError):
+            module.assert_parameterized_jump_rejected(
+                parameterized + "\nPYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000000"
+            )
+
+    def test_pyth_graph_fault_assertion_rejects_false_peer_claim(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        prefix = "\n".join(
+            (
+                "PYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000001",
+                "PYTHOS:CORE:CRASH:USER_FAULT",
+                "PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:5059544852540001",
+            )
+        )
+
+        module.assert_fault_contained(
+            prefix + "\nPYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE"
+        )
+        with self.assertRaises(AssertionError):
+            module.assert_fault_contained(prefix + "\nPYTHOS:CORE:CRASH:PEER_ALIVE")
+
+    def test_pyth_graph_success_assertion_requires_termination_transition(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        exit_only = "\n".join(
+            (
+                "PYTHOS:PYTHTIG:PACKAGE_VALID package:0000000000000001 nodes:5 blocks:1",
+                "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:5059544847520001 imports:1",
+                "PYTHOS:PYTHTIG:RUNTIME_ENTER package:0000000000000001",
+                "PYTHOS:PYTHTIG:PROGRAM_LOG",
+                "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",
+            )
+        )
+
+        with self.assertRaises(AssertionError):
+            module.assert_pyth_tig_success(exit_only)
+        module.assert_pyth_tig_success(
+            exit_only
+            + "\nPYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001"
+        )
+
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
 

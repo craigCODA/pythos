@@ -20,6 +20,8 @@ This work may:
   opt-in controls;
 - reject a package before ring-3 entry when it uses an opcode outside the
   Phase 2 execution profile;
+- reject verifier-valid parameterized control transfers that the bounded Phase
+  2 interpreter does not materialize;
 - preserve and strengthen the success, invalid-package, budget-exhaustion, and
   contained-fault QEMU acceptance cases; and
 - bring the Phase 2 branch onto the current ADR 0066 compatibility baseline.
@@ -74,10 +76,12 @@ semantic verifier. A separate Phase 2 execution-profile check runs in PythCore
 after shared verification and before package mapping, address-space creation,
 bootstrap construction, or ring-3 entry.
 
-The Phase 2 profile admits only the opcodes whose semantics are implemented by
-the reference runtime in this milestone. Future host-operation opcodes retain
-their frozen numeric identities but are rejected by the Phase 2 profile. This
-is a compatibility boundary, not a claim that those future operations work.
+The Phase 2 profile admits only the opcodes and unparameterized control
+transfers whose semantics are implemented by the reference runtime in this
+milestone. Future host-operation opcodes and parameterized jump edges retain
+their frozen version 1 identities/semantics but are rejected by the Phase 2
+profile. This is a compatibility boundary, not a claim that those constructs
+work in Phase 2.
 
 The ring-3 interpreter remains defensive: an impossible unsupported opcode
 still returns its typed runtime error if the kernel boundary is violated.
@@ -87,10 +91,14 @@ still returns its typed runtime error if the kernel boundary is violated.
 - Invalid shared-verifier packages emit one deterministic package-rejection
   marker before ring-3 entry.
 - Valid v1 packages outside the Phase 2 execution profile emit one deterministic
-  unsupported-opcode rejection marker before ring-3 entry.
+  opcode or control-flow rejection marker before ring-3 entry.
 - Budget exhaustion produces the existing typed budget exit.
-- Runtime invalid-instruction faults terminate only the graph process and leave
-  the permitted peer alive.
+- A valid graph exit reports its typed result, clears the active graph-process
+  binding, and reaches a defined PythCore safe-idle state without returning to
+  ring 3.
+- Runtime invalid-instruction faults clear the graph-process binding and prove
+  that PythCore reaches the same defined safe-idle state. Phase 2 creates no
+  peer process and makes no peer-liveness claim.
 - The default object shell remains reachable when no test-only launch mode is
   compiled and selected.
 
@@ -104,8 +112,9 @@ The completed slice requires fresh evidence for:
 - explicit opt-in image and ISO packaging with required artifacts;
 - interface compatibility and boot-marker freezes from current `main`;
 - default normal fast boot and object-shell boot;
-- Phase 2 success, invalid-package rejection, unsupported-profile rejection,
-  budget exhaustion, and contained runtime fault QEMU boots; and
+- Phase 2 success, invalid-package/reference rejection, unsupported opcode and
+  parameterized-control-flow rejection, budget exhaustion, truthful process
+  termination, and contained runtime-fault safe-idle QEMU boots; and
 - the complete existing milestone QEMU acceptance path.
 
 COM1 serial output remains the boot oracle. Compile success or a screenshot is

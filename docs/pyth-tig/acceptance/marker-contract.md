@@ -20,10 +20,12 @@ validation, and the active runtime-profile check all pass. It occurs before
 address-space creation. `PACKAGE_REJECTED` is terminal for that package launch
 and must not be followed by runtime-entry markers for the same invocation.
 
-Phase 2 stable rejection codes include `VERIFY_EFFECT_FORK` for shared-verifier
-rejection and `UNSUPPORTED_PHASE2_OPCODE` for a well-formed version 1 package
-outside the bounded Phase 2 interpreter profile. Both are emitted before
-package mapping, bootstrap construction, or ring-3 entry.
+Phase 2 stable rejection codes include `VERIFY_EFFECT_FORK` and
+`VERIFY_NONCANONICAL_ENCODING` for shared-verifier rejection,
+`UNSUPPORTED_PHASE2_OPCODE` for a well-formed version 1 opcode outside the
+bounded interpreter profile, and `UNSUPPORTED_PHASE2_CONTROL_FLOW` for a
+verifier-valid parameterized transfer that Phase 2 does not materialize. All
+are emitted before package mapping, bootstrap construction, or ring-3 entry.
 
 ## Runtime bootstrap and execution
 
@@ -33,7 +35,9 @@ PYTHOS:PYTHTIG:RUNTIME_ENTER package:<hex>
 PYTHOS:PYTHTIG:PROGRAM_LOG
 PYTHOS:PYTHTIG:BUDGET_EXHAUSTED node:<decimal>
 PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:<hex>
+PYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE
 PYTHOS:PYTHTIG:RUNTIME_EXIT status:<stable-code>
+PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:<hex>
 ```
 
 Required order for successful interpreted execution:
@@ -44,9 +48,19 @@ BOOTSTRAP_BOUND
 RUNTIME_ENTER
 PROGRAM_LOG or other scenario operation markers
 RUNTIME_EXIT status:0
+RUNTIME_TERMINATED
 ```
 
-Budget and fault scenarios must not emit successful completion for the invocation.
+`RUNTIME_EXIT` reports the validated result record. `RUNTIME_TERMINATED` occurs
+only after PythCore clears the active graph-process binding and reaches the
+defined kernel safe-idle state; a successful exit syscall does not return to
+ring 3. Budget exhaustion uses its nonzero typed exit status and then performs
+the same termination transition.
+
+A fault scenario emits `RUNTIME_FAULT_SAFE_IDLE` only after the active graph
+process has been cleared and PythCore remains alive in the defined safe-idle
+state. Phase 2 makes no peer-liveness claim. A fault scenario must not emit
+`RUNTIME_EXIT` or `RUNTIME_TERMINATED`.
 
 ## Object and capability flow
 

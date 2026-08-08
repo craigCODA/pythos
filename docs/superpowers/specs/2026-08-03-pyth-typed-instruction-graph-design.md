@@ -330,20 +330,12 @@ requested field; Phase 1 defines no capability-returning `HostResult`.
 
 ## 9. Verification pipeline
 
-The shared verifier runs in both the host compiler and PythCore. It performs these passes in order:
-
-1. Header, version, reserved fields, offsets, alignment, and total-length validation.
-2. Section non-overlap and count/size validation.
-3. Known type and opcode validation.
-4. Block ownership and exactly-one-terminator validation.
-5. Control target and block-argument count validation.
-6. Dominance and value-availability validation.
-7. Opcode-specific type validation.
-8. Effect-token single-chain validation.
-9. Capability origin, resource kind, and rights validation.
-10. Constant and string pool range validation.
-11. Resource-budget validation.
-12. Canonical-encoding validation and checksum verification.
+The shared decoder/verifier runs in both host tooling and PythCore. The frozen
+version 1 admission order is specified by ADR 0065: checked header/section/
+checksum decoding precedes known type/opcode, block/control-flow, dominance,
+typed/effect/capability, referenced constant/string range, and canonical-record
+validation. Referenced UTF-8 fields must decode as UTF-8, and unused flags,
+auxiliary fields, and immediates must use their canonical zero encoding.
 
 A verifier error is a typed deterministic error code. Permanent verifier error
 identities are frozen only after Phase 1 evidence supports the package ABI

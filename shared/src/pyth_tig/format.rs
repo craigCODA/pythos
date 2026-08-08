@@ -22,7 +22,7 @@ const RECORD_SECTION_ALIGNMENT: usize = 4;
 const CHECKSUM_OFFSET: usize = 84;
 const CHECKSUM_END: usize = 92;
 
-// The provisional v1 public layout struct mirrors the candidate 96-byte header
+// The frozen v1 public layout struct mirrors the 96-byte header
 // with `checksum` at byte 84. Codecs must still read/write explicit LE fields.
 #[derive(Clone, Copy)]
 #[repr(C, packed(4))]

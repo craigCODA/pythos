@@ -45,6 +45,8 @@ pub const HELLO_GRAPH_NAME: &[u8] = b"hello.tig";
 pub const BUDGET_GRAPH_NAME: &[u8] = b"budget.tig";
 pub const INVALID_GRAPH_NAME: &[u8] = b"invalid.tig";
 pub const UNSUPPORTED_GRAPH_NAME: &[u8] = b"unsupported.tig";
+pub const INVALID_STRING_GRAPH_NAME: &[u8] = b"invalid-string.tig";
+pub const PARAMETERIZED_GRAPH_NAME: &[u8] = b"parameterized.tig";
 pub const PYTH_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5448_5254_0001;
 pub const HELLO_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0001;
 pub const BUDGET_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0002;
@@ -60,6 +62,8 @@ pub const PYTH_GRAPH_CONTROL_LAUNCH_HELLO: u16 = 1;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_INVALID: u16 = 2;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_BUDGET: u16 = 3;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_UNSUPPORTED: u16 = 4;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_INVALID_STRING: u16 = 5;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_PARAMETERIZED: u16 = 6;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythRuntimeLaunchError {
@@ -81,6 +85,8 @@ pub enum PythGraphBootMode {
     LaunchInvalid,
     LaunchBudget,
     LaunchUnsupported,
+    LaunchInvalidString,
+    LaunchParameterized,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -92,7 +98,9 @@ pub enum PythGraphRejectCode {
     DuplicateGraphName,
     DuplicateGraphPrincipal,
     UnsupportedPhase2Opcode,
+    UnsupportedPhase2ControlFlow,
     VerifyEffectFork,
+    VerifyNonCanonicalEncoding,
     VerifyOther,
 }
 
@@ -106,7 +114,9 @@ impl PythGraphRejectCode {
             Self::DuplicateGraphName => "DUPLICATE_GRAPH_NAME",
             Self::DuplicateGraphPrincipal => "DUPLICATE_GRAPH_PRINCIPAL",
             Self::UnsupportedPhase2Opcode => "UNSUPPORTED_PHASE2_OPCODE",
+            Self::UnsupportedPhase2ControlFlow => "UNSUPPORTED_PHASE2_CONTROL_FLOW",
             Self::VerifyEffectFork => "VERIFY_EFFECT_FORK",
+            Self::VerifyNonCanonicalEncoding => "VERIFY_NONCANONICAL_ENCODING",
             Self::VerifyOther => "VERIFY_OTHER",
         }
     }
@@ -503,6 +513,8 @@ pub fn decode_and_clear_pyth_graph_control_sector(
         PYTH_GRAPH_CONTROL_LAUNCH_INVALID => PythGraphBootMode::LaunchInvalid,
         PYTH_GRAPH_CONTROL_LAUNCH_BUDGET => PythGraphBootMode::LaunchBudget,
         PYTH_GRAPH_CONTROL_LAUNCH_UNSUPPORTED => PythGraphBootMode::LaunchUnsupported,
+        PYTH_GRAPH_CONTROL_LAUNCH_INVALID_STRING => PythGraphBootMode::LaunchInvalidString,
+        PYTH_GRAPH_CONTROL_LAUNCH_PARAMETERIZED => PythGraphBootMode::LaunchParameterized,
         PYTH_GRAPH_CONTROL_DEFAULT => PythGraphBootMode::DefaultShell,
         _ => PythGraphBootMode::DefaultShell,
     }
@@ -531,9 +543,15 @@ pub fn rejection_code_for_load_error(
         crate::pyth_graph_loader::PythGraphLoadError::UnsupportedPhase2Opcode { .. } => {
             PythGraphRejectCode::UnsupportedPhase2Opcode
         }
+        crate::pyth_graph_loader::PythGraphLoadError::UnsupportedPhase2ControlFlow { .. } => {
+            PythGraphRejectCode::UnsupportedPhase2ControlFlow
+        }
         crate::pyth_graph_loader::PythGraphLoadError::Verify(VerifyError::EffectFork {
             ..
         }) => PythGraphRejectCode::VerifyEffectFork,
+        crate::pyth_graph_loader::PythGraphLoadError::Verify(VerifyError::NonCanonicalEncoding) => {
+            PythGraphRejectCode::VerifyNonCanonicalEncoding
+        }
         crate::pyth_graph_loader::PythGraphLoadError::Verify(_) => PythGraphRejectCode::VerifyOther,
     }
 }
@@ -676,6 +694,25 @@ mod tests {
             decode_and_clear_pyth_graph_control_sector(&mut unsupported),
             PythGraphBootMode::LaunchUnsupported
         );
+        assert_eq!(unsupported, [0u8; crate::block_device::SECTOR_SIZE]);
+
+        let mut invalid_string = [0u8; SECTOR_SIZE];
+        invalid_string[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        invalid_string[8..10]
+            .copy_from_slice(&PYTH_GRAPH_CONTROL_LAUNCH_INVALID_STRING.to_le_bytes());
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut invalid_string),
+            PythGraphBootMode::LaunchInvalidString
+        );
+
+        let mut parameterized = [0u8; SECTOR_SIZE];
+        parameterized[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        parameterized[8..10]
+            .copy_from_slice(&PYTH_GRAPH_CONTROL_LAUNCH_PARAMETERIZED.to_le_bytes());
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut parameterized),
+            PythGraphBootMode::LaunchParameterized
+        );
         assert_eq!(budget, [0u8; crate::block_device::SECTOR_SIZE]);
     }
 
@@ -703,6 +740,29 @@ mod tests {
         assert_eq!(
             PythGraphRejectCode::UnsupportedPhase2Opcode.stable_code(),
             "UNSUPPORTED_PHASE2_OPCODE"
+        );
+        assert_eq!(
+            rejection_code_for_load_error(crate::pyth_graph_loader::PythGraphLoadError::Verify(
+                VerifyError::NonCanonicalEncoding
+            )),
+            PythGraphRejectCode::VerifyNonCanonicalEncoding
+        );
+        assert_eq!(
+            PythGraphRejectCode::VerifyNonCanonicalEncoding.stable_code(),
+            "VERIFY_NONCANONICAL_ENCODING"
+        );
+        assert_eq!(
+            rejection_code_for_load_error(
+                crate::pyth_graph_loader::PythGraphLoadError::UnsupportedPhase2ControlFlow {
+                    block: 0,
+                    target: 1,
+                }
+            ),
+            PythGraphRejectCode::UnsupportedPhase2ControlFlow
+        );
+        assert_eq!(
+            PythGraphRejectCode::UnsupportedPhase2ControlFlow.stable_code(),
+            "UNSUPPORTED_PHASE2_CONTROL_FLOW"
         );
     }
 }

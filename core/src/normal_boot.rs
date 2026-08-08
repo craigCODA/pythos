@@ -70,6 +70,20 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             };
             pyth_runtime_launch::emit_package_rejected_marker(code);
         }
+        pyth_runtime_launch::PythGraphBootMode::LaunchInvalidString => {
+            let Some(code) = substrate.pyth_invalid_string_graph_rejection else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            pyth_runtime_launch::emit_package_rejected_marker(code);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchParameterized => {
+            let Some(code) = substrate.pyth_parameterized_graph_rejection else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            pyth_runtime_launch::emit_package_rejected_marker(code);
+        }
         pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {

@@ -27,13 +27,20 @@ CONTROL_LAUNCH_HELLO = 1
 CONTROL_LAUNCH_INVALID = 2
 CONTROL_LAUNCH_BUDGET = 3
 CONTROL_LAUNCH_UNSUPPORTED = 4
+CONTROL_LAUNCH_INVALID_STRING = 5
+CONTROL_LAUNCH_PARAMETERIZED = 6
 RUNTIME_ELF_ENTRY = 0x0000_0000_0050_0000
 
-HELLO_SUCCESS_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0"
-BUDGET_SUCCESS_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:2"
+HELLO_EXIT_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0"
+BUDGET_EXIT_MARKER = "PYTHOS:PYTHTIG:RUNTIME_EXIT status:2"
+RUNTIME_TERMINATED_MARKER = "PYTHOS:PYTHTIG:RUNTIME_TERMINATED"
+HELLO_SUCCESS_MARKER = RUNTIME_TERMINATED_MARKER
+BUDGET_SUCCESS_MARKER = RUNTIME_TERMINATED_MARKER
 INVALID_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
 UNSUPPORTED_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
-FAULT_SUCCESS_MARKER = "PYTHOS:CORE:CRASH:PEER_ALIVE"
+INVALID_STRING_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
+PARAMETERIZED_SUCCESS_MARKER = "PYTHOS:PYTHTIG:PACKAGE_REJECTED"
+FAULT_SUCCESS_MARKER = "PYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE"
 
 PACKAGE_VALID_RE = re.compile(
     r"^PYTHOS:PYTHTIG:PACKAGE_VALID package:([0-9A-F]{16}) nodes:(\d+) blocks:(\d+)$"
@@ -190,6 +197,7 @@ def assert_pyth_tig_success(serial: str) -> None:
             "PYTHOS:PYTHTIG:PACKAGE_REJECTED",
             "PYTHOS:PYTHTIG:BUDGET_EXHAUSTED",
             "PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED",
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATION_FAILED",
         ),
     )
 
@@ -197,7 +205,8 @@ def assert_pyth_tig_success(serial: str) -> None:
     bootstrap_index, bootstrap_match = require_single_match(lines, BOOTSTRAP_BOUND_RE)
     runtime_index, runtime_match = require_single_match(lines, RUNTIME_ENTER_RE)
     log_index = require_single(lines, "PYTHOS:PYTHTIG:PROGRAM_LOG")
-    exit_index = require_single(lines, HELLO_SUCCESS_MARKER)
+    exit_index = require_single(lines, HELLO_EXIT_MARKER)
+    terminated_index = require_single_containing(lines, RUNTIME_TERMINATED_MARKER)
 
     if (package_match.group(2), package_match.group(3)) != ("5", "1"):
         raise AssertionError("hello graph package shape changed")
@@ -209,7 +218,7 @@ def assert_pyth_tig_success(serial: str) -> None:
         )
     if bootstrap_match.group(1) != "5059544847520001":
         raise AssertionError(f"unexpected graph principal {bootstrap_match.group(1)}")
-    if not package_index < bootstrap_index < runtime_index < log_index < exit_index:
+    if not package_index < bootstrap_index < runtime_index < log_index < exit_index < terminated_index:
         raise AssertionError("PythTIG markers are out of order")
 
 
@@ -246,6 +255,44 @@ def assert_unsupported_profile_rejected(serial: str) -> None:
     )
 
 
+def assert_invalid_string_rejected(serial: str) -> None:
+    lines = serial_lines(serial)
+    reject_forbidden(
+        lines,
+        (
+            "PYTHOS:PANIC",
+            "PYTHOS:PYTHTIG:PACKAGE_VALID",
+            "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND",
+            "PYTHOS:PYTHTIG:RUNTIME_ENTER",
+            "PYTHOS:PYTHTIG:PROGRAM_LOG",
+            "PYTHOS:PYTHTIG:RUNTIME_EXIT",
+        ),
+    )
+    require_single(
+        lines,
+        "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:VERIFY_NONCANONICAL_ENCODING",
+    )
+
+
+def assert_parameterized_jump_rejected(serial: str) -> None:
+    lines = serial_lines(serial)
+    reject_forbidden(
+        lines,
+        (
+            "PYTHOS:PANIC",
+            "PYTHOS:PYTHTIG:PACKAGE_VALID",
+            "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND",
+            "PYTHOS:PYTHTIG:RUNTIME_ENTER",
+            "PYTHOS:PYTHTIG:PROGRAM_LOG",
+            "PYTHOS:PYTHTIG:RUNTIME_EXIT",
+        ),
+    )
+    require_single(
+        lines,
+        "PYTHOS:PYTHTIG:PACKAGE_REJECTED error:UNSUPPORTED_PHASE2_CONTROL_FLOW",
+    )
+
+
 def assert_budget_exhaustion(serial: str) -> None:
     lines = serial_lines(serial)
     reject_forbidden(
@@ -255,13 +302,15 @@ def assert_budget_exhaustion(serial: str) -> None:
             "PYTHOS:PYTHTIG:PACKAGE_REJECTED",
             "PYTHOS:PYTHTIG:PROGRAM_LOG",
             "PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED",
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATION_FAILED",
         ),
     )
     package_index, package_match = require_single_match(lines, PACKAGE_VALID_RE)
     bootstrap_index, bootstrap_match = require_single_match(lines, BOOTSTRAP_BOUND_RE)
     runtime_index, runtime_match = require_single_match(lines, RUNTIME_ENTER_RE)
     budget_index = require_single_containing(lines, "PYTHOS:PYTHTIG:BUDGET_EXHAUSTED node:")
-    exit_index = require_single(lines, BUDGET_SUCCESS_MARKER)
+    exit_index = require_single(lines, BUDGET_EXIT_MARKER)
+    terminated_index = require_single_containing(lines, RUNTIME_TERMINATED_MARKER)
 
     if (package_match.group(2), package_match.group(3)) != ("2", "1"):
         raise AssertionError("budget graph package shape changed")
@@ -269,7 +318,7 @@ def assert_budget_exhaustion(serial: str) -> None:
         raise AssertionError("budget package digest changed across launch")
     if bootstrap_match.group(1) != "5059544847520002":
         raise AssertionError(f"unexpected budget graph principal {bootstrap_match.group(1)}")
-    if not package_index < bootstrap_index < runtime_index < budget_index < exit_index:
+    if not package_index < bootstrap_index < runtime_index < budget_index < exit_index < terminated_index:
         raise AssertionError("budget markers are out of order")
 
 
@@ -281,6 +330,8 @@ def assert_fault_contained(serial: str) -> None:
             "PYTHOS:PANIC",
             "PYTHOS:PYTHTIG:PROGRAM_LOG",
             "PYTHOS:PYTHTIG:RUNTIME_EXIT",
+            "PYTHOS:CORE:CRASH:PEER_ALIVE",
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATION_FAILED",
         ),
     )
     runtime_index = require_single_match(lines, RUNTIME_ENTER_RE)[0]
@@ -289,8 +340,8 @@ def assert_fault_contained(serial: str) -> None:
         lines,
         "PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:5059544852540001",
     )
-    peer_index = require_single(lines, "PYTHOS:CORE:CRASH:PEER_ALIVE")
-    if not runtime_index < user_fault_index < contained_index < peer_index:
+    safe_idle_index = require_single(lines, FAULT_SUCCESS_MARKER)
+    if not runtime_index < user_fault_index < contained_index < safe_idle_index:
         raise AssertionError("runtime fault containment markers are out of order")
 
 
@@ -348,6 +399,16 @@ def main() -> int:
         "unsupported", CONTROL_LAUNCH_UNSUPPORTED, UNSUPPORTED_SUCCESS_MARKER
     )
     assert_unsupported_profile_rejected(unsupported_serial)
+
+    invalid_string_serial = run_qemu(
+        "invalid-string", CONTROL_LAUNCH_INVALID_STRING, INVALID_STRING_SUCCESS_MARKER
+    )
+    assert_invalid_string_rejected(invalid_string_serial)
+
+    parameterized_serial = run_qemu(
+        "parameterized", CONTROL_LAUNCH_PARAMETERIZED, PARAMETERIZED_SUCCESS_MARKER
+    )
+    assert_parameterized_jump_rejected(parameterized_serial)
 
     budget_serial = run_qemu("budget", CONTROL_LAUNCH_BUDGET, BUDGET_SUCCESS_MARKER)
     assert_budget_exhaustion(budget_serial)
