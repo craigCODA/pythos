@@ -169,6 +169,22 @@ pub(crate) fn parameterized_jump_package() -> Vec<u8> {
     bytes
 }
 
+pub(crate) fn object_create_package() -> Vec<u8> {
+    pythos_shared::pyth_tig::test_support::object_note_flow_package().to_vec()
+}
+
+pub(crate) fn object_restore_package() -> Vec<u8> {
+    pythos_shared::pyth_tig::test_support::object_restore_package().to_vec()
+}
+
+pub(crate) fn object_known_denied_package() -> Vec<u8> {
+    pythos_shared::pyth_tig::test_support::object_known_denied_package().to_vec()
+}
+
+pub(crate) fn object_forgery_package() -> Vec<u8> {
+    pythos_shared::pyth_tig::test_support::object_forgery_package().to_vec()
+}
+
 pub(crate) fn build_log_package(
     nodes: &[NodeSpec],
     import_rights: u64,

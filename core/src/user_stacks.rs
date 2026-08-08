@@ -5,7 +5,12 @@ use core::cell::UnsafeCell;
 
 pub const USER_STACK_PAGE_SIZE: usize = 4096;
 pub const USER_STACK_COUNT: usize = 2;
-const USER_STACK_SLOT_PAGES: usize = 2;
+/// ADR 0067 keeps the ADR 0029 guard-page contract but gives each static
+/// user stack enough bounded headroom for the Phase 3 PythTIG interpreter and
+/// object-service syscall request construction in debug acceptance builds.
+pub const USER_STACK_USABLE_PAGES: usize = 4;
+pub const USER_STACK_USABLE_BYTES: usize = USER_STACK_USABLE_PAGES * USER_STACK_PAGE_SIZE;
+const USER_STACK_SLOT_PAGES: usize = 1 + USER_STACK_USABLE_PAGES;
 const USER_STACK_SLOT_SIZE: usize = USER_STACK_SLOT_PAGES * USER_STACK_PAGE_SIZE;
 const USER_STACK_POOL_SIZE: usize = USER_STACK_COUNT * USER_STACK_SLOT_SIZE;
 
@@ -50,7 +55,7 @@ pub fn initialize() -> Result<(), UserStackError> {
         if !is_page_aligned(region.guard_start) || !is_page_aligned(region.stack_start) {
             return Err(UserStackError::Misaligned);
         }
-        if region.stack_len != USER_STACK_PAGE_SIZE as u64 {
+        if region.stack_len != USER_STACK_USABLE_BYTES as u64 {
             return Err(UserStackError::BadGuardLayout);
         }
         if region.guard_start + USER_STACK_PAGE_SIZE as u64 != region.stack_start {
@@ -87,7 +92,7 @@ fn region(index: usize) -> UserStackRegion {
     UserStackRegion {
         guard_start,
         stack_start: guard_start + USER_STACK_PAGE_SIZE as u64,
-        stack_len: USER_STACK_PAGE_SIZE as u64,
+        stack_len: USER_STACK_USABLE_BYTES as u64,
     }
 }
 
@@ -115,6 +120,12 @@ mod tests {
         assert_eq!(
             regions[1].guard_start + USER_STACK_PAGE_SIZE as u64,
             regions[1].stack_start
+        );
+        assert_eq!(regions[0].stack_len, USER_STACK_USABLE_BYTES as u64);
+        assert_eq!(regions[1].stack_len, USER_STACK_USABLE_BYTES as u64);
+        assert_eq!(
+            regions[0].stack_start + regions[0].stack_len,
+            regions[1].guard_start
         );
     }
 

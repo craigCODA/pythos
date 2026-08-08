@@ -958,6 +958,11 @@ fn emit_graph_exit_marker(exit: GraphExitRecord) {
     serial::write_str("PYTHOS:PYTHTIG:RUNTIME_EXIT status:");
     serial::write_dec_u64_value(u64::from(exit.status));
     serial::write_str("\r\n");
+    if exit.status == GRAPH_EXIT_OK
+        && crate::pyth_runtime_launch::take_object_flow_completion_marker()
+    {
+        serial::write_line("PYTHOS:PYTHTIG:OBJECT_FLOW_ACCEPTANCE_COMPLETE");
+    }
 }
 
 #[cfg(test)]
@@ -979,15 +984,19 @@ fn dispatch_object_request_to_service(
         OP_CREATE_OBJECT => match request_object_kind(request.object_kind)
             .and_then(|kind| service.create_object(caller, request.authority, kind))
         {
-            Ok(created) => ObjectShellResponse {
-                status: STATUS_OK,
-                object_kind: request.object_kind,
-                object_id: created.object_id.raw(),
-                revision: created.revision,
-                capability: created.object_capability,
-                ..empty_response()
-            },
-            Err(error) => error_response(error),
+            Ok(created) => {
+                let response = ObjectShellResponse {
+                    status: STATUS_OK,
+                    object_kind: request.object_kind,
+                    object_id: created.object_id.raw(),
+                    revision: created.revision,
+                    capability: created.object_capability,
+                    ..empty_response()
+                };
+                emit_pythtig_object_success_marker(caller, request.operation, response, None);
+                response
+            }
+            Err(error) => object_error_response(caller, request, error),
         },
         OP_QUERY_OBJECTS => {
             if output.len() < MAX_QUERY_RESULTS {
@@ -1002,14 +1011,21 @@ fn dispatch_object_request_to_service(
                         output[count] = entries[count];
                         count += 1;
                     }
-                    ObjectShellResponse {
+                    let response = ObjectShellResponse {
                         status: STATUS_OK,
                         object_kind: request.object_kind,
                         bytes_written: (count * size_of::<ObjectListEntry>()) as u64,
                         ..empty_response()
-                    }
+                    };
+                    emit_pythtig_object_success_marker(
+                        caller,
+                        request.operation,
+                        response,
+                        Some(output[0]),
+                    );
+                    response
                 }
-                Err(error) => error_response(error),
+                Err(error) => object_error_response(caller, request, error),
             }
         }
         OP_INSPECT_OBJECT => match service.inspect_object(
@@ -1020,7 +1036,7 @@ fn dispatch_object_request_to_service(
             Ok(inspection) => {
                 let field_bytes = inspection.field_bytes(FIELD_TEXT).unwrap_or([0; 16]);
                 let bytes_written = u64::from(inspection.field_value_len(FIELD_TEXT).unwrap_or(0));
-                ObjectShellResponse {
+                let response = ObjectShellResponse {
                     status: STATUS_OK,
                     object_kind: OBJECT_KIND_NOTE,
                     field_id: FIELD_TEXT,
@@ -1029,9 +1045,11 @@ fn dispatch_object_request_to_service(
                     bytes_written,
                     field_bytes,
                     ..empty_response()
-                }
+                };
+                emit_pythtig_object_success_marker(caller, request.operation, response, None);
+                response
             }
-            Err(error) => error_response(error),
+            Err(error) => object_error_response(caller, request, error),
         },
         OP_REVISE_FIELD => match service.revise_field(
             caller,
@@ -1040,24 +1058,32 @@ fn dispatch_object_request_to_service(
             request.field_id,
             input,
         ) {
-            Ok(revision) => ObjectShellResponse {
-                status: STATUS_OK,
-                field_id: request.field_id,
-                object_id: request.object_id,
-                revision,
-                ..empty_response()
-            },
-            Err(error) => error_response(error),
+            Ok(revision) => {
+                let response = ObjectShellResponse {
+                    status: STATUS_OK,
+                    field_id: request.field_id,
+                    object_id: request.object_id,
+                    revision,
+                    ..empty_response()
+                };
+                emit_pythtig_object_success_marker(caller, request.operation, response, None);
+                response
+            }
+            Err(error) => object_error_response(caller, request, error),
         },
         OP_GET_HISTORY => {
             match service.history(caller, request.authority, ObjectId::new(request.object_id)) {
-                Ok(revision_count) => ObjectShellResponse {
-                    status: STATUS_OK,
-                    object_id: request.object_id,
-                    revision_count,
-                    ..empty_response()
-                },
-                Err(error) => error_response(error),
+                Ok(revision_count) => {
+                    let response = ObjectShellResponse {
+                        status: STATUS_OK,
+                        object_id: request.object_id,
+                        revision_count,
+                        ..empty_response()
+                    };
+                    emit_pythtig_object_success_marker(caller, request.operation, response, None);
+                    response
+                }
+                Err(error) => object_error_response(caller, request, error),
             }
         }
         _ => bad_request_response(),
@@ -1097,6 +1123,111 @@ fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
         status,
         ..empty_response()
     }
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn object_error_response(
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    error: ObjectServiceError,
+) -> ObjectShellResponse {
+    emit_pythtig_object_denial_marker(caller, request, error);
+    error_response(error)
+}
+
+#[cfg(all(not(test), not(feature = "verify")))]
+fn emit_pythtig_object_success_marker(
+    caller: ActiveUserProcess,
+    operation: u16,
+    response: ObjectShellResponse,
+    query_entry: Option<ObjectListEntry>,
+) {
+    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID
+        || response.status != STATUS_OK
+    {
+        return;
+    }
+    match operation {
+        OP_CREATE_OBJECT if response.object_id != 0 && response.capability.raw() != 0 => {
+            serial::write_str("PYTHOS:PYTHTIG:OBJECT_CREATED object:");
+            serial::write_dec_u64_value(response.object_id);
+            serial::write_str(" revision:");
+            serial::write_dec_u64_value(response.revision);
+            serial::write_str("\r\n");
+        }
+        OP_QUERY_OBJECTS => {
+            if let Some(entry) = query_entry
+                && entry.object_id != 0
+                && entry.capability.raw() != 0
+            {
+                serial::write_str("PYTHOS:PYTHTIG:OBJECT_REBOUND object:");
+                serial::write_dec_u64_value(entry.object_id);
+                serial::write_str("\r\n");
+            }
+        }
+        OP_INSPECT_OBJECT
+            if response.bytes_written == 5 && response.field_bytes[..5] == *b"hello" =>
+        {
+            serial::write_str("PYTHOS:PYTHTIG:OBJECT_INSPECTED object:");
+            serial::write_dec_u64_value(response.object_id);
+            serial::write_str(" revision:");
+            serial::write_dec_u64_value(response.revision);
+            serial::write_str("\r\n");
+        }
+        OP_REVISE_FIELD if response.revision >= 2 => {
+            serial::write_str("PYTHOS:PYTHTIG:OBJECT_REVISED object:");
+            serial::write_dec_u64_value(response.object_id);
+            serial::write_str(" revision:");
+            serial::write_dec_u64_value(response.revision);
+            serial::write_str("\r\n");
+        }
+        OP_GET_HISTORY if response.revision_count >= 2 => {
+            serial::write_str("PYTHOS:PYTHTIG:OBJECT_HISTORY object:");
+            serial::write_dec_u64_value(response.object_id);
+            serial::write_str(" revisions:");
+            serial::write_dec_u64_value(response.revision_count);
+            serial::write_str("\r\n");
+        }
+        _ => {}
+    }
+}
+
+#[cfg(test)]
+fn emit_pythtig_object_success_marker(
+    _caller: ActiveUserProcess,
+    _operation: u16,
+    _response: ObjectShellResponse,
+    _query_entry: Option<ObjectListEntry>,
+) {
+}
+
+#[cfg(all(not(test), not(feature = "verify")))]
+fn emit_pythtig_object_denial_marker(
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    error: ObjectServiceError,
+) {
+    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID
+        || error != ObjectServiceError::Denied
+        || request.operation != OP_INSPECT_OBJECT
+    {
+        return;
+    }
+    if request.object_id == 2001 {
+        serial::write_str("PYTHOS:PYTHTIG:OBJECT_KNOWN_DENIED object:");
+        serial::write_dec_u64_value(request.object_id);
+        serial::write_str("\r\n");
+    } else if request.object_id == 1042 && request.authority.raw() != 0 {
+        serial::write_line("PYTHOS:PYTHTIG:CAPABILITY_FORGERY_DENIED");
+    }
+}
+
+#[cfg(test)]
+fn emit_pythtig_object_denial_marker(
+    _caller: ActiveUserProcess,
+    _request: ObjectShellRequest,
+    _error: ObjectServiceError,
+) {
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -1767,11 +1898,11 @@ mod tests {
         let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
         let mut response = Box::new(empty_test_response());
         let mut copy_map = UserCopyMap::new();
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
         );
         assert_eq!(retained_note_count(shell, workspace), 0);
@@ -1791,11 +1922,11 @@ mod tests {
         copy_map
             .add_mapping(request_ptr + 40, 40, true, false)
             .unwrap();
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::CrossMapping))
         );
         assert_eq!(retained_note_count(shell, workspace), 0);
@@ -1809,7 +1940,7 @@ mod tests {
         let _guard = retained_services::initialize_object_service_for_test(service);
         let mut response = Box::new(empty_test_response());
         let mut copy_map = UserCopyMap::new();
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
         let args = SyscallArgs {
             number: SYSCALL_OBJECT_REQUEST,
@@ -1835,7 +1966,7 @@ mod tests {
         let _guard = retained_services::initialize_object_service_for_test(service);
         let mut response = Box::new(empty_test_response());
         let mut copy_map = UserCopyMap::new();
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
         let args = SyscallArgs {
             number: SYSCALL_OBJECT_REQUEST,
@@ -1863,11 +1994,11 @@ mod tests {
         let mut response = Box::new(empty_test_response());
         let mut copy_map = UserCopyMap::new();
         map_value(&mut copy_map, &*request, true, false);
-        map_value(&mut copy_map, &mut *response, true, false);
+        map_value(&mut copy_map, &*response, true, false);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::PermissionDenied))
         );
         assert_eq!(retained_note_count(shell, workspace), 0);
@@ -1889,12 +2020,12 @@ mod tests {
         request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
         let mut copy_map = UserCopyMap::new();
         map_value(&mut copy_map, &*request, true, false);
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         map_slice(&mut copy_map, &*output, true, false);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::PermissionDenied))
         );
         assert_eq!(
@@ -1918,11 +2049,11 @@ mod tests {
         request.output_len = size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64;
         let mut copy_map = UserCopyMap::new();
         map_value(&mut copy_map, &*request, true, false);
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::LengthOverflow))
         );
         assert_eq!(response.status, STATUS_BAD_REQUEST);
@@ -1946,11 +2077,11 @@ mod tests {
         let mut response = Box::new(empty_test_response());
         let mut copy_map = UserCopyMap::new();
         map_value(&mut copy_map, &*request, true, false);
-        map_value(&mut copy_map, &mut *response, true, true);
+        map_value(&mut copy_map, &*response, true, true);
         process_context::bind_current_process(shell.with_copy_map(copy_map));
 
         assert_eq!(
-            dispatch_object_request(object_args(&*request, &mut *response)),
+            dispatch_object_request(object_args(&request, &mut response)),
             Err(SyscallError::UserCopy(UserCopyError::OutOfRange))
         );
         retained_services::with_object_service(|service| {

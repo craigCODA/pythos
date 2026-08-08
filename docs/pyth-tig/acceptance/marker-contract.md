@@ -1,8 +1,9 @@
 # PythTIG Acceptance Marker Contract
 
-**Status:** Phase 1 format and Phase 2 runtime markers are active only in their
-accepted verification paths. Later-phase markers remain reserved until their
-corresponding implementation phase is explicitly authorized and verified.
+**Status:** Phase 1 format, Phase 2 runtime, and Phase 3 object/capability
+markers are active only in their accepted verification paths. Later-phase
+markers remain reserved until their corresponding implementation phase is
+explicitly authorized and verified.
 
 **Namespace:** `PYTHOS:PYTHTIG:`
 
@@ -75,7 +76,13 @@ PYTHOS:PYTHTIG:OBJECT_REBOUND object:<decimal>
 PYTHOS:PYTHTIG:OBJECT_FLOW_ACCEPTANCE_COMPLETE
 ```
 
-`CAPABILITY_FORGERY_DENIED` occurs only after holder/resource/rights validation rejects the copied or fabricated authority before object mutation. `OBJECT_REBOUND` proves a fresh runtime capability was minted from stable identity/policy after reboot; it does not claim numeric handle inequality.
+Object markers are emitted only after the existing retained object service has
+accepted or denied the corresponding typed object syscall. `OBJECT_INSPECTED`
+requires the retained field bytes to match the scenario expectation.
+`CAPABILITY_FORGERY_DENIED` occurs only after holder/resource/rights validation
+rejects the copied or fabricated authority before object mutation.
+`OBJECT_REBOUND` proves a fresh runtime capability was minted from stable
+identity/policy after reboot; it does not claim numeric handle inequality.
 
 ## Task environment and Task Steward
 

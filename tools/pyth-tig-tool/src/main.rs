@@ -48,6 +48,22 @@ fn run() -> Result<(), String> {
             let bytes = encode::parameterized_jump_package();
             write_package(&path, bytes)
         }
+        "emit-object-create" => {
+            let bytes = encode::object_create_package();
+            write_package(&path, bytes)
+        }
+        "emit-object-restore" => {
+            let bytes = encode::object_restore_package();
+            write_package(&path, bytes)
+        }
+        "emit-object-known-denied" => {
+            let bytes = encode::object_known_denied_package();
+            write_package(&path, bytes)
+        }
+        "emit-object-forgery" => {
+            let bytes = encode::object_forgery_package();
+            write_package(&path, bytes)
+        }
         "verify" => {
             let bytes = fs::read(&path)
                 .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
@@ -73,5 +89,5 @@ fn write_package(path: &PathBuf, bytes: Vec<u8>) -> Result<(), String> {
 }
 
 fn usage() -> String {
-    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|emit-unsupported-phase2|emit-invalid-string-reference|emit-parameterized-jump|verify|mutate-suite> <path>".to_string()
+    "usage: pyth-tig-tool <emit-minimal-log|emit-budget-loop|emit-invalid-effect-fork|emit-unsupported-phase2|emit-invalid-string-reference|emit-parameterized-jump|emit-object-create|emit-object-restore|emit-object-known-denied|emit-object-forgery|verify|mutate-suite> <path>".to_string()
 }

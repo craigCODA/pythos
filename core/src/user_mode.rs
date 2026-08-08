@@ -640,7 +640,10 @@ mod tests {
         let (stack_start, stack_len) = user_stack_region();
 
         assert_eq!(code_len, USER_PAGE_SIZE as u64);
-        assert_eq!(stack_len, USER_PAGE_SIZE as u64);
+        assert_eq!(
+            stack_len,
+            crate::user_stacks::USER_STACK_USABLE_BYTES as u64
+        );
         assert_eq!(code_start % USER_PAGE_SIZE as u64, 0);
         assert_eq!(stack_start % USER_PAGE_SIZE as u64, 0);
     }

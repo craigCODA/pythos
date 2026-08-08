@@ -15,6 +15,10 @@ INVALID_OUTPUT = OUTPUT_DIR / "invalid.tig"
 UNSUPPORTED_OUTPUT = OUTPUT_DIR / "unsupported.tig"
 INVALID_STRING_OUTPUT = OUTPUT_DIR / "invalid-string.tig"
 PARAMETERIZED_OUTPUT = OUTPUT_DIR / "parameterized.tig"
+OBJECT_CREATE_OUTPUT = OUTPUT_DIR / "object-create.tig"
+OBJECT_RESTORE_OUTPUT = OUTPUT_DIR / "object-restore.tig"
+OBJECT_KNOWN_DENIED_OUTPUT = OUTPUT_DIR / "object-known-denied.tig"
+OBJECT_FORGERY_OUTPUT = OUTPUT_DIR / "object-forgery.tig"
 TOOL_EXE = ROOT / "target" / "debug" / (
     "pyth-tig-tool.exe" if os.name == "nt" else "pyth-tig-tool"
 )
@@ -71,12 +75,24 @@ def main() -> int:
     verify_rejected(INVALID_STRING_OUTPUT, "NonCanonicalEncoding")
     emit("emit-parameterized-jump", PARAMETERIZED_OUTPUT)
     verify(PARAMETERIZED_OUTPUT)
+    emit("emit-object-create", OBJECT_CREATE_OUTPUT)
+    verify(OBJECT_CREATE_OUTPUT)
+    emit("emit-object-restore", OBJECT_RESTORE_OUTPUT)
+    verify(OBJECT_RESTORE_OUTPUT)
+    emit("emit-object-known-denied", OBJECT_KNOWN_DENIED_OUTPUT)
+    verify(OBJECT_KNOWN_DENIED_OUTPUT)
+    emit("emit-object-forgery", OBJECT_FORGERY_OUTPUT)
+    verify(OBJECT_FORGERY_OUTPUT)
     print(f"PYTH_GRAPH_READY {HELLO_OUTPUT}")
     print(f"PYTH_GRAPH_BUDGET_READY {BUDGET_OUTPUT}")
     print(f"PYTH_GRAPH_INVALID_READY {INVALID_OUTPUT}")
     print(f"PYTH_GRAPH_UNSUPPORTED_READY {UNSUPPORTED_OUTPUT}")
     print(f"PYTH_GRAPH_INVALID_STRING_READY {INVALID_STRING_OUTPUT}")
     print(f"PYTH_GRAPH_PARAMETERIZED_READY {PARAMETERIZED_OUTPUT}")
+    print(f"PYTH_GRAPH_OBJECT_CREATE_READY {OBJECT_CREATE_OUTPUT}")
+    print(f"PYTH_GRAPH_OBJECT_RESTORE_READY {OBJECT_RESTORE_OUTPUT}")
+    print(f"PYTH_GRAPH_OBJECT_KNOWN_DENIED_READY {OBJECT_KNOWN_DENIED_OUTPUT}")
+    print(f"PYTH_GRAPH_OBJECT_FORGERY_READY {OBJECT_FORGERY_OUTPUT}")
     return 0
 
 

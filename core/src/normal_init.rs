@@ -14,6 +14,8 @@ use crate::pyth_runtime_launch;
 use crate::{
     architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
 };
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 use pythos_shared::boot_protocol::PythBootInfo;
 use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
 
@@ -27,9 +29,9 @@ pub struct NormalBootSubstrate {
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
     #[cfg(feature = "pythtig-phase2-test")]
-    pub pyth_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    pub pyth_runtime_launch: Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
-    pub pyth_budget_runtime_launch: Option<pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    pub pyth_budget_runtime_launch: Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_invalid_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
     #[cfg(feature = "pythtig-phase2-test")]
@@ -38,6 +40,18 @@ pub struct NormalBootSubstrate {
     pub pyth_invalid_string_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_parameterized_graph_rejection: Option<pyth_runtime_launch::PythGraphRejectCode>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_object_create_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_object_restore_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_object_known_denied_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_object_forgery_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
 }
 
 pub struct PreparedShellLaunch {
@@ -90,6 +104,77 @@ pub enum NormalInitError {
     ShellProgram,
     ShellAddressSpace,
     ShellBootstrap,
+}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+struct PythRuntimeLaunchSlot(
+    UnsafeCell<MaybeUninit<pyth_runtime_launch::PreparedPythRuntimeLaunch>>,
+);
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+// SAFETY:
+// 1. Invariant: each slot is written at most once during single-core normal
+//    boot initialization and then read immutably for the selected graph launch.
+// 2. Established by: `initialize_normal_substrate` is the only writer and it
+//    completes before any ring-3 graph process can run.
+// 3. Lifetime: the slots are static and intentionally live for the whole boot.
+// 4. Pointer ownership: normal boot owns the one initialization write; later
+//    users only receive shared references.
+// 5. Alignment: `MaybeUninit<PreparedPythRuntimeLaunch>` preserves the
+//    contained launch-record alignment.
+// 6. Mapped length: exactly one prepared launch record is stored per slot.
+// 7. Concurrency: Phase 3 normal boot is single-core and non-reentrant.
+// 8. Violation: a second writer could invalidate a launch reference already
+//    handed to `normal_boot`.
+unsafe impl Sync for PythRuntimeLaunchSlot {}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_BUDGET_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+fn store_pyth_runtime_launch(
+    slot: &'static PythRuntimeLaunchSlot,
+    launch: Result<
+        pyth_runtime_launch::PreparedPythRuntimeLaunch,
+        pyth_runtime_launch::PythRuntimeLaunchError,
+    >,
+) -> Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch> {
+    let launch = launch.ok()?;
+    // SAFETY:
+    // 1. Invariant: this writes a completed launch record into its dedicated
+    //    static slot before any reference to that slot is exposed.
+    // 2. Established by: all callers are inside `initialize_normal_substrate`
+    //    during single-core pre-ring-3 boot initialization.
+    // 3. Lifetime: the static slot outlives the returned shared reference.
+    // 4. Pointer ownership: this function performs the one initialization
+    //    write; the returned reference is immutable.
+    // 5. Alignment: `MaybeUninit` provides `PreparedPythRuntimeLaunch`
+    //    alignment.
+    // 6. Mapped length: one full `PreparedPythRuntimeLaunch` is written.
+    // 7. Concurrency: no second writer or graph process exists yet.
+    // 8. Violation: reusing a slot after handing out a reference would be
+    //    undefined; this boot path does not reinitialize slots.
+    unsafe {
+        let slot_ptr = slot.0.get();
+        (*slot_ptr).write(launch);
+        Some(&*(*slot_ptr).as_ptr())
+    }
 }
 
 #[cfg(not(test))]
@@ -189,21 +274,25 @@ pub fn initialize_normal_substrate(
         stack_region: user_stacks::regions()[0],
     };
     #[cfg(feature = "pythtig-phase2-test")]
-    let pyth_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch(
-        boot_info,
-        physical_memory,
-        &supervisor_mappings,
-    )
-    .ok();
+    let pyth_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+        ),
+    );
     #[cfg(feature = "pythtig-phase2-test")]
-    let pyth_budget_runtime_launch = pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph(
-        boot_info,
-        physical_memory,
-        &supervisor_mappings,
-        pyth_runtime_launch::BUDGET_GRAPH_NAME,
-        pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
-    )
-    .ok();
+    let pyth_budget_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_BUDGET_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::BUDGET_GRAPH_NAME,
+            pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
+        ),
+    );
     #[cfg(feature = "pythtig-phase2-test")]
     let pyth_invalid_graph_rejection = pyth_runtime_launch::detect_pyth_graph_rejection(
         boot_info,
@@ -223,6 +312,50 @@ pub fn initialize_normal_substrate(
     let pyth_parameterized_graph_rejection = pyth_runtime_launch::detect_pyth_graph_rejection(
         boot_info,
         pyth_runtime_launch::PARAMETERIZED_GRAPH_NAME,
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_object_create_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_object_restore_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_object_known_denied_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_object_forgery_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_graph_deferred_test_object_capability(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+        ),
     );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
@@ -289,6 +422,14 @@ pub fn initialize_normal_substrate(
         pyth_invalid_string_graph_rejection,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_parameterized_graph_rejection,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_object_create_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_object_restore_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_object_known_denied_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_object_forgery_runtime_launch,
     })
 }
 

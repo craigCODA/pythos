@@ -3,7 +3,8 @@ use pythos_shared::{
     object_shell_abi::PackedCapability,
     pyth_runtime_abi::{
         GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_RUNTIME_ERROR, GraphExitRecord,
-        MAX_PYTH_GRAPH_IMPORTS,
+        HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
+        HOST_RESULT_UTF8, HostCallResult, MAX_HOST_RESULT_BYTES, MAX_PYTH_GRAPH_IMPORTS,
     },
     pyth_tig::{
         NO_VALUE,
@@ -24,6 +25,32 @@ pub enum HostError {
 
 pub trait Host {
     fn system_log(&mut self, capability: PackedCapability, text: &[u8]) -> Result<(), HostError>;
+    fn object_create(
+        &mut self,
+        capability: PackedCapability,
+        kind: &[u8],
+    ) -> Result<HostCallResult, HostError>;
+    fn object_query(
+        &mut self,
+        capability: PackedCapability,
+        kind: &[u8],
+    ) -> Result<HostCallResult, HostError>;
+    fn object_inspect(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+    ) -> Result<HostCallResult, HostError>;
+    fn object_revise(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+        text: &[u8],
+    ) -> Result<HostCallResult, HostError>;
+    fn object_history(
+        &mut self,
+        capability: PackedCapability,
+        object_id: u64,
+    ) -> Result<HostCallResult, HostError>;
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +70,7 @@ pub struct Interpreter<'a> {
     graph: VerifiedGraph<'a>,
     imports: &'a [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
     values: &'a mut [Option<Value>; MAX_RUNTIME_VALUES],
+    host_results: &'a mut [Option<HostCallResult>; MAX_RUNTIME_VALUES],
     budget: u64,
     executed_nodes: u64,
     last_node: u32,
@@ -59,12 +87,15 @@ impl<'a> Interpreter<'a> {
         imports: &'a [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
         budget: u64,
         values: &'a mut [Option<Value>; MAX_RUNTIME_VALUES],
+        host_results: &'a mut [Option<HostCallResult>; MAX_RUNTIME_VALUES],
     ) -> Self {
         values.fill(None);
+        host_results.fill(None);
         Self {
             graph,
             imports,
             values,
+            host_results,
             budget,
             executed_nodes: 0,
             last_node: NO_VALUE,
@@ -156,8 +187,16 @@ impl<'a> Interpreter<'a> {
         match opcode {
             Opcode::BlockParam => self.execute_block_param(node_index, &node),
             Opcode::EffectStart => self.store_value(node_index, Value::Effect(node_index as u64)),
+            Opcode::ConstU64 => self.execute_const_u64(node_index, &node),
+            Opcode::ConstBytes => self.execute_const_bytes(package, node_index, &node),
             Opcode::ConstUtf8 => self.execute_const_utf8(package, node_index, &node),
+            Opcode::HostResult => self.execute_host_result(node_index, &node),
             Opcode::SystemLog => self.execute_system_log(package, node_index, &node, host),
+            Opcode::ObjectCreate => self.execute_object_create(package, node_index, &node, host),
+            Opcode::ObjectQuery => self.execute_object_query(package, node_index, &node, host),
+            Opcode::ObjectInspect => self.execute_object_inspect(node_index, &node, host),
+            Opcode::ObjectRevise => self.execute_object_revise(package, node_index, &node, host),
+            Opcode::ObjectHistory => self.execute_object_history(node_index, &node, host),
             Opcode::Jump => Ok(()),
             Opcode::Return => Ok(()),
             _ => Err(RuntimeError::UnsupportedOpcode),
@@ -186,6 +225,18 @@ impl<'a> Interpreter<'a> {
         self.store_value(node_index, Value::Capability(capability))
     }
 
+    fn execute_const_u64(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        match PythType::try_from(node.result_type).map_err(|_| RuntimeError::InvalidValue)? {
+            PythType::ObjectId => self.store_value(node_index, Value::ObjectId(node.immediate)),
+            PythType::RevisionId => self.store_value(node_index, Value::RevisionId(node.immediate)),
+            _ => Err(RuntimeError::UnsupportedOpcode),
+        }
+    }
+
     fn execute_const_utf8(
         &mut self,
         package: &PythGraphPackage<'a>,
@@ -206,6 +257,69 @@ impl<'a> Interpreter<'a> {
         )
     }
 
+    fn execute_const_bytes(
+        &mut self,
+        package: &PythGraphPackage<'a>,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        let offset = usize::try_from(node.auxiliary0).map_err(|_| RuntimeError::InvalidString)?;
+        let len = usize::try_from(node.auxiliary1).map_err(|_| RuntimeError::InvalidString)?;
+        let end = offset.checked_add(len).ok_or(RuntimeError::InvalidString)?;
+        package
+            .constant_pool()
+            .get(offset..end)
+            .ok_or(RuntimeError::InvalidString)?;
+        self.store_value(
+            node_index,
+            Value::Slice {
+                offset: node.auxiliary0,
+                len: node.auxiliary1,
+                utf8: false,
+            },
+        )
+    }
+
+    fn execute_host_result(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        let producer_index =
+            usize::try_from(node.input0).map_err(|_| RuntimeError::InvalidInput)?;
+        let result = self
+            .host_results
+            .get(producer_index)
+            .copied()
+            .flatten()
+            .ok_or(RuntimeError::InvalidValue)?;
+        let value = match node.auxiliary0 {
+            HOST_RESULT_STATUS => Value::ErrorCode(result.status),
+            HOST_RESULT_OBJECT_ID => Value::ObjectId(result.object_id),
+            HOST_RESULT_REVISION => Value::RevisionId(result.revision),
+            HOST_RESULT_CAPABILITY => {
+                if result.capability.raw() == 0 {
+                    return Err(RuntimeError::InvalidValue);
+                }
+                Value::Capability(result.capability)
+            }
+            HOST_RESULT_UTF8 => {
+                let len = usize::from(result.bytes_len);
+                if len > MAX_HOST_RESULT_BYTES
+                    || core::str::from_utf8(&result.bytes[..len]).is_err()
+                {
+                    return Err(RuntimeError::InvalidString);
+                }
+                Value::HostUtf8 {
+                    producer_node: node.input0,
+                    len: result.bytes_len,
+                }
+            }
+            _ => return Err(RuntimeError::InvalidValue),
+        };
+        self.store_value(node_index, value)
+    }
+
     fn execute_system_log(
         &mut self,
         package: &PythGraphPackage<'a>,
@@ -215,15 +329,102 @@ impl<'a> Interpreter<'a> {
     ) -> Result<(), RuntimeError> {
         let _effect = self.expect_effect(node.input0)?;
         let capability = self.expect_capability(node.input1)?;
-        let (offset, len) = self.expect_utf8_slice(node.input2)?;
-        let text = package
-            .string_at(
-                offset,
-                u16::try_from(len).map_err(|_| RuntimeError::InvalidString)?,
-            )
-            .map_err(|_| RuntimeError::InvalidString)?;
+        let text = self.expect_utf8_bytes(package, node.input2)?;
         host.system_log(capability, text)
             .map_err(RuntimeError::Host)?;
+        self.store_value(node_index, Value::Effect(node_index as u64))
+    }
+
+    fn execute_object_create(
+        &mut self,
+        package: &PythGraphPackage<'a>,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let kind = self.expect_utf8_bytes(package, node.input2)?;
+        let result = host
+            .object_create(capability, kind)
+            .map_err(RuntimeError::Host)?;
+        self.store_host_result(node_index, result)
+    }
+
+    fn execute_object_query(
+        &mut self,
+        package: &PythGraphPackage<'a>,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let kind = self.expect_utf8_bytes(package, node.input2)?;
+        let result = host
+            .object_query(capability, kind)
+            .map_err(RuntimeError::Host)?;
+        self.store_host_result(node_index, result)
+    }
+
+    fn execute_object_inspect(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let object_id = self.expect_object_id(node.input2)?;
+        let result = host
+            .object_inspect(capability, object_id)
+            .map_err(RuntimeError::Host)?;
+        self.store_host_result(node_index, result)
+    }
+
+    fn execute_object_revise(
+        &mut self,
+        package: &PythGraphPackage<'a>,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let object_id = self.expect_object_id(node.input2)?;
+        let text = self.expect_bytes(package, node.input3)?;
+        let result = host
+            .object_revise(capability, object_id, text)
+            .map_err(RuntimeError::Host)?;
+        self.store_host_result(node_index, result)
+    }
+
+    fn execute_object_history(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let object_id = self.expect_object_id(node.input2)?;
+        let result = host
+            .object_history(capability, object_id)
+            .map_err(RuntimeError::Host)?;
+        self.store_host_result(node_index, result)
+    }
+
+    fn store_host_result(
+        &mut self,
+        node_index: usize,
+        result: HostCallResult,
+    ) -> Result<(), RuntimeError> {
+        validate_host_call_result(result)?;
+        let slot = self
+            .host_results
+            .get_mut(node_index)
+            .ok_or(RuntimeError::InvalidValue)?;
+        *slot = Some(result);
         self.store_value(node_index, Value::Effect(node_index as u64))
     }
 
@@ -259,9 +460,60 @@ impl<'a> Interpreter<'a> {
         }
     }
 
-    fn expect_utf8_slice(&self, node_index: u32) -> Result<(u32, u32), RuntimeError> {
+    fn expect_utf8_bytes<'b>(
+        &'b self,
+        package: &'b PythGraphPackage<'a>,
+        node_index: u32,
+    ) -> Result<&'b [u8], RuntimeError> {
         match self.load_value(node_index)? {
-            Value::Slice { offset, len, utf8 } if utf8 => Ok((offset, len)),
+            Value::Slice { offset, len, utf8 } if utf8 => package
+                .string_at(
+                    offset,
+                    u16::try_from(len).map_err(|_| RuntimeError::InvalidString)?,
+                )
+                .map_err(|_| RuntimeError::InvalidString),
+            Value::HostUtf8 { producer_node, len } => {
+                let producer_index =
+                    usize::try_from(producer_node).map_err(|_| RuntimeError::InvalidInput)?;
+                let result = self
+                    .host_results
+                    .get(producer_index)
+                    .and_then(Option::as_ref)
+                    .ok_or(RuntimeError::InvalidValue)?;
+                let len = usize::from(len);
+                if len > MAX_HOST_RESULT_BYTES {
+                    return Err(RuntimeError::InvalidString);
+                }
+                let bytes = &result.bytes[..len];
+                core::str::from_utf8(bytes).map_err(|_| RuntimeError::InvalidString)?;
+                Ok(bytes)
+            }
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
+    fn expect_bytes<'b>(
+        &'b self,
+        package: &'b PythGraphPackage<'a>,
+        node_index: u32,
+    ) -> Result<&'b [u8], RuntimeError> {
+        match self.load_value(node_index)? {
+            Value::Slice { offset, len, utf8 } if !utf8 => {
+                let offset = usize::try_from(offset).map_err(|_| RuntimeError::InvalidString)?;
+                let len = usize::try_from(len).map_err(|_| RuntimeError::InvalidString)?;
+                let end = offset.checked_add(len).ok_or(RuntimeError::InvalidString)?;
+                package
+                    .constant_pool()
+                    .get(offset..end)
+                    .ok_or(RuntimeError::InvalidString)
+            }
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
+    fn expect_object_id(&self, node_index: u32) -> Result<u64, RuntimeError> {
+        match self.load_value(node_index)? {
+            Value::ObjectId(object_id) => Ok(object_id),
             _ => Err(RuntimeError::InvalidValue),
         }
     }
@@ -323,18 +575,37 @@ impl RuntimeError {
     }
 }
 
+fn validate_host_call_result(result: HostCallResult) -> Result<(), RuntimeError> {
+    if result.reserved0 != 0
+        || result.reserved1 != [0; 16]
+        || usize::from(result.bytes_len) > MAX_HOST_RESULT_BYTES
+    {
+        return Err(RuntimeError::InvalidValue);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
-        pyth_runtime_abi::MAX_PYTH_GRAPH_IMPORTS,
+        pyth_runtime_abi::{HOST_RESULT_STATUS, HostCallResult, MAX_PYTH_GRAPH_IMPORTS},
         pyth_tig::{format::PythGraphPackage, test_support, verify::verify_package},
     };
 
     struct RecordingHost {
         logs: [[u8; 16]; 4],
         log_count: usize,
+        create_count: usize,
+        revise_count: usize,
+        inspect_count: usize,
+        last_revise_capability: PackedCapability,
+        last_inspect_capability: PackedCapability,
+        last_text: [u8; 16],
+        last_text_len: usize,
+        malformed_create: bool,
+        deny_create: bool,
     }
 
     impl Host for RecordingHost {
@@ -349,6 +620,94 @@ mod tests {
             self.log_count += 1;
             Ok(())
         }
+
+        fn object_create(
+            &mut self,
+            _capability: PackedCapability,
+            kind: &[u8],
+        ) -> Result<HostCallResult, HostError> {
+            if kind != b"note" {
+                return Err(HostError::Failed);
+            }
+            self.create_count += 1;
+            if self.deny_create {
+                return Ok(HostCallResult::empty(1));
+            }
+            let mut result = HostCallResult::empty(0);
+            result.object_id = 1042;
+            result.revision = 1;
+            result.capability = PackedCapability::from_parts(9, 2);
+            if self.malformed_create {
+                result.reserved0 = 1;
+            }
+            Ok(result)
+        }
+
+        fn object_query(
+            &mut self,
+            _capability: PackedCapability,
+            _kind: &[u8],
+        ) -> Result<HostCallResult, HostError> {
+            let mut result = HostCallResult::empty(0);
+            result.object_id = 1042;
+            result.capability = PackedCapability::from_parts(9, 2);
+            Ok(result)
+        }
+
+        fn object_inspect(
+            &mut self,
+            capability: PackedCapability,
+            object_id: u64,
+        ) -> Result<HostCallResult, HostError> {
+            if object_id != 1042 {
+                self.inspect_count += 1;
+                self.last_inspect_capability = capability;
+                let mut result = HostCallResult::empty(1);
+                result.object_id = object_id;
+                return Ok(result);
+            }
+            self.inspect_count += 1;
+            self.last_inspect_capability = capability;
+            self.last_text[..5].copy_from_slice(b"hello");
+            self.last_text_len = 5;
+            let mut result = HostCallResult::empty(0);
+            result.object_id = object_id;
+            result.revision = 2;
+            result.bytes_len = 5;
+            result.bytes[..5].copy_from_slice(b"hello");
+            Ok(result)
+        }
+
+        fn object_revise(
+            &mut self,
+            capability: PackedCapability,
+            object_id: u64,
+            text: &[u8],
+        ) -> Result<HostCallResult, HostError> {
+            if object_id != 1042 || text != b"hello" {
+                return Err(HostError::Failed);
+            }
+            self.revise_count += 1;
+            self.last_revise_capability = capability;
+            let mut result = HostCallResult::empty(0);
+            result.object_id = object_id;
+            result.revision = 2;
+            Ok(result)
+        }
+
+        fn object_history(
+            &mut self,
+            _capability: PackedCapability,
+            object_id: u64,
+        ) -> Result<HostCallResult, HostError> {
+            if object_id != 1042 {
+                return Err(HostError::Failed);
+            }
+            let mut result = HostCallResult::empty(0);
+            result.object_id = object_id;
+            result.revision = 2;
+            Ok(result)
+        }
     }
 
     #[test]
@@ -359,11 +718,22 @@ mod tests {
         let mut host = RecordingHost {
             logs: [[0; 16]; 4],
             log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
         };
         let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
 
-        let exit = Interpreter::new(verified, &imports, 64, &mut values).execute(&mut host);
+        let exit = Interpreter::new(verified, &imports, 64, &mut values, &mut host_results)
+            .execute(&mut host);
 
         assert_eq!(exit.status, GRAPH_EXIT_OK);
         assert_eq!(exit.executed_nodes, 5);
@@ -380,16 +750,212 @@ mod tests {
         let mut host = RecordingHost {
             logs: [[0; 16]; 4],
             log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
         };
         let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
 
-        let exit = Interpreter::new(verified, &imports, 3, &mut values).execute(&mut host);
+        let exit = Interpreter::new(verified, &imports, 3, &mut values, &mut host_results)
+            .execute(&mut host);
 
         assert_eq!(exit.status, GRAPH_EXIT_BUDGET_EXHAUSTED);
         assert_eq!(exit.error_code, RuntimeError::BudgetExhausted.code());
         assert_eq!(exit.executed_nodes, 3);
         assert_eq!(exit.last_node, 1);
         assert_eq!(host.log_count, 0);
+    }
+
+    #[test]
+    fn object_create_revise_and_inspect_propagate_dynamic_capability() {
+        let bytes = test_support::object_note_flow_package();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+        };
+        let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        imports[0] = PackedCapability::from_parts(4, 1);
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(
+            values[9],
+            Some(Value::HostUtf8 {
+                producer_node: 8,
+                len: 5
+            })
+        );
+        assert_eq!(host.create_count, 1);
+        assert_eq!(host.revise_count, 1);
+        assert_eq!(host.inspect_count, 1);
+        assert_eq!(
+            host.last_revise_capability,
+            PackedCapability::from_parts(9, 2)
+        );
+        assert_eq!(
+            host.last_inspect_capability,
+            PackedCapability::from_parts(9, 2)
+        );
+        assert_eq!(&host.last_text[..host.last_text_len], b"hello");
+    }
+
+    #[test]
+    fn known_object_denial_status_executes_through_object_id_constant() {
+        let bytes = test_support::object_known_denied_package();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+        };
+        let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        imports[0] = PackedCapability::from_parts(4, 1);
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(values[7], Some(Value::ErrorCode(1)));
+        assert_eq!(host.inspect_count, 1);
+        assert_eq!(
+            host.last_inspect_capability,
+            PackedCapability::from_parts(9, 2)
+        );
+    }
+
+    #[test]
+    fn restore_query_inspect_history_fixture_executes_with_rebound_capability() {
+        let bytes = test_support::object_restore_package();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+        };
+        let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        imports[0] = PackedCapability::from_parts(4, 1);
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(
+            values[7],
+            Some(Value::HostUtf8 {
+                producer_node: 6,
+                len: 5
+            })
+        );
+        assert_eq!(host_results[8].unwrap().revision, 2);
+        assert_eq!(host.inspect_count, 1);
+        assert_eq!(
+            host.last_inspect_capability,
+            PackedCapability::from_parts(9, 2)
+        );
+    }
+
+    #[test]
+    fn malformed_host_result_metadata_stops_execution() {
+        let bytes =
+            test_support::object_create_host_result(PythType::ErrorCode, HOST_RESULT_STATUS);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: true,
+            deny_create: false,
+        };
+        let imports = [PackedCapability::from_parts(4, 1); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_RUNTIME_ERROR);
+    }
+
+    #[test]
+    fn denied_object_status_is_available_as_typed_host_result() {
+        let bytes =
+            test_support::object_create_host_result(PythType::ErrorCode, HOST_RESULT_STATUS);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: true,
+        };
+        let imports = [PackedCapability::from_parts(4, 1); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(host.create_count, 1);
+        assert_eq!(values[4], Some(Value::ErrorCode(1)));
     }
 }
