@@ -5,8 +5,8 @@ use crate::pyth_tig::{
         PythGraphHeader,
     },
     opcode::{
-        Opcode, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE, RIGHTS_READ,
-        RIGHTS_REVISE,
+        Opcode, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE, RIGHTS_QUERY,
+        RIGHTS_READ, RIGHTS_REVISE,
     },
     types::PythType,
 };
@@ -1010,7 +1010,12 @@ pub fn object_create_host_result(
         },
     );
     write_return(&mut package.bytes, nodes_offset + 5 * NODE_RECORD_SIZE, 0);
-    write_object_workspace_import(&mut package.bytes, imports_offset, 4, RIGHTS_CREATE);
+    write_object_workspace_import(
+        &mut package.bytes,
+        imports_offset,
+        4,
+        RIGHTS_CREATE | RIGHTS_QUERY,
+    );
     package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"note");
     refresh_checksum(&mut package.bytes);
     package
@@ -1206,7 +1211,12 @@ pub fn object_create_revise_with_dynamic_capability()
         },
     );
     write_return(&mut package.bytes, nodes_offset + 8 * NODE_RECORD_SIZE, 0);
-    write_object_workspace_import(&mut package.bytes, imports_offset, 4, RIGHTS_CREATE);
+    write_object_workspace_import(
+        &mut package.bytes,
+        imports_offset,
+        4,
+        RIGHTS_CREATE | RIGHTS_QUERY,
+    );
     package.bytes[constant_pool_offset..constant_pool_offset + 5].copy_from_slice(b"hello");
     package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"note");
     refresh_checksum(&mut package.bytes);
@@ -1343,7 +1353,12 @@ pub fn object_note_flow_package() -> FixturePackage<OBJECT_NOTE_FLOW_PACKAGE_LEN
         },
     );
     write_return(&mut package.bytes, nodes_offset + 10 * NODE_RECORD_SIZE, 0);
-    write_object_workspace_import(&mut package.bytes, imports_offset, 4, RIGHTS_CREATE);
+    write_object_workspace_import(
+        &mut package.bytes,
+        imports_offset,
+        4,
+        RIGHTS_CREATE | RIGHTS_QUERY,
+    );
     package.bytes[constant_pool_offset..constant_pool_offset + 5].copy_from_slice(b"hello");
     package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"note");
     refresh_checksum(&mut package.bytes);

@@ -37,7 +37,13 @@ use pythos_shared::{
         MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR,
         PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock, PythGraphCapabilityBinding,
     },
-    pyth_tig::verify::{VerifiedGraph, VerifyError},
+    pyth_tig::{
+        opcode::{
+            RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RIGHTS_CREATE, RIGHTS_QUERY,
+            RIGHTS_READ,
+        },
+        verify::{VerifiedGraph, VerifyError},
+    },
 };
 
 pub const PYTH_RUNTIME_PROGRAM_NAME: &[u8] = b"pyth-runtime.elf";
@@ -76,6 +82,13 @@ pub enum PythRuntimeLaunchError {
     AddressSpace,
     Capability,
     ControlSector,
+    UnauthorizedImport,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PythGraphImportCapabilities {
+    pub system_log: PackedCapability,
+    pub object_workspace: PackedCapability,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -158,7 +171,7 @@ pub fn build_pyth_graph_bootstrap(
     package_user_ptr: u64,
     package_len: u64,
     result_user_ptr: u64,
-    system_log_capability: PackedCapability,
+    import_capabilities: PythGraphImportCapabilities,
 ) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
     if package_len == 0 || package_len > crate::memory::physical::PAGE_SIZE {
         return Err(PythRuntimeLaunchError::PackageTooLarge);
@@ -194,7 +207,7 @@ pub fn build_pyth_graph_bootstrap(
             resource_kind: import.resource_kind,
             reserved0: 0,
             rights: import.rights,
-            capability: system_log_capability,
+            capability: bind_import_capability(import, import_capabilities)?,
         };
         index += 1;
     }
@@ -211,6 +224,23 @@ pub fn build_pyth_graph_bootstrap(
         result_ptr: result_user_ptr,
         imports: bindings,
     })
+}
+
+fn bind_import_capability(
+    import: pythos_shared::pyth_tig::CapabilityImportRecord,
+    capabilities: PythGraphImportCapabilities,
+) -> Result<PackedCapability, PythRuntimeLaunchError> {
+    let capability = match (import.resource_kind, import.rights) {
+        (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.system_log,
+        (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
+            capabilities.object_workspace
+        }
+        _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
+    };
+    if capability.raw() == 0 {
+        return Err(PythRuntimeLaunchError::MissingImport);
+    }
+    Ok(capability)
 }
 
 #[cfg(all(
@@ -298,7 +328,10 @@ pub fn prepare_pyth_runtime_launch_for_graph(
         PYTH_GRAPH_PACKAGE_USER_PTR,
         package.len() as u64,
         PYTH_GRAPH_RESULT_USER_PTR,
-        system_log_capability,
+        PythGraphImportCapabilities {
+            system_log: system_log_capability,
+            object_workspace: PackedCapability::from_raw(0),
+        },
     )?;
 
     write_package_page(package_frame, package);
@@ -567,21 +600,33 @@ mod tests {
             GRAPH_RESULT_UNIT, GraphExitRecord, PYTH_GRAPH_BOOTSTRAP_MAGIC,
             PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphBootstrapBlock,
         },
-        pyth_tig::{opcode::RESOURCE_SYSTEM_LOG, test_support, verify::verify_bytes},
+        pyth_tig::{
+            opcode::{
+                RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RIGHTS_CREATE, RIGHTS_QUERY,
+                RIGHTS_REVISE,
+            },
+            test_support,
+            types::PythType,
+            verify::verify_bytes,
+        },
     };
 
     #[test]
     fn bootstrap_binds_readonly_package_result_slot_budget_and_system_log_import() {
         let package = test_support::system_log_with_import_capability();
         let verified = verify_bytes(&package).unwrap();
-        let capability = PackedCapability::from_parts(7, 1);
+        let system_log = PackedCapability::from_parts(7, 1);
+        let workspace = PackedCapability::from_parts(8, 1);
 
         let bootstrap = build_pyth_graph_bootstrap(
             &verified,
             0x7100_1000,
             package.len() as u64,
             0x7100_2000,
-            capability,
+            PythGraphImportCapabilities {
+                system_log,
+                object_workspace: workspace,
+            },
         )
         .unwrap();
 
@@ -596,9 +641,77 @@ mod tests {
         assert_eq!(bootstrap.imports[0].import_slot, 0);
         assert_eq!(bootstrap.imports[0].resource_kind, RESOURCE_SYSTEM_LOG);
         assert_eq!(bootstrap.imports[0].rights, 1);
-        assert_eq!(bootstrap.imports[0].capability, capability);
+        assert_eq!(bootstrap.imports[0].capability, system_log);
         assert_eq!(bootstrap.imports[1].capability.raw(), 0);
         assert_eq!(GRAPH_RESULT_UNIT, 0);
+    }
+
+    #[test]
+    fn bootstrap_binds_exact_object_workspace_import_policy() {
+        let package = test_support::object_note_flow_package();
+        let verified = verify_bytes(&package).unwrap();
+        let system_log = PackedCapability::from_parts(7, 1);
+        let workspace = PackedCapability::from_parts(8, 1);
+
+        let bootstrap = build_pyth_graph_bootstrap(
+            &verified,
+            0x7100_1000,
+            package.len() as u64,
+            0x7100_2000,
+            PythGraphImportCapabilities {
+                system_log,
+                object_workspace: workspace,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(bootstrap.import_count, 1);
+        assert_eq!(
+            bootstrap.imports[0].resource_kind,
+            RESOURCE_OBJECT_WORKSPACE
+        );
+        assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE | RIGHTS_QUERY);
+        assert_eq!(bootstrap.imports[0].capability, workspace);
+    }
+
+    #[test]
+    fn bootstrap_denies_excess_workspace_rights_and_initial_object_caps() {
+        let system_log = PackedCapability::from_parts(7, 1);
+        let workspace = PackedCapability::from_parts(8, 1);
+        let policy = PythGraphImportCapabilities {
+            system_log,
+            object_workspace: workspace,
+        };
+
+        let mut excess_workspace = test_support::object_note_flow_package();
+        test_support::set_first_import_rights(
+            &mut excess_workspace,
+            RIGHTS_CREATE | RIGHTS_QUERY | RIGHTS_REVISE,
+        );
+        let verified_excess = verify_bytes(&excess_workspace).unwrap();
+        assert_eq!(
+            build_pyth_graph_bootstrap(
+                &verified_excess,
+                0x7100_1000,
+                excess_workspace.len() as u64,
+                0x7100_2000,
+                policy,
+            ),
+            Err(PythRuntimeLaunchError::UnauthorizedImport)
+        );
+
+        let initial_object = test_support::object_inspect_host_result(PythType::Utf8, 4);
+        let verified_object = verify_bytes(&initial_object).unwrap();
+        assert_eq!(
+            build_pyth_graph_bootstrap(
+                &verified_object,
+                0x7100_1000,
+                initial_object.len() as u64,
+                0x7100_2000,
+                policy,
+            ),
+            Err(PythRuntimeLaunchError::UnauthorizedImport)
+        );
     }
 
     #[test]
