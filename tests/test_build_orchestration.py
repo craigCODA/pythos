@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -137,6 +138,59 @@ class BuildOrchestrationTest(unittest.TestCase):
         )
         self.assertIn("pythtig-phase2-test", core_build)
         self.assertIn("--with-pythtig", package)
+
+    def test_pyth_graph_runtime_copies_source_esp_for_each_scenario(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            module.TARGET = temp_root / "target"
+            module.ESP = temp_root / "source-esp"
+            boot_file = module.ESP / "EFI" / "BOOT" / "BOOTX64.EFI"
+            boot_file.parent.mkdir(parents=True)
+            boot_file.write_bytes(b"scenario-isolation")
+
+            module.run_qemu("success", module.CONTROL_LAUNCH_HELLO, "success")
+            module.run_qemu("invalid", module.CONTROL_LAUNCH_INVALID, "invalid")
+
+            success_esp = module.TARGET / "pyth-graph-runtime-success-esp"
+            invalid_esp = module.TARGET / "pyth-graph-runtime-invalid-esp"
+            self.assertTrue(success_esp.is_dir())
+            self.assertTrue(invalid_esp.is_dir())
+            self.assertEqual(
+                (success_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"scenario-isolation",
+            )
+            self.assertEqual(
+                (invalid_esp / "EFI" / "BOOT" / "BOOTX64.EFI").read_bytes(),
+                b"scenario-isolation",
+            )
+            self.assertNotEqual(success_esp, invalid_esp)
+
+    def test_pyth_graph_runtime_passes_scenario_esp_to_qemu(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            module.TARGET = temp_root / "target"
+            module.ESP = temp_root / "source-esp"
+            module.ESP.mkdir()
+
+            module.run_qemu("invalid", module.CONTROL_LAUNCH_INVALID, "rejected")
+
+            command = normalize(calls[-1])
+            self.assertIn("--esp", command)
+            esp_index = command.index("--esp")
+            self.assertEqual(
+                command[esp_index + 1],
+                str(module.TARGET / "pyth-graph-runtime-invalid-esp").replace(
+                    "\\", "/"
+                ),
+            )
 
     def test_makefile_image_and_iso_targets_depend_on_verified_shell(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -11,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
+ESP = ROOT / "image" / "esp"
 PYTH_RUNTIME_ELF = (
     TARGET
     / "x86_64-unknown-none"
@@ -109,9 +111,18 @@ def prepare_graph_control_image(path: Path, mode: int) -> None:
         image.write(sector)
 
 
+def prepare_scenario_esp(scenario: str) -> Path:
+    scenario_esp = TARGET / f"pyth-graph-runtime-{scenario}-esp"
+    if scenario_esp.exists():
+        shutil.rmtree(scenario_esp)
+    shutil.copytree(ESP, scenario_esp)
+    return scenario_esp
+
+
 def run_qemu(scenario: str, mode: int, success_marker: str) -> str:
     serial_log = TARGET / f"pyth-graph-runtime-{scenario}.log"
     storage_image = TARGET / f"pyth-graph-runtime-{scenario}.img"
+    scenario_esp = prepare_scenario_esp(scenario)
     prepare_graph_control_image(storage_image, mode)
     if serial_log.exists():
         serial_log.unlink()
@@ -119,6 +130,8 @@ def run_qemu(scenario: str, mode: int, success_marker: str) -> str:
         [
             sys.executable,
             "scripts/run-qemu.py",
+            "--esp",
+            str(scenario_esp),
             "--serial-log",
             str(serial_log),
             "--storage-image",
