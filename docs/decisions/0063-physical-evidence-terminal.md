@@ -5,16 +5,29 @@ Status: Accepted
 
 ## Implementation Status on Main
 
-This ADR is accepted as design, and `main` carries the five 2026-08-02
-evidence-terminal gallery frames. As of 2026-08-04, `main` does not contain the
-`evidence_log.rs` or `evidence_terminal.rs` implementation files, an
-`evidence-terminal` Cargo feature, or `scripts/test-evidence-terminal.py`.
+The evidence-terminal design is implemented on `main`. The repository contains
+the evidence-log sources, `core/src/evidence_terminal.rs`, the
+`evidence-terminal` Cargo feature, and `scripts/test-evidence-terminal.py`.
+COM1 remains the automated QEMU oracle; the framebuffer terminal is an opt-in
+visual mirror for serial-less physical evidence capture.
 
-The implementation remains on unmerged branch
-`agent/physical-evidence-terminal`. That branch reports QEMU acceptance at
-implementation commit `5e73e73` and treats physical validation as the next
-step. The committed gallery frames are therefore retained as physical artifact
-evidence, not as a reproducible acceptance path from `main`.
+On 2026-08-08, the evidence-terminal path was captured on the disposable O2
+Micro `1217:8620` target across five readable framebuffer pages and a continuous
+boot video. Every photographed page reports:
+
+```text
+count 00000139
+drop 00000000
+crc 176F4C6E
+```
+
+`format_status_line` formats only the page fields as decimal and formats count,
+drop, and CRC with `write_hex8`. Therefore `00000139` is hexadecimal and means
+313 decimal accepted markers. Two separate physical boots produced the same
+count, zero-drop state, and CRC. The physical stream was reconstructed from the
+current QEMU stream plus observed hardware-path differences and recomputes to
+313 markers with CRC `176F4C6E`. See
+[`docs/evidence/2026-08-08-physical-evidence-terminal.md`](../evidence/2026-08-08-physical-evidence-terminal.md).
 
 ## Context
 
@@ -33,8 +46,8 @@ or broaden the hardware claim.
 ## Decision
 
 Add an opt-in `evidence-terminal` feature for verification images. The feature
-renders a terminal-style marker transcript on the framebuffer after the Phase
-10 storage proof reaches `PYTHOS:CORE:PHASE_10_COMPLETE`.
+renders a terminal-style marker transcript on the framebuffer after the Phase 10
+storage proof reaches `PYTHOS:CORE:PHASE_10_COMPLETE`.
 
 The boot ABI minor version moves from `0.2` to `0.3`. `PythBootInfo` consumes
 part of the existing reserved area with explicit evidence-log metadata:
@@ -86,6 +99,12 @@ On physical hardware the QEMU debug-exit port write is ignored and
 terminal page visible. Page dwell uses the existing PIT tick clock. Any CPU
 spin fallback is calibrated and verified only for the O2 Micro `1217:8620`
 target evidence image.
+
+The physical transcript can legitimately differ from QEMU where hardware
+discovery, audio fallback, or pre-existing persistent-storage state select
+different truthful marker branches. Physical acceptance therefore does not
+require a bit-for-bit copy of the QEMU marker stream; it requires a complete,
+ordered, zero-drop stream consistent with the executed hardware path.
 
 ## Consequences
 
