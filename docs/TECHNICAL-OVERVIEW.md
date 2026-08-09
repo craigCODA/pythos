@@ -7,13 +7,14 @@ execution substrate, brings up service identity and capability mechanisms,
 persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
 SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has target-specific
-physical panel evidence on the confirmed disposable O2 Micro `1217:8620`
-target. ADR 0063 defines the evidence-terminal acceptance contract and its
-repository-state boundaries. The reproducible evidence terminal remains listed
-under "Not yet claimed" until its implementation, harness, documentation, and
-accepted branch state are reconciled together. Recommended follow-up: reconcile
-ADR 0063, README, the status table, and dedicated evidence-terminal
-documentation in a separate evidence-terminal status pass.
+physical evidence on the confirmed disposable O2 Micro `1217:8620` target.
+ADR 0063's evidence terminal is implemented on `main` with QEMU acceptance
+through `scripts/test-evidence-terminal.py`. On 2026-08-08 the terminal was
+captured on the physical O2 Micro target across five readable pages showing
+`count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The count field is
+hexadecimal, so `0x139` is 313 decimal markers. Two separate physical boots
+reproduced the same count, zero-drop state, and CRC, and the reconstructed
+hardware-path stream recomputes to 313 markers with CRC `176F4C6E`.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -32,7 +33,9 @@ and where the boundary of the work still is.
 | Ring-3 object shell in QEMU | Arbitrary third-party programs |
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
-| Physical SDHCI/eMMC backend panel evidence on O2 Micro `1217:8620` | Reproducible evidence terminal from `main` |
+| Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
+| Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
+| Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 
 ## What PythOS Is
 
@@ -266,7 +269,7 @@ The normal object-shell path uses COM2 as an interactive transport and proves a
 create/inspect/revise/history/reboot/restore lifecycle over the same typed
 object storage model.
 
-### Block Backends
+### Block Backends And Physical Evidence
 
 The original persistent-storage path uses legacy virtio-blk in QEMU. Later
 backend work adds polling AHCI in QEMU and an opt-in polling single-block PIO
@@ -274,11 +277,20 @@ SDHCI/eMMC backend. The SDHCI/eMMC backend is selected only when the QEMU test
 boots from ISO with virtio disabled and no AHCI storage disk, and the tests
 reject fallback markers so a passing run cannot be explained by another disk.
 
-The SDHCI/eMMC branch has a first-run photo and second-run video showing the
-final Phase 10 backend panel on the disposable O2 Micro `1217:8620` laptop:
-[docs/milestones/2026-08-01-physical-emmc-phase10.md](milestones/2026-08-01-physical-emmc-phase10.md).
-That is a target-specific physical backend result, not a generic
-hardware-support claim.
+The disposable O2 Micro `1217:8620` laptop has target-specific physical Phase 10
+backend evidence and later five-page evidence-terminal validation. The terminal
+status line's `count 00000139` is hexadecimal, meaning 313 decimal markers, with
+zero drops and CRC `176F4C6E`. The physical marker stream differs from QEMU only
+where the observed hardware/audio/storage state selects different truthful
+branches. The modeled physical stream closes exactly at 313 markers and CRC
+`176F4C6E`.
+
+See:
+
+- [Physical SDHCI/eMMC Phase 10 evidence](milestones/2026-08-01-physical-emmc-phase10.md)
+- [2026-08-08 physical evidence-terminal validation](evidence/2026-08-08-physical-evidence-terminal.md)
+
+This is a target-specific physical result, not a generic hardware-support claim.
 
 ## How Claims Are Verified
 
@@ -290,7 +302,13 @@ are missing or out of order. `scripts/run-qemu.py` classifies terminal outcomes
 as success, panic, reset, timeout, or marker-order violation. Timeout is never
 accepted as success evidence.
 
-The main acceptance commands are:
+The evidence-terminal path mirrors accepted markers into a bounded framebuffer
+transcript. `scripts/test-evidence-terminal.py` requires ordered milestone
+markers, rejects panic/fallback/dropped-transcript conditions, and validates the
+terminal screendump's expected glyph structure. It supplements COM1; it does not
+replace COM1 as the automated oracle.
+
+The main acceptance commands include:
 
 ```powershell
 cargo fmt --check
@@ -305,6 +323,7 @@ python scripts\test-object-shell.py
 python scripts\test-ahci-block-device.py
 python scripts\test-sdhci-emmc-block-device.py
 python scripts\test-object-shell.py --backend sdhci-emmc
+python scripts\test-evidence-terminal.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -320,7 +339,7 @@ QEMU slice handoff suite.
 ## What Is Not Claimed
 
 PythOS is not currently a general-purpose desktop OS. The following are not
-implemented:
+implemented or not claimed:
 
 * conventional desktop-shell authority as the user model;
 * general-purpose filesystem allocation;
@@ -333,6 +352,8 @@ implemented:
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * physical interactive object-shell use through built-in keyboard or trackpad;
+* a requirement that physical and QEMU evidence transcripts be bit-identical;
+* CRC-32 as collision-proof proof of transcript identity;
 * AI inside the trusted core;
 * Patch, Open Surface, Causal Lens UI, or semantic indexing.
 
@@ -355,14 +376,19 @@ make narrower but stronger claims:
   QEMU;
 * SDHCI/eMMC backend tests reject virtio/AHCI fallback and inspect the backing
   eMMC image;
-* first-run photo and second-run video evidence show the final Phase 10
-  SDHCI/eMMC backend panel on the disposable O2 Micro `1217:8620` target;
+* physical evidence shows the Phase 10 SDHCI/eMMC path and later the full
+  five-page evidence terminal on the disposable O2 Micro `1217:8620` target;
+* the physical terminal records 313 accepted markers, zero drops, and CRC
+  `176F4C6E`, with the modeled hardware stream independently recomputing to the
+  same count and CRC;
+* two separate physical boots reproduced the same terminal header;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate.
 
 The value of the project is the discipline around those claims. The repo does
 not ask the reader to believe a status document. It gives them marker contracts,
-ADRs, tests, and boot logs that either support a claim or fail the run.
+ADRs, tests, boot logs, and physical artifacts that either support a claim or
+fail the run.
 
 ## Where To Look
 
@@ -375,6 +401,7 @@ docs/ROADMAP.md
 docs/HANDOVER.md
 docs/THREAT-MODEL.md
 docs/milestones/2026-08-01-physical-emmc-phase10.md
+docs/evidence/2026-08-08-physical-evidence-terminal.md
 ```
 
 Key late-phase ADRs:
@@ -391,6 +418,7 @@ docs/decisions/0051-first-ring3-object-shell.md
 docs/decisions/0052-object-shell-service-abi.md
 docs/decisions/0054-polling-ahci-block-backend.md
 docs/decisions/0062-polling-sdhci-emmc-block-backend.md
+docs/decisions/0063-physical-evidence-terminal.md
 ```
 
 Verification entry points:
@@ -402,6 +430,7 @@ scripts/test-persistent-storage.py
 scripts/test-object-shell.py
 scripts/test-ahci-block-device.py
 scripts/test-sdhci-emmc-block-device.py
+scripts/test-evidence-terminal.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py
