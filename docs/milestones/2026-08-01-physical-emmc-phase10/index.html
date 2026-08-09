@@ -23,17 +23,19 @@
     <main>
       <section class="band">
         <div class="content narrow">
-          <p class="kicker">2026-08-01</p>
+          <p class="kicker">2026-08-01 / physical terminal validated 2026-08-08</p>
           <h1>PythOS Runs Persistent Object Storage Through Physical SDHCI/eMMC Hardware</h1>
           <p class="lede">
             The Phase 10 storage backend panel was reached across two cold-boot
             runs on a disposable O2 Micro <code>1217:8620</code> laptop target.
-            This page records the public claim, the evidence, and what remains
-            outside the claim.
+            A later physical evidence-terminal run exposed the full five-page
+            Milestone 1 marker stream on the same target. This page records the
+            public claim, the evidence, and what remains outside the claim.
           </p>
           <div class="actions">
             <a class="button primary" href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Release assets</a>
             <a class="button" href="../2026-08-01-physical-emmc-phase10.md">Source record</a>
+            <a class="button" href="../../evidence/2026-08-08-physical-evidence-terminal.md">2026-08-08 validation record</a>
           </div>
         </div>
       </section>
@@ -62,28 +64,28 @@ capacity 000000000747C000</code></pre>
       <section class="band">
         <div class="content">
           <div class="section-head">
-            <p class="kicker">2026-08-02 follow-up evidence</p>
-            <h2>Evidence Terminal</h2>
+            <p class="kicker">2026-08-08 follow-up evidence</p>
+            <h2>Physical Evidence Terminal</h2>
           </div>
           <p class="lede">
-            Main carries five evidence-terminal gallery frames showing the
-            captured acceptance-marker stream across five framebuffer pages:
+            Five readable physical terminal pages report
             <code>count 00000139</code>, <code>drop 00000000</code>, and
-            <code>crc 176F4C6E</code>. The generator, feature flag, and QEMU
-            harness are not present on <code>main</code>; the implementation
-            remains on unmerged branch
-            <code>agent/physical-evidence-terminal</code>. The frames show the
-            captured path through loader handoff, kernel initialization,
-            capability gates, scheduler and IPC checks, object persistence,
-            crash recovery, adversarial storage checks, SDHCI/eMMC acceptance,
-            framebuffer readiness, and
-            <code>PYTHOS:CORE:MILESTONE_1_COMPLETE</code>.
+            <code>crc 176F4C6E</code>. The count field is hexadecimal, so
+            <code>0x139</code> equals <strong>313 decimal markers</strong>. The
+            evidence-terminal implementation, Cargo feature, and QEMU harness
+            are present on <code>main</code>.
+          </p>
+          <p class="lede">
+            Two separate physical boots reproduced the same count, zero-drop
+            state, and CRC. The reconstructed physical stream, including the
+            observed hardware-specific audio path and existing-storage path,
+            contains 313 markers and recomputes to CRC <code>176F4C6E</code>.
           </p>
           <p class="boundary-note">
-            These markers are acceptance evidence for the captured milestone
-            path. They are not a claim that every named subsystem is
-            production-complete, portable, interrupt-driven, or broadly supported
-            across hardware.
+            The physical stream is not required to be textually identical to the
+            QEMU stream: hardware discovery and persistent state can truthfully
+            select different marker branches. CRC-32 repeatability is strong
+            reproducibility evidence, not collision-proof identity proof.
           </p>
           <div class="gallery compact">
             <figure class="tile">
@@ -99,7 +101,7 @@ capacity 000000000747C000</code></pre>
               <figcaption class="caption">Page 5/5 - Phase 10, SDHCI/eMMC acceptance, milestone complete.</figcaption>
             </figure>
           </div>
-          <p><a href="../../evidence/#evidence-terminal">Open all five evidence-terminal pages</a> or <a href="../../decisions/0063-physical-evidence-terminal.md">read ADR 0063</a>.</p>
+          <p><a href="../../evidence/#evidence-terminal">Open the evidence-terminal gallery</a>, <a href="../../evidence/2026-08-08-physical-evidence-terminal.md">read the physical validation record</a>, or <a href="../../decisions/0063-physical-evidence-terminal.md">read ADR 0063</a>.</p>
         </div>
       </section>
       <section class="band dark">
@@ -111,12 +113,12 @@ capacity 000000000747C000</code></pre>
               <p>O2 Micro SDHCI/eMMC, vendor/device <code>1217:8620</code>, BDF <code>01:00.0</code>, class/subclass/pi <code>08/05/01</code>.</p>
             </article>
             <article class="tile">
-              <h3>Merge Commit</h3>
-              <p><code>0a59547100eace8eca0ac5d08153ef88f213b272</code></p>
+              <h3>Evidence terminal</h3>
+              <p><code>main</code> carries the implementation and <code>scripts/test-evidence-terminal.py</code> QEMU acceptance harness.</p>
             </article>
             <article class="tile">
-              <h3>ADR</h3>
-              <p><a href="../../decisions/0062-polling-sdhci-emmc-block-backend.md">ADR 0062 - Polling SDHCI/eMMC Block Backend</a></p>
+              <h3>ADRs</h3>
+              <p><a href="../../decisions/0062-polling-sdhci-emmc-block-backend.md">ADR 0062</a> and <a href="../../decisions/0063-physical-evidence-terminal.md">ADR 0063</a>.</p>
             </article>
           </div>
         </div>
@@ -125,17 +127,17 @@ capacity 000000000747C000</code></pre>
         <div class="content">
           <h2>QEMU Backing</h2>
           <p class="lede">
-            Before physical deployment, the branch passed formatting, clippy,
-            host tests, and QEMU acceptance for storage, shell transport, and
-            object persistence.
+            Automated acceptance remains rooted in COM1 serial ordering and host
+            checks. The evidence-terminal harness additionally validates the
+            framebuffer terminal structure and rejects dropped transcripts.
           </p>
           <pre><code>cargo fmt --check
 cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
-cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
 cargo test -p pythos-core
 python scripts\test-sdhci-emmc-block-device.py
 python scripts\test-object-shell.py --backend sdhci-emmc
-python scripts\test-boot.py --slice milestone-1</code></pre>
+python scripts\test-boot.py --slice milestone-1
+python scripts\test-evidence-terminal.py</code></pre>
         </div>
       </section>
       <section class="band">
@@ -152,7 +154,7 @@ python scripts\test-boot.py --slice milestone-1</code></pre>
             </article>
             <article class="tile">
               <h3>Input scope</h3>
-              <p>The physical evidence covers the framebuffer acceptance panel, not physical interactive object-shell input.</p>
+              <p>The physical evidence covers framebuffer output and the evidence terminal, not physical interactive object-shell input.</p>
             </article>
           </div>
         </div>
@@ -161,7 +163,7 @@ python scripts\test-boot.py --slice milestone-1</code></pre>
     <footer class="site-footer">
       <div class="content">
         <a href="../../">PythOS</a>
-        <a href="https://github.com/craigCODA/pythos/pull/1">PR #1</a>
+        <a href="https://github.com/craigCODA/pythos">GitHub</a>
       </div>
     </footer>
   </body>
