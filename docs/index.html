@@ -44,18 +44,19 @@
             <h2>Current Proof</h2>
             <p class="lede">
               PythOS reached its Phase 10 storage path on a disposable O2 Micro
-              <code>1217:8620</code> SDHCI/eMMC laptop target. The site carries
-              a five-page evidence-terminal gallery showing the ordered
-              acceptance-marker stream with zero dropped markers, but
-              <code>main</code> cannot currently regenerate or verify that
-              terminal artifact because the implementation remains unmerged.
-              The result is target-specific physical evidence, not a generic
-              storage-support claim.
+              <code>1217:8620</code> SDHCI/eMMC laptop target. The 2026-08-08
+              physical evidence-terminal capture shows five readable pages with
+              hexadecimal <code>count 00000139</code>, which is 313 decimal
+              markers, zero dropped markers, and CRC <code>176F4C6E</code>.
+              The evidence-terminal implementation, feature, and QEMU acceptance
+              harness are present on <code>main</code>. The result remains
+              target-specific physical evidence, not a generic storage-support
+              claim.
             </p>
             <div class="fact-list">
               <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
               <p class="fact"><strong>Storage path</strong> QEMU-backed virtio-blk, polling AHCI, and polling SDHCI/eMMC acceptance coverage.</p>
-              <p class="fact"><strong>Evidence gallery</strong> <span class="mark">count 00000139</span>, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>; generator absent from <code>main</code>.</p>
+              <p class="fact"><strong>Evidence gallery</strong> <span class="mark">count 00000139</span> = 313 decimal markers, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>; QEMU harness present on <code>main</code>.</p>
             </div>
           </div>
           <figure>
@@ -69,26 +70,29 @@
         <div class="content">
           <div class="section-head">
             <p class="kicker">Evidence terminal</p>
-            <h2>Five Pages, Zero Drops</h2>
+            <h2>Five Pages, 313 Markers, Zero Drops</h2>
           </div>
           <p class="lede">
-            Main carries bounded evidence-terminal gallery frames from the
-            captured Phase 10 path: 139 ordered markers across five terminal
-            pages, with zero dropped markers and a recorded CRC. The generator,
-            feature flag, and QEMU harness are not present on <code>main</code>.
-            The marker stream covers loader handoff, kernel initialization,
-            capability enforcement, scheduler behavior, IPC, object persistence,
-            crash recovery, storage authorization, adversarial storage checks,
-            SDHCI/eMMC acceptance, and framebuffer readiness.
+            The terminal status formatter renders count, drop, and CRC as
+            eight-digit hexadecimal fields. The captured physical Phase 10 path
+            therefore contains 313 ordered markers, not 139: <code>00000139</code>
+            hex equals 313 decimal. Two separate physical boots produced the same
+            count, zero-drop state, and CRC <code>176F4C6E</code>. The physical
+            marker stream differs from QEMU only where truthful hardware discovery,
+            audio fallback, and pre-existing persistent-storage state select
+            different marker branches; the reconstructed physical stream recomputes
+            to the displayed count and CRC.
           </p>
           <p class="boundary-note">
             These markers are acceptance evidence for the captured milestone
             path. They are not a claim that every named subsystem is
             production-complete, portable, interrupt-driven, or broadly supported
-            across hardware.
+            across hardware. CRC-32 repeatability is strong reproducibility evidence,
+            not a collision-proof identity proof.
           </p>
           <div class="actions">
             <a class="button primary" href="evidence/#evidence-terminal">Open gallery</a>
+            <a class="button" href="evidence/2026-08-08-physical-evidence-terminal.md">Read physical validation record</a>
             <a class="button" href="status/">Read claim boundary</a>
           </div>
         </div>
@@ -105,7 +109,7 @@
             </article>
             <article class="tile">
               <h3>Release Assets</h3>
-              <p>The raw first-run photo and second-run MP4 are attached to the GitHub release instead of stored as large repository blobs.</p>
+              <p>The raw physical photos and MP4 belong with the GitHub milestone release instead of as large repository blobs; the repository records their SHA-256 hashes.</p>
               <p><a href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Open release</a></p>
             </article>
             <article class="tile">
