@@ -64,16 +64,23 @@
               </tr>
               <tr>
                 <td>Physical interaction</td>
-                <td>Physical framebuffer acceptance panel and five-page evidence-terminal gallery for the captured storage backend path.</td>
+                <td>Physical framebuffer acceptance panel, boot cinematic capture, and five-page evidence-terminal capture on the disposable O2 Micro target.</td>
                 <td>Physical interactive object-shell input through the laptop keyboard or trackpad, or a general desktop distribution claim.</td>
               </tr>
               <tr>
                 <td>Evidence terminal</td>
-                <td>Gallery artifact showing 139 ordered markers, zero dropped markers, and CRC <code>176F4C6E</code> across five pages; <code>main</code> cannot currently regenerate or verify it.</td>
-                <td>Replacement for COM1 serial, a trusted persistent log store, reproducible acceptance from <code>main</code>, or proof that every named marker is production-complete.</td>
+                <td><code>main</code> contains the implementation and QEMU acceptance harness. Physical capture reports <code>count 00000139</code> (hexadecimal = 313 decimal markers), <code>drop 00000000</code>, and CRC <code>176F4C6E</code> across five pages; two separate physical boots reproduced the same header.</td>
+                <td>Replacement for COM1 serial, a trusted persistent log store, bit-identical physical/QEMU transcripts, collision-proof identity from CRC-32 alone, or proof that every named marker is production-complete.</td>
               </tr>
             </tbody>
           </table>
+          <p class="boundary-note">
+            The physical stream legitimately differs from the QEMU stream where
+            hardware discovery, audio fallback, and existing persistent-storage
+            state select different marker branches. The reconstructed physical
+            stream contains 313 markers and recomputes to CRC <code>176F4C6E</code>.
+            See the <a href="../evidence/2026-08-08-physical-evidence-terminal.md">2026-08-08 validation record</a>.
+          </p>
         </div>
       </section>
     </main>
