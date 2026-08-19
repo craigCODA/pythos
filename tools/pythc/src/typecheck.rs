@@ -15,6 +15,7 @@ const MAX_LOOP_BUDGET: u64 = 65_536;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TypedProgram {
+    pub program: Program,
     pub main: TypedFunction,
     pub required_intrinsics: Vec<Intrinsic>,
 }
@@ -87,6 +88,7 @@ impl Checker {
         }
 
         Ok(TypedProgram {
+            program: program.clone(),
             main: TypedFunction {
                 result_type: PythType::Unit,
             },

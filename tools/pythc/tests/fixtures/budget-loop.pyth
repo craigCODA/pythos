@@ -1,0 +1,7 @@
+program budget_loop principal 0x5059544847520004 {
+    fn main() -> unit {
+        while budget 8 true {
+        }
+        return;
+    }
+}
