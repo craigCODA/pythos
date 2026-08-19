@@ -106,7 +106,7 @@ impl Expression {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Literal {
     Bool { value: bool, span: Span },
-    Integer { value: u64, span: Span },
+    Integer { text: String, span: Span },
     String { value: String, span: Span },
 }
 

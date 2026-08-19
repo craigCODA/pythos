@@ -16,7 +16,7 @@ impl Token {
 pub enum TokenKind {
     Ident(String),
     Hex(String),
-    Integer(u64),
+    Integer(String),
     String(String),
     Symbol(Symbol),
     Eof,

@@ -34,7 +34,7 @@ impl Lexer<'_> {
                 {
                     self.lex_hex()
                 }
-                b'0'..=b'9' => self.lex_integer()?,
+                b'0'..=b'9' => self.lex_integer(),
                 b'"' => self.lex_string()?,
                 b'{' => self.push_symbol(Symbol::LBrace, 1),
                 b'}' => self.push_symbol(Symbol::RBrace, 1),
@@ -91,20 +91,16 @@ impl Lexer<'_> {
             .push(Token::new(TokenKind::Hex(text), Span::new(start, self.pos)));
     }
 
-    fn lex_integer(&mut self) -> Result<(), Diagnostic> {
+    fn lex_integer(&mut self) {
         let start = self.pos;
         while self.peek().is_some_and(|byte| byte.is_ascii_digit()) {
             self.pos += 1;
         }
-        let raw = &self.source[start..self.pos];
-        let value = raw.parse::<u64>().map_err(|_| {
-            Diagnostic::new("P0003", "unexpected token", Span::new(start, self.pos))
-        })?;
+        let text = self.source[start..self.pos].to_string();
         self.tokens.push(Token::new(
-            TokenKind::Integer(value),
+            TokenKind::Integer(text),
             Span::new(start, self.pos),
         ));
-        Ok(())
     }
 
     fn lex_string(&mut self) -> Result<(), Diagnostic> {

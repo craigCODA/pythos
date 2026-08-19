@@ -207,13 +207,16 @@ impl Parser<'_> {
             return Err(self.error_current("P0007", "while requires literal budget"));
         }
         let budget_token = self.advance();
-        let TokenKind::Integer(budget) = budget_token.kind else {
+        let TokenKind::Integer(raw_budget) = budget_token.kind else {
             return Err(Diagnostic::new(
                 "P0007",
                 "while requires literal budget",
                 budget_token.span,
             ));
         };
+        let budget = raw_budget.parse::<u64>().map_err(|_| {
+            Diagnostic::new("P0007", "while requires literal budget", budget_token.span)
+        })?;
         if budget == 0 {
             return Err(Diagnostic::new(
                 "P0008",
@@ -326,8 +329,8 @@ impl Parser<'_> {
                     Ok(Expression::Name(ident))
                 }
             }
-            TokenKind::Integer(value) => Ok(Expression::Literal(Literal::Integer {
-                value,
+            TokenKind::Integer(text) => Ok(Expression::Literal(Literal::Integer {
+                text,
                 span: token.span,
             })),
             TokenKind::String(value) => Ok(Expression::Literal(Literal::String {

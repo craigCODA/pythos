@@ -12,6 +12,9 @@ dependencies = [
 [[package]]
 name = "pythc"
 version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
 
 [[package]]
 name = "pythos-boot"

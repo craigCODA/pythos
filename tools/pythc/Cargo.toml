@@ -9,6 +9,9 @@ rust-version.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[dependencies]
+pythos-shared = { path = "../../shared", features = ["pyth-tig"] }
+
 [[bin]]
 name = "pythc"
 path = "src/main.rs"
