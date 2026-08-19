@@ -10,6 +10,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythc"
+version = "0.1.0"
+
+[[package]]
 name = "pythos-boot"
 version = "0.1.0"
 dependencies = [
