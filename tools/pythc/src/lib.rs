@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod diagnostic;
 pub mod encode;
 pub mod graph;
 pub mod intrinsics;

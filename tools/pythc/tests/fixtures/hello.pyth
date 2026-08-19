@@ -1,0 +1,7 @@
+program hello principal 0x5059544847520001 {
+    import log: capability<system.log, write>;
+    fn main() -> unit {
+        system.log(log, "hello");
+        return;
+    }
+}

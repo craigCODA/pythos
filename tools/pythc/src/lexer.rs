@@ -53,6 +53,7 @@ impl Lexer<'_> {
                 b'-' => self.push_symbol(Symbol::Minus, 1),
                 b'&' if self.peek_next() == Some(b'&') => self.push_symbol(Symbol::AndAnd, 2),
                 b'|' if self.peek_next() == Some(b'|') => self.push_symbol(Symbol::OrOr, 2),
+                b'|' => self.push_symbol(Symbol::Pipe, 1),
                 _ => {
                     let span = Span::new(self.pos, self.pos + 1);
                     return Err(Diagnostic::new("P0001", "unexpected character", span));

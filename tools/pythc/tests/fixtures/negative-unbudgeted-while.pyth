@@ -1,0 +1,7 @@
+program negative_unbudgeted_while principal 0x1 {
+    fn main() -> unit {
+        while true {
+            return;
+        }
+    }
+}

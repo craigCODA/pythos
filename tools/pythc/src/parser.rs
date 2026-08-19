@@ -96,7 +96,11 @@ impl Parser<'_> {
         self.expect_symbol(Symbol::Less)?;
         let resource = self.expect_ident()?.text;
         self.expect_symbol(Symbol::Comma)?;
-        let rights = self.expect_ident()?.text;
+        let mut rights = self.expect_ident()?.text;
+        while self.match_symbol(Symbol::Pipe) {
+            rights.push('|');
+            rights.push_str(&self.expect_ident()?.text);
+        }
         self.expect_symbol(Symbol::Greater)?;
         let end = self.expect_symbol(Symbol::Semicolon)?.end;
 

@@ -39,6 +39,7 @@ pub enum Symbol {
     Plus,
     Minus,
     AndAnd,
+    Pipe,
     OrOr,
     Bang,
 }

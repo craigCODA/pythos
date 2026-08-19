@@ -1,0 +1,7 @@
+program negative_unknown_name principal 0x1 {
+    import log: capability<system.log, read>;
+    fn main() -> unit {
+        system.log(log, missing);
+        return;
+    }
+}

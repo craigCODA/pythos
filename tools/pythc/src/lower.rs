@@ -31,7 +31,7 @@ impl<'a> Lowerer<'a> {
     fn new(program: &'a Program) -> Self {
         Self {
             program,
-            builder: GraphBuilder::new(program.principal_id),
+            builder: GraphBuilder::new(program.principal_id, &program.name.text),
         }
     }
 
@@ -311,8 +311,8 @@ struct GraphBuilder {
 }
 
 impl GraphBuilder {
-    fn new(principal_id: u64) -> Self {
-        Self {
+    fn new(principal_id: u64, program_name: &str) -> Self {
+        let mut builder = Self {
             principal_id,
             imports: Vec::new(),
             block_builders: Vec::new(),
@@ -323,7 +323,12 @@ impl GraphBuilder {
             locals: Vec::new(),
             current_block: 0,
             current_effect: NO_VALUE,
-        }
+        };
+        builder
+            .string_table
+            .extend_from_slice(program_name.as_bytes());
+        builder.string_table.push(0);
+        builder
     }
 
     fn start_entry(&mut self) {
