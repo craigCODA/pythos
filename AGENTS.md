@@ -79,7 +79,12 @@ universal-device work.
 
 ## Active Milestone
 
-The active branch of work is `milestone/phase8-real-hardware-isolation`.
+The current checked-in stop boundary is Phase 10 -> Phase 11 on `main`.
+Milestone 1.5 and Phases 2 through 10 are complete through
+`PYTHOS:CORE:PHASE_10_COMPLETE`. No implementation milestone is active until
+the owner explicitly invokes the next phase. Treat the older
+`milestone/phase8-real-hardware-isolation` branch name as historical context,
+not the current branch target.
 
 Verified vertical slices currently include:
 

@@ -4,12 +4,14 @@ Date: 2026-08-04
 
 ## Status
 
-PythTIG Phase 0 is merged. Owner review accepted ADR 0064 as the architecture
-direction and provisionally accepted ADR 0065 for Phase 1 verifier
-experimentation. This repository still contains documentation and AGENTS
-guardrails only for PythTIG. It does not implement the verifier, runtime,
-compiler, Task Steward, native backend, marker-contract scripts, CI behavior,
-session cutover, or production boot behavior.
+This is the historical Phase 0 reconciliation record. PythTIG Phase 0 is
+merged, owner review accepted ADR 0064 as the architecture direction, and ADR
+0065 is now accepted with the tested PythTIG version 1 package ABI frozen as of
+2026-08-08. Subsequent work on `main` implemented the Phase 1 format/verifier,
+Phase 2 ring-3 runtime, and Phase 3 object/capability proof paths as explicit
+opt-in acceptance paths. The repository still does not implement the Pyth
+source compiler, Task Steward, native backend, production session cutover, or
+default boot replacement behavior.
 
 ## Worktree
 

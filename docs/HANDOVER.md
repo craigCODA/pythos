@@ -3,10 +3,11 @@
 Current boundary: ADR 0063 physical evidence terminal is implemented on `main`
 from the former `agent/physical-evidence-terminal` line and is QEMU-accepted
 through `scripts\test-evidence-terminal.py`. Phase 10 remains complete. Main
-also carries five 2026-08-02 evidence-terminal gallery images showing 139
-ordered markers, zero dropped markers, and CRC `176F4C6E`. Those frames are
-retained as physical artifact evidence for the disposable O2 Micro `1217:8620`
-target, while COM1/QEMU acceptance remains the automated oracle.
+also carries the 2026-08-08 physical evidence-terminal validation record for
+the disposable O2 Micro `1217:8620` target: five readable terminal-page photos
+and one continuous boot video report `count 00000139`, `drop 00000000`, and
+CRC `176F4C6E`. The `count` field is hexadecimal, so `00000139` is 313 decimal
+markers. COM1/QEMU acceptance remains the automated oracle.
 
 The earlier Phase 11 targeted SDHCI/eMMC backend panel validation remains
 recorded on branch `feature/sdhci-emmc-backend`. Two operator-supplied physical
@@ -254,21 +255,19 @@ supported across hardware. COM1 remains the automated QEMU oracle, and the
 physical evidence-terminal claim remains scoped to the disposable O2 Micro
 `1217:8620` target.
 
-## Branch `object-shell` (2026-07-27, unmerged)
+## First Ring-3 Object Shell (Historical Branch Note)
 
-ADR 0051/0052's first ring-3 object shell (`shell.elf`) is fully implemented
-and verified on branch `object-shell`, not yet merged to `main`. All 12 tasks
-of `docs/superpowers/plans/2026-07-26-first-ring3-object-shell.md` are
-complete, including reboot-durable object-service persistence and Task 11
-stack-guard-page hardening. That plan document is the authoritative record —
-see its Task 9-12 status notes for exact architecture, protocol, and
-verification detail. Verify with `python scripts\test-object-shell.py`,
+ADR 0051/0052's first ring-3 object shell (`shell.elf`) was originally verified
+on branch `object-shell`; that old branch-only status is historical. The
+current `main` tree contains the normal object-shell path, retained object
+service, COM2 transport, reboot-durable persistence checks, and guarded-stack
+hardening. The detailed implementation record remains
+`docs/superpowers/plans/2026-07-26-first-ring3-object-shell.md`. Verify this
+surface with `python scripts\test-object-shell.py`,
 `python scripts\test-normal-fast-boot.py`, `python scripts\test-boot.py
 --slice milestone-1`, `python scripts\test-com2-shell-transport.py`, and
 `python scripts\test-persistent-storage.py`. For the ADR 0054 AHCI backend
-extension, also run `python scripts\test-ahci-block-device.py`. Do not merge or
-build on this branch without re-reading that plan document's Task 12 section
-first.
+extension, also run `python scripts\test-ahci-block-device.py`.
 
 ## Interactive Object-Shell Launcher (2026-07-28, branch `object-shell`)
 
@@ -362,19 +361,17 @@ See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-bo
 - Secure Boot must stay disabled (loader is unsigned). Diagnostic paints fire on
   every boot, including successful ones; gating them to failures is a follow-up.
 
-## Intel HDA Audio (2026-07-26, branch `hda-audio`)
+## Intel HDA Audio (Historical Branch Note)
 
-An Intel HDA (Azalia) audio backend is implemented alongside AC97 (ADR 0048,
-`docs/phase-11-real-hardware-findings.md`, plan
-`docs/superpowers/plans/2026-07-25-intel-hda-audio.md`). PythCore discovers the
-controller, maps its MMIO into the kernel address space at VM-build time,
-resets it, enumerates the codec's output path (DAC + pin) via the Immediate
-Command Interface, and plays the boot audio through an output stream (verified
-by the link-position register advancing). Enabled with `python
-scripts/run-qemu.py ... --hda` (needs a longer `--timeout`); default milestone-1
+An Intel HDA (Azalia) audio backend was originally developed on branch
+`hda-audio` and now has code present in the current tree alongside AC97 (ADR
+0048, `docs/phase-11-real-hardware-findings.md`, plan
+`docs/superpowers/plans/2026-07-25-intel-hda-audio.md`). PythCore can discover
+the controller, map MMIO, reset it, enumerate the codec output path, and play
+boot audio through an output stream in the QEMU HDA path. Default milestone-1
 is unaffected because HDA init is skipped when no controller is present. AMD
-ACP/I2S (laptop speakers) is parked; real-hardware audio (headphone jack) is
-unverified pending a laptop boot. Branch not yet merged to `main`.
+ACP/I2S laptop-speaker support remains parked, and real-hardware HDA audio is
+not claimed until a physical headphone-jack boot records evidence.
 
 ## Verify First
 
@@ -410,7 +407,7 @@ Timeout termination is not success evidence.
 Expected branch:
 
 ```text
-milestone/phase8-real-hardware-isolation
+main
 ```
 
 Expected state:
@@ -423,19 +420,16 @@ Phase 4 complete
 Phase 5 complete
 Phase 6 complete
 Phase 7 complete
-Phase 8 ring-3-execution complete
-Phase 8 separate-address-spaces complete
-Phase 8 syscall-entry complete
-Phase 8 user-stacks complete
-Phase 8 service-local-python-runtimes complete
-Phase 8 guarded-shared-memory complete
-Phase 8 process-termination complete
-Phase 8 memory-quotas complete
-Phase 8 cpu-quotas complete
-Phase 8 crash-containment complete
-Phase 8 capability-enforcement-at-boundary complete
-Next allowed work: none inside Phase 8; Later Phases require explicit
-re-invocation and a detailed roadmap section
+Phase 8 complete through capability-enforcement-at-boundary
+Phase 9 complete through process-model-adversarial-suite
+Phase 10 complete through storage-adversarial-suite
+ADR 0063 evidence-terminal implementation and QEMU harness present on main
+PythTIG Phase 1 format/verifier proof path complete
+PythTIG Phase 2 ring-3 runtime proof path complete
+PythTIG Phase 3 object/capability proof path complete
+Next allowed work: none by momentum. Phase 11, PythTIG Phase 4, networking,
+package management, updates, AI, SMP, or hardware expansion require explicit
+re-invocation and the corresponding roadmap or phase plan.
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -1030,8 +1024,10 @@ until a later phase defines one.
 
 ## Next Boundary
 
-Phase 8 is complete. Later Phases are unordered in `docs/ROADMAP.md` and need a
-fresh detailed roadmap section before implementation.
+Phase 10 is complete and the current numbered-roadmap stop boundary is
+Phase 10 -> Phase 11. `docs/ROADMAP.md` and
+`docs/ROADMAP-LATER-PHASES.md` describe the next numbered phases; PythTIG
+Phase 4+ remains a separate explicit invocation path.
 
 Before starting later-phase work, re-read:
 

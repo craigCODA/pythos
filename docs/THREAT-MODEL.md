@@ -4,18 +4,22 @@
 
 Milestone 1 does not provide application isolation, hostile-code capability enforcement, Python runtime isolation, storage security, or network security. It proves firmware handoff and PythCore machine ownership under QEMU OVMF.
 
-## Current Phase 8 Boundary
+## Current Phase 10 Boundary
 
-Phase 8 adds a bounded hardware-enforced user/kernel authority proof for the
-fixed current syscall surface. It proves CPL3 entry/return, distinct user CR3
-roots, guarded user stacks, guarded shared memory across address spaces, user
-fault containment, and syscall-gated capability enforcement where copied
-handles and hardware-resource requests are denied before privileged mutation.
+Phase 8 added a bounded hardware-enforced user/kernel authority proof for the
+fixed syscall surface. Phase 9 generalized that proof with dynamic user ELF
+loading validation, syscall ABI versioning, copy-in/copy-out range checks,
+dynamic capability grants, argv/environment delivery, dynamic fault isolation,
+and a process-model adversarial suite. Phase 10 generalized storage through a
+journaled block allocator, dynamic object counts, fragmentation policy, storage
+quotas, serialized writer tokens, and an adversarial storage suite.
 
-This is still not a general hostile-code platform. PythOS does not yet provide
-dynamic user process loading, a general userspace ABI, full copy-in/copy-out
-policy, broad device mediation, network security, or arbitrary third-party
-application isolation.
+This is still not a general hostile-code platform. The current proofs are
+bounded acceptance paths, not a production multi-user security product. PythOS
+does not yet provide arbitrary third-party application isolation, broad device
+mediation, network security, partition/filesystem security, DMA isolation
+across physical controllers, package trust, update security, or a generic
+hardware support claim.
 
 ## Trusted Components
 

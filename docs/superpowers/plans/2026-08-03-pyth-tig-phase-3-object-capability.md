@@ -1,8 +1,9 @@
 # PythTIG Phase 3 Object and Capability Integration Implementation Plan
 
-**Status:** Accepted future phase pending prior PythTIG phase evidence and
-explicit owner invocation. Do not implement this plan until the owner explicitly
-invokes this phase.
+**Status:** Complete on `main` as an explicit opt-in proof path. The object
+capability flow is exercised by `python scripts\test-pyth-graph-object-flow.py`
+and remains outside the default production boot path. This completion does not
+authorize Phase 4+ work.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development. Every host operation begins with a failing unit or acceptance test.
 

@@ -1,9 +1,10 @@
 # PythTIG Phase 1 Format and Verifier Implementation Plan
 
-**Status:** Accepted future Phase 1 plan, pending explicit owner invocation.
-ADR 0065 is provisionally accepted for this phase; exact package bytes are not
-permanent stable ABI until this phase's encoder, decoder, verifier, and
-negative corpus pass and the owner freezes the format.
+**Status:** Complete on `main`. ADR 0065 is accepted and the tested PythTIG
+version 1 package ABI is frozen as of 2026-08-08. The shared verifier, host
+tool, canonical fixture, and mutation suite are covered by
+`python scripts\test-pyth-tig-format.py`. The task checklist below is the
+historical implementation plan, not current pending work.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Enforce red-green-refactor for every code change.
 

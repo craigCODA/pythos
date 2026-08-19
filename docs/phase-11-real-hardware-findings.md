@@ -232,21 +232,17 @@ PythOS on real UEFI machines actually revealed, versus QEMU-only assumptions.
   support, DMA/ADMA, interrupts, hotplug, or interactive physical shell use.
 - On 2026-08-02, `main` gained five ADR 0063 evidence-terminal gallery frames
   showing the captured acceptance-marker stream across five framebuffer pages:
-  `count 00000139`, `drop 00000000`, and `crc 176F4C6E`. The committed frames
-  are `docs/evidence/2026-08-02-evidence-terminal-page-1.jpg` through
-  `docs/evidence/2026-08-02-evidence-terminal-page-5.jpg`. Page 5 shows
-  `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY`,
-  `PYTHOS:CORE:PHASE_10_COMPLETE`,
-  `PYTHOS:CORE:BLOCK:SDHCI_EMMC_FRAMEBUFFER_ACCEPTANCE_READY`,
-  `PYTHOS:CORE:FRAMEBUFFER_READY`, and
-  `PYTHOS:CORE:MILESTONE_1_COMPLETE`. However, `main` does not include the
-  evidence-log sources, `evidence-terminal` Cargo feature, or
-  `scripts/test-evidence-terminal.py` harness that would regenerate or verify
-  those frames; that implementation remains on unmerged branch
-  `agent/physical-evidence-terminal`. This is visual artifact evidence for the
-  captured milestone path, not reproducible acceptance from `main`, and it does
-  not replace COM1 as the automated oracle or broaden the physical hardware
-  claim beyond the same target.
+  `count 00000139`, `drop 00000000`, and `crc 176F4C6E`. On 2026-08-08, the
+  physical evidence record was corrected and expanded in
+  `docs/evidence/2026-08-08-physical-evidence-terminal.md`: `count 00000139`
+  is hexadecimal, so it represents 313 decimal markers, not 139. The August 8
+  record also notes two physical boots with the same header and records the
+  physical-vs-QEMU marker differences. `main` now includes the evidence-log
+  sources, `evidence-terminal` Cargo feature, and
+  `scripts/test-evidence-terminal.py` harness. COM1 remains the automated QEMU
+  oracle; the physical evidence-terminal is target-specific visual evidence for
+  the disposable O2 Micro `1217:8620` path and does not broaden the hardware
+  claim.
 - **Networking (Phase 14):** no NIC driver yet. The laptop's Wi-Fi is a hard
   target; virtio-net (QEMU) / wired Ethernet is the tractable path when
   networking work begins.
