@@ -1,0 +1,10 @@
+program object_create principal 0x5059544847520006 {
+    import workspace: capability<object.workspace, create|query>;
+    fn main() -> unit {
+        let note_id: object_id = object.create(workspace, 1);
+        let note: capability = object.created_capability();
+        object.revise(note, note_id, 1, "hello");
+        let text: utf8 = object.inspect(note, note_id);
+        return;
+    }
+}

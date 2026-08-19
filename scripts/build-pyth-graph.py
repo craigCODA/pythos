@@ -1,4 +1,4 @@
-"""Build the Phase 2 PythTIG graph fixtures."""
+"""Build the PythTIG graph fixtures."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "target" / "pyth-tig"
+EXAMPLES_DIR = ROOT / "programs" / "examples"
 HELLO_OUTPUT = OUTPUT_DIR / "hello.tig"
 BUDGET_OUTPUT = OUTPUT_DIR / "budget.tig"
 INVALID_OUTPUT = OUTPUT_DIR / "invalid.tig"
@@ -46,6 +47,10 @@ def emit(command: str, output: Path) -> None:
     run([str(TOOL_EXE), command, str(output)])
 
 
+def compile_source(source: Path, output: Path) -> None:
+    run(["cargo", "run", "-p", "pythc", "--", "build", str(source), "-o", str(output)])
+
+
 def verify(output: Path) -> None:
     run([str(TOOL_EXE), "verify", str(output)])
 
@@ -63,7 +68,7 @@ def verify_rejected(output: Path, expected: str) -> None:
 
 def main() -> int:
     run(["cargo", "build", "-p", "pyth-tig-tool"])
-    emit("emit-minimal-log", HELLO_OUTPUT)
+    compile_source(EXAMPLES_DIR / "hello.pyth", HELLO_OUTPUT)
     verify(HELLO_OUTPUT)
     emit("emit-budget-loop", BUDGET_OUTPUT)
     verify(BUDGET_OUTPUT)
@@ -75,9 +80,9 @@ def main() -> int:
     verify_rejected(INVALID_STRING_OUTPUT, "NonCanonicalEncoding")
     emit("emit-parameterized-jump", PARAMETERIZED_OUTPUT)
     verify(PARAMETERIZED_OUTPUT)
-    emit("emit-object-create", OBJECT_CREATE_OUTPUT)
+    compile_source(EXAMPLES_DIR / "object-create.pyth", OBJECT_CREATE_OUTPUT)
     verify(OBJECT_CREATE_OUTPUT)
-    emit("emit-object-restore", OBJECT_RESTORE_OUTPUT)
+    compile_source(EXAMPLES_DIR / "object-restore.pyth", OBJECT_RESTORE_OUTPUT)
     verify(OBJECT_RESTORE_OUTPUT)
     emit("emit-object-known-denied", OBJECT_KNOWN_DENIED_OUTPUT)
     verify(OBJECT_KNOWN_DENIED_OUTPUT)

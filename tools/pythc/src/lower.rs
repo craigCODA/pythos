@@ -1,13 +1,15 @@
 use crate::{
     ast::{BinaryOp, Expression, Literal, Program, Statement, UnaryOp},
     graph::{GraphBlock, GraphImport, GraphNode, OwnedGraph},
-    intrinsics::Intrinsic,
+    intrinsics::{HostProducer, HostResultAccess, Intrinsic},
     span::{Diagnostic, Span},
     typecheck::TypedProgram,
     types::{PythType, is_integer_like_type},
 };
 use pythos_shared::{
-    pyth_runtime_abi::{HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION},
+    pyth_runtime_abi::{
+        HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_UTF8,
+    },
     pyth_tig::{
         NO_VALUE,
         opcode::{
@@ -25,6 +27,7 @@ pub fn lower_program(typed: &TypedProgram) -> Result<OwnedGraph, Diagnostic> {
 struct Lowerer<'a> {
     program: &'a Program,
     builder: GraphBuilder,
+    pending_host_producer: Option<(HostProducer, u32)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -32,6 +35,7 @@ impl<'a> Lowerer<'a> {
         Self {
             program,
             builder: GraphBuilder::new(program.principal_id, &program.name.text),
+            pending_host_producer: None,
         }
     }
 
@@ -165,7 +169,7 @@ impl<'a> Lowerer<'a> {
                         callee.span,
                     )
                 })?;
-                self.lower_intrinsic(intrinsic, args, *span)
+                self.lower_intrinsic(intrinsic, args, *span, expected)
             }
             Expression::Unary { op, expr, .. } => {
                 let input = self.lower_expression(expr, Some(PythType::Bool))?;
@@ -224,10 +228,17 @@ impl<'a> Lowerer<'a> {
                 u64::from(*value),
             )),
             Literal::String { value, .. } => {
-                let (offset, len) = self.builder.intern_string(value.as_bytes())?;
+                let bytes = value.as_bytes();
+                let (opcode, result_type, offset, len) = if expected == Some(PythType::Bytes) {
+                    let (offset, len) = self.builder.intern_constant(bytes)?;
+                    (Opcode::ConstBytes, PythType::Bytes, offset, len)
+                } else {
+                    let (offset, len) = self.builder.intern_string(bytes)?;
+                    (Opcode::ConstUtf8, PythType::Utf8, offset, len)
+                };
                 Ok(self.builder.push_node(
-                    Opcode::ConstUtf8,
-                    PythType::Utf8,
+                    opcode,
+                    result_type,
                     [NO_VALUE; 4],
                     offset,
                     u32::from(len),
@@ -258,31 +269,181 @@ impl<'a> Lowerer<'a> {
         intrinsic: Intrinsic,
         args: &[Expression],
         span: Span,
+        expected: Option<PythType>,
     ) -> Result<u32, Diagnostic> {
-        let opcode = opcode_for_intrinsic(intrinsic).ok_or_else(|| {
-            Diagnostic::new("G0001", "shared verifier rejected compiler output", span)
-        })?;
+        match intrinsic {
+            Intrinsic::ObjectCreatedCapability
+            | Intrinsic::ObjectCreatedRevision
+            | Intrinsic::ObjectQueriedCapability
+            | Intrinsic::ObjectInspectedRevision => {
+                let access = intrinsic
+                    .host_result_access()
+                    .ok_or_else(|| compiler_rejected(span))?;
+                self.lower_host_result_access(access, span)
+            }
+            Intrinsic::ObjectCreate | Intrinsic::ObjectQuery => {
+                self.lower_object_workspace_intrinsic(intrinsic, args, span, expected)
+            }
+            Intrinsic::ObjectInspect => {
+                self.lower_object_read_intrinsic(intrinsic, args, span, expected)
+            }
+            Intrinsic::ObjectHistory => {
+                self.lower_object_read_intrinsic(intrinsic, args, span, expected)
+            }
+            Intrinsic::ObjectRevise => self.lower_object_revise(args, expected),
+            _ => self.lower_generic_effectful_intrinsic(intrinsic, args, span),
+        }
+    }
+
+    fn lower_generic_effectful_intrinsic(
+        &mut self,
+        intrinsic: Intrinsic,
+        args: &[Expression],
+        span: Span,
+    ) -> Result<u32, Diagnostic> {
+        let opcode = opcode_for_intrinsic(intrinsic).ok_or_else(|| compiler_rejected(span))?;
         let arg_types = intrinsic.arg_types();
         let mut lowered_args = [NO_VALUE; 4];
         lowered_args[0] = self.builder.current_effect;
         for (index, (arg, expected)) in args.iter().zip(arg_types.iter().copied()).enumerate() {
             lowered_args[index + 1] = self.lower_expression(arg, Some(expected))?;
         }
+        Ok(self.push_effect_node(opcode, lowered_args, None))
+    }
 
+    fn lower_object_workspace_intrinsic(
+        &mut self,
+        intrinsic: Intrinsic,
+        args: &[Expression],
+        span: Span,
+        expected: Option<PythType>,
+    ) -> Result<u32, Diagnostic> {
+        let opcode = opcode_for_intrinsic(intrinsic).ok_or_else(|| compiler_rejected(span))?;
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let object_kind = self.lower_object_kind(&args[1])?;
+        let producer = self.push_effect_node(
+            opcode,
+            [
+                self.builder.current_effect,
+                capability,
+                object_kind,
+                NO_VALUE,
+            ],
+            intrinsic.producer(),
+        );
+        if expected.is_some() {
+            Ok(self.push_host_result(producer, HOST_RESULT_OBJECT_ID, PythType::ObjectId))
+        } else {
+            Ok(producer)
+        }
+    }
+
+    fn lower_object_revise(
+        &mut self,
+        args: &[Expression],
+        expected: Option<PythType>,
+    ) -> Result<u32, Diagnostic> {
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let object_id = self.lower_expression(&args[1], Some(PythType::ObjectId))?;
+        let payload = self.lower_revision_payload(&args[3])?;
+        let producer = self.push_effect_node(
+            Opcode::ObjectRevise,
+            [self.builder.current_effect, capability, object_id, payload],
+            None,
+        );
+        if expected.is_some() {
+            Ok(self.push_host_result(producer, HOST_RESULT_REVISION, PythType::RevisionId))
+        } else {
+            Ok(producer)
+        }
+    }
+
+    fn lower_object_read_intrinsic(
+        &mut self,
+        intrinsic: Intrinsic,
+        args: &[Expression],
+        span: Span,
+        expected: Option<PythType>,
+    ) -> Result<u32, Diagnostic> {
+        let opcode = opcode_for_intrinsic(intrinsic).ok_or_else(|| compiler_rejected(span))?;
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let object_id = self.lower_expression(&args[1], Some(PythType::ObjectId))?;
+        let producer = self.push_effect_node(
+            opcode,
+            [self.builder.current_effect, capability, object_id, NO_VALUE],
+            intrinsic.producer(),
+        );
+        match (intrinsic, expected) {
+            (Intrinsic::ObjectInspect, Some(PythType::Utf8)) => {
+                Ok(self.push_host_result(producer, HOST_RESULT_UTF8, PythType::Utf8))
+            }
+            (Intrinsic::ObjectHistory, Some(_)) => Err(compiler_rejected(span)),
+            _ => Ok(producer),
+        }
+    }
+
+    fn lower_host_result_access(
+        &mut self,
+        access: HostResultAccess,
+        span: Span,
+    ) -> Result<u32, Diagnostic> {
+        let Some((producer, node)) = self.pending_host_producer else {
+            return Err(compiler_rejected(span));
+        };
+        let (field, result_type) = match (producer, access) {
+            (HostProducer::ObjectCreate, HostResultAccess::CreatedCapability)
+            | (HostProducer::ObjectQuery, HostResultAccess::QueriedCapability) => {
+                (HOST_RESULT_CAPABILITY, PythType::Capability)
+            }
+            (HostProducer::ObjectCreate, HostResultAccess::CreatedRevision)
+            | (HostProducer::ObjectInspect, HostResultAccess::InspectedRevision) => {
+                (HOST_RESULT_REVISION, PythType::RevisionId)
+            }
+            _ => return Err(compiler_rejected(span)),
+        };
+        Ok(self.push_host_result(node, field, result_type))
+    }
+
+    fn lower_object_kind(&mut self, expr: &Expression) -> Result<u32, Diagnostic> {
+        let Expression::Literal(Literal::Integer { text, span }) = expr else {
+            return Err(compiler_rejected(expr.span()));
+        };
+        let kind = match text.parse::<u64>() {
+            Ok(1) => b"note".as_slice(),
+            _ => return Err(compiler_rejected(*span)),
+        };
+        let (offset, len) = self.builder.intern_string(kind)?;
+        Ok(self.builder.push_node(
+            Opcode::ConstUtf8,
+            PythType::Utf8,
+            [NO_VALUE; 4],
+            offset,
+            u32::from(len),
+            0,
+        ))
+    }
+
+    fn lower_revision_payload(&mut self, expr: &Expression) -> Result<u32, Diagnostic> {
+        match expr {
+            Expression::Literal(Literal::String { .. }) => {
+                self.lower_expression(expr, Some(PythType::Bytes))
+            }
+            _ => Err(compiler_rejected(expr.span())),
+        }
+    }
+
+    fn push_effect_node(
+        &mut self,
+        opcode: Opcode,
+        inputs: [u32; 4],
+        producer: Option<HostProducer>,
+    ) -> u32 {
         let effect_node = self
             .builder
-            .push_node(opcode, PythType::Effect, lowered_args, 0, 0, 0);
+            .push_node(opcode, PythType::Effect, inputs, 0, 0, 0);
         self.builder.current_effect = effect_node;
-
-        match intrinsic {
-            Intrinsic::ObjectCreate | Intrinsic::ObjectQuery => {
-                Ok(self.push_host_result(effect_node, HOST_RESULT_OBJECT_ID, PythType::ObjectId))
-            }
-            Intrinsic::ObjectRevise => {
-                Ok(self.push_host_result(effect_node, HOST_RESULT_REVISION, PythType::RevisionId))
-            }
-            _ => Ok(effect_node),
-        }
+        self.pending_host_producer = producer.map(|producer| (producer, effect_node));
+        effect_node
     }
 
     fn push_host_result(&mut self, producer: u32, field: u32, result_type: PythType) -> u32 {
@@ -477,6 +638,25 @@ impl GraphBuilder {
         Ok((offset, len))
     }
 
+    fn intern_constant(&mut self, bytes: &[u8]) -> Result<(u32, u16), Diagnostic> {
+        let offset = u32::try_from(self.constant_pool.len()).map_err(|_| {
+            Diagnostic::new(
+                "G0001",
+                "shared verifier rejected compiler output",
+                Span::default(),
+            )
+        })?;
+        let len = u16::try_from(bytes.len()).map_err(|_| {
+            Diagnostic::new(
+                "G0001",
+                "shared verifier rejected compiler output",
+                Span::default(),
+            )
+        })?;
+        self.constant_pool.extend_from_slice(bytes);
+        Ok((offset, len))
+    }
+
     fn finish(self) -> Result<OwnedGraph, Diagnostic> {
         let mut blocks = Vec::new();
         for (id, block) in self.block_builders.into_iter().enumerate() {
@@ -530,6 +710,10 @@ fn opcode_for_intrinsic(intrinsic: Intrinsic) -> Option<Opcode> {
         Intrinsic::ObjectHistory => Opcode::ObjectHistory,
         _ => return None,
     })
+}
+
+fn compiler_rejected(span: Span) -> Diagnostic {
+    Diagnostic::new("G0001", "shared verifier rejected compiler output", span)
 }
 
 fn import_contract(
