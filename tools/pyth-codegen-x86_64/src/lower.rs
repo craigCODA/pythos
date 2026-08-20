@@ -4,6 +4,7 @@ use pythos_shared::{
         NO_VALUE, NodeRecord, format::PythGraphPackage, opcode::Opcode, types::PythType,
         verify::VerifiedGraph,
     },
+    task_abi::TASK_CONTEXT_RESULT_REASON_UTF8,
 };
 
 use crate::{
@@ -14,13 +15,21 @@ use crate::{
     runtime_layout,
     stubs::{
         GRAPH_LOG_SYSCALL, HOST_RESULT_BYTES_OFFSET, HOST_RESULT_CAPABILITY_OFFSET,
-        HOST_RESULT_OBJECT_ID_OFFSET, HOST_RESULT_REVISION_OFFSET, HOST_RESULT_STATUS_OFFSET,
-        NativeStubDataLayout, OBJECT_QUERY_OUTPUT_BYTES, OBJECT_REQUEST_ABI_WORD,
-        OBJECT_REQUEST_BYTES, OBJECT_REQUEST_SYSCALL, OBJECT_RESPONSE_BYTES,
-        OBJECT_RESPONSE_BYTES_WRITTEN_OFFSET, OBJECT_RESPONSE_CAPABILITY_OFFSET,
-        OBJECT_RESPONSE_FIELD_BYTES_OFFSET, OBJECT_RESPONSE_OBJECT_ID_OFFSET,
-        OBJECT_RESPONSE_REVISION_COUNT_OFFSET, OBJECT_RESPONSE_REVISION_OFFSET,
-        OBJECT_RESPONSE_STATUS_OFFSET, ObjectStubOperation, host_result_field_offset,
+        HOST_RESULT_OBJECT_ID_OFFSET, HOST_RESULT_RESERVED0_OFFSET, HOST_RESULT_REVISION_OFFSET,
+        HOST_RESULT_STATUS_OFFSET, NativeStubDataLayout, OBJECT_QUERY_OUTPUT_BYTES,
+        OBJECT_REQUEST_ABI_WORD, OBJECT_REQUEST_BYTES, OBJECT_REQUEST_SYSCALL,
+        OBJECT_RESPONSE_BYTES, OBJECT_RESPONSE_BYTES_WRITTEN_OFFSET,
+        OBJECT_RESPONSE_CAPABILITY_OFFSET, OBJECT_RESPONSE_FIELD_BYTES_OFFSET,
+        OBJECT_RESPONSE_OBJECT_ID_OFFSET, OBJECT_RESPONSE_REVISION_COUNT_OFFSET,
+        OBJECT_RESPONSE_REVISION_OFFSET, OBJECT_RESPONSE_STATUS_OFFSET, ObjectStubOperation,
+        TASK_CONTEXT_ACTIVE_TASK_ID_OFFSET, TASK_CONTEXT_BYTES,
+        TASK_CONTEXT_CONFIDENCE_SCORE_OFFSET, TASK_CONTEXT_MATCHING_TASK_ID_OFFSET,
+        TASK_CONTEXT_OPERATION, TASK_CONTEXT_PROPOSAL_KIND_OFFSET, TASK_PROPOSAL_KIND_RELATED_CODE,
+        TASK_PROPOSAL_OPERATION, TASK_REQUEST_ABI_WORD, TASK_REQUEST_AUTHORITY_OFFSET,
+        TASK_REQUEST_BYTES, TASK_REQUEST_OUTPUT_LEN_OFFSET, TASK_REQUEST_OUTPUT_PTR_OFFSET,
+        TASK_REQUEST_SCORE_OFFSET, TASK_REQUEST_SYSCALL, TASK_REQUEST_TARGET_TASK_ID_OFFSET,
+        TASK_RESPONSE_BYTES, TASK_RESPONSE_STATUS_OFFSET, host_result_field_offset,
+        task_context_result_field_offset,
     },
     x86::{CodeBuffer, ConditionCode, Memory, Register},
 };
@@ -34,6 +43,8 @@ const LABEL_DONE: Label = Label::new(4);
 const LABEL_NODE_BUDGET_BASE: u32 = 10_000;
 const LABEL_BLOCK_BASE: u32 = 20_000;
 const LABEL_LOCAL_BASE: u32 = 30_000;
+const TASK_CONTEXT_STABLE_REASON: &[u8] = b"context-stable";
+const TASK_CONTEXT_SHIFT_REASON: &[u8] = b"context-shift";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeImage {
@@ -253,6 +264,8 @@ impl<'a> Lowerer<'a> {
                 )?;
                 self.emit_object_operation(node_index, node, operation)
             }
+            Opcode::TaskContextRead => self.emit_task_context_read(node_index, node),
+            Opcode::TaskProposalEmit => self.emit_task_proposal_emit(node_index, node),
             Opcode::Jump => self.emit_jump(node),
             Opcode::Branch => self.emit_branch(node),
             Opcode::Return => self.emit_return(node_index),
@@ -467,19 +480,88 @@ impl<'a> Lowerer<'a> {
         self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
     }
 
+    fn emit_task_context_read(&mut self, node_index: usize, node: NodeRecord) -> Result<()> {
+        self.clear_task_request()?;
+        self.clear_task_response()?;
+        self.clear_task_context()?;
+        self.write_task_request_header(TASK_CONTEXT_OPERATION, 0)?;
+        self.load_value_payload(Register::Rcx, node.input1)?;
+        self.write_data_register(
+            self.data_layout.task_request_offset() + TASK_REQUEST_AUTHORITY_OFFSET,
+            Register::Rcx,
+        )?;
+        self.emit_data_address(Register::Rax, self.data_layout.task_context_offset())?;
+        self.write_data_register(
+            self.data_layout.task_request_offset() + TASK_REQUEST_OUTPUT_PTR_OFFSET,
+            Register::Rax,
+        )?;
+        self.write_data_immediate(
+            self.data_layout.task_request_offset() + TASK_REQUEST_OUTPUT_LEN_OFFSET,
+            TASK_CONTEXT_BYTES as u64,
+        )?;
+
+        self.emit_task_request_syscall()?;
+        self.ensure_task_response_ok()?;
+        self.copy_task_context_to_host_result(node_index)?;
+        self.metadata.task_syscalls += 1;
+        self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
+    }
+
+    fn emit_task_proposal_emit(&mut self, node_index: usize, node: NodeRecord) -> Result<()> {
+        self.clear_task_request()?;
+        self.clear_task_response()?;
+        self.write_task_request_header(TASK_PROPOSAL_OPERATION, TASK_PROPOSAL_KIND_RELATED_CODE)?;
+        self.load_value_payload(Register::Rcx, node.input1)?;
+        self.write_data_register(
+            self.data_layout.task_request_offset() + TASK_REQUEST_AUTHORITY_OFFSET,
+            Register::Rcx,
+        )?;
+        self.load_value_payload(Register::Rcx, node.input2)?;
+        self.write_data_register(
+            self.data_layout.task_request_offset() + TASK_REQUEST_TARGET_TASK_ID_OFFSET,
+            Register::Rcx,
+        )?;
+        self.load_value_payload(Register::Rcx, node.input3)?;
+        self.write_data_register(
+            self.data_layout.task_request_offset() + TASK_REQUEST_SCORE_OFFSET,
+            Register::Rcx,
+        )?;
+
+        self.emit_task_request_syscall()?;
+        self.ensure_task_response_ok()?;
+        self.metadata.task_syscalls += 1;
+        self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
+    }
+
     fn emit_host_result(&mut self, node_index: usize, node: NodeRecord) -> Result<()> {
         let producer_index =
             usize::try_from(node.input0).map_err(|_| CodegenError::AddressOverflow)?;
+        let producer_opcode =
+            Opcode::try_from(self.node_for_input(node.input0)?.opcode).map_err(|_| {
+                CodegenError::UnsupportedOpcode {
+                    opcode: node.opcode,
+                }
+            })?;
         let result_type =
             PythType::try_from(node.result_type).map_err(|_| CodegenError::UnsupportedOpcode {
                 opcode: node.opcode,
             })?;
-        let field_offset =
-            host_result_field_offset(node.auxiliary0).ok_or(CodegenError::UnsupportedOpcode {
-                opcode: node.opcode,
-            })?;
+        let is_task_context = producer_opcode == Opcode::TaskContextRead;
+        let field_offset = if is_task_context {
+            task_context_result_field_offset(node.auxiliary0)
+        } else {
+            host_result_field_offset(node.auxiliary0)
+        }
+        .ok_or(CodegenError::UnsupportedOpcode {
+            opcode: node.opcode,
+        })?;
+        let is_utf8_field = if is_task_context {
+            node.auxiliary0 == TASK_CONTEXT_RESULT_REASON_UTF8
+        } else {
+            node.auxiliary0 == HOST_RESULT_UTF8
+        };
 
-        if node.auxiliary0 == HOST_RESULT_UTF8 {
+        if is_utf8_field {
             self.code
                 .mov_imm64(Register::Rax, u64::from(node.input0) << 32)?;
         } else {
@@ -494,6 +576,9 @@ impl<'a> Lowerer<'a> {
                 .mov_reg64_mem64(Register::Rax, Memory::base(Register::R11))?;
             if field_offset == HOST_RESULT_STATUS_OFFSET {
                 self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
+                self.code.and_reg64(Register::Rax, Register::Rbx)?;
+            } else if field_offset == HOST_RESULT_RESERVED0_OFFSET {
+                self.code.mov_imm64(Register::Rbx, 0xFFFF_FFFF)?;
                 self.code.and_reg64(Register::Rax, Register::Rbx)?;
             }
         }
@@ -583,6 +668,137 @@ impl<'a> Lowerer<'a> {
                 Register::Rax,
             )?;
             self.write_data_register(result + HOST_RESULT_BYTES_OFFSET + offset, Register::Rax)?;
+        }
+        Ok(())
+    }
+
+    fn clear_task_request(&mut self) -> Result<()> {
+        for offset in [0, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88] {
+            self.write_data_immediate(self.data_layout.task_request_offset() + offset, 0)?;
+        }
+        Ok(())
+    }
+
+    fn clear_task_response(&mut self) -> Result<()> {
+        for offset in [0, 8, 16, 24, 32, 40, 48] {
+            self.write_data_immediate(self.data_layout.task_response_offset() + offset, 0)?;
+        }
+        Ok(())
+    }
+
+    fn clear_task_context(&mut self) -> Result<()> {
+        for offset in [0, 8, 16, 24, 32, 40, 48, 56, 64, 72] {
+            self.write_data_immediate(self.data_layout.task_context_offset() + offset, 0)?;
+        }
+        Ok(())
+    }
+
+    fn write_task_request_header(&mut self, operation: u16, proposal_kind: u16) -> Result<()> {
+        let header =
+            TASK_REQUEST_ABI_WORD | (u64::from(operation) << 32) | (u64::from(proposal_kind) << 48);
+        self.write_data_immediate(self.data_layout.task_request_offset(), header)
+    }
+
+    fn emit_task_request_syscall(&mut self) -> Result<()> {
+        self.code.mov_imm64(Register::Rax, TASK_REQUEST_SYSCALL)?;
+        self.emit_data_address(Register::Rdi, self.data_layout.task_request_offset())?;
+        self.code
+            .mov_imm64(Register::Rsi, TASK_REQUEST_BYTES as u64)?;
+        self.emit_data_address(Register::Rdx, self.data_layout.task_response_offset())?;
+        self.code
+            .mov_imm64(Register::R10, TASK_RESPONSE_BYTES as u64)?;
+        self.code.mov_imm64(Register::R8, 0)?;
+        self.code.syscall()
+    }
+
+    fn ensure_task_response_ok(&mut self) -> Result<()> {
+        self.read_data_register(
+            self.data_layout.task_response_offset() + TASK_RESPONSE_STATUS_OFFSET,
+            Register::Rax,
+        )?;
+        self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
+        self.code.and_reg64(Register::Rax, Register::Rbx)?;
+        self.code.mov_imm64(Register::Rbx, 0)?;
+        self.code.cmp_reg64(Register::Rax, Register::Rbx)?;
+        self.emit_jcc(ConditionCode::NotEqual, LABEL_RUNTIME_ERROR_EXIT)
+    }
+
+    fn copy_task_context_to_host_result(&mut self, node_index: usize) -> Result<()> {
+        let context = self.data_layout.task_context_offset();
+        let result = self.data_layout.host_result_offset(node_index)?;
+
+        self.read_data_register(context + TASK_CONTEXT_ACTIVE_TASK_ID_OFFSET, Register::Rax)?;
+        self.write_data_register(result + HOST_RESULT_OBJECT_ID_OFFSET, Register::Rax)?;
+
+        self.read_data_register(
+            context + TASK_CONTEXT_MATCHING_TASK_ID_OFFSET,
+            Register::Rax,
+        )?;
+        self.write_data_register(result + HOST_RESULT_REVISION_OFFSET, Register::Rax)?;
+
+        self.read_data_register(
+            context + TASK_CONTEXT_CONFIDENCE_SCORE_OFFSET,
+            Register::Rax,
+        )?;
+        self.write_data_register(result + HOST_RESULT_CAPABILITY_OFFSET, Register::Rax)?;
+
+        self.write_data_immediate(result + HOST_RESULT_BYTES_OFFSET, 0)?;
+        self.write_data_immediate(result + HOST_RESULT_BYTES_OFFSET + 8, 0)?;
+
+        let stable_label = self.next_local_label();
+        let done_label = self.next_local_label();
+        self.read_data_register(
+            context + TASK_CONTEXT_CONFIDENCE_SCORE_OFFSET,
+            Register::Rax,
+        )?;
+        self.code.mov_imm64(Register::Rbx, 70)?;
+        self.code.cmp_reg64(Register::Rax, Register::Rbx)?;
+        self.emit_jcc(ConditionCode::Below, stable_label)?;
+
+        self.write_task_context_header_word(result, TASK_CONTEXT_SHIFT_REASON.len())?;
+        self.write_data_bytes(result + HOST_RESULT_BYTES_OFFSET, TASK_CONTEXT_SHIFT_REASON)?;
+        self.emit_jmp(done_label)?;
+
+        self.code.bind_label(stable_label)?;
+        self.write_task_context_header_word(result, TASK_CONTEXT_STABLE_REASON.len())?;
+        self.write_data_bytes(
+            result + HOST_RESULT_BYTES_OFFSET,
+            TASK_CONTEXT_STABLE_REASON,
+        )?;
+
+        self.code.bind_label(done_label)?;
+        Ok(())
+    }
+
+    fn write_task_context_header_word(&mut self, result: usize, reason_len: usize) -> Result<()> {
+        self.read_data_register(
+            self.data_layout.task_response_offset() + TASK_RESPONSE_STATUS_OFFSET,
+            Register::Rax,
+        )?;
+        self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
+        self.code.and_reg64(Register::Rax, Register::Rbx)?;
+        self.code.mov_imm64(Register::Rbx, reason_len as u64)?;
+        self.code.shl_reg64_imm8(Register::Rbx, 16)?;
+        self.code.or_reg64(Register::Rax, Register::Rbx)?;
+        self.read_data_register(
+            self.data_layout.task_context_offset() + TASK_CONTEXT_PROPOSAL_KIND_OFFSET,
+            Register::Rbx,
+        )?;
+        self.code.mov_imm64(Register::Rcx, 0xFFFF)?;
+        self.code.and_reg64(Register::Rbx, Register::Rcx)?;
+        self.code.shl_reg64_imm8(Register::Rbx, 32)?;
+        self.code.or_reg64(Register::Rax, Register::Rbx)?;
+        self.write_data_register(result + HOST_RESULT_STATUS_OFFSET, Register::Rax)
+    }
+
+    fn write_data_bytes(&mut self, data_offset: usize, bytes: &[u8]) -> Result<()> {
+        let mut offset = 0usize;
+        while offset < bytes.len() {
+            let mut chunk = [0u8; 8];
+            let chunk_len = core::cmp::min(8, bytes.len() - offset);
+            chunk[..chunk_len].copy_from_slice(&bytes[offset..offset + chunk_len]);
+            self.write_data_immediate(data_offset + offset, u64::from_le_bytes(chunk))?;
+            offset += 8;
         }
         Ok(())
     }

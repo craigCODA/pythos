@@ -107,6 +107,45 @@ fn canonical_object_flows_lower_to_object_stubs() {
 }
 
 #[test]
+fn task_context_read_lowers_to_task_request_stub() {
+    let graph = verified_graph(
+        test_support::task_context_score_with_import_rights(
+            pythos_shared::task_abi::TASK_RIGHT_READ_CONTEXT,
+        )
+        .to_vec(),
+    );
+
+    let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
+
+    assert_eq!(image.metadata.capability_immediates, 0);
+    assert_eq!(image.metadata.bootstrap_import_loads, 1);
+    assert_eq!(image.metadata.task_syscalls, 1);
+    assert_eq!(image.metadata.host_result_loads, 1);
+    assert!(parsed.bytes_in_segment_with_flags(b"PYTH_TASK_REQUEST", PF_R | PF_W));
+    assert!(!parsed.bytes_in_segment_with_flags(b"PYTH_TASK_REQUEST", PF_R | PF_X));
+}
+
+#[test]
+fn task_proposal_emit_lowers_to_task_request_stub() {
+    let graph = verified_graph(
+        test_support::task_proposal_emit_with_import_rights(
+            pythos_shared::task_abi::TASK_RIGHT_CREATE_PROPOSAL,
+        )
+        .to_vec(),
+    );
+
+    let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
+
+    assert_eq!(image.metadata.capability_immediates, 0);
+    assert_eq!(image.metadata.bootstrap_import_loads, 1);
+    assert_eq!(image.metadata.task_syscalls, 1);
+    assert!(parsed.bytes_in_segment_with_flags(b"PYTH_TASK_REQUEST", PF_R | PF_W));
+    assert!(!parsed.bytes_in_segment_with_flags(b"PYTH_TASK_REQUEST", PF_R | PF_X));
+}
+
+#[test]
 fn system_log_and_graph_exit_use_existing_graph_syscalls() {
     let graph = verified_graph(test_support::system_log_with_import_capability().to_vec());
 
