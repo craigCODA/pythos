@@ -1,3 +1,7 @@
+use crate::pyth_command_abi::{
+    COMMAND_FIELD_KIND, COMMAND_FIELD_OBJECT_ID, COMMAND_FIELD_PROPOSAL_ID, COMMAND_FIELD_TASK_ID,
+    COMMAND_FIELD_TEXT_UTF8,
+};
 use crate::pyth_runtime_abi::{
     HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
     HOST_RESULT_UTF8,
@@ -902,7 +906,11 @@ fn opcode_accepts_result(opcode: Opcode, actual: PythType, expected: PythType) -
         (opcode, actual),
         (
             Opcode::ConstU64,
-            PythType::ObjectId | PythType::RevisionId | PythType::TaskId | PythType::ProposalId
+            PythType::ObjectId
+                | PythType::RevisionId
+                | PythType::TaskId
+                | PythType::ProposalId
+                | PythType::ErrorCode
         ) | (Opcode::BlockParam, _)
     )
 }
@@ -1046,6 +1054,11 @@ fn host_result_field_schema(producer_opcode: Opcode, field: u32) -> Option<HostR
         (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_CONFIDENCE_SCORE) => U64,
         (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_PROPOSAL_KIND) => U64,
         (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_REASON_UTF8) => Utf8,
+        (Opcode::CommandRead, COMMAND_FIELD_KIND) => U64,
+        (Opcode::CommandRead, COMMAND_FIELD_OBJECT_ID) => ObjectId,
+        (Opcode::CommandRead, COMMAND_FIELD_TASK_ID) => TaskId,
+        (Opcode::CommandRead, COMMAND_FIELD_PROPOSAL_ID) => PythType::ProposalId,
+        (Opcode::CommandRead, COMMAND_FIELD_TEXT_UTF8) => Utf8,
         _ => return None,
     };
 

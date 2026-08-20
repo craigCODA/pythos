@@ -129,3 +129,24 @@ fn lowering_accepts_task_steward_program_with_conditional_proposal() {
     assert!(graph.contains_opcode(Opcode::TaskProposalEmit));
     assert!(graph.contains_opcode(Opcode::SystemLog));
 }
+
+#[test]
+fn lowering_emits_session_manager_command_shape_accepted_by_verifier() {
+    let typed =
+        typecheck_source(include_str!("../../../programs/session-manager/main.pyth")).unwrap();
+    let graph = lower_program(&typed).unwrap();
+    let bytes = encode_verified_graph(&graph).unwrap();
+    let package = PythGraphPackage::decode(&bytes).unwrap();
+    let verified = verify_package(&package).unwrap();
+
+    assert!(verified.package().blocks().len() >= 3);
+    assert_eq!(
+        graph
+            .nodes
+            .iter()
+            .filter(|node| node.opcode == Opcode::CommandRead)
+            .count(),
+        1
+    );
+    assert!(graph.contains_opcode(Opcode::CommandResultEmit));
+}

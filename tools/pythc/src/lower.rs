@@ -7,6 +7,10 @@ use crate::{
     types::{PythType, is_integer_like_type},
 };
 use pythos_shared::{
+    pyth_command_abi::{
+        COMMAND_FIELD_KIND, COMMAND_FIELD_OBJECT_ID, COMMAND_FIELD_PROPOSAL_ID,
+        COMMAND_FIELD_TASK_ID, COMMAND_FIELD_TEXT_UTF8,
+    },
     pyth_runtime_abi::{
         HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_UTF8,
     },
@@ -34,6 +38,7 @@ struct Lowerer<'a> {
     builder: GraphBuilder,
     pending_host_producer: Option<(HostProducer, u32)>,
     pending_task_context_producer: Option<(u32, u32)>,
+    pending_command_read_producer: Option<(u32, u32)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -43,6 +48,7 @@ impl<'a> Lowerer<'a> {
             builder: GraphBuilder::new(program.principal_id, &program.name.text),
             pending_host_producer: None,
             pending_task_context_producer: None,
+            pending_command_read_producer: None,
         }
     }
 
@@ -139,6 +145,7 @@ impl<'a> Lowerer<'a> {
         let incoming_effect = self.builder.current_effect;
         let incoming_host_producer = self.pending_host_producer;
         let incoming_task_context_producer = self.pending_task_context_producer;
+        let incoming_command_read_producer = self.pending_command_read_producer;
         let then_block = self.builder.add_block();
         let else_block = self.builder.add_block();
         self.builder
@@ -148,11 +155,13 @@ impl<'a> Lowerer<'a> {
         self.builder.current_effect = incoming_effect;
         self.pending_host_producer = incoming_host_producer;
         self.pending_task_context_producer = incoming_task_context_producer;
+        self.pending_command_read_producer = incoming_command_read_producer;
         self.lower_statements(then_statements)?;
         let then_terminated = self.builder.current_block_is_terminated();
         let then_effect = self.builder.current_effect;
         let then_host_producer = self.pending_host_producer;
         let then_task_context_producer = self.pending_task_context_producer;
+        let then_command_read_producer = self.pending_command_read_producer;
         let mut join_block = None;
         if !then_terminated {
             let target = *join_block.get_or_insert_with(|| self.builder.add_block());
@@ -164,11 +173,13 @@ impl<'a> Lowerer<'a> {
         self.builder.current_effect = incoming_effect;
         self.pending_host_producer = incoming_host_producer;
         self.pending_task_context_producer = incoming_task_context_producer;
+        self.pending_command_read_producer = incoming_command_read_producer;
         self.lower_statements(else_statements)?;
         let else_terminated = self.builder.current_block_is_terminated();
         let else_effect = self.builder.current_effect;
         let else_host_producer = self.pending_host_producer;
         let else_task_context_producer = self.pending_task_context_producer;
+        let else_command_read_producer = self.pending_command_read_producer;
         if !else_terminated {
             let target = *join_block.get_or_insert_with(|| self.builder.add_block());
             self.clear_pending_producers();
@@ -182,21 +193,25 @@ impl<'a> Lowerer<'a> {
                     self.builder.current_effect = then_effect;
                     self.pending_host_producer = then_host_producer;
                     self.pending_task_context_producer = then_task_context_producer;
+                    self.pending_command_read_producer = then_command_read_producer;
                 }
                 (false, true) => {
                     self.builder.current_effect = else_effect;
                     self.pending_host_producer = else_host_producer;
                     self.pending_task_context_producer = else_task_context_producer;
+                    self.pending_command_read_producer = else_command_read_producer;
                 }
                 (true, true) if then_effect == else_effect => {
                     self.builder.current_effect = then_effect;
                     self.pending_host_producer = then_host_producer;
                     self.pending_task_context_producer = then_task_context_producer;
+                    self.pending_command_read_producer = then_command_read_producer;
                 }
                 (true, true) => {
                     self.builder.current_effect = NO_VALUE;
                     self.pending_host_producer = None;
                     self.pending_task_context_producer = None;
+                    self.pending_command_read_producer = None;
                 }
                 (false, false) => {}
             }
@@ -362,6 +377,11 @@ impl<'a> Lowerer<'a> {
             | Intrinsic::TaskContextReason => {
                 self.lower_task_context_accessor(intrinsic, args, span)
             }
+            Intrinsic::CommandKind
+            | Intrinsic::CommandObject
+            | Intrinsic::CommandTask
+            | Intrinsic::CommandProposal
+            | Intrinsic::CommandText => self.lower_command_accessor(intrinsic, args, span),
             Intrinsic::TaskPropose => self.lower_task_propose(args, expected, span),
             _ => self.lower_generic_effectful_intrinsic(intrinsic, args, span),
         }
@@ -509,6 +529,37 @@ impl<'a> Lowerer<'a> {
         Ok(self.push_host_result(producer, field, result_type))
     }
 
+    fn lower_command_accessor(
+        &mut self,
+        intrinsic: Intrinsic,
+        args: &[Expression],
+        span: Span,
+    ) -> Result<u32, Diagnostic> {
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let producer = match self.pending_command_read_producer {
+            Some((pending_capability, producer))
+                if pending_capability == capability && self.builder.current_effect == producer =>
+            {
+                producer
+            }
+            _ => self.push_effect_node(
+                Opcode::CommandRead,
+                [self.builder.current_effect, capability, NO_VALUE, NO_VALUE],
+                None,
+            ),
+        };
+        self.pending_command_read_producer = Some((capability, producer));
+        let (field, result_type) = match intrinsic {
+            Intrinsic::CommandKind => (COMMAND_FIELD_KIND, PythType::U64),
+            Intrinsic::CommandObject => (COMMAND_FIELD_OBJECT_ID, PythType::ObjectId),
+            Intrinsic::CommandTask => (COMMAND_FIELD_TASK_ID, PythType::TaskId),
+            Intrinsic::CommandProposal => (COMMAND_FIELD_PROPOSAL_ID, PythType::ProposalId),
+            Intrinsic::CommandText => (COMMAND_FIELD_TEXT_UTF8, PythType::Utf8),
+            _ => return Err(compiler_rejected(span)),
+        };
+        Ok(self.push_host_result(producer, field, result_type))
+    }
+
     fn lower_task_propose(
         &mut self,
         args: &[Expression],
@@ -570,6 +621,9 @@ impl<'a> Lowerer<'a> {
         if opcode != Opcode::TaskContextRead {
             self.pending_task_context_producer = None;
         }
+        if opcode != Opcode::CommandRead {
+            self.pending_command_read_producer = None;
+        }
         self.pending_host_producer = producer.map(|producer| (producer, effect_node));
         effect_node
     }
@@ -588,6 +642,7 @@ impl<'a> Lowerer<'a> {
     fn clear_pending_producers(&mut self) {
         self.pending_host_producer = None;
         self.pending_task_context_producer = None;
+        self.pending_command_read_producer = None;
     }
 }
 
@@ -841,6 +896,7 @@ fn opcode_for_intrinsic(intrinsic: Intrinsic) -> Option<Opcode> {
         Intrinsic::ObjectInspect => Opcode::ObjectInspect,
         Intrinsic::ObjectRevise => Opcode::ObjectRevise,
         Intrinsic::ObjectHistory => Opcode::ObjectHistory,
+        Intrinsic::CommandResultEmit => Opcode::CommandResultEmit,
         _ => return None,
     })
 }

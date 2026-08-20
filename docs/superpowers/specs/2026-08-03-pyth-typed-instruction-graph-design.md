@@ -198,7 +198,7 @@ The frozen version 1 public layout struct uses `#[repr(C, packed(4))]` so the
 pub struct PythGraphHeader {
     pub magic: [u8; 8],              // b"PYTHTIG1"
     pub major: u16,                  // 1
-    pub minor: u16,                  // 0
+    pub minor: u16,                  // 1 for command-capable packages; 0 remains accepted
     pub flags: u32,
     pub package_id: u64,
     pub principal_id: u64,

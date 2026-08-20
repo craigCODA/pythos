@@ -106,6 +106,21 @@ for system logging, object operations, task/proposal operations, graph
 relationship queries, relevance assertions, capability requests, and later
 command input/result operations.
 
+Minor version 1 adds the command input/result family without changing existing
+major-version-1 record layouts:
+
+```text
+0x1500 CommandRead
+0x1501 CommandResultEmit
+```
+
+`CommandRead` consumes `[Effect, Capability]`, requires command read authority,
+and exposes closed `HostResult` fields for command kind, object id, task id,
+proposal id, and bounded UTF-8 text. `CommandResultEmit` consumes
+`[Effect, Capability, ErrorCode, Utf8]` and requires command append authority.
+These operations carry typed command objects only; PythCore still does not parse
+human command text.
+
 The frozen task host-operation family includes `TaskContextRead` at opcode
 `0x1205`. It consumes `[Effect, Capability]` and requires the task
 read-context right. Its closed `HostResult` fields are active task id,
@@ -153,9 +168,10 @@ Referenced-range or record-canonicalization failures use the frozen
 `NonCanonicalEncoding` verifier identity. Section-range failures and checksum
 failures retain their decoder error identities under `VerifyError::Decode`.
 
-Unknown major versions are rejected. A higher minor version is rejected unless
-all newly set flags and records are explicitly understood. Reserved fields must
-be zero unless a later accepted ADR assigns them.
+Unknown major versions are rejected. A decoder/runtime that supports version
+1.1 accepts both minor `0` and minor `1` packages, and rejects minor `2` or
+higher unless all newly set flags and records are explicitly understood.
+Reserved fields must be zero unless a later accepted ADR assigns them.
 
 ## Consequences
 
