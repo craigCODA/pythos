@@ -15,7 +15,7 @@ use pythos_shared::object_shell_abi::MAX_QUERY_RESULTS;
 
 pub const MAX_CURRENT_OBJECTS: usize = 4;
 pub const MAX_REVISIONS: usize = MAX_QUERY_RESULTS;
-pub const OBJECT_SERVICE_CURRENT_OBJECTS: usize = MAX_QUERY_RESULTS + 1;
+pub const OBJECT_SERVICE_CURRENT_OBJECTS: usize = crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS;
 
 pub type RevisionHistory = BoundedRevisionHistory<MAX_CURRENT_OBJECTS, MAX_REVISIONS>;
 pub type ObjectServiceRevisionHistory =

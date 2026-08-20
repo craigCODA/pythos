@@ -5,18 +5,18 @@
 // `--features verify`.
 #![cfg_attr(feature = "verify", allow(dead_code))]
 
+use crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS;
 #[cfg(not(test))]
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::typed_object_format::TypedObjectRecord;
-use pythos_shared::object_shell_abi::MAX_QUERY_RESULTS;
 
 pub const SHELL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4845_4C01;
 pub const EXTERNAL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4558_5401;
 const LEGACY_RELATIONSHIP_OBJECTS: usize = 4;
 const LEGACY_RELATIONSHIPS: usize = 8;
-pub const OBJECT_SERVICE_RELATIONSHIP_OBJECTS: usize = MAX_QUERY_RESULTS + 3;
-pub const OBJECT_SERVICE_RELATIONSHIPS: usize = MAX_QUERY_RESULTS + 1;
+pub const OBJECT_SERVICE_RELATIONSHIP_OBJECTS: usize = MAX_DYNAMIC_OBJECTS + 2;
+pub const OBJECT_SERVICE_RELATIONSHIPS: usize = MAX_DYNAMIC_OBJECTS;
 
 pub type RelationshipStore =
     BoundedRelationshipStore<LEGACY_RELATIONSHIP_OBJECTS, LEGACY_RELATIONSHIPS>;
@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn relationship_capacity_keeps_eight_shell_notes_plus_workspace_roots_and_external_fixture() {
+    fn relationship_capacity_keeps_shell_notes_external_fixture_and_task_history() {
         let mut store = ObjectServiceRelationshipStore::new();
         let shell_workspace = object(SHELL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
         let external_workspace = object(EXTERNAL_WORKSPACE_OBJECT_ID, ObjectKind::WorkspaceSession);
@@ -390,9 +390,23 @@ mod tests {
             ))
             .unwrap();
 
+        let task_history_capacity = crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS
+            - (pythos_shared::object_shell_abi::MAX_QUERY_RESULTS + 1);
+        for index in 0..task_history_capacity {
+            let event = object(3000 + index as u64, ObjectKind::TaskEvent);
+            store.insert_object(event).unwrap();
+            store
+                .add_relationship(ObjectRelationship::new(
+                    event.object_id(),
+                    RelationshipKind::BelongsTo,
+                    shell_workspace.object_id(),
+                ))
+                .unwrap();
+        }
+
         assert_eq!(
             store.relationship_count(),
-            pythos_shared::object_shell_abi::MAX_QUERY_RESULTS + 1
+            crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS
         );
     }
 }
