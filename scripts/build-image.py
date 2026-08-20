@@ -26,6 +26,7 @@ PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = (
     ROOT / "target" / "pyth-tig" / "object-known-denied.tig"
 )
 PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-forgery.tig"
+PYTH_TASK_STEWARD_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "task-steward.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -56,6 +57,7 @@ OBJECT_CREATE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0006
 OBJECT_RESTORE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0007
 OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0008
 OBJECT_FORGERY_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0009
+TASK_STEWARD_GRAPH_PRINCIPAL_ID = 0x5059_5448_5354_0001
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -255,6 +257,22 @@ def phase3_object_pyth_graph_records() -> list[tuple[int, bytes]]:
     ]
 
 
+def phase5_task_steward_pyth_graph_records() -> list[tuple[int, bytes]]:
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(
+                b"task-steward.tig",
+                TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+                require_file(
+                    PYTH_TASK_STEWARD_GRAPH_PACKAGE,
+                    "PythTIG task-steward graph package",
+                ),
+            ),
+        )
+    ]
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -293,11 +311,20 @@ def build_user_elf_payload(text: bytes) -> bytes:
 
 
 def build_default_init_pak(
-    include_pythtig: bool = False, include_pythtig_object_flow: bool = False
+    include_pythtig: bool = False,
+    include_pythtig_object_flow: bool = False,
+    include_pythtig_task_steward: bool = False,
 ) -> bytes:
-    if include_pythtig and include_pythtig_object_flow:
+    selected_pythtig_sets = sum(
+        [
+            bool(include_pythtig),
+            bool(include_pythtig_object_flow),
+            bool(include_pythtig_task_steward),
+        ]
+    )
+    if selected_pythtig_sets > 1:
         raise SystemExit(
-            "select either --with-pythtig or --with-pythtig-object-flow, not both; "
+            "select only one PythTIG graph set; "
             "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
         )
     shell_elf = require_file(SHELL_ELF, "shell ELF")
@@ -314,6 +341,9 @@ def build_default_init_pak(
     if include_pythtig_object_flow:
         records.append(pyth_runtime_record())
         records.extend(phase3_object_pyth_graph_records())
+    if include_pythtig_task_steward:
+        records.append(pyth_runtime_record())
+        records.extend(phase5_task_steward_pyth_graph_records())
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -358,6 +388,7 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
     parser.add_argument("--with-pythtig", action="store_true")
     parser.add_argument("--with-pythtig-object-flow", action="store_true")
+    parser.add_argument("--with-pythtig-task-steward", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -377,7 +408,11 @@ def main() -> int:
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(
         pythos_dir / "INIT.PAK",
-        build_default_init_pak(args.with_pythtig, args.with_pythtig_object_flow),
+        build_default_init_pak(
+            args.with_pythtig,
+            args.with_pythtig_object_flow,
+            args.with_pythtig_task_steward,
+        ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 

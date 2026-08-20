@@ -113,3 +113,19 @@ program task_steward principal 0x5059544853540001 {
 
     assert_eq!(task_context_reads, 2);
 }
+
+#[test]
+fn lowering_accepts_task_steward_program_with_conditional_proposal() {
+    let typed = typecheck_source(include_str!("../../../programs/task-steward/main.pyth")).unwrap();
+    let graph = lower_program(&typed).unwrap();
+
+    assert_eq!(graph.effect_forks(), 0);
+    let bytes = encode_verified_graph(&graph).unwrap();
+    let package = PythGraphPackage::decode(&bytes).unwrap();
+    let verified = verify_package(&package).unwrap();
+
+    assert_eq!(verified.package().blocks().len(), 3);
+    assert!(graph.contains_opcode(Opcode::TaskContextRead));
+    assert!(graph.contains_opcode(Opcode::TaskProposalEmit));
+    assert!(graph.contains_opcode(Opcode::SystemLog));
+}

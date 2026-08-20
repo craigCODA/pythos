@@ -125,6 +125,17 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             pyth_runtime_launch::arm_object_flow_completion_marker();
             launch_pyth_graph_runtime_with_deferred_import(launch, capability);
         }
+        pyth_runtime_launch::PythGraphBootMode::LaunchTaskSteward => {
+            let Some(launch) = substrate.pyth_task_steward_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = retained_services::with_task_service(|service| {
+                service.steward_proposal_capability()
+            })
+            .map_err(|_| ());
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
         pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
 

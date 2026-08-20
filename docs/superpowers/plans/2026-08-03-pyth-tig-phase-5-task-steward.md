@@ -438,7 +438,6 @@ program task_steward principal 0x5059544853540001 {
     fn main() -> unit {
         let score: u64 = task.context_score(context);
         if score < 70 {
-            system.log(log, "task-context-stable");
             return;
         } else {
             let candidate: task_id = task.context_candidate(context);
@@ -453,6 +452,11 @@ program task_steward principal 0x5059544853540001 {
 Add the context accessor intrinsics as immediate HostResult accessors tied to a
 matching `TaskContextRead` capability. Reuse is allowed only for consecutive
 accessors from the same context capability.
+
+The low-score branch is side-effect-free in PythTIG v1. The frozen graph format
+has a single effect chain and no effect-join block parameter for branch-local
+host calls in both arms; stable-context evidence is emitted by the task service
+and acceptance harness instead.
 
 - [ ] **Step 2: Compile and verify**
 
