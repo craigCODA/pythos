@@ -7,6 +7,8 @@
 
 #[cfg(all(feature = "verify", feature = "hardware-probe"))]
 compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
+#[cfg(all(feature = "pyth-tig-default", feature = "legacy-shell"))]
+compile_error!("features `pyth-tig-default` and `legacy-shell` are mutually exclusive");
 
 mod architecture;
 mod audio;
@@ -60,6 +62,11 @@ mod process_model;
 mod ps2;
 mod pyth_graph_loader;
 mod pyth_runtime_launch;
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod pyth_service_supervisor;
 mod qemu_exit;
 mod resource_quotas;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]

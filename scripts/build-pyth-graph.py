@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUTPUT_DIR = ROOT / "target" / "pyth-tig"
 EXAMPLES_DIR = ROOT / "programs" / "examples"
 TASK_STEWARD_DIR = ROOT / "programs" / "task-steward"
+SESSION_MANAGER_DIR = ROOT / "programs" / "session-manager"
 HELLO_OUTPUT = OUTPUT_DIR / "hello.tig"
 BUDGET_OUTPUT = OUTPUT_DIR / "budget.tig"
 INVALID_OUTPUT = OUTPUT_DIR / "invalid.tig"
@@ -22,6 +23,7 @@ OBJECT_RESTORE_OUTPUT = OUTPUT_DIR / "object-restore.tig"
 OBJECT_KNOWN_DENIED_OUTPUT = OUTPUT_DIR / "object-known-denied.tig"
 OBJECT_FORGERY_OUTPUT = OUTPUT_DIR / "object-forgery.tig"
 TASK_STEWARD_OUTPUT = OUTPUT_DIR / "task-steward.tig"
+SESSION_MANAGER_OUTPUT = OUTPUT_DIR / "session-manager.tig"
 TOOL_EXE = ROOT / "target" / "debug" / (
     "pyth-tig-tool.exe" if os.name == "nt" else "pyth-tig-tool"
 )
@@ -92,6 +94,8 @@ def main() -> int:
     verify(OBJECT_FORGERY_OUTPUT)
     compile_source(TASK_STEWARD_DIR / "main.pyth", TASK_STEWARD_OUTPUT)
     verify(TASK_STEWARD_OUTPUT)
+    compile_source(SESSION_MANAGER_DIR / "main.pyth", SESSION_MANAGER_OUTPUT)
+    verify(SESSION_MANAGER_OUTPUT)
     print(f"PYTH_GRAPH_READY {HELLO_OUTPUT}")
     print(f"PYTH_GRAPH_BUDGET_READY {BUDGET_OUTPUT}")
     print(f"PYTH_GRAPH_INVALID_READY {INVALID_OUTPUT}")
@@ -103,6 +107,7 @@ def main() -> int:
     print(f"PYTH_GRAPH_OBJECT_KNOWN_DENIED_READY {OBJECT_KNOWN_DENIED_OUTPUT}")
     print(f"PYTH_GRAPH_OBJECT_FORGERY_READY {OBJECT_FORGERY_OUTPUT}")
     print(f"PYTH_GRAPH_TASK_STEWARD_READY {TASK_STEWARD_OUTPUT}")
+    print(f"PYTH_GRAPH_SESSION_MANAGER_READY {SESSION_MANAGER_OUTPUT}")
     return 0
 
 

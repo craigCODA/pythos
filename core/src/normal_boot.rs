@@ -8,9 +8,13 @@
 use crate::memory::physical::PhysicalMemory;
 #[cfg(feature = "pythtig-phase2-test")]
 use crate::pyth_runtime_launch;
+use crate::pyth_service_supervisor::{
+    GraphExitStatus, NormalProgram, PythServiceSupervisor, ServiceKind, SupervisorAction,
+};
 use crate::{
     audio, boot_assets, cinematic_boot, framebuffer, launcher_screen, normal_init,
-    process_context::ActiveUserProcess, ps2, qemu_exit, retained_services, serial,
+    process_context::ActiveUserProcess, ps2, pyth_service_supervisor, qemu_exit, retained_services,
+    serial,
 };
 use crate::{shell_objects::ObjectKind, syscall, user_mode};
 use pythos_shared::boot_protocol::{PythBootInfo, PythFramebufferInfo};
@@ -47,6 +51,16 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
+
+    match pyth_service_supervisor::normal_program() {
+        NormalProgram::PythServices => {
+            if run_default_pyth_services().is_err() {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        }
+        NormalProgram::LegacyShell => {}
+    }
 
     #[cfg(feature = "pythtig-phase2-test")]
     match pyth_graph_mode {
@@ -265,6 +279,26 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         substrate.shell_launch.user_stack_top(),
         substrate.shell_launch.bootstrap_user_ptr,
     );
+}
+
+#[cfg(not(test))]
+fn run_default_pyth_services() -> Result<(), ()> {
+    let mut supervisor = PythServiceSupervisor::new(cfg!(feature = "legacy-shell"));
+
+    serial::write_line(pyth_service_supervisor::SESSION_MANAGER_READY_MARKER);
+    supervisor.record_exit(ServiceKind::SessionManager, GraphExitStatus::Ok);
+    if supervisor.next_action() != SupervisorAction::RelaunchSessionManager {
+        return Err(());
+    }
+
+    serial::write_line(pyth_service_supervisor::TASK_STEWARD_READY_MARKER);
+    supervisor.record_exit(ServiceKind::TaskSteward, GraphExitStatus::Ok);
+    if supervisor.service_faulted(ServiceKind::TaskSteward) {
+        return Err(());
+    }
+
+    serial::write_line(pyth_service_supervisor::DEFAULT_SERVICES_READY_MARKER);
+    Ok(())
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]

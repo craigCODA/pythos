@@ -119,7 +119,12 @@ fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), P
             }
             Ok(Opcode::ConstU64) => matches!(
                 PythType::try_from(node.result_type),
-                Ok(PythType::ObjectId | PythType::RevisionId | PythType::TaskId | PythType::U64)
+                Ok(PythType::ObjectId
+                    | PythType::RevisionId
+                    | PythType::TaskId
+                    | PythType::ProposalId
+                    | PythType::ErrorCode
+                    | PythType::U64)
             ),
             Ok(
                 Opcode::EffectStart
@@ -135,6 +140,8 @@ fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), P
                 | Opcode::ObjectHistory
                 | Opcode::TaskContextRead
                 | Opcode::TaskProposalEmit
+                | Opcode::CommandRead
+                | Opcode::CommandResultEmit
                 | Opcode::Branch
                 | Opcode::Jump
                 | Opcode::Return,
