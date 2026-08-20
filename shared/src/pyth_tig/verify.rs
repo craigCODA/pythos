@@ -8,6 +8,11 @@ use crate::pyth_tig::{
     opcode::{Opcode, RESOURCE_OBJECT, RIGHTS_READ, RIGHTS_REVISE},
     types::PythType,
 };
+use crate::task_abi::{
+    TASK_CONTEXT_RESULT_ACTIVE_TASK_ID, TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID,
+    TASK_CONTEXT_RESULT_CONFIDENCE_SCORE, TASK_CONTEXT_RESULT_PROPOSAL_KIND,
+    TASK_CONTEXT_RESULT_REASON_UTF8,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum VerifyError {
@@ -1008,7 +1013,7 @@ fn host_result_is_in_contiguous_projection_run(
 }
 
 fn host_result_field_schema(producer_opcode: Opcode, field: u32) -> Option<HostResultSchema> {
-    use PythType::{Capability, ErrorCode, ObjectId, RevisionId, Utf8};
+    use PythType::{Capability, ErrorCode, ObjectId, RevisionId, TaskId, U64, Utf8};
 
     let result_type = match (producer_opcode, field) {
         (
@@ -1036,6 +1041,11 @@ fn host_result_field_schema(producer_opcode: Opcode, field: u32) -> Option<HostR
         ) => RevisionId,
         (Opcode::ObjectCreate | Opcode::ObjectQuery, HOST_RESULT_CAPABILITY) => Capability,
         (Opcode::ObjectInspect, HOST_RESULT_UTF8) => Utf8,
+        (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_ACTIVE_TASK_ID) => TaskId,
+        (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID) => TaskId,
+        (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_CONFIDENCE_SCORE) => U64,
+        (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_PROPOSAL_KIND) => U64,
+        (Opcode::TaskContextRead, TASK_CONTEXT_RESULT_REASON_UTF8) => Utf8,
         _ => return None,
     };
 
@@ -1291,6 +1301,12 @@ mod tests {
         HOST_RESULT_UTF8,
     };
     use crate::pyth_tig::test_support;
+    use crate::task_abi::{
+        TASK_CONTEXT_RESULT_ACTIVE_TASK_ID, TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID,
+        TASK_CONTEXT_RESULT_CONFIDENCE_SCORE, TASK_CONTEXT_RESULT_PROPOSAL_KIND,
+        TASK_CONTEXT_RESULT_REASON_UTF8, TASK_RIGHT_APPEND_EVENT, TASK_RIGHT_APPROVE_PROPOSAL,
+        TASK_RIGHT_CONTROL_STATE, TASK_RIGHT_CREATE_PROPOSAL,
+    };
 
     #[test]
     fn verifier_rejects_missing_terminator_bad_target_and_use_before_definition() {
@@ -1373,6 +1389,30 @@ mod tests {
                 import_slot: 0,
             })
         );
+    }
+
+    #[test]
+    fn verifier_requires_create_proposal_right_for_task_proposal_emit() {
+        assert!(
+            verify_bytes(&test_support::task_proposal_emit_with_import_rights(
+                TASK_RIGHT_CREATE_PROPOSAL
+            ))
+            .is_ok()
+        );
+
+        for rights in [
+            TASK_RIGHT_APPEND_EVENT,
+            TASK_RIGHT_APPROVE_PROPOSAL,
+            TASK_RIGHT_CONTROL_STATE,
+        ] {
+            assert_eq!(
+                verify_bytes(&test_support::task_proposal_emit_with_import_rights(rights)),
+                Err(VerifyError::ImportRightsInsufficient {
+                    node: 4,
+                    import_slot: 0,
+                })
+            );
+        }
     }
 
     #[test]
@@ -1462,6 +1502,50 @@ mod tests {
                 HOST_RESULT_UTF8,
             ))
             .is_ok()
+        );
+    }
+
+    #[test]
+    fn verifier_documents_task_context_host_result_fields() {
+        assert_eq!(
+            host_result_field_schema(Opcode::TaskContextRead, TASK_CONTEXT_RESULT_ACTIVE_TASK_ID)
+                .unwrap()
+                .result_type,
+            PythType::TaskId,
+        );
+        assert_eq!(
+            host_result_field_schema(
+                Opcode::TaskContextRead,
+                TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID
+            )
+            .unwrap()
+            .result_type,
+            PythType::TaskId,
+        );
+        assert_eq!(
+            host_result_field_schema(
+                Opcode::TaskContextRead,
+                TASK_CONTEXT_RESULT_CONFIDENCE_SCORE
+            )
+            .unwrap()
+            .result_type,
+            PythType::U64,
+        );
+        assert_eq!(
+            host_result_field_schema(Opcode::TaskContextRead, TASK_CONTEXT_RESULT_PROPOSAL_KIND)
+                .unwrap()
+                .result_type,
+            PythType::U64,
+        );
+        assert_eq!(
+            host_result_field_schema(Opcode::TaskContextRead, TASK_CONTEXT_RESULT_REASON_UTF8)
+                .unwrap()
+                .result_type,
+            PythType::Utf8,
+        );
+        assert_eq!(
+            host_result_field_schema(Opcode::TaskProposalEmit, TASK_CONTEXT_RESULT_REASON_UTF8),
+            None,
         );
     }
 

@@ -52,6 +52,9 @@ pub struct NormalBootSubstrate {
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_object_forgery_runtime_launch:
         Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_task_steward_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
 }
 
 pub struct PreparedShellLaunch {
@@ -145,6 +148,9 @@ static PYTH_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 static PYTH_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_TASK_STEWARD_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
@@ -357,6 +363,15 @@ pub fn initialize_normal_substrate(
             pyth_runtime_launch::OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
         ),
     );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_task_steward_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_TASK_STEWARD_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_task_steward(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+        ),
+    );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -430,6 +445,8 @@ pub fn initialize_normal_substrate(
         pyth_object_known_denied_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_object_forgery_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_task_steward_runtime_launch,
     })
 }
 

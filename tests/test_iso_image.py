@@ -83,6 +83,21 @@ def build_init_pak_with_phase3_object_programs(module) -> bytes:
         return module.build_default_init_pak(include_pythtig_object_flow=True)
 
 
+def build_init_pak_with_task_steward_program(module) -> bytes:
+    with tempfile.TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        shell = temp_path / "pythos-user-shell"
+        runtime = temp_path / "pythos-user-pyth-runtime"
+        task_steward = temp_path / "task-steward.tig"
+        shell.write_bytes(b"\x7fELFshell")
+        runtime.write_bytes(b"\x7fELFpyth-runtime")
+        task_steward.write_bytes(b"PYTHTIG1task-steward")
+        module.SHELL_ELF = shell
+        module.PYTH_RUNTIME_ELF = runtime
+        module.PYTH_TASK_STEWARD_GRAPH_PACKAGE = task_steward
+        return module.build_default_init_pak(include_pythtig_task_steward=True)
+
+
 def build_init_pak_without_phase2_programs(module) -> bytes:
     with tempfile.TemporaryDirectory() as temp:
         temp_path = Path(temp)
@@ -317,11 +332,55 @@ class IsoImageTest(unittest.TestCase):
     def test_phase2_and_phase3_object_graph_sets_are_not_co_packaged(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             with self.assertRaisesRegex(
-                SystemExit, "select either --with-pythtig or --with-pythtig-object-flow"
+                SystemExit, "select only one PythTIG graph set"
             ):
                 module.build_default_init_pak(
                     include_pythtig=True, include_pythtig_object_flow=True
                 )
+
+    def test_task_steward_graph_set_is_packaged_by_both_builders(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            init_pak = build_init_pak_with_task_steward_program(module)
+            payload = init_pak[module.INIT_PAK_HEADER_LEN :]
+            table_start = module.INIT_BUNDLE_HEADER_LEN
+            graph_index = 3
+            graph_entry = table_start + graph_index * module.INIT_BUNDLE_RECORD_LEN
+            record_count = int.from_bytes(payload[24:26], "little")
+            record_types = [
+                int.from_bytes(
+                    payload[
+                        table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN : table_start
+                        + index * module.INIT_BUNDLE_RECORD_LEN
+                        + 4
+                    ],
+                    "little",
+                )
+                for index in range(record_count)
+            ]
+
+            self.assertEqual(record_count, 8)
+            self.assertEqual(
+                record_types[:4],
+                [
+                    module.INIT_BUNDLE_RUNTIME_TYPE,
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                ],
+            )
+
+            graph_start = int.from_bytes(payload[graph_entry + 8 : graph_entry + 16], "little")
+            graph_len = int.from_bytes(payload[graph_entry + 16 : graph_entry + 24], "little")
+            graph_record = payload[graph_start : graph_start + graph_len]
+            name_len = int.from_bytes(graph_record[12:14], "little")
+
+            self.assertEqual(graph_record[:8], module.NAMED_PYTH_GRAPH_MAGIC)
+            self.assertEqual(
+                int.from_bytes(graph_record[16:24], "little"),
+                module.TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+            )
+            self.assertEqual(graph_record[40 : 40 + name_len], b"task-steward.tig")
 
     def test_generated_init_pak_contains_inner_bundle_records(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):

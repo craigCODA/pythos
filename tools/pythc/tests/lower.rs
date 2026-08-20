@@ -58,3 +58,74 @@ fn lowering_emits_object_restore_flow_shape_accepted_by_verifier() {
     assert!(graph.contains_opcode(Opcode::ObjectInspect));
     assert!(graph.contains_opcode(Opcode::ObjectHistory));
 }
+
+#[test]
+fn lowering_emits_task_context_and_proposal_shape_accepted_by_verifier() {
+    let typed = typecheck_source(
+        r#"
+program task_steward principal 0x5059544853540001 {
+    import context: capability<task.context, read>;
+    import proposals: capability<task.proposal, create>;
+    fn main() -> unit {
+        let score: u64 = task.context_score(context);
+        let candidate: task_id = task.context_candidate(context);
+        task.propose(proposals, candidate, score);
+        return;
+    }
+}
+"#,
+    )
+    .unwrap();
+    let graph = lower_program(&typed).unwrap();
+    let bytes = encode_verified_graph(&graph).unwrap();
+    let package = PythGraphPackage::decode(&bytes).unwrap();
+    let verified = verify_package(&package).unwrap();
+
+    assert_eq!(verified.package().blocks().len(), 1);
+    assert!(graph.contains_opcode(Opcode::TaskContextRead));
+    assert!(graph.contains_opcode(Opcode::TaskProposalEmit));
+}
+
+#[test]
+fn lowering_keeps_task_context_reads_bound_to_each_context_capability() {
+    let typed = typecheck_source(
+        r#"
+program task_steward principal 0x5059544853540001 {
+    import active_context: capability<task.context, read>;
+    import candidate_context: capability<task.context, read>;
+    import proposals: capability<task.proposal, create>;
+    fn main() -> unit {
+        let score: u64 = task.context_score(active_context);
+        let candidate: task_id = task.context_candidate(candidate_context);
+        task.propose(proposals, candidate, score);
+        return;
+    }
+}
+"#,
+    )
+    .unwrap();
+    let graph = lower_program(&typed).unwrap();
+    let task_context_reads = graph
+        .nodes
+        .iter()
+        .filter(|node| node.opcode == Opcode::TaskContextRead)
+        .count();
+
+    assert_eq!(task_context_reads, 2);
+}
+
+#[test]
+fn lowering_accepts_task_steward_program_with_conditional_proposal() {
+    let typed = typecheck_source(include_str!("../../../programs/task-steward/main.pyth")).unwrap();
+    let graph = lower_program(&typed).unwrap();
+
+    assert_eq!(graph.effect_forks(), 0);
+    let bytes = encode_verified_graph(&graph).unwrap();
+    let package = PythGraphPackage::decode(&bytes).unwrap();
+    let verified = verify_package(&package).unwrap();
+
+    assert_eq!(verified.package().blocks().len(), 3);
+    assert!(graph.contains_opcode(Opcode::TaskContextRead));
+    assert!(graph.contains_opcode(Opcode::TaskProposalEmit));
+    assert!(graph.contains_opcode(Opcode::SystemLog));
+}

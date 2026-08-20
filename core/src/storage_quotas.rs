@@ -105,6 +105,23 @@ impl StorageQuotaTable {
         Ok(())
     }
 
+    #[cfg_attr(all(not(test), feature = "verify"), allow(dead_code))]
+    pub fn ensure_minimum_limit(
+        &mut self,
+        service_id: ServiceId,
+        min_blocks: u64,
+    ) -> Result<(), StorageQuotaError> {
+        let record = self
+            .records
+            .iter_mut()
+            .find(|record| record.active && record.service_id == service_id)
+            .ok_or(StorageQuotaError::UnknownService)?;
+        if record.max_blocks < min_blocks {
+            record.max_blocks = min_blocks;
+        }
+        Ok(())
+    }
+
     pub fn release_blocks(
         &mut self,
         service_id: ServiceId,
@@ -204,5 +221,19 @@ mod tests {
         quotas.release_blocks(service_id, 1).unwrap();
 
         assert_eq!(quotas.used_blocks(service_id), Ok(1));
+    }
+
+    #[test]
+    fn storage_quota_limit_can_be_raised_without_mutating_usage() {
+        let mut identities = ServiceIdentityTable::new();
+        let service_id = identities.register_task(TaskId::new(94)).unwrap();
+        let mut quotas = StorageQuotaTable::new();
+
+        quotas.register(service_id, 1).unwrap();
+        quotas.charge_blocks(service_id, 1).unwrap();
+        quotas.ensure_minimum_limit(service_id, 3).unwrap();
+
+        assert_eq!(quotas.used_blocks(service_id), Ok(1));
+        assert_eq!(quotas.charge_blocks(service_id, 2), Ok(()));
     }
 }

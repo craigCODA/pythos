@@ -106,6 +106,13 @@ for system logging, object operations, task/proposal operations, graph
 relationship queries, relevance assertions, capability requests, and later
 command input/result operations.
 
+The frozen task host-operation family includes `TaskContextRead` at opcode
+`0x1205`. It consumes `[Effect, Capability]` and requires the task
+read-context right. Its closed `HostResult` fields are active task id,
+candidate task id, confidence score, proposal kind, and reason text. The
+operation exposes only a bounded typed context summary; it does not grant task
+state authority.
+
 Capability imports become graph values only through the version 1 import
 materialization convention: an entry-block `BlockParam` node with
 `result_type = Capability` and `auxiliary0 = import_slot` names a declared

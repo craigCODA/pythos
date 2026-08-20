@@ -92,6 +92,10 @@ mod storage_quotas;
 mod storage_service;
 mod syscall;
 mod system_api;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+mod task_context;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+mod task_service;
 mod tasks;
 mod typed_object_format;
 mod user_copy;

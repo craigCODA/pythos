@@ -33,7 +33,8 @@ use pythos_shared::{
 };
 
 const OBJECT_SERVICE_BASE_SECTOR: u64 = 96;
-const OBJECT_SERVICE_BLOCK_COUNT: u16 = 12;
+const OBJECT_SERVICE_BLOCK_COUNT: u16 = MAX_DYNAMIC_OBJECTS as u16;
+const TASK_SERVICE_STORAGE_ID: ServiceId = ServiceId::from_raw(0x5059_5453_5354_5201);
 const FIRST_SHELL_NOTE_ID: u64 = 1042;
 const KNOWN_EXTERNAL_NOTE_ID: u64 = 2001;
 const SHELL_TASK_ID: u64 = 180;
@@ -442,6 +443,78 @@ impl ObjectService {
         )?))
     }
 
+    pub(crate) fn create_task_service_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object: TypedObjectRecord,
+    ) -> Result<(), ObjectServiceError> {
+        if !is_task_service_kind(object.object_kind()) {
+            return Err(ObjectServiceError::UnsupportedKind);
+        }
+        self.ensure_storage_quota(TASK_SERVICE_STORAGE_ID)?;
+        self.quotas.charge_blocks(TASK_SERVICE_STORAGE_ID, 1)?;
+        if let Err(error) = self.objects.create_object(object) {
+            let _ = self.quotas.release_blocks(TASK_SERVICE_STORAGE_ID, 1);
+            return Err(error.into());
+        }
+        if let Err(error) = self.relationships.insert_object(object) {
+            let _ = self.objects.delete_object(object.object_id());
+            let _ = self.quotas.release_blocks(TASK_SERVICE_STORAGE_ID, 1);
+            return Err(error.into());
+        }
+        self.relationships
+            .add_relationship(ObjectRelationship::new(
+                object.object_id(),
+                RelationshipKind::BelongsTo,
+                ObjectId::new(SHELL_WORKSPACE_OBJECT_ID),
+            ))?;
+        let timestamp = self.take_timestamp();
+        self.revisions
+            .create_object(object, timestamp, caller.service_id())?;
+        Ok(())
+    }
+
+    pub(crate) fn revise_task_service_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object: TypedObjectRecord,
+    ) -> Result<u64, ObjectServiceError> {
+        if !is_task_service_kind(object.object_kind()) {
+            return Err(ObjectServiceError::UnsupportedKind);
+        }
+        let current = self
+            .revisions
+            .current_revision(object.object_id())
+            .ok_or(ObjectServiceError::NotFound)?;
+        if current.object().object_kind() != object.object_kind() {
+            return Err(ObjectServiceError::UnsupportedKind);
+        }
+        let mut staged_objects = self.objects;
+        let mut staged_revisions = self.revisions;
+        staged_objects.replace_object(object)?;
+        let timestamp = self.next_timestamp_ticks;
+        let revision = staged_revisions.update_object(object, timestamp, caller.service_id())?;
+        self.objects = staged_objects;
+        self.revisions = staged_revisions;
+        self.next_timestamp_ticks = self.next_timestamp_ticks.wrapping_add(1);
+        Ok(revision)
+    }
+
+    pub(crate) fn task_service_object(&self, object_id: ObjectId) -> Option<TypedObjectRecord> {
+        self.objects.object(object_id)
+    }
+
+    pub(crate) fn task_service_objects(&self) -> [Option<TypedObjectRecord>; MAX_DYNAMIC_OBJECTS] {
+        let records = self.objects.object_records();
+        let mut objects = [None; MAX_DYNAMIC_OBJECTS];
+        let mut index = 0;
+        while index < MAX_DYNAMIC_OBJECTS {
+            objects[index] = records[index].map(|record| record.object);
+            index += 1;
+        }
+        objects
+    }
+
     fn new_seeded() -> Result<Self, ObjectServiceError> {
         let mut service = Self {
             objects: DynamicObjectStore::new(
@@ -618,6 +691,20 @@ impl ObjectService {
             ResourceId::new(object_id.raw()),
             OBJECT_RIGHTS,
         )?))
+    }
+
+    fn ensure_storage_quota(&mut self, service_id: ServiceId) -> Result<(), ObjectServiceError> {
+        match self.quotas.used_blocks(service_id) {
+            Ok(_) => self
+                .quotas
+                .ensure_minimum_limit(service_id, MAX_DYNAMIC_OBJECTS as u64)
+                .map_err(ObjectServiceError::from),
+            Err(StorageQuotaError::UnknownService) => self
+                .quotas
+                .register(service_id, MAX_DYNAMIC_OBJECTS as u64)
+                .map_err(ObjectServiceError::from),
+            Err(error) => Err(error.into()),
+        }
     }
 
     fn object_belongs_to_workspace(&self, object_id: ObjectId, workspace_id: ObjectId) -> bool {
@@ -807,6 +894,18 @@ fn unpack_capability(capability: PackedCapability) -> CapabilityHandle {
     CapabilityHandle::from_parts(capability.slot(), capability.generation())
 }
 
+fn is_task_service_kind(kind: ObjectKind) -> bool {
+    matches!(
+        kind,
+        ObjectKind::Task
+            | ObjectKind::TaskProposal
+            | ObjectKind::TaskEvent
+            | ObjectKind::TaskRelation
+            | ObjectKind::RelevanceAssertion
+            | ObjectKind::CapabilityRequest
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -905,6 +1004,33 @@ mod tests {
             MAX_QUERY_RESULTS
         );
         assert!(results.iter().all(|entry| entry.object_id != 2001));
+    }
+
+    #[test]
+    fn task_storage_quota_does_not_expand_shell_note_quota() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        service
+            .create_task_service_object(
+                shell,
+                TypedObjectRecord::new(ObjectId::new(5000), ObjectKind::TaskEvent, 1),
+            )
+            .unwrap();
+
+        for _ in 0..MAX_QUERY_RESULTS {
+            service
+                .create_object(shell, workspace, ObjectKind::Note)
+                .unwrap();
+        }
+
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::Note),
+            Err(ObjectServiceError::Quota(
+                StorageQuotaError::StorageQuotaExceeded
+            ))
+        );
     }
 
     #[test]

@@ -1,0 +1,17 @@
+program task_steward principal 0x5059544853540001 {
+    import log: capability<system.log, write>;
+    import context: capability<task.context, read>;
+    import proposals: capability<task.proposal, create>;
+
+    fn main() -> unit {
+        let score: u64 = task.context_score(context);
+        if score < 70 {
+            return;
+        } else {
+            let candidate: task_id = task.context_candidate(context);
+            task.propose(proposals, candidate, score);
+            system.log(log, "task-proposal-created");
+            return;
+        }
+    }
+}

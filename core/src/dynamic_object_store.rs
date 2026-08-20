@@ -12,9 +12,7 @@ use crate::{
     storage_allocator::{AllocatorError, BlockAllocator, BlockExtent},
     typed_object_format::TypedObjectRecord,
 };
-use pythos_shared::object_shell_abi::MAX_QUERY_RESULTS;
-
-pub const MAX_DYNAMIC_OBJECTS: usize = MAX_QUERY_RESULTS + 1;
+pub const MAX_DYNAMIC_OBJECTS: usize = 24;
 const DYNAMIC_OBJECT_BASE_SECTOR: u64 = 96;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -457,8 +455,8 @@ mod tests {
     }
 
     #[test]
-    fn store_capacity_keeps_eight_shell_notes_plus_external_denial_fixture() {
-        let mut store = DynamicObjectStore::new(64, 12).unwrap();
+    fn store_capacity_keeps_shell_notes_external_fixture_and_task_history() {
+        let mut store = DynamicObjectStore::new(64, MAX_DYNAMIC_OBJECTS as u16).unwrap();
         store
             .create_object(TypedObjectRecord::new(
                 ObjectId::new(2001),
@@ -477,9 +475,18 @@ mod tests {
                 .unwrap();
         }
 
-        assert_eq!(
-            store.object_count(),
-            pythos_shared::object_shell_abi::MAX_QUERY_RESULTS + 1
-        );
+        let task_history_capacity =
+            MAX_DYNAMIC_OBJECTS - (pythos_shared::object_shell_abi::MAX_QUERY_RESULTS + 1);
+        for index in 0..task_history_capacity {
+            store
+                .create_object(TypedObjectRecord::new(
+                    ObjectId::new(3000 + index as u64),
+                    ObjectKind::TaskEvent,
+                    1,
+                ))
+                .unwrap();
+        }
+
+        assert_eq!(store.object_count(), MAX_DYNAMIC_OBJECTS);
     }
 }

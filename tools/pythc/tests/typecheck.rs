@@ -31,12 +31,64 @@ program bad_unknown_name principal 0x1 {
 }
 "#;
 
+const TASK_STEWARD_INTRINSICS: &str = r#"
+program task_steward principal 0x5059544853540001 {
+    import context: capability<task.context, read>;
+    import proposals: capability<task.proposal, create>;
+    fn main() -> unit {
+        let score: u64 = task.context_score(context);
+        let candidate: task_id = task.context_candidate(context);
+        task.propose(proposals, candidate, score);
+        return;
+    }
+}
+"#;
+
+const TASK_PROPOSE_ASSIGNED: &str = r#"
+program task_steward principal 0x5059544853540001 {
+    import context: capability<task.context, read>;
+    import proposals: capability<task.proposal, create>;
+    fn main() -> unit {
+        let score: u64 = task.context_score(context);
+        let candidate: task_id = task.context_candidate(context);
+        let proposal: proposal_id = task.propose(proposals, candidate, score);
+        return;
+    }
+}
+"#;
+
 #[test]
 fn typechecks_object_capability_flow() {
     let typed = typecheck_source(include_str!("fixtures/object-note.pyth")).unwrap();
     assert_eq!(typed.main.result_type, PythType::Unit);
     assert!(typed.required_intrinsics.contains(&Intrinsic::ObjectCreate));
     assert!(typed.required_intrinsics.contains(&Intrinsic::ObjectRevise));
+}
+
+#[test]
+fn typechecks_task_context_and_proposal_intrinsics_with_proposal_only_rights() {
+    let typed = typecheck_source(TASK_STEWARD_INTRINSICS).unwrap();
+
+    assert_eq!(typed.main.result_type, PythType::Unit);
+    assert!(
+        typed
+            .required_intrinsics
+            .contains(&Intrinsic::TaskContextScore)
+    );
+    assert!(
+        typed
+            .required_intrinsics
+            .contains(&Intrinsic::TaskContextCandidate)
+    );
+    assert!(typed.required_intrinsics.contains(&Intrinsic::TaskPropose));
+}
+
+#[test]
+fn rejects_assigned_task_proposal_result_because_emit_is_effect_only() {
+    assert_eq!(
+        typecheck_source(TASK_PROPOSE_ASSIGNED).unwrap_err().code,
+        "T0003"
+    );
 }
 
 #[test]

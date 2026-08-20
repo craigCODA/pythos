@@ -1,4 +1,8 @@
 use crate::pyth_tig::types::PythType;
+use crate::task_abi::{
+    TASK_RIGHT_APPROVE_PROPOSAL, TASK_RIGHT_CONTROL_STATE, TASK_RIGHT_CREATE_PROPOSAL,
+    TASK_RIGHT_READ_CONTEXT,
+};
 
 pub const RESOURCE_SYSTEM_LOG: u16 = 1;
 pub const RESOURCE_OBJECT_WORKSPACE: u16 = 2;
@@ -122,22 +126,26 @@ impl Opcode {
             Self::ObjectHistory => {
                 host_sig([Effect, Capability, ObjectId], RESOURCE_OBJECT, RIGHTS_READ)
             }
-            Self::TaskActiveRead => host_sig([Effect, Capability], RESOURCE_TASK, RIGHTS_READ),
+            Self::TaskActiveRead => {
+                host_sig([Effect, Capability], RESOURCE_TASK, TASK_RIGHT_READ_CONTEXT)
+            }
             Self::TaskProposalEmit => host_sig(
                 [Effect, Capability, TaskId, U64],
                 RESOURCE_TASK,
-                RIGHTS_APPEND,
+                TASK_RIGHT_CREATE_PROPOSAL,
             ),
             Self::TaskProposalApprove => host_sig(
                 [Effect, Capability, ProposalId],
                 RESOURCE_TASK,
-                RIGHTS_APPROVE,
+                TASK_RIGHT_APPROVE_PROPOSAL,
             ),
-            Self::TaskSuspend | Self::TaskRevive => {
-                host_sig([Effect, Capability, TaskId], RESOURCE_TASK, RIGHTS_CONTROL)
-            }
+            Self::TaskSuspend | Self::TaskRevive => host_sig(
+                [Effect, Capability, TaskId],
+                RESOURCE_TASK,
+                TASK_RIGHT_CONTROL_STATE,
+            ),
             Self::TaskContextRead => {
-                host_sig([Effect, Capability, TaskId], RESOURCE_TASK, RIGHTS_READ)
+                host_sig([Effect, Capability], RESOURCE_TASK, TASK_RIGHT_READ_CONTEXT)
             }
             Self::GraphQueryRelated => {
                 host_sig([Effect, Capability, ObjectId], RESOURCE_GRAPH, RIGHTS_QUERY)

@@ -6,7 +6,7 @@
 //! that PythCore validates against the caller before acting.
 
 pub const OBJECT_SHELL_ABI_MAJOR: u16 = 1;
-pub const OBJECT_SHELL_ABI_MINOR: u16 = 0;
+pub const OBJECT_SHELL_ABI_MINOR: u16 = 1;
 
 pub const SYSCALL_CONSOLE_READ_BYTE: u64 = 0x5059_0100;
 pub const SYSCALL_CONSOLE_WRITE_BYTE: u64 = 0x5059_0101;
@@ -76,7 +76,9 @@ pub struct ObjectListEntry {
 /// Read-only block PythCore maps into the shell process at launch: its
 /// initial capability set and any reachable objects. Never mutated by the
 /// shell; per-object capabilities the shell later acquires (via `create` or
-/// `query`) live in the shell's own user-space `CapabilityMap`, not here.
+/// `query`) live in the shell's own user-space `CapabilityMap`, not here. The
+/// task-control capability is user authority; proposal-only graph runtimes use
+/// the separate Pyth graph bootstrap ABI.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BootstrapCapabilityBlock {
@@ -88,6 +90,7 @@ pub struct BootstrapCapabilityBlock {
     pub console: PackedCapability,
     pub workspace: PackedCapability,
     pub system_control: PackedCapability,
+    pub task_control: PackedCapability,
     pub objects: [ObjectListEntry; MAX_SHELL_OBJECT_CAPS],
 }
 
@@ -134,6 +137,7 @@ mod tests {
     #[test]
     fn request_and_response_layouts_are_stable() {
         assert_eq!(OBJECT_SHELL_ABI_MAJOR, 1);
+        assert_eq!(OBJECT_SHELL_ABI_MINOR, 1);
         assert_eq!(OBJECT_KIND_NOTE, 10);
         assert_eq!(FIELD_TEXT, 1);
         assert_eq!(OP_CREATE_OBJECT, 1);
@@ -145,7 +149,7 @@ mod tests {
         assert_eq!(core::mem::size_of::<ObjectShellRequest>(), 80);
         assert_eq!(core::mem::size_of::<ObjectShellResponse>(), 64);
         assert_eq!(core::mem::size_of::<ObjectListEntry>(), 16);
-        assert_eq!(core::mem::size_of::<BootstrapCapabilityBlock>(), 168);
+        assert_eq!(core::mem::size_of::<BootstrapCapabilityBlock>(), 176);
     }
 
     #[test]
@@ -235,6 +239,8 @@ mod tests {
             core::mem::offset_of!(BootstrapCapabilityBlock, system_control),
             32
         );
-        assert_eq!(core::mem::offset_of!(BootstrapCapabilityBlock, objects), 40);
+        let task_control_offset = core::mem::offset_of!(BootstrapCapabilityBlock, task_control);
+        assert_eq!(task_control_offset, 40);
+        assert_eq!(core::mem::offset_of!(BootstrapCapabilityBlock, objects), 48);
     }
 }

@@ -18,6 +18,7 @@ pub struct CapabilityMap {
     console: PackedCapability,
     workspace: PackedCapability,
     system_control: PackedCapability,
+    task_control: PackedCapability,
     entries: [Option<ObjectListEntry>; CAPACITY],
     entry_count: usize,
 }
@@ -30,6 +31,7 @@ impl CapabilityMap {
             console: bootstrap.console,
             workspace: bootstrap.workspace,
             system_control: bootstrap.system_control,
+            task_control: bootstrap.task_control,
             entries: [None; CAPACITY],
             entry_count: 0,
         };
@@ -50,6 +52,10 @@ impl CapabilityMap {
 
     pub const fn system_control(&self) -> PackedCapability {
         self.system_control
+    }
+
+    pub const fn task_control(&self) -> PackedCapability {
+        self.task_control
     }
 
     /// The cached capability for `object_id`, if any. `None` means the shell
@@ -119,6 +125,7 @@ mod tests {
             console: PackedCapability::from_parts(1, 1),
             workspace: PackedCapability::from_parts(2, 1),
             system_control: PackedCapability::from_parts(3, 1),
+            task_control: PackedCapability::from_parts(4, 1),
             objects: [ObjectListEntry {
                 object_id: 0,
                 capability: PackedCapability::from_raw(0),
@@ -139,6 +146,7 @@ mod tests {
         let map = CapabilityMap::from_bootstrap(&bootstrap);
 
         assert_eq!(map.workspace().slot(), 2);
+        assert_eq!(map.task_control().slot(), 4);
         assert_eq!(map.object_capability(1042).unwrap().slot(), 10);
         assert_eq!(map.object_capability(9999), None);
     }
