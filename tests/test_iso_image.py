@@ -99,7 +99,119 @@ def build_init_pak_without_phase2_programs(module) -> bytes:
         return module.build_default_init_pak()
 
 
+def native_elf_fixture() -> bytes:
+    text_offset = 0x1000
+    data_offset = 0x2000
+    elf = bytearray(data_offset + 8)
+    elf[:4] = b"\x7fELF"
+    elf[4:7] = bytes((2, 1, 1))
+    elf[16:18] = (2).to_bytes(2, "little")
+    elf[18:20] = (0x3E).to_bytes(2, "little")
+    elf[20:24] = (1).to_bytes(4, "little")
+    elf[24:32] = (0x0040_0000).to_bytes(8, "little")
+    elf[32:40] = (64).to_bytes(8, "little")
+    elf[52:54] = (64).to_bytes(2, "little")
+    elf[54:56] = (56).to_bytes(2, "little")
+    elf[56:58] = (2).to_bytes(2, "little")
+    elf[58:60] = (64).to_bytes(2, "little")
+
+    def load(index: int, flags: int, offset: int, address: int, size: int) -> None:
+        entry = 64 + index * 56
+        elf[entry : entry + 4] = (1).to_bytes(4, "little")
+        elf[entry + 4 : entry + 8] = flags.to_bytes(4, "little")
+        elf[entry + 8 : entry + 16] = offset.to_bytes(8, "little")
+        elf[entry + 16 : entry + 24] = address.to_bytes(8, "little")
+        elf[entry + 24 : entry + 32] = address.to_bytes(8, "little")
+        elf[entry + 32 : entry + 40] = size.to_bytes(8, "little")
+        elf[entry + 40 : entry + 48] = size.to_bytes(8, "little")
+        elf[entry + 48 : entry + 56] = (0x1000).to_bytes(8, "little")
+
+    load(0, 0x5, text_offset, 0x0040_0000, 1)
+    load(1, 0x6, data_offset, 0x0040_1000, 8)
+    elf[text_offset] = 0xC3
+    return bytes(elf)
+
+
+def load_native_elf_verifier():
+    path = ROOT / "scripts" / "verify-pyth-native-elf.py"
+    spec = importlib.util.spec_from_file_location("verify_pyth_native_elf", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load verify-pyth-native-elf.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class IsoImageTest(unittest.TestCase):
+    def test_native_elf_verifier_rejects_invalid_load_ranges(self) -> None:
+        verifier = load_native_elf_verifier()
+        truncated_load = bytearray(native_elf_fixture())
+        truncated_load[64 + 32 : 64 + 40] = (2).to_bytes(8, "little")
+        truncated_load[64 + 40 : 64 + 48] = (1).to_bytes(8, "little")
+        with self.assertRaisesRegex(ValueError, "file size exceeds memory size"):
+            verifier.verify(bytes(truncated_load))
+
+        out_of_range_load = bytearray(native_elf_fixture())
+        out_of_range_load[64 + 8 : 64 + 16] = (len(out_of_range_load)).to_bytes(8, "little")
+        out_of_range_load[64 + 32 : 64 + 40] = (1).to_bytes(8, "little")
+        with self.assertRaisesRegex(ValueError, "file range is outside"):
+            verifier.verify(bytes(out_of_range_load))
+
+    def test_native_binding_record_binds_graph_and_elf_digests(self) -> None:
+        principal = 0x5059_5448_4752_0001
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                graph_dir = temp_path / "graphs"
+                graph_dir.mkdir()
+                graph = graph_dir / "hello.tig"
+                elf = temp_path / "hello.elf"
+                graph_bytes = b"PYTHTIG1" + bytes(16) + principal.to_bytes(8, "little")
+                graph.write_bytes(graph_bytes)
+                elf_bytes = native_elf_fixture()
+                elf.write_bytes(elf_bytes)
+                module.PYTH_GRAPH_OUTPUT_DIR = graph_dir
+
+                records = module.native_pyth_graph_records(elf)
+
+                self.assertEqual(
+                    [record_type for record_type, _ in records],
+                    [
+                        module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                        module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                        module.INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE,
+                    ],
+                )
+                binding = records[2][1]
+                self.assertEqual(binding[:8], module.PYTH_NATIVE_BINDING_MAGIC)
+                self.assertEqual(int.from_bytes(binding[16:24], "little"), principal)
+                self.assertEqual(
+                    int.from_bytes(binding[24:32], "little"), module.digest64(graph_bytes)
+                )
+                self.assertEqual(
+                    int.from_bytes(binding[32:40], "little"), module.digest64(elf_bytes)
+                )
+
+                substituted_elf = elf_bytes[:-1] + bytes((elf_bytes[-1] ^ 1,))
+                self.assertNotEqual(
+                    int.from_bytes(binding[32:40], "little"),
+                    module.digest64(substituted_elf),
+                )
+
+    def test_native_packaging_rejects_invalid_elf(self) -> None:
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                graph_dir = temp_path / "graphs"
+                graph_dir.mkdir()
+                (graph_dir / "hello.tig").write_bytes(b"PYTHTIG1" + bytes(24))
+                elf = temp_path / "hello.elf"
+                elf.write_bytes(b"not an ELF")
+                module.PYTH_GRAPH_OUTPUT_DIR = graph_dir
+
+                with self.assertRaisesRegex(ValueError, "not an ELF64 file"):
+                    module.native_pyth_graph_records(elf)
+
     def test_default_init_pak_excludes_phase2_runtime_and_graphs(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             init_pak = build_init_pak_without_phase2_programs(module)

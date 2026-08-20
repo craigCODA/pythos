@@ -69,12 +69,18 @@ def verify(data: bytes) -> None:
         offset = phoff + index * phentsize
         kind = read_u32(data, offset)
         flags = read_u32(data, offset + 4)
+        file_offset = read_u64(data, offset + 8)
         vaddr = read_u64(data, offset + 16)
+        filesz = read_u64(data, offset + 32)
         memsz = read_u64(data, offset + 40)
         if kind == PT_INTERP:
             raise ValueError("interpreter segment is forbidden")
         if kind != PT_LOAD:
             continue
+        if filesz > memsz:
+            raise ValueError("LOAD file size exceeds memory size")
+        if file_offset > len(data) or filesz > len(data) - file_offset:
+            raise ValueError("LOAD file range is outside the ELF")
         if flags & PF_W and flags & PF_X:
             raise ValueError("writable executable LOAD is forbidden")
         if flags == (PF_R | PF_W):

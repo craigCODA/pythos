@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shutil
 from pathlib import Path
 
@@ -39,12 +40,15 @@ INIT_BUNDLE_RUNTIME_TYPE = 0x0000_0001
 INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
 INIT_BUNDLE_NAMED_USER_ELF_TYPE = 0x0000_0003
 INIT_BUNDLE_PYTH_GRAPH_TYPE = 0x0000_0004
+INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE = 0x0000_0005
 NAMED_USER_PROGRAM_MAGIC = b"PYUPGM01"
 NAMED_USER_PROGRAM_HEADER_LEN = 40
 MAX_NAMED_PROGRAM_NAME_LEN = 32
 NAMED_PYTH_GRAPH_MAGIC = b"PYTIGM01"
 NAMED_PYTH_GRAPH_HEADER_LEN = 40
 MAX_NAMED_PYTH_GRAPH_NAME_LEN = 32
+PYTH_NATIVE_BINDING_MAGIC = b"PYTNAT01"
+PYTH_NATIVE_BINDING_HEADER_LEN = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
@@ -160,6 +164,39 @@ def build_named_pyth_graph(name: bytes, principal_id: int, package: bytes) -> by
     return bytes(header) + name + package
 
 
+def load_native_elf_verifier():
+    path = ROOT / "scripts" / "verify-pyth-native-elf.py"
+    spec = importlib.util.spec_from_file_location("verify_pyth_native_elf", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_pyth_native_binding(
+    graph_name: bytes,
+    elf_name: bytes,
+    principal_id: int,
+    graph: bytes,
+    elf: bytes,
+) -> bytes:
+    if len(graph_name) > MAX_NAMED_PYTH_GRAPH_NAME_LEN:
+        raise ValueError("native source graph name is too long")
+    if len(elf_name) > MAX_NAMED_PROGRAM_NAME_LEN:
+        raise ValueError("native ELF name is too long")
+    header = bytearray(PYTH_NATIVE_BINDING_HEADER_LEN)
+    header[0:8] = PYTH_NATIVE_BINDING_MAGIC
+    header[8:10] = (1).to_bytes(2, "little")
+    header[10:12] = (0).to_bytes(2, "little")
+    header[12:14] = len(graph_name).to_bytes(2, "little")
+    header[14:16] = len(elf_name).to_bytes(2, "little")
+    header[16:24] = principal_id.to_bytes(8, "little")
+    header[24:32] = digest64(graph).to_bytes(8, "little")
+    header[32:40] = digest64(elf).to_bytes(8, "little")
+    return bytes(header) + graph_name + elf_name
+
+
 def graph_principal_id(package: bytes) -> int:
     if len(package) < 32 or package[:8] != b"PYTHTIG1":
         raise ValueError("native source graph is not a PythTIG package")
@@ -168,6 +205,7 @@ def graph_principal_id(package: bytes) -> int:
 
 def native_pyth_graph_records(elf_path: Path) -> list[tuple[int, bytes]]:
     elf = require_file(elf_path, "Pyth native ELF")
+    load_native_elf_verifier().verify(elf)
     graph_path = PYTH_GRAPH_OUTPUT_DIR / f"{elf_path.stem}.tig"
     graph = require_file(graph_path, "Pyth native source graph package")
     principal_id = graph_principal_id(graph)
@@ -181,6 +219,10 @@ def native_pyth_graph_records(elf_path: Path) -> list[tuple[int, bytes]]:
         (
             INIT_BUNDLE_NAMED_USER_ELF_TYPE,
             build_named_user_program(elf_name, principal_id, elf),
+        ),
+        (
+            INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE,
+            build_pyth_native_binding(graph_name, elf_name, principal_id, graph, elf),
         ),
     ]
 
