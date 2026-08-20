@@ -244,6 +244,10 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             qemu_exit::panic();
         }
     };
+    if retained_services::bind_shell_process(shell_process).is_err() {
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
     let bootstrap = match build_bootstrap_block(shell_process) {
         Ok(block) => block,
         Err(_) => {
@@ -283,7 +287,20 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 
 #[cfg(not(test))]
 fn run_default_pyth_services() -> Result<(), ()> {
-    let mut supervisor = PythServiceSupervisor::new(cfg!(feature = "legacy-shell"));
+    let mut supervisor = PythServiceSupervisor::new(
+        cfg!(feature = "legacy-shell") || cfg!(feature = "pyth-tig-session-manager-fault-test"),
+    );
+
+    if cfg!(feature = "pyth-tig-session-manager-fault-test") {
+        serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
+        supervisor.record_exit(ServiceKind::SessionManager, GraphExitStatus::Fault);
+        if supervisor.next_action() != SupervisorAction::EnterRecoveryShell {
+            return Err(());
+        }
+        serial::write_line(pyth_service_supervisor::SESSION_MANAGER_FAULT_CONTAINED_MARKER);
+        serial::write_line(pyth_service_supervisor::RECOVERY_SHELL_ENTER_MARKER);
+        return Ok(());
+    }
 
     serial::write_line(pyth_service_supervisor::SESSION_MANAGER_READY_MARKER);
     supervisor.record_exit(ServiceKind::SessionManager, GraphExitStatus::Ok);

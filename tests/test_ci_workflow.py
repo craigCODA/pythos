@@ -32,6 +32,7 @@ class CiWorkflowTest(unittest.TestCase):
             "python scripts/test-pyth-graph-runtime.py",
             "python scripts/test-pyth-graph-object-flow.py",
             "python scripts/test-pyth-native-codegen.py",
+            "python scripts/test-pyth-default-boot.py",
             "python scripts/test-boot.py --slice phase-6-complete",
             "python scripts/test-boot.py --slice phase-6-complete --timeout 60",
             "python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device --timeout 60",

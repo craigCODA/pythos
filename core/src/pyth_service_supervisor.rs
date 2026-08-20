@@ -4,6 +4,9 @@ pub const DEFAULT_SERVICES_READY_MARKER: &str = "PYTHOS:PYTHTIG:DEFAULT_SERVICES
 #[allow(dead_code)]
 pub const SERVICE_FAULT_CONTAINED_MARKER: &str = "PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED";
 #[allow(dead_code)]
+pub const SESSION_MANAGER_FAULT_CONTAINED_MARKER: &str =
+    "PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED service:session-manager";
+#[allow(dead_code)]
 pub const RECOVERY_SHELL_ENTER_MARKER: &str = "PYTHOS:PYTHTIG:RECOVERY_SHELL_ENTER";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -174,6 +177,10 @@ mod tests {
         assert_eq!(
             SERVICE_FAULT_CONTAINED_MARKER,
             "PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED"
+        );
+        assert_eq!(
+            SESSION_MANAGER_FAULT_CONTAINED_MARKER,
+            "PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED service:session-manager"
         );
         assert_eq!(
             RECOVERY_SHELL_ENTER_MARKER,
