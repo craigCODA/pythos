@@ -19,6 +19,7 @@ const SHT_STRTAB: u32 = 3;
 const SHF_WRITE: u64 = 1;
 const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
+const EMPTY_RODATA_SENTINEL: &[u8] = &[0];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElfImage {
@@ -63,17 +64,20 @@ impl ElfImage {
             });
         }
 
+        let rodata = if self.rodata.is_empty() {
+            EMPTY_RODATA_SENTINEL
+        } else {
+            &self.rodata
+        };
+
         let text_offset = PAGE_SIZE;
         let text_addr = self.base_address;
         let text_end = checked_add(text_offset, self.text.len() as u64)?;
         let rodata_offset = align_up(text_end, PAGE_SIZE)?;
         let rodata_addr = align_up(checked_add(text_addr, self.text.len() as u64)?, PAGE_SIZE)?;
-        let rodata_end = checked_add(rodata_offset, self.rodata.len() as u64)?;
+        let rodata_end = checked_add(rodata_offset, rodata.len() as u64)?;
         let data_offset = align_up(rodata_end, PAGE_SIZE)?;
-        let data_addr = align_up(
-            checked_add(rodata_addr, self.rodata.len() as u64)?,
-            PAGE_SIZE,
-        )?;
+        let data_addr = align_up(checked_add(rodata_addr, rodata.len() as u64)?, PAGE_SIZE)?;
         let data_end = checked_add(data_offset, self.data.len() as u64)?;
 
         let shstrtab = SectionStringTable::new();
@@ -105,8 +109,8 @@ impl ElfImage {
                 flags: PF_R,
                 offset: rodata_offset,
                 vaddr: rodata_addr,
-                filesz: self.rodata.len() as u64,
-                memsz: self.rodata.len() as u64,
+                filesz: rodata.len() as u64,
+                memsz: rodata.len() as u64,
             },
         )?;
         write_program_header(
@@ -122,7 +126,7 @@ impl ElfImage {
         )?;
 
         write_range(&mut bytes, text_offset, &self.text)?;
-        write_range(&mut bytes, rodata_offset, &self.rodata)?;
+        write_range(&mut bytes, rodata_offset, rodata)?;
         write_range(&mut bytes, data_offset, &self.data)?;
         write_range(&mut bytes, shstrtab_offset, &shstrtab.bytes)?;
 
@@ -151,7 +155,7 @@ impl ElfImage {
                 flags: SHF_ALLOC,
                 addr: rodata_addr,
                 offset: rodata_offset,
-                size: self.rodata.len() as u64,
+                size: rodata.len() as u64,
                 addralign: 1,
             },
         )?;

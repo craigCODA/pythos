@@ -87,6 +87,21 @@ impl ActiveUserProcess {
         ))
     }
 
+    pub fn from_pyth_native_launch(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        image: &user_elf::UserElfImage,
+        copy_map: PythRuntimeCopyMapSpec,
+    ) -> Result<Self, UserCopyError> {
+        Ok(Self::from_copy_map(
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map_from_pyth_native_launch(image, copy_map)?,
+        ))
+    }
+
     #[cfg(test)]
     pub const fn with_copy_map(self, copy_map: UserCopyMap) -> Self {
         Self {
@@ -154,6 +169,25 @@ pub fn copy_map_from_pyth_runtime_launch(
     map.add_mapping(spec.bootstrap_user_ptr, spec.bootstrap_len, true, false)?;
     map.add_mapping(spec.package_user_ptr, spec.package_len, true, false)?;
     map.add_mapping(spec.result_user_ptr, spec.result_len, true, true)?;
+    Ok(map)
+}
+
+pub fn copy_map_from_pyth_native_launch(
+    image: &user_elf::UserElfImage,
+    spec: PythRuntimeCopyMapSpec,
+) -> Result<UserCopyMap, UserCopyError> {
+    let mut map = copy_map_from_pyth_runtime_launch(spec)?;
+    let mut index = 0usize;
+    while index < image.segment_count() {
+        let segment = image.segment(index).ok_or(UserCopyError::OutOfRange)?;
+        map.add_mapping(
+            segment.page_start(),
+            segment.page_len(),
+            true,
+            segment.writable(),
+        )?;
+        index += 1;
+    }
     Ok(map)
 }
 
@@ -295,6 +329,54 @@ mod tests {
         assert_eq!(
             map.validate_range(0xFFFF_FFFF_8000_0000, 8, UserCopyAccess::Read),
             Err(UserCopyError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn native_graph_copy_map_retains_elf_segments_and_graph_payload_permissions() {
+        let image = user_elf::validate(&minimal_user_elf()).unwrap();
+        let stack = user_stacks::UserStackRegion {
+            guard_start: 0x0070_0000,
+            stack_start: 0x0070_1000,
+            stack_len: 0x1000,
+        };
+        let map = copy_map_from_pyth_native_launch(
+            &image,
+            PythRuntimeCopyMapSpec {
+                stack,
+                bootstrap_user_ptr: 0x7100_0000,
+                bootstrap_len: 512,
+                package_user_ptr: 0x7100_1000,
+                package_len: 384,
+                result_user_ptr: 0x7100_2000,
+                result_len: 64,
+            },
+        )
+        .unwrap();
+
+        assert!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert!(
+            map.validate_range(0x0040_1000, 16, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(0x7100_1000, 384, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(0x7100_1000, 1, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert!(
+            map.validate_range(0x7100_2000, 64, UserCopyAccess::Write)
+                .is_ok()
         );
     }
 

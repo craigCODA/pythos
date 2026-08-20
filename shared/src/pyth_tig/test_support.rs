@@ -77,6 +77,7 @@ const TASK_CONTEXT_READ_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 5 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
 const TASK_PROPOSAL_EMIT_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 6 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
+const BRANCH_RETURN_PACKAGE_LEN: usize = HEADER_SIZE + 3 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
 
 struct BlockSpec {
     block_id: u32,
@@ -349,6 +350,84 @@ pub fn package_with_bad_branch_target() -> AlignedPackage {
         },
     );
     refresh_checksum(bytes);
+    package
+}
+
+pub fn branch_to_return_package(condition: bool) -> FixturePackage<BRANCH_RETURN_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; BRANCH_RETURN_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 3, 4, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 1,
+            first_node: 2,
+            node_count: 1,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 2,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + 2 * BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 2,
+            first_node: 3,
+            node_count: 1,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 3,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstBool.code(),
+            result_type: PythType::Bool.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: u64::from(condition),
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Branch.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 1,
+            auxiliary1: 2,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 2 * NODE_RECORD_SIZE, 1);
+    write_return(&mut package.bytes, nodes_offset + 3 * NODE_RECORD_SIZE, 2);
+    refresh_checksum(&mut package.bytes);
     package
 }
 

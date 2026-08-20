@@ -205,13 +205,30 @@ def graph_principal_id(package: bytes) -> int:
     return int.from_bytes(package[24:32], "little")
 
 
+def named_graph_principal_id(graph_name: bytes, package: bytes) -> int:
+    known = {
+        b"hello.tig": HELLO_GRAPH_PRINCIPAL_ID,
+        b"budget.tig": BUDGET_GRAPH_PRINCIPAL_ID,
+        b"invalid.tig": INVALID_GRAPH_PRINCIPAL_ID,
+        b"unsupported.tig": UNSUPPORTED_GRAPH_PRINCIPAL_ID,
+        b"invalid-string.tig": INVALID_STRING_GRAPH_PRINCIPAL_ID,
+        b"parameterized.tig": PARAMETERIZED_GRAPH_PRINCIPAL_ID,
+        b"object-create.tig": OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+        b"object-restore.tig": OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+        b"object-known-denied.tig": OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+        b"object-forgery.tig": OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+        b"task-steward.tig": TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+    }
+    return known.get(graph_name, graph_principal_id(package))
+
+
 def native_pyth_graph_records(elf_path: Path) -> list[tuple[int, bytes]]:
     elf = require_file(elf_path, "Pyth native ELF")
     load_native_elf_verifier().verify(elf)
     graph_path = PYTH_GRAPH_OUTPUT_DIR / f"{elf_path.stem}.tig"
     graph = require_file(graph_path, "Pyth native source graph package")
-    principal_id = graph_principal_id(graph)
     graph_name = graph_path.name.encode("ascii")
+    principal_id = named_graph_principal_id(graph_name, graph)
     elf_name = elf_path.name.encode("ascii")
     return [
         (
@@ -388,12 +405,13 @@ def build_default_init_pak(
         [
             bool(include_pythtig),
             bool(include_pythtig_object_flow),
+            pyth_native_elf is not None,
             bool(include_pythtig_task_steward),
         ]
     )
     if selected_pythtig_sets > 1:
         raise SystemExit(
-            "select only one PythTIG graph set; "
+            "select only one PythTIG graph/native set; "
             "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
         )
     shell_elf = require_file(SHELL_ELF, "shell ELF")

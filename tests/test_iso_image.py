@@ -222,6 +222,39 @@ class IsoImageTest(unittest.TestCase):
                     module.digest64(substituted_elf),
                 )
 
+    def test_native_known_graph_packaging_uses_named_principal(self) -> None:
+        inner_fixture_principal = 0x5059_5448_5052_4E05
+        for module in (load_build_image_module(), load_build_iso_module()):
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                graph_dir = temp_path / "graphs"
+                graph_dir.mkdir()
+                graph = graph_dir / "budget.tig"
+                elf = temp_path / "budget.elf"
+                graph.write_bytes(
+                    b"PYTHTIG1" + bytes(16) + inner_fixture_principal.to_bytes(8, "little")
+                )
+                elf.write_bytes(native_elf_fixture())
+                module.PYTH_GRAPH_OUTPUT_DIR = graph_dir
+
+                records = module.native_pyth_graph_records(elf)
+                graph_record = records[0][1]
+                program_record = records[1][1]
+                binding = records[2][1]
+
+                self.assertEqual(
+                    int.from_bytes(graph_record[16:24], "little"),
+                    module.BUDGET_GRAPH_PRINCIPAL_ID,
+                )
+                self.assertEqual(
+                    int.from_bytes(program_record[16:24], "little"),
+                    module.BUDGET_GRAPH_PRINCIPAL_ID,
+                )
+                self.assertEqual(
+                    int.from_bytes(binding[16:24], "little"),
+                    module.BUDGET_GRAPH_PRINCIPAL_ID,
+                )
+
     def test_native_packaging_rejects_invalid_elf(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             with tempfile.TemporaryDirectory() as temp:
@@ -329,14 +362,36 @@ class IsoImageTest(unittest.TestCase):
                 with self.assertRaisesRegex(SystemExit, "missing PythTIG runtime ELF"):
                     module.build_default_init_pak(include_pythtig_object_flow=True)
 
-    def test_phase2_and_phase3_object_graph_sets_are_not_co_packaged(self) -> None:
+    def test_pythtig_graph_and_native_sets_are_not_co_packaged(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             with self.assertRaisesRegex(
-                SystemExit, "select only one PythTIG graph set"
+                SystemExit, "select only one PythTIG graph/native set"
             ):
                 module.build_default_init_pak(
                     include_pythtig=True, include_pythtig_object_flow=True
                 )
+
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                native_elf = temp_path / "hello.elf"
+                native_elf.write_bytes(native_elf_fixture())
+                with self.assertRaisesRegex(
+                    SystemExit, "select only one PythTIG graph/native set"
+                ):
+                    module.build_default_init_pak(
+                        include_pythtig=True, pyth_native_elf=native_elf
+                    )
+
+            with tempfile.TemporaryDirectory() as temp:
+                temp_path = Path(temp)
+                native_elf = temp_path / "hello.elf"
+                native_elf.write_bytes(native_elf_fixture())
+                with self.assertRaisesRegex(
+                    SystemExit, "select only one PythTIG graph/native set"
+                ):
+                    module.build_default_init_pak(
+                        include_pythtig_task_steward=True, pyth_native_elf=native_elf
+                    )
 
     def test_task_steward_graph_set_is_packaged_by_both_builders(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):

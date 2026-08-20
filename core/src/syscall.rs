@@ -1396,7 +1396,7 @@ fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
         return Err(SyscallError::BadResult);
     }
     let caller = process_context::current_caller()?;
-    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID {
+    if !crate::user_mode::is_active_pyth_graph_process(caller.principal_id()) {
         return Err(SyscallError::BadResult);
     }
     let copy_map = caller.copy_map();
@@ -1466,7 +1466,11 @@ fn emit_graph_exit_marker(exit: GraphExitRecord) {
         serial::write_dec_u64_value(u64::from(exit.last_node));
         serial::write_str("\r\n");
     }
-    serial::write_str("PYTHOS:PYTHTIG:RUNTIME_EXIT status:");
+    if crate::user_mode::is_active_pyth_native_graph() {
+        serial::write_str("PYTHOS:PYTHTIG:NATIVE_EXIT status:");
+    } else {
+        serial::write_str("PYTHOS:PYTHTIG:RUNTIME_EXIT status:");
+    }
     serial::write_dec_u64_value(u64::from(exit.status));
     serial::write_str("\r\n");
     if exit.status == GRAPH_EXIT_OK
@@ -1653,8 +1657,8 @@ fn emit_pythtig_object_success_marker(
     response: ObjectShellResponse,
     query_entry: Option<ObjectListEntry>,
 ) {
-    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID
-        || response.status != STATUS_OK
+    if response.status != STATUS_OK
+        || !crate::user_mode::is_active_pyth_graph_process(caller.principal_id())
     {
         return;
     }
@@ -1718,8 +1722,8 @@ fn emit_pythtig_object_denial_marker(
     request: ObjectShellRequest,
     error: ObjectServiceError,
 ) {
-    if caller.principal_id() != crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID
-        || error != ObjectServiceError::Denied
+    if error != ObjectServiceError::Denied
+        || !crate::user_mode::is_active_pyth_graph_process(caller.principal_id())
         || request.operation != OP_INSPECT_OBJECT
     {
         return;
@@ -2309,6 +2313,32 @@ mod tests {
             validate_graph_exit_record(bad),
             Err(SyscallError::BadResult)
         );
+    }
+
+    #[test]
+    fn pyth_graph_exit_accepts_active_native_graph_process_identity() {
+        let native = ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_5447_5254_0002),
+            crate::pyth_runtime_launch::HELLO_GRAPH_PRINCIPAL_ID,
+            0xE1F0,
+        );
+        let exit = GraphExitRecord {
+            status: GRAPH_EXIT_OK,
+            error_code: 0,
+            last_node: 4,
+            executed_nodes: 5,
+            result_type: GRAPH_RESULT_UNIT,
+            reserved0: 0,
+            reserved1: 0,
+            result_raw: 0,
+        };
+
+        crate::user_mode::activate_persistent_user_process_for_test(
+            native,
+            crate::user_mode::PersistentUserProcessKind::PythNativeGraph,
+        );
+
+        assert_eq!(finalize_pyth_graph_exit(native, exit), Ok(SYSCALL_OK));
     }
 
     #[test]

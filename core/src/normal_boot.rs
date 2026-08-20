@@ -131,7 +131,68 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 qemu_exit::panic();
             };
             let capability = retained_services::with_task_service(|service| {
-                service.steward_proposal_capability()
+                service.grant_steward_proposal_capability(launch.process)
+            })
+            .map_err(|_| ());
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeHello => {
+            let Some(launch) = substrate.pyth_native_hello_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            launch_pyth_graph_runtime(launch);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeBudget => {
+            let Some(launch) = substrate.pyth_native_budget_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            launch_pyth_graph_runtime(launch);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeObjectCreate => {
+            let Some(launch) = substrate.pyth_native_object_create_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeObjectRestore => {
+            let Some(launch) = substrate.pyth_native_object_restore_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeObjectKnownDenied => {
+            let Some(launch) = substrate
+                .pyth_native_object_known_denied_runtime_launch
+                .as_ref()
+            else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = graph_workspace_capability(launch.process);
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeObjectForgery => {
+            let Some(launch) = substrate.pyth_native_object_forgery_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = copied_shell_object_capability_for_forgery();
+            pyth_runtime_launch::arm_object_flow_completion_marker();
+            launch_pyth_graph_runtime_with_deferred_import(launch, capability);
+        }
+        pyth_runtime_launch::PythGraphBootMode::LaunchNativeTaskSteward => {
+            let Some(launch) = substrate.pyth_native_task_steward_runtime_launch.as_ref() else {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            };
+            let capability = retained_services::with_task_service(|service| {
+                service.grant_steward_proposal_capability(launch.process)
             })
             .map_err(|_| ());
             launch_pyth_graph_runtime_with_deferred_import(launch, capability);
@@ -249,15 +310,29 @@ fn launch_pyth_graph_runtime_with_deferred_import(
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }
+    pyth_runtime_launch::emit_native_elf_valid_marker(launch);
     pyth_runtime_launch::emit_package_valid_marker(launch);
     pyth_runtime_launch::emit_bootstrap_bound_marker(launch);
-    user_mode::enter_pyth_graph_runtime(
-        launch.process,
-        launch.entry,
-        launch.user_stack_top(),
-        launch.bootstrap_user_ptr,
-        launch.package_digest,
-    );
+    match launch.execution_kind {
+        pyth_runtime_launch::PythGraphExecutionKind::Interpreter => {
+            user_mode::enter_pyth_graph_runtime(
+                launch.process,
+                launch.entry,
+                launch.user_stack_top(),
+                launch.bootstrap_user_ptr,
+                launch.package_digest,
+            );
+        }
+        pyth_runtime_launch::PythGraphExecutionKind::Native => {
+            user_mode::enter_pyth_native_graph(
+                launch.process,
+                launch.entry,
+                launch.user_stack_top(),
+                launch.bootstrap_user_ptr,
+                launch.package_digest,
+            );
+        }
+    }
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]

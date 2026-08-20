@@ -478,6 +478,14 @@ impl<'a> TaskService<'a> {
         self.authority.steward_proposal()
     }
 
+    pub fn grant_steward_proposal_capability(
+        &mut self,
+        caller: ActiveUserProcess,
+    ) -> PackedCapability {
+        self.authority
+            .issue_extra(caller, STEWARD_TASK_RIGHTS, TASK_CAPABILITY_STEWARD_DOMAIN)
+    }
+
     pub const fn user_caller(&self) -> ActiveUserProcess {
         self.objects.shell_caller()
     }
@@ -623,8 +631,7 @@ impl TaskAuthorityState {
         }
     }
 
-    #[cfg(test)]
-    fn issue_extra_for_test(
+    fn issue_extra(
         &mut self,
         caller: ActiveUserProcess,
         rights: u64,
@@ -633,6 +640,16 @@ impl TaskAuthorityState {
         let token = self.issue(caller, rights, domain);
         self.extra_issued = IssuedTaskCapability::new(caller, rights, token);
         token
+    }
+
+    #[cfg(test)]
+    fn issue_extra_for_test(
+        &mut self,
+        caller: ActiveUserProcess,
+        rights: u64,
+        domain: u64,
+    ) -> PackedCapability {
+        self.issue_extra(caller, rights, domain)
     }
 }
 
@@ -1144,6 +1161,7 @@ fn read_u64(bytes: &[u8], offset: usize) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pythos_shared::task_abi::MAX_TASK_PROPOSAL_RESULTS;
 
     #[test]
     fn proposal_does_not_change_active_task_until_user_approval() {
@@ -1235,6 +1253,68 @@ mod tests {
             ),
             Err(TaskServiceError::Denied)
         );
+    }
+
+    #[test]
+    fn explicit_native_task_steward_launch_policy_can_bind_proposal_authority() {
+        let mut service = TaskService::new_for_test();
+        let user = service.user_caller();
+        let user_control = service.user_task_control_capability();
+        let static_steward = service.steward_caller();
+        let native_steward = ActiveUserProcess::new(
+            static_steward.service_id(),
+            static_steward.principal_id(),
+            0x4E41_5449_5645,
+        );
+        let static_capability = service.steward_proposal_capability();
+
+        let task = service
+            .create_task(user, user_control, b"Universal Boot")
+            .unwrap();
+        assert_eq!(
+            service.create_proposal(
+                native_steward,
+                static_capability,
+                TaskProposalKind::NewTask,
+                task.task_id,
+                0,
+                90,
+                b"PythTIG Native",
+                b"context-shift",
+            ),
+            Err(TaskServiceError::Denied)
+        );
+
+        let native_capability = service.grant_steward_proposal_capability(native_steward);
+        let proposal = service
+            .create_proposal(
+                native_steward,
+                native_capability,
+                TaskProposalKind::NewTask,
+                task.task_id,
+                0,
+                90,
+                b"PythTIG Native",
+                b"context-shift",
+            )
+            .unwrap();
+        let mut output = [TaskProposalListEntry {
+            status: 0,
+            proposal_kind: 0,
+            reserved0: 0,
+            proposal_id: 0,
+            target_task_id: 0,
+            candidate_task_id: 0,
+            score: 0,
+        }; MAX_TASK_PROPOSAL_RESULTS];
+
+        assert_eq!(
+            service.list_pending_proposals(user, user_control, &mut output),
+            Ok(1)
+        );
+        assert_eq!(output[0].proposal_id, proposal.proposal_id);
+        assert_eq!(output[0].target_task_id, task.task_id);
+        assert_eq!(output[0].score, 90);
     }
 
     #[test]

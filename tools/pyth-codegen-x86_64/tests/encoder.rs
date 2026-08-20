@@ -156,6 +156,23 @@ fn elf_writer_aligns_load_segments_to_pages() {
     assert_eq!(parsed.load_file_alignment(PF_R | PF_W), Some(0x1000));
 }
 
+#[test]
+fn elf_writer_materializes_empty_rodata_as_valid_load_segment() {
+    let elf = ElfImage::new(0x0040_0000)
+        .with_text(&[0xC3])
+        .with_rodata(&[])
+        .with_data(&[0xCD; 33])
+        .encode()
+        .unwrap();
+    let parsed = ParsedElf::parse(&elf).unwrap();
+
+    assert_eq!(parsed.load_address(PF_R | PF_X), Some(0x0040_0000));
+    assert_eq!(parsed.load_address(PF_R), Some(0x0040_1000));
+    assert_eq!(parsed.load_address(PF_R | PF_W), Some(0x0040_2000));
+    assert_eq!(parsed.load_file_size(PF_R), Some(1));
+    assert_eq!(parsed.section_size(".rodata"), Some(1));
+}
+
 #[derive(Debug)]
 struct ParsedElf<'a> {
     bytes: &'a [u8],
@@ -300,8 +317,23 @@ impl<'a> ParsedElf<'a> {
             })
     }
 
+    fn load_file_size(&self, flags: u32) -> Option<u64> {
+        self.program_headers
+            .iter()
+            .find(|header| header.kind == PT_LOAD && header.flags == flags)
+            .map(|header| {
+                assert_eq!(header.filesz, header.memsz);
+                assert!(header.filesz > 0);
+                header.filesz
+            })
+    }
+
     fn section_addr(&self, name: &str) -> Option<u64> {
         self.section_header(name).map(|header| header.addr)
+    }
+
+    fn section_size(&self, name: &str) -> Option<u64> {
+        self.section_header(name).map(|header| header.size)
     }
 
     fn section_flags(&self, name: &str) -> Option<u64> {

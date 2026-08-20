@@ -410,6 +410,8 @@ impl<'a> Lowerer<'a> {
         self.load_value_payload(Register::Rdi, node.input1)?;
         self.emit_package_slice_address(node.input2, Register::Rsi, Register::Rdx)?;
         self.code.mov_imm64(Register::Rax, GRAPH_LOG_SYSCALL)?;
+        self.code.mov_imm64(Register::R10, 0)?;
+        self.code.mov_imm64(Register::R8, 0)?;
         self.code.syscall()?;
         self.metadata.system_log_syscalls += 1;
         self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
@@ -998,6 +1000,9 @@ impl<'a> Lowerer<'a> {
             Register::Rsi,
             runtime_layout::GRAPH_EXIT_RECORD_BYTES as u64,
         )?;
+        self.code.mov_imm64(Register::Rdx, 0)?;
+        self.code.mov_imm64(Register::R10, 0)?;
+        self.code.mov_imm64(Register::R8, 0)?;
         self.metadata.graph_exit_syscalls += 1;
         self.code.syscall()
     }
@@ -1164,7 +1169,11 @@ fn data_base_address(text_len: usize) -> Result<u64> {
     let text_end = TEXT_BASE
         .checked_add(u64::try_from(text_len).map_err(|_| CodegenError::AddressOverflow)?)
         .ok_or(CodegenError::AddressOverflow)?;
-    align_up_u64(text_end, PAGE_SIZE)
+    let rodata_start = align_up_u64(text_end, PAGE_SIZE)?;
+    let rodata_end = rodata_start
+        .checked_add(1)
+        .ok_or(CodegenError::AddressOverflow)?;
+    align_up_u64(rodata_end, PAGE_SIZE)
 }
 
 fn align_up_u64(value: u64, alignment: u64) -> Result<u64> {

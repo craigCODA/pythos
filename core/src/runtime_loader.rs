@@ -3,7 +3,8 @@
 #![cfg_attr(test, allow(dead_code))]
 
 use pythos_shared::{
-    boot_protocol::PythBootInfo, init_bundle, init_pak, runtime_payload, user_program_manifest,
+    boot_protocol::PythBootInfo, init_bundle, init_pak, pyth_native_binding, runtime_payload,
+    user_program_manifest,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -14,8 +15,10 @@ pub enum RuntimeLoadError {
     BadUserElfPayload,
     MissingRuntimePayload,
     MissingUserElfPayload,
+    MissingPythNativeBinding,
     DuplicateProgramName,
     DuplicateProgramPrincipal,
+    BadPythNativeBinding,
 }
 
 pub fn load_init_payload(
@@ -104,6 +107,61 @@ pub fn validate_named_user_program_payload_bytes<'a>(
     let manifest = selected.ok_or(RuntimeLoadError::MissingUserElfPayload)?;
     enforce_kernel_identity_policy(manifest)?;
     Ok(manifest)
+}
+
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_pyth_native_binding<'a>(
+    boot_info: &'a PythBootInfo,
+    graph_name: &[u8],
+    elf_name: &[u8],
+    principal_id: u64,
+    graph: &[u8],
+    elf: &[u8],
+) -> Result<pyth_native_binding::PythNativeBinding<'a>, RuntimeLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_pyth_native_binding_payload_bytes(
+        bytes,
+        graph_name,
+        elf_name,
+        principal_id,
+        graph,
+        elf,
+    )
+}
+
+pub fn validate_pyth_native_binding_payload_bytes<'a>(
+    bytes: &'a [u8],
+    graph_name: &[u8],
+    elf_name: &[u8],
+    principal_id: u64,
+    graph: &[u8],
+    elf: &[u8],
+) -> Result<pyth_native_binding::PythNativeBinding<'a>, RuntimeLoadError> {
+    let payload = init_pak_payload(bytes)?;
+    let bundle = init_bundle::validate(payload).map_err(|_| RuntimeLoadError::BadInitBundle)?;
+    let mut selected = None;
+    let mut index = 0usize;
+    while let Some(record) = bundle.record_at(init_bundle::RecordType::PythNativeBinding, index) {
+        let binding = pyth_native_binding::validate_pyth_native_binding(record.bytes())
+            .map_err(|_| RuntimeLoadError::BadPythNativeBinding)?;
+        if binding.graph_name() == graph_name && binding.elf_name() == elf_name {
+            if selected.is_some() {
+                return Err(RuntimeLoadError::BadInitBundle);
+            }
+            selected = Some(record.bytes());
+        }
+        index += 1;
+    }
+    let binding_bytes = selected.ok_or(RuntimeLoadError::MissingPythNativeBinding)?;
+    pyth_native_binding::validate_pyth_native_binding_for_artifacts(
+        binding_bytes,
+        graph_name,
+        elf_name,
+        principal_id,
+        graph,
+        elf,
+    )
+    .map_err(|_| RuntimeLoadError::BadPythNativeBinding)
 }
 
 const MAX_NAMED_PROGRAM_RECORDS: usize = 8;
@@ -279,6 +337,32 @@ mod tests {
         bytes
     }
 
+    fn build_native_binding(
+        graph_name: &[u8],
+        elf_name: &[u8],
+        principal_id: u64,
+        graph: &[u8],
+        elf: &[u8],
+    ) -> Vec<u8> {
+        let mut bytes = vec![
+            0u8;
+            pyth_native_binding::PYTH_NATIVE_BINDING_HEADER_LEN
+                + graph_name.len()
+                + elf_name.len()
+        ];
+        let len = pyth_native_binding::encode_pyth_native_binding(
+            &mut bytes,
+            graph_name,
+            elf_name,
+            principal_id,
+            graph,
+            elf,
+        )
+        .unwrap();
+        bytes.truncate(len);
+        bytes
+    }
+
     #[test]
     fn valid_init_pak_runtime_payload_passes_without_execution() {
         let payload = build_runtime_payload(HELLO_SERVICE);
@@ -417,6 +501,82 @@ mod tests {
         assert_eq!(
             validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
             Err(RuntimeLoadError::DuplicateProgramName)
+        );
+    }
+
+    #[test]
+    fn pyth_native_binding_loader_matches_graph_and_elf_manifests() {
+        let graph = b"PYTHTIG1graph";
+        let elf = b"\x7FELFnative";
+        let principal_id = 0x5059_5448_4752_0001;
+        let binding = build_native_binding(b"hello.tig", b"hello.elf", principal_id, graph, elf);
+        let inner = build_inner_bundle(&[(
+            pythos_shared::init_bundle::TYPE_PYTH_NATIVE_BINDING,
+            binding.as_slice(),
+        )]);
+        let bundle = build_init_pak(&inner);
+
+        let loaded = validate_pyth_native_binding_payload_bytes(
+            &bundle,
+            b"hello.tig",
+            b"hello.elf",
+            principal_id,
+            graph,
+            elf,
+        )
+        .unwrap();
+
+        assert_eq!(loaded.graph_name(), b"hello.tig");
+        assert_eq!(loaded.elf_name(), b"hello.elf");
+        assert_eq!(loaded.principal_id(), principal_id);
+    }
+
+    #[test]
+    fn pyth_native_binding_loader_rejects_missing_or_mismatched_binding() {
+        let graph = b"PYTHTIG1graph";
+        let elf = b"\x7FELFnative";
+        let principal_id = 0x5059_5448_4752_0001;
+        let empty = build_init_pak(&build_inner_bundle(&[]));
+        assert_eq!(
+            validate_pyth_native_binding_payload_bytes(
+                &empty,
+                b"hello.tig",
+                b"hello.elf",
+                principal_id,
+                graph,
+                elf,
+            ),
+            Err(RuntimeLoadError::BadInitBundle)
+        );
+
+        let binding = build_native_binding(b"hello.tig", b"hello.elf", principal_id, graph, elf);
+        let inner = build_inner_bundle(&[(
+            pythos_shared::init_bundle::TYPE_PYTH_NATIVE_BINDING,
+            binding.as_slice(),
+        )]);
+        let bundle = build_init_pak(&inner);
+
+        assert_eq!(
+            validate_pyth_native_binding_payload_bytes(
+                &bundle,
+                b"hello.tig",
+                b"hello.elf",
+                principal_id,
+                graph,
+                b"\x7FELFother",
+            ),
+            Err(RuntimeLoadError::BadPythNativeBinding)
+        );
+        assert_eq!(
+            validate_pyth_native_binding_payload_bytes(
+                &bundle,
+                b"budget.tig",
+                b"budget.elf",
+                principal_id,
+                graph,
+                elf,
+            ),
+            Err(RuntimeLoadError::MissingPythNativeBinding)
         );
     }
 

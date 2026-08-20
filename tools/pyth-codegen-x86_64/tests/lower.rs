@@ -1,3 +1,4 @@
+use pyth_codegen_x86_64::stubs::NativeStubDataLayout;
 use pyth_codegen_x86_64::{CodegenError, layout::NativeLayout, lower::lower_verified_graph};
 use pythos_shared::pyth_tig::{
     NO_VALUE,
@@ -90,6 +91,29 @@ fn generated_request_buffers_are_writable_non_executable_data() {
 }
 
 #[test]
+fn generated_data_references_target_writable_data_segment() {
+    let graph = verified_graph(
+        test_support::object_create_host_result(
+            PythType::ErrorCode,
+            pythos_shared::pyth_runtime_abi::HOST_RESULT_STATUS,
+        )
+        .to_vec(),
+    );
+    let node_count = graph.package().nodes().len();
+    let data_layout = NativeStubDataLayout::new(node_count).unwrap();
+    let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
+    let data_base = parsed.load_address(PF_R | PF_W).unwrap();
+    let object_request = data_base + data_layout.object_request_offset() as u64;
+
+    assert!(parsed.executable_bytes_contain(&mov_imm64(RegisterEncoding::R11, object_request)));
+    assert!(!parsed.executable_bytes_contain(&mov_imm64(
+        RegisterEncoding::R11,
+        0x0040_1000 + data_layout.object_request_offset() as u64,
+    )));
+}
+
+#[test]
 fn canonical_object_flows_lower_to_object_stubs() {
     for bytes in [
         test_support::object_note_flow_package().to_vec(),
@@ -150,11 +174,14 @@ fn system_log_and_graph_exit_use_existing_graph_syscalls() {
     let graph = verified_graph(test_support::system_log_with_import_capability().to_vec());
 
     let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
 
     assert_eq!(image.metadata.capability_immediates, 0);
     assert_eq!(image.metadata.bootstrap_import_loads, 1);
     assert_eq!(image.metadata.system_log_syscalls, 1);
     assert!(image.metadata.graph_exit_syscalls >= 1);
+    assert!(parsed.executable_bytes_contain(&graph_log_syscall_with_zero_tail_args()));
+    assert!(parsed.executable_bytes_contain(&graph_exit_syscall_with_zero_tail_args()));
 }
 
 fn verified_graph(bytes: Vec<u8>) -> VerifiedGraph<'static> {
@@ -388,6 +415,7 @@ struct ProgramHeader {
     kind: u32,
     flags: u32,
     offset: u64,
+    vaddr: u64,
     filesz: u64,
 }
 
@@ -413,6 +441,7 @@ impl<'a> ParsedElf<'a> {
                 kind: read_u32_at(bytes, offset)?,
                 flags: read_u32_at(bytes, offset + 4)?,
                 offset: read_u64_at(bytes, offset + 8)?,
+                vaddr: read_u64_at(bytes, offset + 16)?,
                 filesz: read_u64_at(bytes, offset + 32)?,
             });
         }
@@ -435,6 +464,56 @@ impl<'a> ParsedElf<'a> {
                     .is_some_and(|segment| segment.windows(needle.len()).any(|win| win == needle))
             })
     }
+
+    fn executable_bytes_contain(&self, needle: &[u8]) -> bool {
+        self.bytes_in_segment_with_flags(needle, PF_R | PF_X)
+    }
+
+    fn load_address(&self, flags: u32) -> Option<u64> {
+        self.program_headers
+            .iter()
+            .find(|header| header.kind == PT_LOAD && header.flags == flags)
+            .map(|header| header.vaddr)
+    }
+}
+
+enum RegisterEncoding {
+    R11,
+}
+
+fn graph_log_syscall_with_zero_tail_args() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_mov_imm64(&mut bytes, 0x48, 0xB8, 0x5059_0200);
+    push_mov_imm64(&mut bytes, 0x49, 0xBA, 0);
+    push_mov_imm64(&mut bytes, 0x49, 0xB8, 0);
+    bytes.extend_from_slice(&[0x0F, 0x05]);
+    bytes
+}
+
+fn graph_exit_syscall_with_zero_tail_args() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    push_mov_imm64(&mut bytes, 0x48, 0xB8, 0x5059_0201);
+    bytes.extend_from_slice(&[0x4C, 0x89, 0xF7]);
+    push_mov_imm64(&mut bytes, 0x48, 0xBE, 32);
+    push_mov_imm64(&mut bytes, 0x48, 0xBA, 0);
+    push_mov_imm64(&mut bytes, 0x49, 0xBA, 0);
+    push_mov_imm64(&mut bytes, 0x49, 0xB8, 0);
+    bytes.extend_from_slice(&[0x0F, 0x05]);
+    bytes
+}
+
+fn push_mov_imm64(bytes: &mut Vec<u8>, rex: u8, opcode: u8, immediate: u64) {
+    bytes.push(rex);
+    bytes.push(opcode);
+    bytes.extend_from_slice(&immediate.to_le_bytes());
+}
+
+fn mov_imm64(register: RegisterEncoding, immediate: u64) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    match register {
+        RegisterEncoding::R11 => push_mov_imm64(&mut bytes, 0x49, 0xBB, immediate),
+    }
+    bytes
 }
 
 fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {

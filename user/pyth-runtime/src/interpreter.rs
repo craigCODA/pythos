@@ -169,6 +169,20 @@ impl<'a> Interpreter<'a> {
                 }
                 return Ok(BlockOutcome::Jump(target));
             }
+            if Opcode::try_from(node.opcode).map_err(|_| RuntimeError::UnsupportedOpcode)?
+                == Opcode::Branch
+            {
+                let target = if self.expect_bool(node.input0)? {
+                    node.auxiliary0
+                } else {
+                    node.auxiliary1
+                };
+                let target = usize::try_from(target).map_err(|_| RuntimeError::InvalidBlock)?;
+                if package.blocks().get(target).is_none() {
+                    return Err(RuntimeError::InvalidBlock);
+                }
+                return Ok(BlockOutcome::Jump(target));
+            }
         }
 
         Err(RuntimeError::InvalidBlock)
@@ -199,7 +213,9 @@ impl<'a> Interpreter<'a> {
         match opcode {
             Opcode::BlockParam => self.execute_block_param(node_index, &node),
             Opcode::EffectStart => self.store_value(node_index, Value::Effect(node_index as u64)),
+            Opcode::ConstBool => self.execute_const_bool(node_index, &node),
             Opcode::ConstU64 => self.execute_const_u64(node_index, &node),
+            Opcode::LessThanU64 => self.execute_less_than_u64(node_index, &node),
             Opcode::ConstBytes => self.execute_const_bytes(package, node_index, &node),
             Opcode::ConstUtf8 => self.execute_const_utf8(package, node_index, &node),
             Opcode::HostResult => self.execute_host_result(package, node_index, &node),
@@ -212,6 +228,7 @@ impl<'a> Interpreter<'a> {
             Opcode::TaskContextRead => self.execute_task_context(node_index, &node, host),
             Opcode::TaskProposalEmit => self.execute_task_proposal_emit(node_index, &node, host),
             Opcode::Jump => Ok(()),
+            Opcode::Branch => Ok(()),
             Opcode::Return => Ok(()),
             _ => Err(RuntimeError::UnsupportedOpcode),
         }
@@ -239,6 +256,23 @@ impl<'a> Interpreter<'a> {
         self.store_value(node_index, Value::Capability(capability))
     }
 
+    fn execute_const_bool(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        if PythType::try_from(node.result_type).map_err(|_| RuntimeError::InvalidValue)?
+            != PythType::Bool
+        {
+            return Err(RuntimeError::UnsupportedOpcode);
+        }
+        match node.immediate {
+            0 => self.store_value(node_index, Value::Bool(false)),
+            1 => self.store_value(node_index, Value::Bool(true)),
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
     fn execute_const_u64(
         &mut self,
         node_index: usize,
@@ -252,6 +286,21 @@ impl<'a> Interpreter<'a> {
             PythType::ProposalId => self.store_value(node_index, Value::ProposalId(node.immediate)),
             _ => Err(RuntimeError::UnsupportedOpcode),
         }
+    }
+
+    fn execute_less_than_u64(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        if PythType::try_from(node.result_type).map_err(|_| RuntimeError::InvalidValue)?
+            != PythType::Bool
+        {
+            return Err(RuntimeError::UnsupportedOpcode);
+        }
+        let lhs = self.expect_u64(node.input0)?;
+        let rhs = self.expect_u64(node.input1)?;
+        self.store_value(node_index, Value::Bool(lhs < rhs))
     }
 
     fn execute_const_utf8(
@@ -613,6 +662,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    fn expect_bool(&self, node_index: u32) -> Result<bool, RuntimeError> {
+        match self.load_value(node_index)? {
+            Value::Bool(value) => Ok(value),
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
     fn exit_ok(&self) -> GraphExitRecord {
         GraphExitRecord {
             status: GRAPH_EXIT_OK,
@@ -919,6 +975,41 @@ mod tests {
         assert_eq!(exit.executed_nodes, 3);
         assert_eq!(exit.last_node, 1);
         assert_eq!(host.log_count, 0);
+    }
+
+    #[test]
+    fn branch_terminator_selects_boolean_target() {
+        for (condition, expected_last_node) in [(true, 2), (false, 3)] {
+            let bytes = test_support::branch_to_return_package(condition);
+            let package = PythGraphPackage::decode(&bytes).unwrap();
+            let verified = verify_package(&package).unwrap();
+            let mut host = RecordingHost {
+                logs: [[0; 16]; 4],
+                log_count: 0,
+                create_count: 0,
+                revise_count: 0,
+                inspect_count: 0,
+                last_revise_capability: PackedCapability::from_raw(0),
+                last_inspect_capability: PackedCapability::from_raw(0),
+                last_text: [0; 16],
+                last_text_len: 0,
+                malformed_create: false,
+                deny_create: false,
+                proposal_count: 0,
+                last_candidate_task_id: 0,
+                last_score: 0,
+            };
+            let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
+            let mut values = [None; MAX_RUNTIME_VALUES];
+            let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+            let exit = Interpreter::new(verified, &imports, 16, &mut values, &mut host_results)
+                .execute(&mut host);
+
+            assert_eq!(exit.status, GRAPH_EXIT_OK);
+            assert_eq!(exit.executed_nodes, 3);
+            assert_eq!(exit.last_node, expected_last_node);
+        }
     }
 
     #[test]

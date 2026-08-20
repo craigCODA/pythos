@@ -55,6 +55,27 @@ pub struct NormalBootSubstrate {
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_task_steward_runtime_launch:
         Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_hello_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_budget_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_create_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_restore_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_known_denied_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_forgery_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_task_steward_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
 }
 
 pub struct PreparedShellLaunch {
@@ -151,6 +172,27 @@ static PYTH_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 static PYTH_TASK_STEWARD_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_HELLO_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_BUDGET_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_TASK_STEWARD_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
@@ -372,6 +414,87 @@ pub fn initialize_normal_substrate(
             &supervisor_mappings,
         ),
     );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_hello_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_HELLO_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::HELLO_GRAPH_NAME,
+            pyth_runtime_launch::HELLO_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::HELLO_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_budget_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_BUDGET_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::BUDGET_GRAPH_NAME,
+            pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::BUDGET_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_create_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_CREATE_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_restore_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_RESTORE_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_known_denied_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_forgery_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_test_object_capability(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_FORGERY_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_task_steward_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_TASK_STEWARD_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_task_steward(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+        ),
+    );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -447,6 +570,20 @@ pub fn initialize_normal_substrate(
         pyth_object_forgery_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_task_steward_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_hello_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_budget_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_create_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_restore_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_known_denied_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_forgery_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_task_steward_runtime_launch,
     })
 }
 
