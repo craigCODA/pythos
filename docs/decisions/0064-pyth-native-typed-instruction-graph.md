@@ -33,6 +33,15 @@ The first executor is a ring-3 interpreter and semantic reference
 implementation. A later x86-64 backend may lower only verified graphs and must
 pass differential acceptance against the interpreter.
 
+When the explicitly invoked Phase 6 native-codegen work packages a native ELF
+for test images, the image builder records source-to-artifact evidence rather
+than launch authority. It emits the verified source graph as a named PythTIG
+graph package, emits the generated ELF as a named user program using the graph
+principal, and emits the ADR 0037 `TYPE_PYTH_NATIVE_BINDING` record that binds
+the graph name, ELF name, principal id, graph digest, and ELF digest. The native
+ELF must pass the bounded native-ELF verifier before it is packaged. This
+metadata is not a signature claim and is not a runtime cutover gate.
+
 The existing Rust object shell and custom-minimal proof runtime remain available
 until a later cutover gate passes with fresh evidence.
 

@@ -183,7 +183,13 @@ class IsoImageTest(unittest.TestCase):
                     ],
                 )
                 binding = records[2][1]
+                graph_name = graph.name.encode("ascii")
+                elf_name = elf.name.encode("ascii")
                 self.assertEqual(binding[:8], module.PYTH_NATIVE_BINDING_MAGIC)
+                self.assertEqual(int.from_bytes(binding[8:10], "little"), 1)
+                self.assertEqual(int.from_bytes(binding[10:12], "little"), 0)
+                self.assertEqual(int.from_bytes(binding[12:14], "little"), len(graph_name))
+                self.assertEqual(int.from_bytes(binding[14:16], "little"), len(elf_name))
                 self.assertEqual(int.from_bytes(binding[16:24], "little"), principal)
                 self.assertEqual(
                     int.from_bytes(binding[24:32], "little"), module.digest64(graph_bytes)
@@ -191,6 +197,9 @@ class IsoImageTest(unittest.TestCase):
                 self.assertEqual(
                     int.from_bytes(binding[32:40], "little"), module.digest64(elf_bytes)
                 )
+                self.assertEqual(binding[40:48], bytes(8))
+                self.assertEqual(binding[48 : 48 + len(graph_name)], graph_name)
+                self.assertEqual(binding[48 + len(graph_name) :], elf_name)
 
                 substituted_elf = elf_bytes[:-1] + bytes((elf_bytes[-1] ^ 1,))
                 self.assertNotEqual(
