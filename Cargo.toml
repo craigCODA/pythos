@@ -4,7 +4,9 @@ members = [
     "boot",
     "core",
     "shared",
+    "tools/pyth-codegen-x86_64",
     "tools/pyth-tig-tool",
+    "tools/pythc",
     "user/pyth-runtime",
     "user/shell",
 ]

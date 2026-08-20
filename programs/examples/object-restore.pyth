@@ -1,0 +1,10 @@
+program object_restore principal 0x5059544847520007 {
+    import workspace: capability<object.workspace, create|query>;
+    fn main() -> unit {
+        let note_id: object_id = object.query(workspace, 1);
+        let note: capability = object.queried_capability();
+        let text: utf8 = object.inspect(note, note_id);
+        object.history(note, note_id);
+        return;
+    }
+}

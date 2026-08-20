@@ -53,6 +53,38 @@ The first record type tags are:
 0x0000_0002 = user ELF payload for Phase 9 dynamic loading
 ```
 
+Later compatible record assignments keep the same inner-bundle major version
+when they add a recognized record type without changing the record-table
+layout, existing record numbers, existing record payloads, checksum rules, or
+ordinal lookup behavior:
+
+```text
+0x0000_0003 = named user ELF manifest from ADR 0052
+0x0000_0004 = named PythTIG graph package from ADR 0064
+0x0000_0005 = PythTIG native artifact binding from ADR 0064 Phase 6
+```
+
+The `0x0000_0005` native binding payload is integrity metadata for differential
+evidence. It has this little-endian layout:
+
+```text
+offset  size  field
+0       8     magic = PYTNAT01
+8       2     major = 1
+10      2     minor = 0
+12      2     graph_name_len
+14      2     elf_name_len
+16      8     principal_id
+24      8     graph_digest
+32      8     elf_digest
+40      8     reserved = 0
+48      N     graph_name bytes, then elf_name bytes
+```
+
+The digest fields use the same FNV-1a 64-bit `digest64` helper as the named
+graph and named user-program manifests. This binding is not a signature claim
+and does not authorize native launch by itself.
+
 Offsets are relative to the start of the inner bundle. Checksums are wrapping
 unsigned byte sums over exactly the record payload bytes.
 

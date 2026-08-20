@@ -1,0 +1,8 @@
+program negative_revise_rights principal 0x1 {
+    import workspace: capability<object, read>;
+    fn main() -> unit {
+        let note_id: object_id = 1;
+        let revision: revision_id = object.revise(workspace, note_id, 1, "hello");
+        return;
+    }
+}

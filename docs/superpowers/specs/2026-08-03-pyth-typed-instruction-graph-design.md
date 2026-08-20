@@ -182,7 +182,7 @@ Version 1 does not expose raw addresses, arbitrary aggregates, user-defined layo
 0x1501 CommandResultEmit    // introduced in package minor 1
 ```
 
-`TaskProposalApprove`, `TaskSuspend`, and `TaskRevive` require explicit user-authority imports. The Task Steward program is never granted those imports. `TaskContextRead` exposes a bounded typed context summary, not arbitrary object-store access. `CommandRead` and `CommandResultEmit` are version 1.1 additions; a 1.0 runtime rejects 1.1 packages, while a 1.1 runtime continues to accept 1.0 packages.
+`TaskProposalApprove`, `TaskSuspend`, and `TaskRevive` require explicit user-authority imports. The Task Steward program is never granted those imports. `TaskProposalEmit` requires create-proposal authority. `TaskContextRead` consumes `[Effect, Capability]`, requires read-context authority, and exposes a bounded typed context summary through closed host-result fields: active task id, candidate task id, confidence score, proposal kind, and reason text. It does not expose arbitrary object-store access. `CommandRead` and `CommandResultEmit` are version 1.1 additions; a 1.0 runtime rejects 1.1 packages, while a 1.1 runtime continues to accept 1.0 packages.
 
 ## 8. Canonical package ABI
 
@@ -198,7 +198,7 @@ The frozen version 1 public layout struct uses `#[repr(C, packed(4))]` so the
 pub struct PythGraphHeader {
     pub magic: [u8; 8],              // b"PYTHTIG1"
     pub major: u16,                  // 1
-    pub minor: u16,                  // 0
+    pub minor: u16,                  // 1 for command-capable packages; 0 remains accepted
     pub flags: u32,
     pub package_id: u64,
     pub principal_id: u64,

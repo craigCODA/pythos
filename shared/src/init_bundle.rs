@@ -9,6 +9,10 @@ pub const TYPE_USER_ELF: u32 = 0x0000_0002;
 /// `crate::user_program_manifest`), distinct from the ordinal `TYPE_USER_ELF`.
 pub const TYPE_NAMED_USER_ELF: u32 = 0x0000_0003;
 pub const TYPE_PYTH_GRAPH_PACKAGE: u32 = 0x0000_0004;
+/// PythTIG Phase 6 native-artifact integrity metadata. This record binds one
+/// named graph package digest to one named native ELF digest before either is
+/// eligible for future native launch handling.
+pub const TYPE_PYTH_NATIVE_BINDING: u32 = 0x0000_0005;
 const HEADER_RESERVED_OFFSET: usize = 26;
 const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
@@ -22,6 +26,7 @@ pub enum RecordType {
     UserElf,
     NamedUserElf,
     PythGraphPackage,
+    PythNativeBinding,
 }
 
 impl RecordType {
@@ -31,6 +36,7 @@ impl RecordType {
             TYPE_USER_ELF => Some(Self::UserElf),
             TYPE_NAMED_USER_ELF => Some(Self::NamedUserElf),
             TYPE_PYTH_GRAPH_PACKAGE => Some(Self::PythGraphPackage),
+            TYPE_PYTH_NATIVE_BINDING => Some(Self::PythNativeBinding),
             _ => None,
         }
     }
@@ -321,6 +327,33 @@ mod tests {
             b"named-manifest"
         );
         assert_eq!(parsed.record(RecordType::UserElf).unwrap().bytes(), b"elf");
+    }
+
+    #[test]
+    fn pyth_native_binding_record_is_addressable_alongside_graph_and_elf_records() {
+        let bundle = build_bundle(&[
+            (TYPE_PYTH_GRAPH_PACKAGE, b"graph-manifest"),
+            (TYPE_NAMED_USER_ELF, b"elf-manifest"),
+            (TYPE_PYTH_NATIVE_BINDING, b"native-binding"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(
+            parsed
+                .record(RecordType::PythNativeBinding)
+                .unwrap()
+                .bytes(),
+            b"native-binding"
+        );
+        assert_eq!(
+            parsed.record(RecordType::PythGraphPackage).unwrap().bytes(),
+            b"graph-manifest"
+        );
+        assert_eq!(
+            parsed.record(RecordType::NamedUserElf).unwrap().bytes(),
+            b"elf-manifest"
+        );
     }
 
     #[test]

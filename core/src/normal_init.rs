@@ -9,8 +9,12 @@
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
 use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
+#[cfg(feature = "pyth-tig-default")]
+use crate::pyth_graph_loader;
 #[cfg(feature = "pythtig-phase2-test")]
 use crate::pyth_runtime_launch;
+#[cfg(feature = "pyth-tig-default")]
+use crate::pyth_service_supervisor::{self, ServiceKind, ServicePackageAdmission};
 use crate::{
     architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
 };
@@ -28,6 +32,10 @@ pub struct NormalBootSubstrate {
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
+    #[cfg(feature = "pyth-tig-default")]
+    pub session_manager_service_package: ServicePackageAdmission,
+    #[cfg(feature = "pyth-tig-default")]
+    pub task_steward_service_package: ServicePackageAdmission,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_runtime_launch: Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
@@ -51,6 +59,30 @@ pub struct NormalBootSubstrate {
         Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_object_forgery_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_task_steward_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_hello_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_budget_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_create_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_restore_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_known_denied_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_object_forgery_runtime_launch:
+        Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
+    #[cfg(feature = "pythtig-phase2-test")]
+    pub pyth_native_task_steward_runtime_launch:
         Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
 }
 
@@ -104,6 +136,7 @@ pub enum NormalInitError {
     ShellProgram,
     ShellAddressSpace,
     ShellBootstrap,
+    DefaultServiceGraphPackage,
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
@@ -145,6 +178,30 @@ static PYTH_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 static PYTH_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_TASK_STEWARD_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_HELLO_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_BUDGET_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
+    PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+static PYTH_NATIVE_TASK_STEWARD_RUNTIME_LAUNCH_SLOT: PythRuntimeLaunchSlot =
     PythRuntimeLaunchSlot(UnsafeCell::new(MaybeUninit::uninit()));
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
@@ -273,6 +330,20 @@ pub fn initialize_normal_substrate(
         bootstrap_kernel_ptr: bootstrap_frame,
         stack_region: user_stacks::regions()[0],
     };
+    #[cfg(feature = "pyth-tig-default")]
+    let session_manager_service_package = admit_default_service_package(
+        boot_info,
+        ServiceKind::SessionManager,
+        pyth_service_supervisor::SESSION_MANAGER_GRAPH_NAME,
+        pyth_service_supervisor::SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+    )?;
+    #[cfg(feature = "pyth-tig-default")]
+    let task_steward_service_package = admit_default_service_package(
+        boot_info,
+        ServiceKind::TaskSteward,
+        pyth_service_supervisor::TASK_STEWARD_GRAPH_NAME,
+        pyth_service_supervisor::TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+    )?;
     #[cfg(feature = "pythtig-phase2-test")]
     let pyth_runtime_launch = store_pyth_runtime_launch(
         &PYTH_RUNTIME_LAUNCH_SLOT,
@@ -357,6 +428,96 @@ pub fn initialize_normal_substrate(
             pyth_runtime_launch::OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
         ),
     );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_task_steward_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_TASK_STEWARD_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_runtime_launch_for_task_steward(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_hello_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_HELLO_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::HELLO_GRAPH_NAME,
+            pyth_runtime_launch::HELLO_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::HELLO_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_budget_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_BUDGET_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::BUDGET_GRAPH_NAME,
+            pyth_runtime_launch::BUDGET_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::BUDGET_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_create_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_CREATE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_CREATE_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_restore_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_RESTORE_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_RESTORE_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_known_denied_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_KNOWN_DENIED_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_KNOWN_DENIED_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_object_forgery_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_OBJECT_FORGERY_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_graph_deferred_test_object_capability(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_NAME,
+            pyth_runtime_launch::OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+            pyth_runtime_launch::OBJECT_FORGERY_NATIVE_PROGRAM_NAME,
+        ),
+    );
+    #[cfg(feature = "pythtig-phase2-test")]
+    let pyth_native_task_steward_runtime_launch = store_pyth_runtime_launch(
+        &PYTH_NATIVE_TASK_STEWARD_RUNTIME_LAUNCH_SLOT,
+        pyth_runtime_launch::prepare_pyth_native_launch_for_task_steward(
+            boot_info,
+            physical_memory,
+            &supervisor_mappings,
+        ),
+    );
     // SAFETY:
     // 1. Invariant: `kernel_address_space` maps the currently executing
     //    PythCore code, active bootstrap stack, boot metadata, and
@@ -410,6 +571,10 @@ pub fn initialize_normal_substrate(
         kernel_address_space,
         block_device,
         shell_launch,
+        #[cfg(feature = "pyth-tig-default")]
+        session_manager_service_package,
+        #[cfg(feature = "pyth-tig-default")]
+        task_steward_service_package,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
@@ -430,6 +595,22 @@ pub fn initialize_normal_substrate(
         pyth_object_known_denied_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_object_forgery_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_task_steward_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_hello_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_budget_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_create_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_restore_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_known_denied_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_object_forgery_runtime_launch,
+        #[cfg(feature = "pythtig-phase2-test")]
+        pyth_native_task_steward_runtime_launch,
     })
 }
 
@@ -453,4 +634,25 @@ fn initialize_task_process_and_kernel_stack_state(
 #[cfg(not(test))]
 fn initialize_guarded_user_stack_pool() -> Result<(), NormalInitError> {
     user_stacks::initialize().map_err(|_| NormalInitError::UserStacks)
+}
+
+#[cfg(feature = "pyth-tig-default")]
+fn admit_default_service_package(
+    boot_info: &'static PythBootInfo,
+    service: ServiceKind,
+    graph_name: &[u8],
+    expected_principal_id: u64,
+) -> Result<ServicePackageAdmission, NormalInitError> {
+    let graph = pyth_graph_loader::load_named_pyth_graph_for_admission(boot_info, graph_name)
+        .map_err(|_| NormalInitError::DefaultServiceGraphPackage)?;
+    if graph.manifest.principal_id() != expected_principal_id {
+        return Err(NormalInitError::DefaultServiceGraphPackage);
+    }
+    Ok(ServicePackageAdmission::new(
+        service,
+        expected_principal_id,
+        graph.manifest.package_digest(),
+        graph.verified.package().header().node_count,
+        graph.verified.package().header().block_count,
+    ))
 }

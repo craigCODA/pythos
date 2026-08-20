@@ -1,14 +1,18 @@
-use crate::pyth_tig::{
-    NO_VALUE,
-    format::{
-        CapabilityImportRecord, NodeRecord, PYTH_TIG_MAGIC, PYTH_TIG_MAJOR, PYTH_TIG_MINOR,
-        PythGraphHeader,
+use crate::{
+    pyth_command_abi::{COMMAND_FIELD_KIND, COMMAND_FIELD_TEXT_UTF8},
+    pyth_tig::{
+        NO_VALUE,
+        format::{
+            CapabilityImportRecord, NodeRecord, PYTH_TIG_MAGIC, PYTH_TIG_MAJOR, PYTH_TIG_MINOR,
+            PythGraphHeader,
+        },
+        opcode::{
+            Opcode, RESOURCE_COMMAND, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_TASK,
+            RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ, RIGHTS_REVISE,
+        },
+        types::PythType,
     },
-    opcode::{
-        Opcode, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE, RIGHTS_QUERY,
-        RIGHTS_READ, RIGHTS_REVISE,
-    },
-    types::PythType,
+    task_abi::TASK_CONTEXT_RESULT_CONFIDENCE_SCORE,
 };
 
 const HEADER_SIZE: usize = core::mem::size_of::<PythGraphHeader>();
@@ -70,6 +74,13 @@ const OBJECT_KNOWN_DENIED_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 9 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
 const OBJECT_FORGERY_PACKAGE_LEN: usize =
     HEADER_SIZE + BLOCK_RECORD_SIZE + 6 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 8;
+const TASK_CONTEXT_READ_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 5 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
+const TASK_PROPOSAL_EMIT_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 6 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
+const COMMAND_READ_RESULT_EMIT_PACKAGE_LEN: usize =
+    HEADER_SIZE + BLOCK_RECORD_SIZE + 8 * NODE_RECORD_SIZE + IMPORT_RECORD_SIZE + 4;
+const BRANCH_RETURN_PACKAGE_LEN: usize = HEADER_SIZE + 3 * BLOCK_RECORD_SIZE + 4 * NODE_RECORD_SIZE;
 
 struct BlockSpec {
     block_id: u32,
@@ -342,6 +353,84 @@ pub fn package_with_bad_branch_target() -> AlignedPackage {
         },
     );
     refresh_checksum(bytes);
+    package
+}
+
+pub fn branch_to_return_package(condition: bool) -> FixturePackage<BRANCH_RETURN_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; BRANCH_RETURN_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 3, 4, 0, 0, 0);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 2,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 1,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 1,
+            first_node: 2,
+            node_count: 1,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 2,
+        },
+    );
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset + 2 * BLOCK_RECORD_SIZE,
+        BlockSpec {
+            block_id: 2,
+            first_node: 3,
+            node_count: 1,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 3,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset,
+        NodeSpec {
+            opcode: Opcode::ConstBool.code(),
+            result_type: PythType::Bool.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: u64::from(condition),
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::Branch.code(),
+            result_type: PythType::Unit.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: 1,
+            auxiliary1: 2,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 2 * NODE_RECORD_SIZE, 1);
+    write_return(&mut package.bytes, nodes_offset + 3 * NODE_RECORD_SIZE, 2);
+    refresh_checksum(&mut package.bytes);
     package
 }
 
@@ -2068,6 +2157,278 @@ pub fn object_revise_with_read_only_import() -> FixturePackage<OBJECT_REVISE_PAC
         },
     );
     package.bytes[string_table_offset..string_table_offset + 8].copy_from_slice(b"object-0");
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn task_proposal_emit_with_import_rights(
+    rights: u64,
+) -> FixturePackage<TASK_PROPOSAL_EMIT_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; TASK_PROPOSAL_EMIT_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 6, 1, 0, 4);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 6,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 5,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_import_capability_param(&mut package.bytes, nodes_offset + NODE_RECORD_SIZE, 0, 0);
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::TaskId.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0x2001,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 3 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 85,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 4 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::TaskProposalEmit.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, 1, 2, 3],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 5 * NODE_RECORD_SIZE, 0);
+    write_import_record(
+        &mut package.bytes,
+        imports_offset,
+        ImportSpec {
+            name_offset: 0,
+            name_len: 4,
+            resource_kind: RESOURCE_TASK,
+            rights,
+            expected_type: PythType::Capability.code(),
+            import_slot: 0,
+        },
+    );
+    package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"task");
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn task_context_score_with_import_rights(
+    rights: u64,
+) -> FixturePackage<TASK_CONTEXT_READ_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; TASK_CONTEXT_READ_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 5, 1, 0, 4);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 5,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 4,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_import_capability_param(&mut package.bytes, nodes_offset + NODE_RECORD_SIZE, 0, 0);
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::TaskContextRead.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, 1, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 3 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [2, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: TASK_CONTEXT_RESULT_CONFIDENCE_SCORE,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 4 * NODE_RECORD_SIZE, 0);
+    write_import_record(
+        &mut package.bytes,
+        imports_offset,
+        ImportSpec {
+            name_offset: 0,
+            name_len: 4,
+            resource_kind: RESOURCE_TASK,
+            rights,
+            expected_type: PythType::Capability.code(),
+            import_slot: 0,
+        },
+    );
+    package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"task");
+    refresh_checksum(&mut package.bytes);
+    package
+}
+
+pub fn command_read_result_emit_with_import_rights(
+    rights: u64,
+) -> FixturePackage<COMMAND_READ_RESULT_EMIT_PACKAGE_LEN> {
+    let mut package = FixturePackage {
+        bytes: [0u8; COMMAND_READ_RESULT_EMIT_PACKAGE_LEN],
+    };
+    initialize_graph_header(&mut package.bytes, 0, 1, 8, 1, 0, 4);
+    let blocks_offset = read_u32(&package.bytes, BLOCKS_OFFSET_OFFSET) as usize;
+    let nodes_offset = read_u32(&package.bytes, NODES_OFFSET_OFFSET) as usize;
+    let imports_offset = read_u32(&package.bytes, IMPORTS_OFFSET_OFFSET) as usize;
+    let string_table_offset = read_u32(&package.bytes, STRING_TABLE_OFFSET_OFFSET) as usize;
+
+    write_block_record(
+        &mut package.bytes,
+        blocks_offset,
+        BlockSpec {
+            block_id: 0,
+            first_node: 0,
+            node_count: 8,
+            parameter_count: 0,
+            flags: 0,
+            terminator_node: 7,
+        },
+    );
+    write_effect_start(&mut package.bytes, nodes_offset, 0);
+    write_import_capability_param(&mut package.bytes, nodes_offset + NODE_RECORD_SIZE, 0, 0);
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 2 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::CommandRead.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [0, 1, NO_VALUE, NO_VALUE],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 3 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::U64.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [2, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: COMMAND_FIELD_KIND,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 4 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::HostResult.code(),
+            result_type: PythType::Utf8.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [2, NO_VALUE, NO_VALUE, NO_VALUE],
+            auxiliary0: COMMAND_FIELD_TEXT_UTF8,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 5 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::ConstU64.code(),
+            result_type: PythType::ErrorCode.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [NO_VALUE; 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_node_record(
+        &mut package.bytes,
+        nodes_offset + 6 * NODE_RECORD_SIZE,
+        NodeSpec {
+            opcode: Opcode::CommandResultEmit.code(),
+            result_type: PythType::Effect.code(),
+            flags: 0,
+            block_index: 0,
+            inputs: [2, 1, 5, 4],
+            auxiliary0: 0,
+            auxiliary1: 0,
+            immediate: 0,
+        },
+    );
+    write_return(&mut package.bytes, nodes_offset + 7 * NODE_RECORD_SIZE, 0);
+    write_import_record(
+        &mut package.bytes,
+        imports_offset,
+        ImportSpec {
+            name_offset: 0,
+            name_len: 4,
+            resource_kind: RESOURCE_COMMAND,
+            rights,
+            expected_type: PythType::Capability.code(),
+            import_slot: 0,
+        },
+    );
+    package.bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"cmds");
     refresh_checksum(&mut package.bytes);
     package
 }

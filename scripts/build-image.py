@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import shutil
 from pathlib import Path
 
@@ -26,6 +27,9 @@ PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = (
     ROOT / "target" / "pyth-tig" / "object-known-denied.tig"
 )
 PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-forgery.tig"
+PYTH_GRAPH_OUTPUT_DIR = ROOT / "target" / "pyth-tig"
+PYTH_TASK_STEWARD_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "task-steward.tig"
+PYTH_SESSION_MANAGER_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "session-manager.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -38,12 +42,15 @@ INIT_BUNDLE_RUNTIME_TYPE = 0x0000_0001
 INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
 INIT_BUNDLE_NAMED_USER_ELF_TYPE = 0x0000_0003
 INIT_BUNDLE_PYTH_GRAPH_TYPE = 0x0000_0004
+INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE = 0x0000_0005
 NAMED_USER_PROGRAM_MAGIC = b"PYUPGM01"
 NAMED_USER_PROGRAM_HEADER_LEN = 40
 MAX_NAMED_PROGRAM_NAME_LEN = 32
 NAMED_PYTH_GRAPH_MAGIC = b"PYTIGM01"
 NAMED_PYTH_GRAPH_HEADER_LEN = 40
 MAX_NAMED_PYTH_GRAPH_NAME_LEN = 32
+PYTH_NATIVE_BINDING_MAGIC = b"PYTNAT01"
+PYTH_NATIVE_BINDING_HEADER_LEN = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
@@ -56,6 +63,8 @@ OBJECT_CREATE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0006
 OBJECT_RESTORE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0007
 OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0008
 OBJECT_FORGERY_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0009
+TASK_STEWARD_GRAPH_PRINCIPAL_ID = 0x5059_5448_5354_0001
+SESSION_MANAGER_GRAPH_PRINCIPAL_ID = 0x5059_5448_534D_0001
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -159,6 +168,87 @@ def build_named_pyth_graph(name: bytes, principal_id: int, package: bytes) -> by
     return bytes(header) + name + package
 
 
+def load_native_elf_verifier():
+    path = ROOT / "scripts" / "verify-pyth-native-elf.py"
+    spec = importlib.util.spec_from_file_location("verify_pyth_native_elf", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_pyth_native_binding(
+    graph_name: bytes,
+    elf_name: bytes,
+    principal_id: int,
+    graph: bytes,
+    elf: bytes,
+) -> bytes:
+    if len(graph_name) > MAX_NAMED_PYTH_GRAPH_NAME_LEN:
+        raise ValueError("native source graph name is too long")
+    if len(elf_name) > MAX_NAMED_PROGRAM_NAME_LEN:
+        raise ValueError("native ELF name is too long")
+    header = bytearray(PYTH_NATIVE_BINDING_HEADER_LEN)
+    header[0:8] = PYTH_NATIVE_BINDING_MAGIC
+    header[8:10] = (1).to_bytes(2, "little")
+    header[10:12] = (0).to_bytes(2, "little")
+    header[12:14] = len(graph_name).to_bytes(2, "little")
+    header[14:16] = len(elf_name).to_bytes(2, "little")
+    header[16:24] = principal_id.to_bytes(8, "little")
+    header[24:32] = digest64(graph).to_bytes(8, "little")
+    header[32:40] = digest64(elf).to_bytes(8, "little")
+    return bytes(header) + graph_name + elf_name
+
+
+def graph_principal_id(package: bytes) -> int:
+    if len(package) < 32 or package[:8] != b"PYTHTIG1":
+        raise ValueError("native source graph is not a PythTIG package")
+    return int.from_bytes(package[24:32], "little")
+
+
+def named_graph_principal_id(graph_name: bytes, package: bytes) -> int:
+    known = {
+        b"hello.tig": HELLO_GRAPH_PRINCIPAL_ID,
+        b"budget.tig": BUDGET_GRAPH_PRINCIPAL_ID,
+        b"invalid.tig": INVALID_GRAPH_PRINCIPAL_ID,
+        b"unsupported.tig": UNSUPPORTED_GRAPH_PRINCIPAL_ID,
+        b"invalid-string.tig": INVALID_STRING_GRAPH_PRINCIPAL_ID,
+        b"parameterized.tig": PARAMETERIZED_GRAPH_PRINCIPAL_ID,
+        b"object-create.tig": OBJECT_CREATE_GRAPH_PRINCIPAL_ID,
+        b"object-restore.tig": OBJECT_RESTORE_GRAPH_PRINCIPAL_ID,
+        b"object-known-denied.tig": OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
+        b"object-forgery.tig": OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
+        b"task-steward.tig": TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+        b"session-manager.tig": SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+    }
+    return known.get(graph_name, graph_principal_id(package))
+
+
+def native_pyth_graph_records(elf_path: Path) -> list[tuple[int, bytes]]:
+    elf = require_file(elf_path, "Pyth native ELF")
+    load_native_elf_verifier().verify(elf)
+    graph_path = PYTH_GRAPH_OUTPUT_DIR / f"{elf_path.stem}.tig"
+    graph = require_file(graph_path, "Pyth native source graph package")
+    graph_name = graph_path.name.encode("ascii")
+    principal_id = named_graph_principal_id(graph_name, graph)
+    elf_name = elf_path.name.encode("ascii")
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(graph_name, principal_id, graph),
+        ),
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(elf_name, principal_id, elf),
+        ),
+        (
+            INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE,
+            build_pyth_native_binding(graph_name, elf_name, principal_id, graph, elf),
+        ),
+    ]
+
+
 def require_file(path: Path, description: str) -> bytes:
     if not path.exists():
         raise SystemExit(f"missing {description}: {path}")
@@ -255,6 +345,46 @@ def phase3_object_pyth_graph_records() -> list[tuple[int, bytes]]:
     ]
 
 
+def phase5_task_steward_pyth_graph_records() -> list[tuple[int, bytes]]:
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(
+                b"task-steward.tig",
+                TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+                require_file(
+                    PYTH_TASK_STEWARD_GRAPH_PACKAGE,
+                    "PythTIG task-steward graph package",
+                ),
+            ),
+        )
+    ]
+
+
+def phase7_default_service_pyth_graph_records() -> list[tuple[int, bytes]]:
+    graph_specs = [
+        (
+            b"session-manager.tig",
+            SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+            PYTH_SESSION_MANAGER_GRAPH_PACKAGE,
+            "PythTIG session-manager graph package",
+        ),
+        (
+            b"task-steward.tig",
+            TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+            PYTH_TASK_STEWARD_GRAPH_PACKAGE,
+            "PythTIG task-steward graph package",
+        ),
+    ]
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(name, principal_id, require_file(path, description)),
+        )
+        for name, principal_id, path, description in graph_specs
+    ]
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -293,11 +423,24 @@ def build_user_elf_payload(text: bytes) -> bytes:
 
 
 def build_default_init_pak(
-    include_pythtig: bool = False, include_pythtig_object_flow: bool = False
+    include_pythtig: bool = False,
+    include_pythtig_object_flow: bool = False,
+    pyth_native_elf: Path | None = None,
+    include_pythtig_task_steward: bool = False,
+    include_pythtig_default_services: bool = False,
 ) -> bytes:
-    if include_pythtig and include_pythtig_object_flow:
+    selected_pythtig_sets = sum(
+        [
+            bool(include_pythtig),
+            bool(include_pythtig_object_flow),
+            pyth_native_elf is not None,
+            bool(include_pythtig_task_steward),
+            bool(include_pythtig_default_services),
+        ]
+    )
+    if selected_pythtig_sets > 1:
         raise SystemExit(
-            "select either --with-pythtig or --with-pythtig-object-flow, not both; "
+            "select only one PythTIG graph/native set; "
             "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
         )
     shell_elf = require_file(SHELL_ELF, "shell ELF")
@@ -314,6 +457,14 @@ def build_default_init_pak(
     if include_pythtig_object_flow:
         records.append(pyth_runtime_record())
         records.extend(phase3_object_pyth_graph_records())
+    if pyth_native_elf is not None:
+        records.extend(native_pyth_graph_records(pyth_native_elf))
+    if include_pythtig_task_steward:
+        records.append(pyth_runtime_record())
+        records.extend(phase5_task_steward_pyth_graph_records())
+    if include_pythtig_default_services:
+        records.append(pyth_runtime_record())
+        records.extend(phase7_default_service_pyth_graph_records())
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -358,6 +509,9 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
     parser.add_argument("--with-pythtig", action="store_true")
     parser.add_argument("--with-pythtig-object-flow", action="store_true")
+    parser.add_argument("--pyth-native-elf", type=Path)
+    parser.add_argument("--with-pythtig-task-steward", action="store_true")
+    parser.add_argument("--with-pythtig-default-services", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -377,7 +531,13 @@ def main() -> int:
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(
         pythos_dir / "INIT.PAK",
-        build_default_init_pak(args.with_pythtig, args.with_pythtig_object_flow),
+        build_default_init_pak(
+            args.with_pythtig,
+            args.with_pythtig_object_flow,
+            args.pyth_native_elf,
+            args.with_pythtig_task_steward,
+            args.with_pythtig_default_services,
+        ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 

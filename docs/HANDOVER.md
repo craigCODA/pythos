@@ -1,13 +1,22 @@
 # PythOS Handover
 
-Current boundary: ADR 0063 physical evidence terminal is implemented on `main`
-from the former `agent/physical-evidence-terminal` line and is QEMU-accepted
-through `scripts\test-evidence-terminal.py`. Phase 10 remains complete. Main
-also carries the 2026-08-08 physical evidence-terminal validation record for
-the disposable O2 Micro `1217:8620` target: five readable terminal-page photos
-and one continuous boot video report `count 00000139`, `drop 00000000`, and
-CRC `176F4C6E`. The `count` field is hexadecimal, so `00000139` is 313 decimal
-markers. COM1/QEMU acceptance remains the automated oracle.
+Current PythTIG branch boundary: `agent/pythtig-phase7-cutover-cross-target`
+contains the Phase 7 cutover/cross-target work. Normal boot now admits the
+Pyth-native session-manager/default-service graph packages before readiness;
+the Rust object shell is retained through `legacy-shell` and recovery after a
+contained default service fault. Phase 7 also adds QEMU virtio/AHCI
+unchanged-package comparison and physical-target preparation/import-verification
+tooling.
+
+The pre-Phase-7 `main` boundary remains: ADR 0063 physical evidence terminal is
+implemented on `main` from the former `agent/physical-evidence-terminal` line
+and is QEMU-accepted through `scripts\test-evidence-terminal.py`. Phase 10
+remains complete. Main also carries the 2026-08-08 physical evidence-terminal
+validation record for the disposable O2 Micro `1217:8620` target: five readable
+terminal-page photos and one continuous boot video report `count 00000139`,
+`drop 00000000`, and CRC `176F4C6E`. The `count` field is hexadecimal, so
+`00000139` is 313 decimal markers. COM1/QEMU acceptance remains the automated
+oracle.
 
 The earlier Phase 11 targeted SDHCI/eMMC backend panel validation remains
 recorded on branch `feature/sdhci-emmc-backend`. Two operator-supplied physical
@@ -33,7 +42,7 @@ object-inspection substrate, but do not extend launcher, widget, window-shell,
 desktop, or first-party application work unless a later owner-approved phase
 explicitly authorizes it.
 
-## PythTIG Owner Adoption Status (2026-08-04)
+## PythTIG Owner Adoption Status (2026-08-20)
 
 The former branch `docs/pythtig-phase0-from-physical-evidence` imported the
 proposed Pyth Native Typed Instruction Graph program as docs-only Phase 0
@@ -43,10 +52,22 @@ implementation merge.
 
 Owner review accepted ADR 0064 as the PythTIG architecture direction. ADR 0065
 is accepted, and the tested PythTIG version 1 package ABI is frozen as of
-2026-08-08. Phase 2 ring-3 runtime acceptance is complete. Phase 3
-object/capability integration is implemented as an explicit opt-in proof path
-that uses the retained object service; it does not change the default
-production object-shell boot path and does not authorize Phase 4+ work.
+2026-08-08. PythTIG Phase 1 through Phase 7 have been owner-invoked in order on
+the Phase 7 cutover/cross-target branch.
+
+Phase 7 acceptance means:
+
+- Pyth source compiles through `pythc` into canonical ADR 0065 graph packages.
+- The same verified graph semantics run through the bounded ring-3 interpreter
+  and custom x86-64 backend.
+- PythCore supplies typed capabilities and services but does not parse Pyth
+  source, command text, semantic prompts, or agent policy.
+- Task Steward can emit explainable proposals but cannot approve, create, or
+  mutate authoritative task state without user-held authority.
+- Normal boot launches Pyth graph services by default.
+- The Rust object shell remains a maintenance/recovery fallback.
+- Cross-target claims require unchanged package bytes, matching runtime digest,
+  matching normalized semantic markers, and target-specific evidence.
 
 Imported proposal artifacts live under:
 
@@ -66,10 +87,9 @@ ADR 0065: Pyth Graph Package ABI
 
 This merge keeps the ADR 0063 evidence-terminal implementation baseline intact
 and records the full reconciliation in
-`docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement the Pyth
-source language, compiler, Task Steward, native backend, production cutover, or
-later marker/CI behavior from this proposal until the owner explicitly invokes
-the corresponding phase.
+`docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement later
+PythTIG phases, hardware expansion, networking, package management, updates,
+AI, or SMP by momentum; each still requires explicit owner invocation.
 
 ## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
 
@@ -346,9 +366,10 @@ and AI.
 
 ## Real-Hardware Boot Status (2026-07-25)
 
-PythOS now boots on real UEFI hardware, not only QEMU. A laptop boots a USB all
-the way to the milestone-1 cinematic wake screen (`PythOS [HISS] We Are Woken`).
-See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-boot*`.
+PythOS has target-specific real UEFI boot evidence, not only QEMU evidence. The
+recorded Phase 11 laptop run booted a USB image to the milestone-1 cinematic
+wake screen (`PythOS [HISS] We Are Woken`) on that named target only. See ADR
+0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-boot*`.
 
 - The loader identity-maps the low 512 GiB (1 GiB huge pages) so machines that
   load the loader / boot structures above 4 GiB survive the `CR3` handoff.
@@ -357,7 +378,8 @@ See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-bo
   less machine the last color shown localizes how far boot reached.
 - Known-deferred: one desktop still stops at the loader's magenta pre-handoff
   color; the 512 GiB map is the leading fix but is unverified on that box. The
-  laptop is the working real-hardware oracle for now.
+  recorded laptop evidence is the working target-specific real-hardware oracle
+  for that branch note, not a generic hardware-support claim.
 - Secure Boot must stay disabled (loader is unsigned). Diagnostic paints fire on
   every boot, including successful ones; gating them to failures is a follow-up.
 
@@ -407,7 +429,7 @@ Timeout termination is not success evidence.
 Expected branch:
 
 ```text
-main
+agent/pythtig-phase7-cutover-cross-target
 ```
 
 Expected state:
@@ -427,9 +449,14 @@ ADR 0063 evidence-terminal implementation and QEMU harness present on main
 PythTIG Phase 1 format/verifier proof path complete
 PythTIG Phase 2 ring-3 runtime proof path complete
 PythTIG Phase 3 object/capability proof path complete
-Next allowed work: none by momentum. Phase 11, PythTIG Phase 4, networking,
-package management, updates, AI, SMP, or hardware expansion require explicit
-re-invocation and the corresponding roadmap or phase plan.
+PythTIG Phase 4 host compiler proof path complete
+PythTIG Phase 5 Task Steward proof path complete
+PythTIG Phase 6 native backend proof path complete
+PythTIG Phase 7 cutover/cross-target proof path complete on this branch
+Next allowed work: none by momentum. Merge/review of this branch, Phase 11,
+later PythTIG phases, networking, package management, updates, AI, SMP, or
+hardware expansion require explicit re-invocation and the corresponding
+roadmap or phase plan.
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -1025,9 +1052,10 @@ until a later phase defines one.
 ## Next Boundary
 
 Phase 10 is complete and the current numbered-roadmap stop boundary is
-Phase 10 -> Phase 11. `docs/ROADMAP.md` and
-`docs/ROADMAP-LATER-PHASES.md` describe the next numbered phases; PythTIG
-Phase 4+ remains a separate explicit invocation path.
+Phase 10 -> Phase 11. On the Phase 7 PythTIG branch, the current PythTIG stop
+boundary is Phase 7 -> later PythTIG phases. `docs/ROADMAP.md`,
+`docs/ROADMAP-LATER-PHASES.md`, and `docs/pyth-tig/ACCEPTANCE.md` describe the
+corresponding gates.
 
 Before starting later-phase work, re-read:
 
@@ -1038,6 +1066,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin networking, package management, updates, AI, SMP, or hardware
-expansion by momentum. Pick one Later Phase, write its detailed slice sequence
-and required artifacts, then start with a failing automated test.
+Do not begin networking, package management, updates, AI, SMP, hardware
+expansion, or later PythTIG work by momentum. Pick one later phase, write its
+detailed slice sequence and required artifacts, then start with a failing
+automated test.

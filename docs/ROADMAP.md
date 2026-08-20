@@ -11,7 +11,7 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
-## Accepted Future Program Pending Phase Invocation: PythTIG
+## Accepted PythTIG Program Boundary
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is
 accepted as the future execution-model architecture direction by ADR 0064.
@@ -26,13 +26,24 @@ docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md
 docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
 ```
 
-This section preserves the current roadmap and accepted behavior. PythTIG
-Phase 1 format/verifier work, Phase 2 ring-3 runtime work, and Phase 3
-object/capability integration have been owner-invoked in order. The completed
-proof paths remain opt-in and do not change the default production object-shell
-boot path. Do not implement `pythc`, Task Steward behavior, native lowering, or
-normal-boot cutover from this documentation by momentum; each later phase still
-requires explicit owner invocation.
+PythTIG Phase 1 through Phase 7 have been owner-invoked in order on the Phase 7
+cutover/cross-target branch. Phase 7 changes normal boot to admit the
+Pyth-native session-manager and default service graph packages before
+readiness, while retaining the Rust object shell under the `legacy-shell`
+maintenance fallback and as the recovery shell after a contained
+default-service fault.
+
+PythCore still accepts only typed graph packages and typed syscalls. It must not
+parse Pyth source, human command text, semantic prompts, or agent policy. Task
+Steward remains proposal-only and cannot approve authoritative task state. An
+unchanged graph package checksum and normalized semantic markers are required
+for every cross-target claim, and physical evidence remains
+machine/controller-specific.
+
+Halt at the PythTIG Phase 7 boundary. Do not implement later PythTIG phases,
+hardware expansion, networking, package management, updates, AI, or SMP from
+this documentation by momentum; each later phase still requires explicit owner
+invocation.
 
 ## How To Read This File
 

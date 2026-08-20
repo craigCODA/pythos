@@ -93,6 +93,13 @@ fn run_line(
         }) => {
             syscalls::dispatch_object_request(console, object_caps, &mut request, &text[..text_len])
         }
+        Ok(Command::Task {
+            mut request,
+            input,
+            input_len,
+        }) => {
+            syscalls::dispatch_task_request(console, object_caps, &mut request, &input[..input_len])
+        }
         Err(_) => syscalls::write_str(console, "ERROR unknown-command\r\n"),
     }
 }

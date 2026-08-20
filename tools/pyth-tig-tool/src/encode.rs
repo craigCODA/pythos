@@ -91,7 +91,7 @@ pub(crate) fn invalid_effect_fork_package() -> Vec<u8> {
 
 pub(crate) fn unsupported_phase2_package() -> Vec<u8> {
     build_log_package(
-        &[const_u64(), ret()],
+        &[const_bool(), ret()],
         RIGHTS_READ,
         RESOURCE_SYSTEM_LOG,
         PythType::Capability.code(),

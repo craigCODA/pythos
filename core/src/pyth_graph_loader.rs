@@ -40,9 +40,33 @@ pub fn load_named_pyth_graph<'a>(
     validate_named_pyth_graph_payload_bytes(bytes, name)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn load_named_pyth_graph_for_admission<'a>(
+    boot_info: &'a PythBootInfo,
+    name: &[u8],
+) -> Result<LoadedPythGraph<'a>, PythGraphLoadError> {
+    let bytes = init_bundle_bytes(boot_info)?;
+    validate_named_pyth_graph_payload_bytes_for_admission(bytes, name)
+}
+
 pub fn validate_named_pyth_graph_payload_bytes<'a>(
     bytes: &'a [u8],
     name: &[u8],
+) -> Result<LoadedPythGraph<'a>, PythGraphLoadError> {
+    validate_named_pyth_graph_payload_bytes_with_profile(bytes, name, true)
+}
+
+pub fn validate_named_pyth_graph_payload_bytes_for_admission<'a>(
+    bytes: &'a [u8],
+    name: &[u8],
+) -> Result<LoadedPythGraph<'a>, PythGraphLoadError> {
+    validate_named_pyth_graph_payload_bytes_with_profile(bytes, name, false)
+}
+
+fn validate_named_pyth_graph_payload_bytes_with_profile<'a>(
+    bytes: &'a [u8],
+    name: &[u8],
+    enforce_runtime_profile: bool,
 ) -> Result<LoadedPythGraph<'a>, PythGraphLoadError> {
     let payload = init_pak_payload(bytes)?;
     let bundle = init_bundle::validate(payload).map_err(|_| PythGraphLoadError::BadInitBundle)?;
@@ -61,7 +85,9 @@ pub fn validate_named_pyth_graph_payload_bytes<'a>(
 
     let manifest = selected.ok_or(PythGraphLoadError::MissingGraphPayload)?;
     let verified = verify::verify_bytes(manifest.package()).map_err(PythGraphLoadError::Verify)?;
-    validate_phase2_runtime_profile(&verified)?;
+    if enforce_runtime_profile {
+        validate_phase2_runtime_profile(&verified)?;
+    }
     Ok(LoadedPythGraph { manifest, verified })
 }
 
@@ -119,19 +145,30 @@ fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), P
             }
             Ok(Opcode::ConstU64) => matches!(
                 PythType::try_from(node.result_type),
-                Ok(PythType::ObjectId | PythType::RevisionId)
+                Ok(PythType::ObjectId
+                    | PythType::RevisionId
+                    | PythType::TaskId
+                    | PythType::ProposalId
+                    | PythType::ErrorCode
+                    | PythType::U64)
             ),
             Ok(
                 Opcode::EffectStart
                 | Opcode::ConstBytes
                 | Opcode::ConstUtf8
                 | Opcode::HostResult
+                | Opcode::LessThanU64
                 | Opcode::SystemLog
                 | Opcode::ObjectCreate
                 | Opcode::ObjectQuery
                 | Opcode::ObjectInspect
                 | Opcode::ObjectRevise
                 | Opcode::ObjectHistory
+                | Opcode::TaskContextRead
+                | Opcode::TaskProposalEmit
+                | Opcode::CommandRead
+                | Opcode::CommandResultEmit
+                | Opcode::Branch
                 | Opcode::Jump
                 | Opcode::Return,
             ) => true,
@@ -319,7 +356,7 @@ mod tests {
 
     #[test]
     fn loader_rejects_verifier_valid_opcode_outside_phase2_profile() {
-        let package = test_support::structurally_valid_terminated_package();
+        let package = test_support::branch_to_return_package(true);
         verify::verify_bytes(&package).expect("shared v1 verifier must admit frozen opcode");
         let bundle = build_named_graph_bundle(b"unsupported.tig", &package);
 
@@ -327,9 +364,22 @@ mod tests {
             validate_named_pyth_graph_payload_bytes(&bundle, b"unsupported.tig"),
             Err(PythGraphLoadError::UnsupportedPhase2Opcode {
                 node: 0,
-                opcode: Opcode::ConstU64.code(),
+                opcode: Opcode::ConstBool.code(),
             })
         );
+    }
+
+    #[test]
+    fn admission_loader_accepts_verifier_valid_graph_without_runtime_profile_claim() {
+        let package = test_support::branch_to_return_package(true);
+        verify::verify_bytes(&package).expect("shared v1 verifier must admit frozen opcode");
+        let bundle = build_named_graph_bundle(b"service.tig", &package);
+
+        let loaded =
+            validate_named_pyth_graph_payload_bytes_for_admission(&bundle, b"service.tig").unwrap();
+
+        assert_eq!(loaded.manifest.name(), b"service.tig");
+        assert_eq!(loaded.verified.package().header().node_count, 4);
     }
 
     #[test]
@@ -358,5 +408,19 @@ mod tests {
 
         assert_eq!(loaded.manifest.name(), b"object.tig");
         assert_eq!(loaded.verified.package().header().node_count, 11);
+    }
+
+    #[test]
+    fn loader_accepts_task_steward_runtime_profile() {
+        let package = test_support::task_context_score_with_import_rights(
+            pythos_shared::task_abi::TASK_RIGHT_READ_CONTEXT,
+        );
+        verify::verify_bytes(&package).expect("shared v1 verifier must admit Task Steward graph");
+        let bundle = build_named_graph_bundle(b"task-steward.tig", &package);
+
+        let loaded = validate_named_pyth_graph_payload_bytes(&bundle, b"task-steward.tig").unwrap();
+
+        assert_eq!(loaded.manifest.name(), b"task-steward.tig");
+        assert_eq!(loaded.verified.package().header().node_count, 5);
     }
 }

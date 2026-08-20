@@ -79,6 +79,7 @@ static PERSISTENT_USER_PROCESS_KIND: AtomicU64 = AtomicU64::new(PERSISTENT_KIND_
 const PERSISTENT_KIND_NONE: u64 = 0;
 const PERSISTENT_KIND_OBJECT_SHELL: u64 = 1;
 const PERSISTENT_KIND_PYTH_GRAPH_RUNTIME: u64 = 2;
+const PERSISTENT_KIND_PYTH_NATIVE_GRAPH: u64 = 3;
 
 const fn user_code_bytes() -> [u8; USER_PAGE_SIZE] {
     let mut bytes = [0; USER_PAGE_SIZE];
@@ -174,6 +175,7 @@ unsafe extern "C" {
 pub enum PersistentUserProcessKind {
     ObjectShell,
     PythGraphRuntime,
+    PythNativeGraph,
 }
 
 impl PersistentUserProcessKind {
@@ -181,6 +183,7 @@ impl PersistentUserProcessKind {
         match self {
             Self::ObjectShell => PERSISTENT_KIND_OBJECT_SHELL,
             Self::PythGraphRuntime => PERSISTENT_KIND_PYTH_GRAPH_RUNTIME,
+            Self::PythNativeGraph => PERSISTENT_KIND_PYTH_NATIVE_GRAPH,
         }
     }
 
@@ -188,6 +191,7 @@ impl PersistentUserProcessKind {
         match raw {
             PERSISTENT_KIND_OBJECT_SHELL => Some(Self::ObjectShell),
             PERSISTENT_KIND_PYTH_GRAPH_RUNTIME => Some(Self::PythGraphRuntime),
+            PERSISTENT_KIND_PYTH_NATIVE_GRAPH => Some(Self::PythNativeGraph),
             _ => None,
         }
     }
@@ -333,6 +337,67 @@ pub fn enter_pyth_graph_runtime(
 }
 
 #[cfg(not(test))]
+pub fn enter_pyth_native_graph(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    bootstrap_user_ptr: u64,
+    package_digest: u64,
+) -> ! {
+    process_context::bind_current_process(process);
+    tss::set_ring0_stack(kernel_trap_stack_top());
+    serial::write_str("PYTHOS:PYTHTIG:NATIVE_ENTER package:");
+    serial::write_hex_u64_value(package_digest);
+    serial::write_str("\r\n");
+    PERSISTENT_USER_PROCESS_ACTIVE.store(true, Ordering::SeqCst);
+    PERSISTENT_USER_PROCESS_KIND.store(
+        PersistentUserProcessKind::PythNativeGraph.raw(),
+        Ordering::SeqCst,
+    );
+    // SAFETY:
+    // 1. Invariant: `entry` is the validated native PythTIG ELF entry point,
+    //    `user_stack_top` is a guarded user stack, and `bootstrap_user_ptr`
+    //    names the read-only Pyth graph bootstrap block.
+    // 2. Established by: PythTIG native normal init validates the native ELF,
+    //    graph package, native binding record, payload mappings, and retained
+    //    user root before activation.
+    // 3. Lifetime: the native graph root and payload pages are retained for
+    //    the one-shot invocation.
+    // 4. Pointer ownership: the CPU consumes user RIP/RSP/RDI by value.
+    // 5. Alignment: entry and stack are canonical user addresses; bootstrap is
+    //    page-aligned and satisfies the block's ABI alignment.
+    // 6. Mapped length: the root maps the native ELF, one stack, bootstrap,
+    //    package, result page, kernel trap stack, and syscall path.
+    // 7. Concurrency: Phase 6 launches one native graph process on one CPU.
+    // 8. Violation: bad descriptors or mappings fault through containment.
+    unsafe {
+        ring3_enter_forever_abi(entry, user_stack_top, bootstrap_user_ptr);
+    }
+}
+
+pub fn is_active_pyth_graph_process(expected_principal: u64) -> bool {
+    PERSISTENT_USER_PROCESS_ACTIVE.load(Ordering::SeqCst)
+        && matches!(
+            PersistentUserProcessKind::from_raw(
+                PERSISTENT_USER_PROCESS_KIND.load(Ordering::SeqCst)
+            ),
+            Some(
+                PersistentUserProcessKind::PythGraphRuntime
+                    | PersistentUserProcessKind::PythNativeGraph
+            )
+        )
+        && process_context::current_caller()
+            .map(|process| process.principal_id() == expected_principal)
+            .unwrap_or(false)
+}
+
+pub fn is_active_pyth_native_graph() -> bool {
+    PERSISTENT_USER_PROCESS_ACTIVE.load(Ordering::SeqCst)
+        && PersistentUserProcessKind::from_raw(PERSISTENT_USER_PROCESS_KIND.load(Ordering::SeqCst))
+            == Some(PersistentUserProcessKind::PythNativeGraph)
+}
+
+#[cfg(not(test))]
 enum ExpectedUserTrap {
     Breakpoint,
     Fault(u64),
@@ -430,7 +495,13 @@ pub fn transition_pyth_graph_runtime_exit(expected_principal: u64) -> bool {
     let outcome = transition_persistent_user_process_to_safe_idle();
     outcome.was_active
         && outcome.safe_idle_ready
-        && outcome.process_kind == Some(PersistentUserProcessKind::PythGraphRuntime)
+        && matches!(
+            outcome.process_kind,
+            Some(
+                PersistentUserProcessKind::PythGraphRuntime
+                    | PersistentUserProcessKind::PythNativeGraph
+            )
+        )
         && outcome.terminated_principal == Some(expected_principal)
 }
 
@@ -467,6 +538,22 @@ fn handle_persistent_user_fault(_vector: u64, _rip: u64, _rsp: u64, _fault_addre
                 serial::write_line("PYTHOS:SHELL:FAULT_TERMINATED");
             }
             Some(PersistentUserProcessKind::PythGraphRuntime) => {
+                serial::write_str("PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:");
+                serial::write_hex_u64_value(principal);
+                serial::write_str(" vector:");
+                serial::write_dec_u64_value(_vector);
+                serial::write_str(" rip:");
+                serial::write_hex_u64_value(_rip);
+                serial::write_str(" rsp:");
+                serial::write_hex_u64_value(_rsp);
+                serial::write_str(" cr2:");
+                serial::write_hex_u64_value(_fault_address);
+                serial::write_str("\r\n");
+                if _outcome.was_active && _outcome.safe_idle_ready {
+                    serial::write_line("PYTHOS:PYTHTIG:RUNTIME_FAULT_SAFE_IDLE");
+                }
+            }
+            Some(PersistentUserProcessKind::PythNativeGraph) => {
                 serial::write_str("PYTHOS:PYTHTIG:RUNTIME_FAULT_CONTAINED principal:");
                 serial::write_hex_u64_value(principal);
                 serial::write_str(" vector:");

@@ -473,7 +473,7 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
         abi = source("shared/src/object_shell_abi.rs")
         for symbol, ty, value in (
             ("OBJECT_SHELL_ABI_MAJOR", "u16", "1"),
-            ("OBJECT_SHELL_ABI_MINOR", "u16", "0"),
+            ("OBJECT_SHELL_ABI_MINOR", "u16", "1"),
             ("SYSCALL_CONSOLE_READ_BYTE", "u64", "0x5059_0100"),
             ("SYSCALL_CONSOLE_WRITE_BYTE", "u64", "0x5059_0101"),
             ("SYSCALL_OBJECT_REQUEST", "u64", "0x5059_0120"),
@@ -503,10 +503,12 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
                 "core::mem::size_of::<ObjectShellRequest>(), 80",
                 "core::mem::size_of::<ObjectShellResponse>(), 64",
                 "core::mem::size_of::<ObjectListEntry>(), 16",
-                "core::mem::size_of::<BootstrapCapabilityBlock>(), 168",
+                "core::mem::size_of::<BootstrapCapabilityBlock>(), 176",
                 "core::mem::offset_of!(ObjectShellRequest, authority), 16",
                 "core::mem::offset_of!(ObjectShellResponse, field_bytes), 48",
-                "core::mem::offset_of!(BootstrapCapabilityBlock, objects), 40",
+                "core::mem::offset_of!(BootstrapCapabilityBlock, task_control)",
+                "assert_eq!(task_control_offset, 40)",
+                "core::mem::offset_of!(BootstrapCapabilityBlock, objects), 48",
             ],
             "object shell ABI layout tests",
         )

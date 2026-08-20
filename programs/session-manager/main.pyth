@@ -1,0 +1,13 @@
+program session_manager principal 0x50595448534D0001 {
+    import commands: capability<command, read|append>;
+    fn main() -> unit {
+        let kind: u64 = command.kind(commands);
+        let text: utf8 = command.text(commands);
+        if kind == 3 {
+            command.result_emit(commands, 0, text);
+            return;
+        } else {
+            return;
+        }
+    }
+}

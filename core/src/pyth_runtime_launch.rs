@@ -2,6 +2,8 @@
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
 use crate::block_device::SECTOR_SIZE;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::task_service;
 #[cfg(all(
     not(test),
     feature = "pythtig-phase2-test",
@@ -14,9 +16,9 @@ use crate::{
         physical::{PAGE_SIZE, PhysicalMemory},
         r#virtual::{RetainedUserAddressSpace, UserAddressSpace, UserPayloadMapping},
     },
-    process_context::ActiveUserProcess,
-    pyth_graph_loader, runtime_loader, serial, syscall, user_elf, user_stacks,
+    pyth_graph_loader, retained_services, runtime_loader, serial, syscall, user_elf, user_stacks,
 };
+use crate::{process_context::ActiveUserProcess, service_identity::ServiceId};
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(
     not(test),
@@ -40,8 +42,8 @@ use pythos_shared::{
     },
     pyth_tig::{
         opcode::{
-            RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RIGHTS_CREATE,
-            RIGHTS_QUERY, RIGHTS_READ,
+            RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK,
+            RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ,
         },
         verify::{VerifiedGraph, VerifyError},
     },
@@ -58,6 +60,14 @@ pub const OBJECT_CREATE_GRAPH_NAME: &[u8] = b"object-create.tig";
 pub const OBJECT_RESTORE_GRAPH_NAME: &[u8] = b"object-restore.tig";
 pub const OBJECT_KNOWN_DENIED_GRAPH_NAME: &[u8] = b"object-known-denied.tig";
 pub const OBJECT_FORGERY_GRAPH_NAME: &[u8] = b"object-forgery.tig";
+pub const TASK_STEWARD_GRAPH_NAME: &[u8] = b"task-steward.tig";
+pub const HELLO_NATIVE_PROGRAM_NAME: &[u8] = b"hello.elf";
+pub const BUDGET_NATIVE_PROGRAM_NAME: &[u8] = b"budget.elf";
+pub const OBJECT_CREATE_NATIVE_PROGRAM_NAME: &[u8] = b"object-create.elf";
+pub const OBJECT_RESTORE_NATIVE_PROGRAM_NAME: &[u8] = b"object-restore.elf";
+pub const OBJECT_KNOWN_DENIED_NATIVE_PROGRAM_NAME: &[u8] = b"object-known-denied.elf";
+pub const OBJECT_FORGERY_NATIVE_PROGRAM_NAME: &[u8] = b"object-forgery.elf";
+pub const TASK_STEWARD_NATIVE_PROGRAM_NAME: &[u8] = b"task-steward.elf";
 pub const PYTH_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5448_5254_0001;
 pub const HELLO_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0001;
 pub const BUDGET_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0002;
@@ -66,6 +76,8 @@ pub const OBJECT_CREATE_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0006;
 pub const OBJECT_RESTORE_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0007;
 pub const OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0008;
 pub const OBJECT_FORGERY_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0009;
+pub const TASK_STEWARD_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_5354_0001;
+const PYTH_GRAPH_RUNTIME_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_5447_5254_0001);
 pub const PYTH_GRAPH_BOOTSTRAP_USER_PTR: u64 = 0x0000_0000_7100_0000;
 pub const PYTH_GRAPH_PACKAGE_USER_PTR: u64 = 0x0000_0000_7100_1000;
 pub const PYTH_GRAPH_RESULT_USER_PTR: u64 = 0x0000_0000_7100_2000;
@@ -84,6 +96,14 @@ pub const PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_CREATE: u16 = 7;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_RESTORE: u16 = 8;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_KNOWN_DENIED: u16 = 9;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_FORGERY: u16 = 10;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_TASK_STEWARD: u16 = 11;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_HELLO: u16 = 12;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_BUDGET: u16 = 13;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_CREATE: u16 = 14;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_RESTORE: u16 = 15;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_KNOWN_DENIED: u16 = 16;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_FORGERY: u16 = 17;
+pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_TASK_STEWARD: u16 = 18;
 
 static OBJECT_FLOW_COMPLETION_MARKER_ARMED: AtomicBool = AtomicBool::new(false);
 
@@ -93,6 +113,8 @@ pub enum PythRuntimeLaunchError {
     TooManyImports,
     PackageTooLarge,
     RuntimeProgram,
+    NativeProgram,
+    NativeBinding,
     GraphPackage,
     Memory,
     AddressSpace,
@@ -105,12 +127,14 @@ pub enum PythRuntimeLaunchError {
 pub struct PythGraphImportCapabilities {
     pub system_log: PackedCapability,
     pub object_workspace: PackedCapability,
+    pub task_steward: PackedCapability,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythGraphDeferredImport {
     None,
     ObjectWorkspace,
+    TaskSteward,
     TestOnlyObjectCapability,
 }
 
@@ -118,6 +142,7 @@ pub enum PythGraphDeferredImport {
 enum PythGraphBootstrapBinding {
     Complete(PythGraphImportCapabilities),
     DeferredObjectWorkspace { system_log: PackedCapability },
+    DeferredTaskSteward { system_log: PackedCapability },
     DeferredTestOnlyObjectCapability,
 }
 
@@ -134,6 +159,26 @@ pub enum PythGraphBootMode {
     LaunchObjectRestore,
     LaunchObjectKnownDenied,
     LaunchObjectForgery,
+    LaunchTaskSteward,
+    LaunchNativeHello,
+    LaunchNativeBudget,
+    LaunchNativeObjectCreate,
+    LaunchNativeObjectRestore,
+    LaunchNativeObjectKnownDenied,
+    LaunchNativeObjectForgery,
+    LaunchNativeTaskSteward,
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PythGraphExecutionKind {
+    Interpreter,
+    Native,
 }
 
 pub fn arm_object_flow_completion_marker() {
@@ -189,6 +234,7 @@ pub struct PreparedPythRuntimeLaunch {
     pub entry: u64,
     pub bootstrap_user_ptr: u64,
     pub package_digest: u64,
+    pub execution_kind: PythGraphExecutionKind,
     pub graph_principal_id: u64,
     pub import_count: u16,
     pub node_count: u32,
@@ -323,6 +369,12 @@ fn bind_import_capability(
                 (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
                     capabilities.object_workspace
                 }
+                (RESOURCE_TASK, rights) if rights == (RIGHTS_READ | RIGHTS_CREATE) => {
+                    return Err(PythRuntimeLaunchError::UnauthorizedImport);
+                }
+                (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
+                    capabilities.task_steward
+                }
                 _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
             }
         }
@@ -330,6 +382,15 @@ fn bind_import_capability(
             match (import.resource_kind, import.rights) {
                 (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => system_log,
                 (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
+                    PackedCapability::from_raw(0)
+                }
+                _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
+            }
+        }
+        PythGraphBootstrapBinding::DeferredTaskSteward { system_log } => {
+            match (import.resource_kind, import.rights) {
+                (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => system_log,
+                (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
                     PackedCapability::from_raw(0)
                 }
                 _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
@@ -346,12 +407,53 @@ fn bind_import_capability(
         && !matches!(
             binding,
             PythGraphBootstrapBinding::DeferredObjectWorkspace { .. }
+                | PythGraphBootstrapBinding::DeferredTaskSteward { .. }
                 | PythGraphBootstrapBinding::DeferredTestOnlyObjectCapability
         )
     {
         return Err(PythRuntimeLaunchError::MissingImport);
     }
     Ok(capability)
+}
+
+fn graph_imports_task_resource(verified: &VerifiedGraph<'_>) -> bool {
+    verified
+        .package()
+        .imports()
+        .iter()
+        .any(|import| import.resource_kind == RESOURCE_TASK)
+}
+
+fn pyth_graph_runtime_process(
+    runtime_principal_id: u64,
+    runtime_program_digest: u64,
+    graph_principal_id: u64,
+) -> ActiveUserProcess {
+    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    if graph_principal_id == TASK_STEWARD_GRAPH_PRINCIPAL_ID {
+        return task_service::steward_process();
+    }
+    #[cfg(not(any(test, all(not(test), not(feature = "verify")))))]
+    let _ = graph_principal_id;
+    ActiveUserProcess::new(
+        PYTH_GRAPH_RUNTIME_SERVICE_ID,
+        runtime_principal_id,
+        runtime_program_digest,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+fn pyth_native_graph_process(principal_id: u64, program_digest: u64) -> ActiveUserProcess {
+    if principal_id == TASK_STEWARD_GRAPH_PRINCIPAL_ID {
+        let steward = task_service::steward_process();
+        return ActiveUserProcess::new(steward.service_id(), principal_id, program_digest);
+    }
+    ActiveUserProcess::new(PYTH_GRAPH_RUNTIME_SERVICE_ID, principal_id, program_digest)
 }
 
 pub fn bind_deferred_import(
@@ -370,6 +472,9 @@ pub fn bind_deferred_import(
         PythGraphDeferredImport::ObjectWorkspace => {
             (RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE | RIGHTS_QUERY)
         }
+        PythGraphDeferredImport::TaskSteward => {
+            return bind_task_steward_imports(bootstrap, capability);
+        }
         PythGraphDeferredImport::TestOnlyObjectCapability => (RESOURCE_OBJECT, RIGHTS_READ),
     };
     let mut index = 0usize;
@@ -385,6 +490,33 @@ pub fn bind_deferred_import(
         index += 1;
     }
     Err(PythRuntimeLaunchError::MissingImport)
+}
+
+fn bind_task_steward_imports(
+    bootstrap: &mut PythGraphBootstrapBlock,
+    capability: PackedCapability,
+) -> Result<(), PythRuntimeLaunchError> {
+    let mut bound = false;
+    let mut index = 0usize;
+    while index < usize::from(bootstrap.import_count) {
+        let binding = &mut bootstrap.imports[index];
+        if binding.resource_kind == RESOURCE_TASK {
+            if binding.rights != RIGHTS_READ && binding.rights != RIGHTS_CREATE {
+                return Err(PythRuntimeLaunchError::UnauthorizedImport);
+            }
+            if binding.capability.raw() != 0 {
+                return Err(PythRuntimeLaunchError::UnauthorizedImport);
+            }
+            binding.capability = capability;
+            bound = true;
+        }
+        index += 1;
+    }
+    if bound {
+        Ok(())
+    } else {
+        Err(PythRuntimeLaunchError::MissingImport)
+    }
 }
 
 #[cfg(all(
@@ -461,6 +593,28 @@ pub fn prepare_pyth_runtime_launch_for_graph_deferred_object_workspace(
     not(feature = "verify"),
     not(feature = "hardware-probe")
 ))]
+pub fn prepare_pyth_runtime_launch_for_task_steward(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_runtime_launch_for_graph_with_policy(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        TASK_STEWARD_GRAPH_NAME,
+        TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+        PythGraphDeferredImport::TaskSteward,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
 pub fn prepare_pyth_runtime_launch_for_graph_deferred_test_object_capability(
     boot_info: &'static PythBootInfo,
     physical_memory: &mut PhysicalMemory,
@@ -475,6 +629,107 @@ pub fn prepare_pyth_runtime_launch_for_graph_deferred_test_object_capability(
         graph_name,
         expected_graph_principal_id,
         PythGraphDeferredImport::TestOnlyObjectCapability,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+pub fn prepare_pyth_native_launch_for_graph(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph_name: &[u8],
+    expected_graph_principal_id: u64,
+    native_program_name: &[u8],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_native_launch_for_graph_with_policy(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        graph_name,
+        expected_graph_principal_id,
+        native_program_name,
+        PythGraphDeferredImport::None,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+pub fn prepare_pyth_native_launch_for_graph_deferred_object_workspace(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph_name: &[u8],
+    expected_graph_principal_id: u64,
+    native_program_name: &[u8],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_native_launch_for_graph_with_policy(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        graph_name,
+        expected_graph_principal_id,
+        native_program_name,
+        PythGraphDeferredImport::ObjectWorkspace,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+pub fn prepare_pyth_native_launch_for_graph_deferred_test_object_capability(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph_name: &[u8],
+    expected_graph_principal_id: u64,
+    native_program_name: &[u8],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_native_launch_for_graph_with_policy(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        graph_name,
+        expected_graph_principal_id,
+        native_program_name,
+        PythGraphDeferredImport::TestOnlyObjectCapability,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+pub fn prepare_pyth_native_launch_for_task_steward(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    prepare_pyth_native_launch_for_graph_with_policy(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        TASK_STEWARD_GRAPH_NAME,
+        TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+        TASK_STEWARD_NATIVE_PROGRAM_NAME,
+        PythGraphDeferredImport::TaskSteward,
         None,
     )
 }
@@ -508,11 +763,102 @@ fn prepare_pyth_runtime_launch_for_graph_with_policy(
     if graph.manifest.principal_id() != expected_graph_principal_id {
         return Err(PythRuntimeLaunchError::GraphPackage);
     }
+    let process_identity = pyth_graph_runtime_process(
+        runtime_manifest.principal_id(),
+        runtime_manifest.elf_digest(),
+        graph.manifest.principal_id(),
+    );
+
+    prepare_pyth_launch_with_executable(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        &graph,
+        &runtime_image,
+        runtime_manifest.elf(),
+        process_identity,
+        PythGraphExecutionKind::Interpreter,
+        deferred_import,
+        object_workspace_capability,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+fn prepare_pyth_native_launch_for_graph_with_policy(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph_name: &[u8],
+    expected_graph_principal_id: u64,
+    native_program_name: &[u8],
+    deferred_import: PythGraphDeferredImport,
+    object_workspace_capability: Option<PackedCapability>,
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    let graph = pyth_graph_loader::load_named_pyth_graph(boot_info, graph_name)
+        .map_err(|_| PythRuntimeLaunchError::GraphPackage)?;
+    if graph.manifest.principal_id() != expected_graph_principal_id {
+        return Err(PythRuntimeLaunchError::GraphPackage);
+    }
+    let native_manifest = runtime_loader::load_named_user_program(boot_info, native_program_name)
+        .map_err(|_| PythRuntimeLaunchError::NativeProgram)?;
+    if native_manifest.principal_id() != graph.manifest.principal_id() {
+        return Err(PythRuntimeLaunchError::NativeProgram);
+    }
+    let native_image = user_elf::validate(native_manifest.elf())
+        .map_err(|_| PythRuntimeLaunchError::NativeProgram)?;
+    runtime_loader::load_pyth_native_binding(
+        boot_info,
+        graph_name,
+        native_program_name,
+        graph.manifest.principal_id(),
+        graph.manifest.package(),
+        native_manifest.elf(),
+    )
+    .map_err(|_| PythRuntimeLaunchError::NativeBinding)?;
+    let process_identity =
+        pyth_native_graph_process(native_manifest.principal_id(), native_manifest.elf_digest());
+
+    prepare_pyth_launch_with_executable(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        &graph,
+        &native_image,
+        native_manifest.elf(),
+        process_identity,
+        PythGraphExecutionKind::Native,
+        deferred_import,
+        object_workspace_capability,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+fn prepare_pyth_launch_with_executable(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    graph: &pyth_graph_loader::LoadedPythGraph<'_>,
+    executable_image: &user_elf::UserElfImage,
+    executable_elf: &[u8],
+    process_identity: ActiveUserProcess,
+    execution_kind: PythGraphExecutionKind,
+    deferred_import: PythGraphDeferredImport,
+    object_workspace_capability: Option<PackedCapability>,
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
     let package = graph.manifest.package();
     if package.is_empty() || package.len() > PAGE_SIZE as usize {
         return Err(PythRuntimeLaunchError::PackageTooLarge);
     }
-
     let bootstrap_frame = physical_memory
         .allocate_zeroed_page()
         .map_err(|_| PythRuntimeLaunchError::Memory)?;
@@ -524,29 +870,48 @@ fn prepare_pyth_runtime_launch_for_graph_with_policy(
         .map_err(|_| PythRuntimeLaunchError::Memory)?;
 
     let stack_region = user_stacks::regions()[1];
-    let process = ActiveUserProcess::from_pyth_runtime_launch(
-        crate::service_identity::ServiceId::from_raw(0x5059_5447_5254_0001),
-        runtime_manifest.principal_id(),
-        runtime_manifest.elf_digest(),
-        crate::process_context::PythRuntimeCopyMapSpec {
-            stack: stack_region,
-            bootstrap_user_ptr: PYTH_GRAPH_BOOTSTRAP_USER_PTR,
-            bootstrap_len: size_of::<PythGraphBootstrapBlock>() as u64,
-            package_user_ptr: PYTH_GRAPH_PACKAGE_USER_PTR,
-            package_len: package.len() as u64,
-            result_user_ptr: PYTH_GRAPH_RESULT_USER_PTR,
-            result_len: size_of::<GraphExitRecord>() as u64,
-        },
-    )
+    let copy_spec = crate::process_context::PythRuntimeCopyMapSpec {
+        stack: stack_region,
+        bootstrap_user_ptr: PYTH_GRAPH_BOOTSTRAP_USER_PTR,
+        bootstrap_len: size_of::<PythGraphBootstrapBlock>() as u64,
+        package_user_ptr: PYTH_GRAPH_PACKAGE_USER_PTR,
+        package_len: package.len() as u64,
+        result_user_ptr: PYTH_GRAPH_RESULT_USER_PTR,
+        result_len: size_of::<GraphExitRecord>() as u64,
+    };
+    let process = match execution_kind {
+        PythGraphExecutionKind::Interpreter => ActiveUserProcess::from_pyth_runtime_launch(
+            process_identity.service_id(),
+            process_identity.principal_id(),
+            process_identity.program_digest(),
+            copy_spec,
+        ),
+        PythGraphExecutionKind::Native => ActiveUserProcess::from_pyth_native_launch(
+            process_identity.service_id(),
+            process_identity.principal_id(),
+            process_identity.program_digest(),
+            executable_image,
+            copy_spec,
+        ),
+    }
     .map_err(|_| PythRuntimeLaunchError::AddressSpace)?;
     let system_log_capability = syscall::grant_pyth_graph_system_log_capability(process)
         .map_err(|_| PythRuntimeLaunchError::Capability)?;
+    let task_steward_capability = if graph_imports_task_resource(&graph.verified)
+        && deferred_import != PythGraphDeferredImport::TaskSteward
+    {
+        retained_services::with_task_service(|service| service.steward_proposal_capability())
+            .map_err(|_| PythRuntimeLaunchError::Capability)?
+    } else {
+        PackedCapability::from_raw(0)
+    };
     let bootstrap_binding = match deferred_import {
         PythGraphDeferredImport::None => {
             PythGraphBootstrapBinding::Complete(PythGraphImportCapabilities {
                 system_log: system_log_capability,
                 object_workspace: object_workspace_capability
                     .unwrap_or(PackedCapability::from_raw(0)),
+                task_steward: task_steward_capability,
             })
         }
         PythGraphDeferredImport::ObjectWorkspace => {
@@ -554,6 +919,9 @@ fn prepare_pyth_runtime_launch_for_graph_with_policy(
                 system_log: system_log_capability,
             }
         }
+        PythGraphDeferredImport::TaskSteward => PythGraphBootstrapBinding::DeferredTaskSteward {
+            system_log: system_log_capability,
+        },
         PythGraphDeferredImport::TestOnlyObjectCapability => {
             PythGraphBootstrapBinding::DeferredTestOnlyObjectCapability
         }
@@ -588,20 +956,20 @@ fn prepare_pyth_runtime_launch_for_graph_with_policy(
         UserAddressSpace::build_with_user_elf_payloads_and_supervisor_mappings(
             physical_memory,
             boot_info,
-            &runtime_image,
-            runtime_manifest.elf(),
+            executable_image,
+            executable_elf,
             &payloads,
             &graph_supervisor_mappings,
         )
         .map_err(|_| PythRuntimeLaunchError::AddressSpace)?;
-    if loaded_runtime.entry() != runtime_image.entry()
-        || loaded_runtime.segment_count() != runtime_image.segment_count()
+    if loaded_runtime.entry() != executable_image.entry()
+        || loaded_runtime.segment_count() != executable_image.segment_count()
         || !loaded_runtime.bss_zeroed()
     {
         return Err(PythRuntimeLaunchError::AddressSpace);
     }
     address_space
-        .validate_user_elf_entry(runtime_image.entry())
+        .validate_user_elf_entry(executable_image.entry())
         .map_err(|_| PythRuntimeLaunchError::AddressSpace)?;
     address_space
         .validate_user_payload_mapping(PYTH_GRAPH_BOOTSTRAP_USER_PTR, false)
@@ -619,9 +987,10 @@ fn prepare_pyth_runtime_launch_for_graph_with_policy(
     Ok(PreparedPythRuntimeLaunch {
         address_space: address_space.retain_for_boot(),
         process,
-        entry: runtime_image.entry(),
+        entry: executable_image.entry(),
         bootstrap_user_ptr: PYTH_GRAPH_BOOTSTRAP_USER_PTR,
         package_digest: graph.manifest.package_digest(),
+        execution_kind,
         graph_principal_id: graph.manifest.principal_id(),
         import_count: bootstrap.import_count,
         node_count: graph.verified.package().header().node_count,
@@ -694,6 +1063,21 @@ pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_hex_u64_value(launch.graph_principal_id);
     serial::write_str(" imports:");
     serial::write_dec_u64_value(u64::from(launch.import_count));
+    serial::write_str("\r\n");
+}
+
+#[cfg(all(
+    not(test),
+    feature = "pythtig-phase2-test",
+    not(feature = "verify"),
+    not(feature = "hardware-probe")
+))]
+pub fn emit_native_elf_valid_marker(launch: &PreparedPythRuntimeLaunch) {
+    if launch.execution_kind != PythGraphExecutionKind::Native {
+        return;
+    }
+    serial::write_str("PYTHOS:PYTHTIG:NATIVE_ELF_VALID elf:");
+    serial::write_hex_u64_value(launch.process.program_digest());
     serial::write_str("\r\n");
 }
 
@@ -797,6 +1181,22 @@ pub fn decode_and_clear_pyth_graph_control_sector(
         PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_RESTORE => PythGraphBootMode::LaunchObjectRestore,
         PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_KNOWN_DENIED => PythGraphBootMode::LaunchObjectKnownDenied,
         PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_FORGERY => PythGraphBootMode::LaunchObjectForgery,
+        PYTH_GRAPH_CONTROL_LAUNCH_TASK_STEWARD => PythGraphBootMode::LaunchTaskSteward,
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_HELLO => PythGraphBootMode::LaunchNativeHello,
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_BUDGET => PythGraphBootMode::LaunchNativeBudget,
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_CREATE => {
+            PythGraphBootMode::LaunchNativeObjectCreate
+        }
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_RESTORE => {
+            PythGraphBootMode::LaunchNativeObjectRestore
+        }
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_KNOWN_DENIED => {
+            PythGraphBootMode::LaunchNativeObjectKnownDenied
+        }
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_FORGERY => {
+            PythGraphBootMode::LaunchNativeObjectForgery
+        }
+        PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_TASK_STEWARD => PythGraphBootMode::LaunchNativeTaskSteward,
         PYTH_GRAPH_CONTROL_DEFAULT => PythGraphBootMode::DefaultShell,
         _ => PythGraphBootMode::DefaultShell,
     }
@@ -841,7 +1241,7 @@ pub fn rejection_code_for_load_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{process_context, user_copy::UserCopyAccess, user_stacks};
+    use crate::{process_context, task_service, user_copy::UserCopyAccess, user_stacks};
     use core::mem::size_of;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
@@ -851,8 +1251,8 @@ mod tests {
         },
         pyth_tig::{
             opcode::{
-                RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RIGHTS_CREATE, RIGHTS_QUERY,
-                RIGHTS_REVISE,
+                RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK, RIGHTS_CONTROL,
+                RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ, RIGHTS_REVISE,
             },
             test_support,
             types::PythType,
@@ -875,6 +1275,7 @@ mod tests {
             PythGraphImportCapabilities {
                 system_log,
                 object_workspace: workspace,
+                task_steward: PackedCapability::from_raw(0),
             },
         )
         .unwrap();
@@ -910,6 +1311,7 @@ mod tests {
             PythGraphImportCapabilities {
                 system_log,
                 object_workspace: workspace,
+                task_steward: PackedCapability::from_raw(0),
             },
         )
         .unwrap();
@@ -924,12 +1326,69 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_binds_exact_task_steward_import_policy() {
+        let system_log = PackedCapability::from_parts(7, 1);
+        let workspace = PackedCapability::from_parts(8, 1);
+        let task_steward = PackedCapability::from_parts(9, 1);
+        let policy = PythGraphImportCapabilities {
+            system_log,
+            object_workspace: workspace,
+            task_steward,
+        };
+
+        let context_package = test_support::task_context_score_with_import_rights(RIGHTS_READ);
+        let context_verified = verify_bytes(&context_package).unwrap();
+        let context_bootstrap = build_pyth_graph_bootstrap(
+            &context_verified,
+            0x7100_1000,
+            context_package.len() as u64,
+            0x7100_2000,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(context_bootstrap.import_count, 1);
+        assert_eq!(context_bootstrap.imports[0].resource_kind, RESOURCE_TASK);
+        assert_eq!(context_bootstrap.imports[0].rights, RIGHTS_READ);
+        assert_eq!(context_bootstrap.imports[0].capability, task_steward);
+
+        let proposal_package = test_support::task_proposal_emit_with_import_rights(RIGHTS_CREATE);
+        let proposal_verified = verify_bytes(&proposal_package).unwrap();
+        let proposal_bootstrap = build_pyth_graph_bootstrap(
+            &proposal_verified,
+            0x7100_1000,
+            proposal_package.len() as u64,
+            0x7100_2000,
+            policy,
+        )
+        .unwrap();
+        assert_eq!(proposal_bootstrap.import_count, 1);
+        assert_eq!(proposal_bootstrap.imports[0].resource_kind, RESOURCE_TASK);
+        assert_eq!(proposal_bootstrap.imports[0].rights, RIGHTS_CREATE);
+        assert_eq!(proposal_bootstrap.imports[0].capability, task_steward);
+
+        let mut excess = test_support::task_proposal_emit_with_import_rights(RIGHTS_CREATE);
+        test_support::set_first_import_rights(&mut excess, RIGHTS_CREATE | RIGHTS_CONTROL);
+        let excess_verified = verify_bytes(&excess).unwrap();
+        assert_eq!(
+            build_pyth_graph_bootstrap(
+                &excess_verified,
+                0x7100_1000,
+                excess.len() as u64,
+                0x7100_2000,
+                policy,
+            ),
+            Err(PythRuntimeLaunchError::UnauthorizedImport)
+        );
+    }
+
+    #[test]
     fn bootstrap_denies_excess_workspace_rights_and_initial_object_caps() {
         let system_log = PackedCapability::from_parts(7, 1);
         let workspace = PackedCapability::from_parts(8, 1);
         let policy = PythGraphImportCapabilities {
             system_log,
             object_workspace: workspace,
+            task_steward: PackedCapability::from_raw(0),
         };
 
         let mut excess_workspace = test_support::object_note_flow_package();
@@ -997,6 +1456,37 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_defers_task_steward_until_runtime_authority_grant() {
+        let package = test_support::task_proposal_emit_with_import_rights(RIGHTS_CREATE);
+        let verified = verify_bytes(&package).unwrap();
+        let system_log = PackedCapability::from_parts(7, 1);
+        let task_steward = PackedCapability::from_parts(9, 1);
+
+        let mut bootstrap = build_pyth_graph_bootstrap_with_binding(
+            &verified,
+            0x7100_1000,
+            package.len() as u64,
+            0x7100_2000,
+            PythGraphBootstrapBinding::DeferredTaskSteward { system_log },
+        )
+        .unwrap();
+
+        assert_eq!(bootstrap.import_count, 1);
+        assert_eq!(bootstrap.imports[0].resource_kind, RESOURCE_TASK);
+        assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE);
+        assert_eq!(bootstrap.imports[0].capability.raw(), 0);
+
+        bind_deferred_import(
+            &mut bootstrap,
+            PythGraphDeferredImport::TaskSteward,
+            task_steward,
+        )
+        .unwrap();
+
+        assert_eq!(bootstrap.imports[0].capability, task_steward);
+    }
+
+    #[test]
     fn test_only_forgery_binding_does_not_open_normal_import_policy() {
         let package = test_support::object_forgery_package();
         let verified = verify_bytes(&package).unwrap();
@@ -1013,6 +1503,7 @@ mod tests {
                 PythGraphImportCapabilities {
                     system_log,
                     object_workspace: workspace,
+                    task_steward: PackedCapability::from_raw(0),
                 },
             ),
             Err(PythRuntimeLaunchError::UnauthorizedImport)
@@ -1036,6 +1527,25 @@ mod tests {
         )
         .unwrap();
         assert_eq!(bootstrap.imports[0].capability, copied_object_capability);
+    }
+
+    #[test]
+    fn task_steward_graph_uses_steward_process_identity_not_generic_runtime() {
+        let steward = task_service::steward_process();
+
+        assert_eq!(
+            pyth_graph_runtime_process(
+                PYTH_RUNTIME_PRINCIPAL_ID,
+                0xAA,
+                TASK_STEWARD_GRAPH_PRINCIPAL_ID
+            ),
+            steward
+        );
+        assert_eq!(
+            pyth_graph_runtime_process(PYTH_RUNTIME_PRINCIPAL_ID, 0xAA, HELLO_GRAPH_PRINCIPAL_ID)
+                .principal_id(),
+            PYTH_RUNTIME_PRINCIPAL_ID
+        );
     }
 
     #[test]
@@ -1172,9 +1682,59 @@ mod tests {
                 PYTH_GRAPH_CONTROL_LAUNCH_OBJECT_FORGERY,
                 PythGraphBootMode::LaunchObjectForgery,
             ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_TASK_STEWARD,
+                PythGraphBootMode::LaunchTaskSteward,
+            ),
         ];
 
         for (raw_mode, expected) in cases {
+            let mut sector = [0u8; SECTOR_SIZE];
+            sector[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+            sector[8..10].copy_from_slice(&raw_mode.to_le_bytes());
+            assert_eq!(
+                decode_and_clear_pyth_graph_control_sector(&mut sector),
+                expected
+            );
+            assert_eq!(sector, [0u8; crate::block_device::SECTOR_SIZE]);
+        }
+    }
+
+    #[test]
+    fn pyth_graph_control_sector_selects_native_launch_modes_without_reusing_legacy_modes() {
+        let cases = [
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_HELLO,
+                PythGraphBootMode::LaunchNativeHello,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_BUDGET,
+                PythGraphBootMode::LaunchNativeBudget,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_CREATE,
+                PythGraphBootMode::LaunchNativeObjectCreate,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_RESTORE,
+                PythGraphBootMode::LaunchNativeObjectRestore,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_KNOWN_DENIED,
+                PythGraphBootMode::LaunchNativeObjectKnownDenied,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_FORGERY,
+                PythGraphBootMode::LaunchNativeObjectForgery,
+            ),
+            (
+                PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_TASK_STEWARD,
+                PythGraphBootMode::LaunchNativeTaskSteward,
+            ),
+        ];
+
+        for (raw_mode, expected) in cases {
+            assert!(raw_mode > PYTH_GRAPH_CONTROL_LAUNCH_TASK_STEWARD);
             let mut sector = [0u8; SECTOR_SIZE];
             sector[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
             sector[8..10].copy_from_slice(&raw_mode.to_le_bytes());

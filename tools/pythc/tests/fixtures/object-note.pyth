@@ -1,0 +1,9 @@
+program object_note principal 0x5059544847520002 {
+    import workspace: capability<object.workspace, create>;
+    import note: capability<object, revise>;
+    fn main() -> unit {
+        let note_id: object_id = object.create(workspace, 1);
+        let revision: revision_id = object.revise(note, note_id, 1, "hello");
+        return;
+    }
+}

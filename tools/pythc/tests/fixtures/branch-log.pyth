@@ -1,0 +1,10 @@
+program branch_log principal 0x5059544847520003 {
+    import log: capability<system.log, read>;
+    fn main() -> unit {
+        if true {
+            system.log(log, "then");
+        } else {
+        }
+        return;
+    }
+}

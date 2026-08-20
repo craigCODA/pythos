@@ -1,6 +1,6 @@
 pub const PYTH_TIG_MAGIC: [u8; 8] = *b"PYTHTIG1";
 pub const PYTH_TIG_MAJOR: u16 = 1;
-pub const PYTH_TIG_MINOR: u16 = 0;
+pub const PYTH_TIG_MINOR: u16 = 1;
 
 pub const MAX_PACKAGE_BYTES: usize = 131_072;
 pub const MAX_GRAPH_NODES: usize = 1_024;
@@ -720,7 +720,7 @@ mod tests {
     fn v1_layouts_and_codes_are_recorded() {
         assert_eq!(PYTH_TIG_MAGIC, *b"PYTHTIG1");
         assert_eq!(PYTH_TIG_MAJOR, 1);
-        assert_eq!(PYTH_TIG_MINOR, 0);
+        assert_eq!(PYTH_TIG_MINOR, 1);
         assert_eq!(core::mem::size_of::<PythGraphHeader>(), 96);
         assert_eq!(core::mem::size_of::<TypeRecord>(), 8);
         assert_eq!(core::mem::size_of::<BlockRecord>(), 24);
@@ -852,11 +852,22 @@ mod tests {
             );
 
             let mut minor = crate::pyth_tig::test_support::minimal_log_package();
-            crate::pyth_tig::test_support::set_header_minor(&mut minor, PYTH_TIG_MINOR + 1);
+            crate::pyth_tig::test_support::set_header_minor(&mut minor, 2);
             assert_eq!(
                 PythGraphPackage::decode(&minor),
                 Err(PackageDecodeError::UnsupportedMinor)
             );
+        }
+
+        #[test]
+        fn decoder_accepts_version_1_0_and_1_1_packages() {
+            let mut v1_0 = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::set_header_minor(&mut v1_0, 0);
+            assert!(PythGraphPackage::decode(&v1_0).is_ok());
+
+            let mut v1_1 = crate::pyth_tig::test_support::minimal_log_package();
+            crate::pyth_tig::test_support::set_header_minor(&mut v1_1, 1);
+            assert!(PythGraphPackage::decode(&v1_1).is_ok());
         }
 
         #[test]

@@ -1,7 +1,7 @@
 # ADR 0065: Pyth Graph Package ABI
 
 Date: 2026-08-04
-Status: Accepted; PythTIG version 1 ABI frozen 2026-08-08
+Status: Accepted; PythTIG version 1.0 ABI frozen 2026-08-08; compatible minor 1 extension recorded by ADR 0068
 
 ## Context
 
@@ -103,8 +103,30 @@ The version 1 primitive type set is:
 The version 1 opcode families cover structural nodes, constants, pure
 arithmetic/boolean operations, control terminators, and typed host operations
 for system logging, object operations, task/proposal operations, graph
-relationship queries, relevance assertions, capability requests, and later
-command input/result operations.
+relationship queries, relevance assertions, capability requests, and the
+command input/result operations assigned by ADR 0068.
+
+ADR 0068 assigns minor version 1 to the command input/result family without
+changing existing major-version-1 record layouts:
+
+```text
+0x1500 CommandRead
+0x1501 CommandResultEmit
+```
+
+`CommandRead` consumes `[Effect, Capability]`, requires command read authority,
+and exposes closed `HostResult` fields for command kind, object id, task id,
+proposal id, and bounded UTF-8 text. `CommandResultEmit` consumes
+`[Effect, Capability, ErrorCode, Utf8]` and requires command append authority.
+These operations carry typed command objects only; PythCore still does not parse
+human command text.
+
+The frozen task host-operation family includes `TaskContextRead` at opcode
+`0x1205`. It consumes `[Effect, Capability]` and requires the task
+read-context right. Its closed `HostResult` fields are active task id,
+candidate task id, confidence score, proposal kind, and reason text. The
+operation exposes only a bounded typed context summary; it does not grant task
+state authority.
 
 Capability imports become graph values only through the version 1 import
 materialization convention: an entry-block `BlockParam` node with
@@ -146,17 +168,19 @@ Referenced-range or record-canonicalization failures use the frozen
 `NonCanonicalEncoding` verifier identity. Section-range failures and checksum
 failures retain their decoder error identities under `VerifyError::Decode`.
 
-Unknown major versions are rejected. A higher minor version is rejected unless
-all newly set flags and records are explicitly understood. Reserved fields must
-be zero unless a later accepted ADR assigns them.
+Unknown major versions are rejected. A decoder/runtime that supports version
+1.1 accepts both minor `0` and minor `1` packages, and rejects minor `2` or
+higher unless all newly set flags and records are explicitly understood.
+Reserved fields must be zero unless a later accepted ADR assigns them.
 
 ## Consequences
 
 Record sizes, offsets, numeric type IDs, opcode IDs, limits, verifier error
 identities, version behavior, canonicalization, and checksum behavior are the
-stable PythTIG version 1 ABI. The owner froze this ABI on 2026-08-08 after the
-host-side encoder, decoder, verifier, canonical-format tests, and deterministic
-negative mutation corpus passed against real packages. An incompatible change
+stable PythTIG version 1.0 ABI. The owner froze this baseline on 2026-08-08
+after the host-side encoder, decoder, verifier, canonical-format tests, and
+deterministic negative mutation corpus passed against real packages. ADR 0068
+records the compatible version 1.1 command extension. An incompatible change
 requires a new accepted ADR and a new major package version; it must not be
 silently introduced under major version 1.
 

@@ -13,6 +13,10 @@ use pythos_shared::{
         PythGraphBootstrapBlock, SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG,
     },
     pyth_tig::format::MAX_PACKAGE_BYTES,
+    task_abi::{
+        OP_CREATE_PROPOSAL, OP_READ_CONTEXT_SUMMARY, SYSCALL_TASK_REQUEST, TASK_ABI_MAJOR,
+        TASK_ABI_MINOR, TaskContextSummary, TaskProposalKind, TaskRequest, TaskResponse,
+    },
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +129,46 @@ impl Host for GraphSyscallHost {
         result.revision = response.revision_count;
         Ok(result)
     }
+
+    fn task_context(&mut self, capability: PackedCapability) -> Result<HostCallResult, HostError> {
+        let mut request = base_task_request(OP_READ_CONTEXT_SUMMARY, capability);
+        let mut summary = empty_task_context_summary();
+        request.output_ptr = &mut summary as *mut TaskContextSummary as u64;
+        request.output_len = size_of::<TaskContextSummary>() as u64;
+        let response = send_task_request(&mut request)?;
+        result_from_task_context(response, summary)
+    }
+
+    fn task_propose(
+        &mut self,
+        capability: PackedCapability,
+        candidate_task_id: u64,
+        score: u64,
+    ) -> Result<(), HostError> {
+        let mut request = base_task_request(OP_CREATE_PROPOSAL, capability);
+        request.proposal_kind = TaskProposalKind::Related.code();
+        request.target_task_id = candidate_task_id;
+        request.score = score;
+        let response = send_task_request(&mut request)?;
+        if response.status == STATUS_OK {
+            Ok(())
+        } else {
+            Err(HostError::Failed)
+        }
+    }
+
+    fn command_read(&mut self, _capability: PackedCapability) -> Result<HostCallResult, HostError> {
+        Err(HostError::Denied)
+    }
+
+    fn command_result_emit(
+        &mut self,
+        _capability: PackedCapability,
+        _status: u16,
+        _text: &[u8],
+    ) -> Result<(), HostError> {
+        Err(HostError::Denied)
+    }
 }
 
 fn base_object_request(operation: u16, authority: PackedCapability) -> ObjectShellRequest {
@@ -151,6 +195,76 @@ fn object_kind_from_graph(kind: &[u8]) -> Result<u16, HostError> {
         Ok(OBJECT_KIND_NOTE)
     } else {
         Err(HostError::Failed)
+    }
+}
+
+fn base_task_request(operation: u16, authority: PackedCapability) -> TaskRequest {
+    TaskRequest {
+        abi_major: TASK_ABI_MAJOR,
+        abi_minor: TASK_ABI_MINOR,
+        operation,
+        proposal_kind: 0,
+        authority: authority.raw(),
+        task_id: 0,
+        proposal_id: 0,
+        target_task_id: 0,
+        input_ptr: 0,
+        input_len: 0,
+        output_ptr: 0,
+        output_len: 0,
+        flags: 0,
+        score: 0,
+        reserved0: 0,
+    }
+}
+
+fn send_task_request(request: &mut TaskRequest) -> Result<TaskResponse, HostError> {
+    let mut response = empty_task_response();
+    // SAFETY: matches syscall5's contract. `request` and `response` are live
+    // stack objects for the duration of the synchronous syscall. Optional
+    // context output is named by fields already written into `request` and is
+    // likewise a live stack object. PythCore validates the active process copy
+    // map before reading or writing user buffers.
+    let result = unsafe {
+        syscall5(
+            SYSCALL_TASK_REQUEST,
+            request as *const TaskRequest as u64,
+            size_of::<TaskRequest>() as u64,
+            &mut response as *mut TaskResponse as u64,
+            size_of::<TaskResponse>() as u64,
+            0,
+        )
+    };
+    if result == SYSCALL_OK {
+        Ok(response)
+    } else {
+        Err(HostError::Failed)
+    }
+}
+
+fn result_from_task_context(
+    response: TaskResponse,
+    summary: TaskContextSummary,
+) -> Result<HostCallResult, HostError> {
+    if response.status != STATUS_OK {
+        return Err(HostError::Failed);
+    }
+    let mut result = HostCallResult::empty(response.status);
+    result.object_id = summary.active_task_id;
+    result.revision = summary.matching_suspended_task_id;
+    result.capability = PackedCapability::from_raw(summary.confidence_score);
+    result.reserved0 = u32::from(summary.proposal_kind);
+    let reason = context_reason_bytes(summary);
+    result.bytes_len = reason.len() as u16;
+    result.bytes[..reason.len()].copy_from_slice(reason);
+    Ok(result)
+}
+
+fn context_reason_bytes(summary: TaskContextSummary) -> &'static [u8] {
+    if summary.confidence_score >= 70 {
+        b"context-shift"
+    } else {
+        b"context-stable"
     }
 }
 
@@ -231,6 +345,40 @@ const fn empty_response() -> ObjectShellResponse {
         bytes_written: 0,
         capability: PackedCapability::from_raw(0),
         field_bytes: [0; 16],
+    }
+}
+
+const fn empty_task_response() -> TaskResponse {
+    TaskResponse {
+        status: pythos_shared::object_shell_abi::STATUS_BAD_REQUEST,
+        operation: 0,
+        proposal_kind: 0,
+        reserved0: 0,
+        task_id: 0,
+        proposal_id: 0,
+        active_task_id: 0,
+        bytes_written: 0,
+        score: 0,
+        reserved1: 0,
+        reserved2: 0,
+    }
+}
+
+const fn empty_task_context_summary() -> TaskContextSummary {
+    TaskContextSummary {
+        active_task_id: 0,
+        matching_suspended_task_id: 0,
+        dominant_object_kind: 0,
+        dominant_tool_domain: 0,
+        proposal_kind: 0,
+        event_count: 0,
+        active_match_count: 0,
+        candidate_match_count: 0,
+        tool_domain_changed: 0,
+        reserved0: 0,
+        confidence_score: 0,
+        candidate_tag_hash: 0,
+        source_event_ids: [0; 4],
     }
 }
 
@@ -571,5 +719,19 @@ mod tests {
 
         assert_eq!(imports[0], PackedCapability::from_parts(7, 1));
         assert_eq!(imports[1], PackedCapability::from_raw(0));
+    }
+
+    #[test]
+    fn task_context_response_requires_ok_status_before_projecting_summary() {
+        let response = empty_task_response();
+        let mut summary = empty_task_context_summary();
+        summary.active_task_id = 0x1001;
+        summary.matching_suspended_task_id = 0x2001;
+        summary.confidence_score = 85;
+
+        assert_eq!(
+            result_from_task_context(response, summary),
+            Err(HostError::Failed)
+        );
     }
 }

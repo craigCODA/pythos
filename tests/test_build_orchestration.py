@@ -315,6 +315,20 @@ class BuildOrchestrationTest(unittest.TestCase):
             + "\nPYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001"
         )
 
+    def test_pyth_native_equivalence_normalizes_process_identity_boundary(self) -> None:
+        module = load_script("test-pyth-native-codegen.py")
+        interpreter = [
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544852540001",
+        ]
+        native = [
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:5059544847520001",
+        ]
+
+        self.assertEqual(
+            module.normalized_pythtig_trace(interpreter),
+            module.normalized_pythtig_trace(native),
+        )
+
     def test_pyth_graph_object_flow_assertions_require_runtime_entry_and_termination(self) -> None:
         module = load_script("test-pyth-graph-object-flow.py")
         valid = "\n".join(

@@ -10,12 +10,15 @@ use crate::block_device::BlockDeviceInfo;
 #[cfg(not(test))]
 use crate::general_storage_persistence::GeneralStoragePersistenceError;
 use crate::object_service::{ObjectService, ObjectServiceError};
+use crate::process_context::ActiveUserProcess;
+use crate::task_service::{TaskAuthorityState, TaskService, TaskServiceError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RetainedServiceError {
     ObjectServiceAlreadyInitialized,
     ObjectServiceUnavailable,
     ObjectService(ObjectServiceError),
+    TaskService(TaskServiceError),
     #[cfg(not(test))]
     Persistence(GeneralStoragePersistenceError),
     /// Task 11: `persist_object_service` was called while running on a stack
@@ -29,6 +32,7 @@ pub enum RetainedServiceError {
 }
 
 struct RetainedObjectServiceStorage(UnsafeCell<MaybeUninit<ObjectService>>);
+struct RetainedTaskAuthorityStorage(UnsafeCell<MaybeUninit<TaskAuthorityState>>);
 
 // SAFETY:
 // 1. Invariant: object service storage is initialized exactly once before
@@ -45,9 +49,27 @@ struct RetainedObjectServiceStorage(UnsafeCell<MaybeUninit<ObjectService>>);
 // 8. Violation: concurrent access could corrupt object state or grant authority
 //    to the wrong caller.
 unsafe impl Sync for RetainedObjectServiceStorage {}
+// SAFETY:
+// 1. Invariant: task authority storage is initialized with the retained object
+//    service and then accessed only during one syscall/task-service borrow.
+// 2. Established by: initialize_object_service and
+//    initialize_object_service_from_device write exactly one authority state
+//    before task syscalls are accepted.
+// 3. Lifetime: storage is static for the full boot.
+// 4. Pointer ownership: with_task_service grants one mutable borrow for one
+//    dispatch closure and does not retain it.
+// 5. Alignment: MaybeUninit<TaskAuthorityState> provides the required
+//    alignment.
+// 6. Mapped length: exactly one TaskAuthorityState value is accessed.
+// 7. Concurrency: ADR 0051 is single-core and syscall dispatch is non-reentrant.
+// 8. Violation: concurrent access could validate authority for the wrong
+//    caller or issue duplicate task tokens.
+unsafe impl Sync for RetainedTaskAuthorityStorage {}
 
 static OBJECT_SERVICE: RetainedObjectServiceStorage =
     RetainedObjectServiceStorage(UnsafeCell::new(MaybeUninit::uninit()));
+static TASK_AUTHORITY: RetainedTaskAuthorityStorage =
+    RetainedTaskAuthorityStorage(UnsafeCell::new(MaybeUninit::uninit()));
 static OBJECT_SERVICE_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(not(test))]
@@ -75,6 +97,7 @@ static OBJECT_SERVICE_DEVICE: RetainedDeviceStorage =
     RetainedDeviceStorage(UnsafeCell::new(MaybeUninit::uninit()));
 
 pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedServiceError> {
+    let task_authority = TaskAuthorityState::new(service.shell_caller());
     if OBJECT_SERVICE_INITIALIZED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_err()
@@ -95,6 +118,7 @@ pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedS
     // 8. Violation: a second writer would overwrite retained service state.
     unsafe {
         (*OBJECT_SERVICE.0.get()).write(service);
+        (*TASK_AUTHORITY.0.get()).write(task_authority);
     }
     Ok(())
 }
@@ -128,6 +152,15 @@ pub fn initialize_object_service_from_device(
     if let Err(error) = result {
         OBJECT_SERVICE_INITIALIZED.store(false, Ordering::SeqCst);
         return Err(RetainedServiceError::ObjectService(error));
+    }
+    // SAFETY: ObjectService restoration succeeded above, so the retained slot
+    // now contains one initialized service from which the shell caller can be
+    // copied to seed task authority.
+    let shell_caller = unsafe { (*OBJECT_SERVICE.0.get()).assume_init_ref().shell_caller() };
+    // SAFETY: this is the one task-authority initialization paired with the
+    // retained object service for this boot.
+    unsafe {
+        (*TASK_AUTHORITY.0.get()).write(TaskAuthorityState::new(shell_caller));
     }
     // SAFETY: matches RetainedDeviceStorage's own invariant above - this is
     // the one write, performed before any caller can observe
@@ -209,6 +242,44 @@ pub fn with_object_service<R>(
     // 8. Violation: concurrent access could corrupt object state or grant
     //    authority to the wrong caller.
     Ok(f(unsafe { (*OBJECT_SERVICE.0.get()).assume_init_mut() }))
+}
+
+pub fn with_task_service<R>(
+    f: impl FnOnce(&mut TaskService<'_>) -> R,
+) -> Result<R, RetainedServiceError> {
+    let result = with_object_service(|objects| {
+        // SAFETY: task authority is initialized by the same successful
+        // initialize_object_service path that made with_object_service succeed.
+        let authority = unsafe { (*TASK_AUTHORITY.0.get()).assume_init_mut() };
+        let mut tasks =
+            TaskService::new(objects, authority).map_err(RetainedServiceError::TaskService)?;
+        Ok(f(&mut tasks))
+    })?;
+    result
+}
+
+pub fn bind_shell_process(shell_caller: ActiveUserProcess) -> Result<(), RetainedServiceError> {
+    with_object_service(|service| service.bind_shell_caller(shell_caller))?
+        .map_err(RetainedServiceError::ObjectService)?;
+    // SAFETY:
+    // 1. Invariant: task authority storage is paired with the initialized
+    //    retained object service and can be rewritten before shell entry.
+    // 2. Established by: normal boot calls this after validating the shell
+    //    launch process and before ring-3 shell execution/syscall dispatch.
+    // 3. Lifetime: the written TaskAuthorityState remains in static storage
+    //    for the rest of this boot.
+    // 4. Pointer ownership: TASK_AUTHORITY owns the storage; no TaskService
+    //    borrow is live because with_object_service returned before this write.
+    // 5. Alignment: MaybeUninit<TaskAuthorityState> provides the required
+    //    alignment.
+    // 6. Mapped length: exactly one TaskAuthorityState value is written.
+    // 7. Concurrency: ADR 0051 normal boot is single-core before shell entry.
+    // 8. Violation: calling while a TaskService borrow is live could replace
+    //    authority under an active syscall; this hook is only pre-launch.
+    unsafe {
+        (*TASK_AUTHORITY.0.get()).write(TaskAuthorityState::new(shell_caller));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -299,5 +370,24 @@ mod tests {
         .unwrap();
 
         assert_eq!(queried_id, created_id.raw());
+    }
+
+    #[test]
+    fn retained_task_service_reuses_object_service_backend_between_borrows() {
+        let _guard = initialize_object_service_for_test(ObjectService::new_for_test());
+
+        let task_id = with_task_service(|service| {
+            let user = service.user_caller();
+            let authority = service.user_task_control_capability();
+            service
+                .create_task(user, authority, b"Universal Boot")
+                .unwrap()
+                .task_id
+        })
+        .unwrap();
+
+        let active = with_task_service(|service| service.active_task_id()).unwrap();
+
+        assert_eq!(active, Some(task_id));
     }
 }

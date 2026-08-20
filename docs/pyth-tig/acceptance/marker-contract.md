@@ -1,7 +1,7 @@
 # PythTIG Acceptance Marker Contract
 
-**Status:** Phase 1 format, Phase 2 runtime, and Phase 3 object/capability
-markers are active only in their accepted verification paths. Later-phase
+**Status:** Phase 1 through Phase 7 markers are active in their accepted
+verification paths on the Phase 7 cutover/cross-target branch. Later-phase
 markers remain reserved until their corresponding implementation phase is
 explicitly authorized and verified.
 
@@ -128,14 +128,16 @@ A differential match requires equal typed exit status, operation result, object 
 ## Cutover, fallback, and cross-target
 
 ```text
+PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:<stable-name> package:<hex> principal:<hex> nodes:<decimal> blocks:<decimal>
 PYTHOS:PYTHTIG:SESSION_MANAGER_READY
+PYTHOS:PYTHTIG:TASK_STEWARD_READY
 PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY
 PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED service:<stable-name>
 PYTHOS:PYTHTIG:RECOVERY_SHELL_ENTER
 PYTHOS:PYTHTIG:ACCEPTANCE_COMPLETE package:<hex> target:<stable-name>
 ```
 
-`DEFAULT_SERVICES_READY` is emitted only after the Pyth-native session manager and required default services are alive. A service fault scenario requires `SERVICE_FAULT_CONTAINED` followed by `RECOVERY_SHELL_ENTER` and must not panic PythCore.
+`SERVICE_PACKAGE_ADMITTED` is emitted only after the named service graph package is present in `INIT.PAK`, passes manifest digest validation and the shared PythTIG verifier, matches its expected service principal, and has a non-empty node/block shape. `DEFAULT_SERVICES_READY` is emitted only after the admitted Pyth-native session manager and required default-service package path reaches the normal boot readiness gate. These markers prove package admission and readiness under the current bounded normal-boot path; they do not claim independent daemon scheduling. A service fault scenario requires `SERVICE_FAULT_CONTAINED` followed by `RECOVERY_SHELL_ENTER` and must not panic PythCore.
 
 `ACCEPTANCE_COMPLETE` is the terminal marker for one accepted package/target run. The target name and package digest must be captured in the test artifact.
 
