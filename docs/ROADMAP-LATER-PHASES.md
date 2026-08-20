@@ -1,8 +1,9 @@
-# PythOS Roadmap: What's Left (Phase 11 onward)
+# PythOS Roadmap: Phase 11 Closure And What's Left
 
 This supersedes the Phase 9/10 planning sections of the older later-phases
-sketch with verified actuals, and carries the remaining phases forward with the
-naming and ADR conventions established in practice.
+sketch with verified actuals, records the Phase 11 closure state, and carries
+the remaining phases forward with the naming and ADR conventions established in
+practice.
 
 ## Status Recap (Verified, Not Assumed)
 
@@ -16,15 +17,24 @@ Phase 10         complete   general-purpose-storage
                               ADRs 0044-0045
                               final marker: PYTHOS:CORE:PHASE_10_COMPLETE
                               commit range 984e352..55e18d3
+Phase 11         recorded   physical-hardware-boot-smoke-test
+                              ADR 0046
+                              findings: docs/phase-11-real-hardware-findings.md
 ```
 
-Next ADR number: **0046**. Hard stop is the Phase 10 -> Phase 11 boundary,
-already recorded in `AGENTS.md`. Nothing below is authorized to start without
-explicit re-invocation, same as every phase before it.
+Next unallocated ADR number: **0069**. Hard stop is the Phase 11 -> Phase 12
+boundary, already recorded in `AGENTS.md`. Nothing below is authorized to start
+without explicit re-invocation, same as every phase before it.
 
 ---
 
 ## Phase 11: Physical Hardware Boot Smoke Test
+
+Status: recorded on `main`. ADR 0046 and
+`docs/phase-11-real-hardware-findings.md` are the Phase 11 closure artifacts.
+The later O2 Micro `1217:8620` SDHCI/eMMC and evidence-terminal records add
+target-specific physical storage/evidence coverage; they do not broaden Phase
+11 into generic hardware support.
 
 ### Purpose
 
@@ -65,8 +75,8 @@ on real firmware.
 
 ### Required Artifacts
 
-`docs/research/real-hardware-boot-findings.md`, populated regardless of
-outcome. `ADR 0046` for the target hardware/firmware record.
+`docs/phase-11-real-hardware-findings.md`, populated regardless of outcome.
+`ADR 0046` for the target hardware/firmware and loader-handoff record.
 
 ---
 
@@ -231,11 +241,11 @@ per-subsystem SMP audit treatment as earlier phases.
 `multi-core-scheduler` -> `per-subsystem-smp-audit`.
 
 The final audit covers every phase's negative/adversarial suite through Phase
-16, not just through Phase 8.
+17, not just through Phase 8.
 
 ### Exit Condition
 
-Every phase's original adversarial test suite, from Phase 2 through Phase 16,
+Every phase's original adversarial test suite, from Phase 2 through Phase 17,
 passes under real multi-core execution. The exit condition is "nothing
 regressed."
 
@@ -249,4 +259,4 @@ regressed."
    paths exist on top of it, while Applications and Packaging silently assumed
    an answer that was never given.
 3. Every phase after Phase 12 is renumbered by one.
-4. SMP's audit scope now explicitly covers everything built through Phase 16.
+4. SMP's audit scope now explicitly covers everything built through Phase 17.

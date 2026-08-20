@@ -8,15 +8,18 @@ contained default service fault. Phase 7 also adds QEMU virtio/AHCI
 unchanged-package comparison and physical-target preparation/import-verification
 tooling.
 
-The pre-Phase-7 `main` boundary remains: ADR 0063 physical evidence terminal is
-implemented on `main` from the former `agent/physical-evidence-terminal` line
-and is QEMU-accepted through `scripts\test-evidence-terminal.py`. Phase 10
-remains complete. Main also carries the 2026-08-08 physical evidence-terminal
-validation record for the disposable O2 Micro `1217:8620` target: five readable
-terminal-page photos and one continuous boot video report `count 00000139`,
-`drop 00000000`, and CRC `176F4C6E`. The `count` field is hexadecimal, so
-`00000139` is 313 decimal markers. COM1/QEMU acceptance remains the automated
-oracle.
+The pre-Phase-7 `main` boundary has been reconciled: Phase 10 remains complete,
+and Phase 11 physical-hardware smoke-test findings are recorded on `main`
+through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The current
+numbered-roadmap stop boundary is Phase 11 -> Phase 12. ADR 0063 physical
+evidence terminal is implemented on `main` from the former
+`agent/physical-evidence-terminal` line and is QEMU-accepted through
+`scripts\test-evidence-terminal.py`. Main also carries the 2026-08-08 physical
+evidence-terminal validation record for the disposable O2 Micro `1217:8620`
+target: five readable terminal-page photos and one continuous boot video report
+`count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The `count` field is
+hexadecimal, so `00000139` is 313 decimal markers. COM1/QEMU acceptance remains
+the automated oracle.
 
 The earlier Phase 11 targeted SDHCI/eMMC backend panel validation remains
 recorded on branch `feature/sdhci-emmc-backend`. Two operator-supplied physical
@@ -1096,11 +1099,12 @@ until a later phase defines one.
 
 ## Next Boundary
 
-Phase 10 is complete and the current numbered-roadmap stop boundary is
-Phase 10 -> Phase 11. On the Phase 7 PythTIG branch, the current PythTIG stop
-boundary is Phase 7 -> later PythTIG phases. `docs/ROADMAP.md`,
-`docs/ROADMAP-LATER-PHASES.md`, and `docs/pyth-tig/ACCEPTANCE.md` describe the
-corresponding gates.
+Phase 10 is complete, and Phase 11 physical-hardware smoke-test findings are
+recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The
+current numbered-roadmap stop boundary is Phase 11 -> Phase 12. On the Phase 7
+PythTIG branch, the current PythTIG stop boundary is Phase 7 -> later PythTIG
+phases. `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
+`docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
 Before starting later-phase work, re-read:
 
@@ -1111,7 +1115,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin networking, package management, updates, AI, SMP, hardware
-expansion, or later PythTIG work by momentum. Pick one later phase, write its
-detailed slice sequence and required artifacts, then start with a failing
-automated test.
+Do not begin the Phase 12 `path-vs-graph-decision`, networking, package
+management, updates, AI, SMP, hardware expansion, or later PythTIG work by
+momentum. Pick one later phase, write its detailed slice sequence and required
+artifacts, then start with a failing automated test where code is involved.

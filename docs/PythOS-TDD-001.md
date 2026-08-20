@@ -146,7 +146,7 @@ Verified vertical slices:
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-Phase 7 `persistent-object-storage`, Phase 8 `real-hardware-isolation`, Phase 9 `general-purpose-process-model`, and Phase 10 `general-purpose-storage` are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Halt at the Phase 10 -> Phase 11 boundary. Do not begin Phase 11 `real-hardware-target-selection`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
+Phase 7 `persistent-object-storage`, Phase 8 `real-hardware-isolation`, Phase 9 `general-purpose-process-model`, and Phase 10 `general-purpose-storage` are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that evidence is target-specific and does not claim generic hardware support. Halt at the Phase 11 -> Phase 12 boundary. Do not begin Phase 12 `path-vs-graph-decision`, networking, AI, SMP, package management, updates, or hardware expansion before explicit re-invocation.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 

@@ -1117,11 +1117,11 @@ before any AI can invoke privileged operations.
 
 ## Later Phases (Superseded)
 
-The current Phase 11 onward roadmap is maintained in
+The current Phase 11 closure state and Phase 12 onward roadmap are maintained in
 [`docs/ROADMAP-LATER-PHASES.md`](ROADMAP-LATER-PHASES.md). That document is
-canonical after verified Phase 9 and Phase 10 completion. The older detailed
-planning sketch below is retained only as historical context and must not be
-used to start new work.
+canonical after verified Phase 9 and Phase 10 completion and recorded Phase 11
+physical-hardware smoke-test findings. The older detailed planning sketch below
+is retained only as historical context and must not be used to start new work.
 
 This extends `docs/ROADMAP.md`'s deliberately coarse "Later Phases" section
 now that Phase 8 is complete. It uses the same format as Phases 1.5-8:
@@ -1142,17 +1142,18 @@ phases proved *bounded, fixed* surfaces:
   It does not prove general, dynamically-sized, arbitrarily-many-object
   storage allocation.
 
-Two phases were missing from the list entirely. Corrected order:
+The current canonical order is:
 
 ```text
 Phase 9   general-purpose-process-model   (generalizes Phase 8)
 Phase 10  general-purpose-storage          (generalizes Phase 7)
-Phase 11  physical-hardware-boot-smoke-test (cheap, do this early)
-Phase 12  applications-and-packaging       (needs 9 + 10)
-Phase 13  networking
-Phase 14  hardware-driver-expansion
-Phase 15  updates-and-recovery-mode
-Phase 16  smp                              (deliberately last)
+Phase 11  physical-hardware-boot-smoke-test (recorded, target-specific)
+Phase 12  general-purpose-filesystem-path-layer
+Phase 13  applications-and-packaging       (needs 9 + 10 + 12)
+Phase 14  networking
+Phase 15  hardware-driver-expansion
+Phase 16  updates-and-recovery-mode
+Phase 17  smp                              (deliberately last)
 ```
 
 Semantic indexing / local AI is intentionally not on this list — that's
@@ -1246,8 +1247,8 @@ copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
 grants is complete. ADR 0041 for process argv/environment launch data is
 complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
 for the process-model adversarial suite is complete. Phase 9 is complete;
-Phase 10 now follows below. The active hard stop is the Phase 10 -> Phase 11
-boundary in the Phase 10 section.
+Phase 10 follows below as historical context. The active hard stop is now the
+Phase 11 -> Phase 12 boundary recorded in `docs/ROADMAP-LATER-PHASES.md`.
 
 ---
 
@@ -1288,9 +1289,11 @@ An arbitrary, growing set of typed objects can be created, deleted, and
 survive reboot and a torn write under dynamic allocation — the same rigor
 as Phase 7's proof, generalized past the single fixed checkpoint.
 
-Status: complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. Halt at the Phase
-10 -> Phase 11 boundary; do not begin Phase 11
-`real-hardware-target-selection` without explicit re-invocation.
+Status: complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11
+physical-hardware smoke-test findings are recorded through ADR 0046 and
+`docs/phase-11-real-hardware-findings.md`. Halt at the Phase 11 -> Phase 12
+boundary; do not begin Phase 12 `path-vs-graph-decision` without explicit
+re-invocation.
 
 ### Scope boundary
 
@@ -1309,6 +1312,10 @@ Phase 10 killed-mid-commit dynamic-allocation recovery scenario.
 ---
 
 ## Phase 11: Physical Hardware Boot Smoke Test
+
+Status: recorded on `main`. See ADR 0046 and
+`docs/phase-11-real-hardware-findings.md`; use
+`docs/ROADMAP-LATER-PHASES.md` for the active Phase 12 onward roadmap.
 
 ### Purpose
 
@@ -1362,13 +1369,13 @@ real firmware at all.
 
 ### Required artifacts
 
-A findings document (`docs/research/real-hardware-boot-findings.md`) even if
-— especially if — it fails. A documented failure here is more valuable than
-skipping this phase and finding out during Phase 14 with drivers involved.
+Recorded as ADR 0046 and `docs/phase-11-real-hardware-findings.md`. A
+documented finding here is more valuable than skipping this phase and finding
+out during hardware expansion with drivers involved.
 
 ---
 
-## Phase 12: Applications and Packaging
+## Historical Phase 12: Applications and Packaging (Current Phase 13)
 
 ### Purpose
 
@@ -1417,7 +1424,7 @@ the moment real packages exist against it.
 
 ---
 
-## Phase 13: Networking
+## Historical Phase 13: Networking (Current Phase 14)
 
 ### Purpose
 
@@ -1465,7 +1472,7 @@ same role Phase 7 played for the Phase 5 typed-object split.
 
 ---
 
-## Phase 14: Hardware Driver Expansion
+## Historical Phase 14: Hardware Driver Expansion (Current Phase 15)
 
 ### Purpose
 
@@ -1502,7 +1509,7 @@ working USB mass storage path is worth more than five half-working ones.
 
 ---
 
-## Phase 15: Immutable A/B Updates and Recovery Mode
+## Historical Phase 15: Immutable A/B Updates and Recovery Mode (Current Phase 16)
 
 ### Purpose
 
@@ -1512,9 +1519,10 @@ Don't conflate the two.
 
 ### Preconditions
 
-Phase 13 (networking, for update transport) and Phase 14 (enough hardware
-support that "the machine" means something beyond QEMU) both reasonably
-mature. Phase 12 (packaging) informs what "an update" actually updates.
+Current Phase 14 (networking, for update transport) and current Phase 15
+(enough hardware support that "the machine" means something beyond QEMU) both
+reasonably mature. Current Phase 13 (packaging) informs what "an update"
+actually updates.
 
 ### Locked slice sequence
 
@@ -1542,7 +1550,7 @@ needs the same rigor as Phase 8's syscall ABI.
 
 ---
 
-## Phase 16: SMP
+## Historical Phase 16: SMP (Current Phase 17)
 
 ### Purpose
 
