@@ -1,7 +1,7 @@
 # PythTIG Acceptance Marker Contract
 
-**Status:** Phase 1 format, Phase 2 runtime, and Phase 3 object/capability
-markers are active only in their accepted verification paths. Later-phase
+**Status:** Phase 1 through Phase 7 markers are active in their accepted
+verification paths on the Phase 7 cutover/cross-target branch. Later-phase
 markers remain reserved until their corresponding implementation phase is
 explicitly authorized and verified.
 

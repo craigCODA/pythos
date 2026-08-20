@@ -1,7 +1,7 @@
 # PythTIG Test and Evidence Matrix
 
-Status: Phase 1 format, Phase 2 ring-3 runtime, and Phase 3 object/capability
-rows implemented; later rows remain pending explicit phase invocation.
+Status: Phase 1 through Phase 7 rows are implemented on the Phase 7
+cutover/cross-target branch.
 
 Every command is run from a clean phase worktree with fresh build artifacts.
 Exact command options may be reconciled when the live tree differs. ADR 0065's
@@ -17,9 +17,11 @@ tested version 1 package ABI is frozen as of 2026-08-08.
 | Ring-3 interpreter | `python scripts\test-pyth-graph-runtime.py` | `PYTH_GRAPH_RUNTIME_TEST_OK` | Seven isolated boots prove execution/termination, shared-verifier rejection, opcode/control-flow profile rejection before ring 3, budget termination, and truthful fault safe-idle containment |
 | Object capability flow | `python scripts\test-pyth-graph-object-flow.py` | `PYTH_GRAPH_OBJECT_FLOW_TEST_OK` | Create/revise/inspect/history through retained object service, known-ID denial, wrong-holder forgery denial, reboot query/rebind |
 | Host compiler | `python scripts\test-pythc.py` | `PYTHC_TEST_OK` | Source subset -> canonical verified package; negatives rejected |
-| Task Steward | `python scripts\test-pyth-task-steward.py` | `PYTH_TASK_STEWARD_TEST_OK` | Hybrid proposal flow and authority boundary |
+| Task Steward | `python scripts\build-pyth-graph.py`; covered in default boot and native backend acceptance | `PYTH_GRAPH_TASK_STEWARD_READY`, `PYTHOS:PYTHTIG:TASK_STEWARD_READY` | Task Steward graph is compiled, packaged, launched, and remains proposal-only through the task authority boundary |
 | Native backend | `python scripts\test-pyth-native-codegen.py` | `PYTH_NATIVE_CODEGEN_TEST_OK` | W^X ELF and interpreter/native differential suite |
-| Cross-target/cutover | `python scripts\test-pyth-cross-target.py` | `PYTH_CROSS_TARGET_TEST_OK` | Same package digest/semantics through default service and fallback paths |
+| Default cutover/recovery | `python scripts\test-pyth-default-boot.py` | `PYTH_DEFAULT_BOOT_TEST_OK` | Pyth services are default normal boot, reboot restore works, and service fault enters recovery shell |
+| Cross-target/cutover | `python scripts\test-pyth-cross-target.py --automated-only` | `PYTH_CROSS_TARGET_TEST_OK` | Same package digest/semantics through QEMU virtio and AHCI backends |
+| Physical import tooling | `python scripts\verify-pyth-physical-log.py --self-test` | `PYTH_PHYSICAL_LOG_SELF_TEST_OK` | Manifest/log verifier accepts exact target evidence and rejects mismatched package digests |
 
 ## Required unit and static checks
 

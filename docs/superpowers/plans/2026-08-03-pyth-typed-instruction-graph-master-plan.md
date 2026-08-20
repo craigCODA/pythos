@@ -137,9 +137,11 @@ python scripts\test-pyth-tig-format.py
 python scripts\test-pyth-graph-runtime.py
 python scripts\test-pyth-graph-object-flow.py
 python scripts\test-pythc.py
-python scripts\test-pyth-task-steward.py
+python scripts\build-pyth-graph.py
 python scripts\test-pyth-native-codegen.py
-python scripts\test-pyth-cross-target.py
+python scripts\test-pyth-default-boot.py
+python scripts\test-pyth-cross-target.py --automated-only
+python scripts\verify-pyth-physical-log.py --self-test
 ```
 
 Expected terminal lines:
@@ -157,9 +159,12 @@ PYTH_TIG_FORMAT_TEST_OK
 PYTH_GRAPH_RUNTIME_TEST_OK
 PYTH_GRAPH_OBJECT_FLOW_TEST_OK
 PYTHC_TEST_OK
-PYTH_TASK_STEWARD_TEST_OK
+PYTH_GRAPH_TASK_STEWARD_READY
+PYTH_GRAPH_SESSION_MANAGER_READY
 PYTH_NATIVE_CODEGEN_TEST_OK
+PYTH_DEFAULT_BOOT_TEST_OK
 PYTH_CROSS_TARGET_TEST_OK
+PYTH_PHYSICAL_LOG_SELF_TEST_OK
 ```
 
 ## Program completion boundary
