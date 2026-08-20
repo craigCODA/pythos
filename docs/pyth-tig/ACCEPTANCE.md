@@ -82,6 +82,12 @@ Host-side coverage for this contract lives in:
 python -m unittest tests.test_build_orchestration
 ```
 
+The artifact-collision signature is fixed only when the one-shot runtime harness
+packages the isolated kernel and reaches `PYTHOS:PYTHTIG:RUNTIME_TERMINATED`.
+If a later object-flow run emits `PYTHOS:PYTHTIG:OBJECT_CREATED` and then exits
+with runtime status 1, treat that as a separate retained-object persistence
+investigation rather than evidence that the wrong kernel was packaged.
+
 ## Required Markers
 
 Default normal boot must include, in order:

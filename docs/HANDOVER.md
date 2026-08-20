@@ -56,6 +56,15 @@ cargo build -p pythos-core --target x86_64-unknown-none
 python scripts/test-pyth-graph-runtime.py
 ```
 
+PR #10 follow-up: the first hosted run after this fix proved the original
+runtime-panic signature was gone because `scripts/test-pyth-graph-runtime.py`
+completed with `PYTH_GRAPH_RUNTIME_TEST_OK` and emitted
+`PYTHOS:PYTHTIG:RUNTIME_TERMINATED`. That same run later showed a separate
+`scripts/test-pyth-graph-object-flow.py` status-1 observation after
+`PYTHOS:PYTHTIG:OBJECT_CREATED`; do not classify that later object-flow signal
+as the shared-core-artifact collision. If it recurs, investigate retained object
+checkpoint persistence after a successful create marker.
+
 ## Interface Model Correction (2026-08-05)
 
 ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,
