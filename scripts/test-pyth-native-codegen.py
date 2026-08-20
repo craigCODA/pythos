@@ -16,6 +16,13 @@ TARGET = ROOT / "target"
 ESP = ROOT / "image" / "esp"
 PYTH_TIG_DIR = TARGET / "pyth-tig"
 PYTH_NATIVE_DIR = TARGET / "pyth-native"
+PYTHTIG_CORE_TARGET = TARGET / "pythtig-phase2-core"
+PYTHTIG_CORE_ELF = (
+    PYTHTIG_CORE_TARGET
+    / "x86_64-unknown-none"
+    / "debug"
+    / "pythcore"
+)
 
 SECTOR_SIZE = 512
 STORAGE_SIZE_BYTES = 16 * 1024 * 1024
@@ -154,6 +161,8 @@ def build_base_artifacts() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--target-dir",
+            str(PYTHTIG_CORE_TARGET),
             "--no-default-features",
             "--features",
             "pythtig-phase2-test",
@@ -218,11 +227,28 @@ def prepare_scenario_esp(label: str) -> Path:
 
 
 def build_interpreter_image(flag: str) -> None:
-    run([sys.executable, "scripts/build-image.py", flag])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            flag,
+        ]
+    )
 
 
 def build_native_image(elf: Path) -> None:
-    run([sys.executable, "scripts/build-image.py", "--pyth-native-elf", str(elf)])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            "--pyth-native-elf",
+            str(elf),
+        ]
+    )
 
 
 def run_qemu(label: str, mode: int, storage_image: Path) -> str:

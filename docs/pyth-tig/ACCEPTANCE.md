@@ -60,6 +60,28 @@ attempts to clippy host-target user binaries and fails before lint analysis
 with the no-std panic/unwind configuration. Use the target-specific clippy
 commands above.
 
+## Build Artifact Isolation
+
+The one-shot PythTIG QEMU harnesses must build the `pythtig-phase2-test`
+PythCore binary into the dedicated Cargo target directory
+`target/pythtig-phase2-core` and package that exact ELF with
+`scripts/build-image.py --kernel target/pythtig-phase2-core/x86_64-unknown-none/debug/pythcore`.
+
+This avoids a CI artifact collision where an earlier default-feature
+`pythos-core` build and a later no-default PythTIG test build both write through
+Cargo's shared final binary path
+`target/x86_64-unknown-none/debug/pythcore`. If the PythTIG one-shot image
+packages the wrong binary, QEMU can enter the normal boot path and fail before
+`PYTHOS:PYTHTIG:RUNTIME_TERMINATED`; observed failure signatures include
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` followed by `PYTHOS:PANIC`, or a
+normal boot timeout with no PythTIG runtime markers.
+
+Host-side coverage for this contract lives in:
+
+```powershell
+python -m unittest tests.test_build_orchestration
+```
+
 ## Required Markers
 
 Default normal boot must include, in order:

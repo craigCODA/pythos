@@ -28,6 +28,34 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## PythTIG CI Artifact Isolation Hotfix (2026-08-20)
+
+After the Phase 7 merge, the hosted one-shot PythTIG runtime job reported a
+QEMU panic before `PYTHOS:PYTHTIG:RUNTIME_TERMINATED`. The pasted CI serial log
+showed normal-init markers through
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` followed by `PYTHOS:PANIC`.
+
+The local reproducer built default-feature `pythos-core`, then built the
+no-default `pythtig-phase2-test` core, then packaged
+`scripts/build-image.py --with-pythtig`. That polluted-artifact sequence booted
+a normal/default core path and timed out without PythTIG runtime markers,
+proving the class of failure: the one-shot PythTIG harnesses were relying on
+Cargo's shared final binary path `target/x86_64-unknown-none/debug/pythcore`.
+
+The fix is build orchestration only. PythTIG one-shot harnesses build
+`pythos-core --no-default-features --features pythtig-phase2-test` into
+`target/pythtig-phase2-core` and package that exact ELF via
+`scripts/build-image.py --kernel`. This does not change the PythTIG package ABI,
+runtime ABI, marker contract, or boot semantics.
+
+Required regression evidence:
+
+```powershell
+python -m unittest tests.test_build_orchestration
+cargo build -p pythos-core --target x86_64-unknown-none
+python scripts/test-pyth-graph-runtime.py
+```
+
 ## Interface Model Correction (2026-08-05)
 
 ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,

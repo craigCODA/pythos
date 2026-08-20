@@ -13,6 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 ESP = ROOT / "image" / "esp"
+PYTHTIG_CORE_TARGET = TARGET / "pythtig-phase2-core"
+PYTHTIG_CORE_ELF = (
+    PYTHTIG_CORE_TARGET
+    / "x86_64-unknown-none"
+    / "debug"
+    / "pythcore"
+)
 PYTH_RUNTIME_ELF = (
     TARGET
     / "x86_64-unknown-none"
@@ -90,6 +97,8 @@ def build_boot_image() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--target-dir",
+            str(PYTHTIG_CORE_TARGET),
             "--no-default-features",
             "--features",
             "pythtig-phase2-test",
@@ -97,12 +106,28 @@ def build_boot_image() -> None:
     )
     build_verified_user_shell()
     build_pyth_graph_artifacts()
-    run([sys.executable, "scripts/build-image.py", "--with-pythtig"])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            "--with-pythtig",
+        ]
+    )
 
 
 def rebuild_image_with_current_runtime() -> None:
     run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
-    run([sys.executable, "scripts/build-image.py", "--with-pythtig"])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            "--with-pythtig",
+        ]
+    )
 
 
 def prepare_graph_control_image(path: Path, mode: int) -> None:
