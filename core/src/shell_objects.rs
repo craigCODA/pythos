@@ -36,6 +36,12 @@ pub enum ObjectKind {
     ButtonWidget,
     TextFieldWidget,
     Note,
+    Task,
+    TaskProposal,
+    TaskEvent,
+    TaskRelation,
+    RelevanceAssertion,
+    CapabilityRequest,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

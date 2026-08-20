@@ -4,6 +4,10 @@
 #[cfg(not(test))]
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
+use pythos_shared::task_abi::{
+    OBJECT_KIND_CAPABILITY_REQUEST, OBJECT_KIND_RELEVANCE_ASSERTION, OBJECT_KIND_TASK,
+    OBJECT_KIND_TASK_EVENT, OBJECT_KIND_TASK_PROPOSAL, OBJECT_KIND_TASK_RELATION,
+};
 
 pub const FORMAT_VERSION: u16 = 1;
 pub const MAX_FIELDS: usize = 4;
@@ -250,6 +254,12 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::WorkspaceSession => 8,
         ObjectKind::ObjectBrowserWindow => 9,
         ObjectKind::Note => 10,
+        ObjectKind::Task => OBJECT_KIND_TASK,
+        ObjectKind::TaskProposal => OBJECT_KIND_TASK_PROPOSAL,
+        ObjectKind::TaskEvent => OBJECT_KIND_TASK_EVENT,
+        ObjectKind::TaskRelation => OBJECT_KIND_TASK_RELATION,
+        ObjectKind::RelevanceAssertion => OBJECT_KIND_RELEVANCE_ASSERTION,
+        ObjectKind::CapabilityRequest => OBJECT_KIND_CAPABILITY_REQUEST,
     }
 }
 
@@ -265,6 +275,12 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         8 => Ok(ObjectKind::WorkspaceSession),
         9 => Ok(ObjectKind::ObjectBrowserWindow),
         10 => Ok(ObjectKind::Note),
+        OBJECT_KIND_TASK => Ok(ObjectKind::Task),
+        OBJECT_KIND_TASK_PROPOSAL => Ok(ObjectKind::TaskProposal),
+        OBJECT_KIND_TASK_EVENT => Ok(ObjectKind::TaskEvent),
+        OBJECT_KIND_TASK_RELATION => Ok(ObjectKind::TaskRelation),
+        OBJECT_KIND_RELEVANCE_ASSERTION => Ok(ObjectKind::RelevanceAssertion),
+        OBJECT_KIND_CAPABILITY_REQUEST => Ok(ObjectKind::CapabilityRequest),
         _ => Err(ObjectFormatError::InvalidKind),
     }
 }
@@ -349,6 +365,39 @@ mod tests {
         assert_eq!(field.field_id(), 1);
         assert_eq!(field.value_len(), 5);
         assert_eq!(&field.value()[..5], b"hello");
+    }
+
+    #[test]
+    fn task_object_kinds_round_trip_with_stable_codes() {
+        let cases = [
+            (ObjectKind::Task, OBJECT_KIND_TASK),
+            (ObjectKind::TaskProposal, OBJECT_KIND_TASK_PROPOSAL),
+            (ObjectKind::TaskEvent, OBJECT_KIND_TASK_EVENT),
+            (ObjectKind::TaskRelation, OBJECT_KIND_TASK_RELATION),
+            (
+                ObjectKind::RelevanceAssertion,
+                OBJECT_KIND_RELEVANCE_ASSERTION,
+            ),
+            (
+                ObjectKind::CapabilityRequest,
+                OBJECT_KIND_CAPABILITY_REQUEST,
+            ),
+        ];
+
+        for (kind, code) in cases {
+            let record = TypedObjectRecord::new(ObjectId::new(u64::from(code)), kind, 1);
+            let mut bytes = record.encode();
+            assert_eq!(read_u16(&bytes, 16), code);
+
+            let decoded = TypedObjectRecord::decode(&bytes).unwrap();
+            assert_eq!(decoded.object_kind(), kind);
+
+            write_u16(&mut bytes, 16, code);
+            assert_eq!(
+                TypedObjectRecord::decode(&bytes).unwrap().object_kind(),
+                kind
+            );
+        }
     }
 
     #[test]
