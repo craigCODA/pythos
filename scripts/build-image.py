@@ -26,6 +26,7 @@ PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = (
     ROOT / "target" / "pyth-tig" / "object-known-denied.tig"
 )
 PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-forgery.tig"
+PYTH_GRAPH_OUTPUT_DIR = ROOT / "target" / "pyth-tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -157,6 +158,31 @@ def build_named_pyth_graph(name: bytes, principal_id: int, package: bytes) -> by
     header[24:32] = digest64(package).to_bytes(8, "little")
     header[32:36] = len(package).to_bytes(4, "little")
     return bytes(header) + name + package
+
+
+def graph_principal_id(package: bytes) -> int:
+    if len(package) < 32 or package[:8] != b"PYTHTIG1":
+        raise ValueError("native source graph is not a PythTIG package")
+    return int.from_bytes(package[24:32], "little")
+
+
+def native_pyth_graph_records(elf_path: Path) -> list[tuple[int, bytes]]:
+    elf = require_file(elf_path, "Pyth native ELF")
+    graph_path = PYTH_GRAPH_OUTPUT_DIR / f"{elf_path.stem}.tig"
+    graph = require_file(graph_path, "Pyth native source graph package")
+    principal_id = graph_principal_id(graph)
+    graph_name = graph_path.name.encode("ascii")
+    elf_name = elf_path.name.encode("ascii")
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(graph_name, principal_id, graph),
+        ),
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(elf_name, principal_id, elf),
+        ),
+    ]
 
 
 def require_file(path: Path, description: str) -> bytes:
@@ -293,7 +319,9 @@ def build_user_elf_payload(text: bytes) -> bytes:
 
 
 def build_default_init_pak(
-    include_pythtig: bool = False, include_pythtig_object_flow: bool = False
+    include_pythtig: bool = False,
+    include_pythtig_object_flow: bool = False,
+    pyth_native_elf: Path | None = None,
 ) -> bytes:
     if include_pythtig and include_pythtig_object_flow:
         raise SystemExit(
@@ -314,6 +342,8 @@ def build_default_init_pak(
     if include_pythtig_object_flow:
         records.append(pyth_runtime_record())
         records.extend(phase3_object_pyth_graph_records())
+    if pyth_native_elf is not None:
+        records.extend(native_pyth_graph_records(pyth_native_elf))
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -358,6 +388,7 @@ def main() -> int:
     parser.add_argument("--kernel", type=Path, default=PYTHCORE_ELF)
     parser.add_argument("--with-pythtig", action="store_true")
     parser.add_argument("--with-pythtig-object-flow", action="store_true")
+    parser.add_argument("--pyth-native-elf", type=Path)
     args = parser.parse_args()
 
     loader = args.loader
@@ -377,7 +408,11 @@ def main() -> int:
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(
         pythos_dir / "INIT.PAK",
-        build_default_init_pak(args.with_pythtig, args.with_pythtig_object_flow),
+        build_default_init_pak(
+            args.with_pythtig,
+            args.with_pythtig_object_flow,
+            args.pyth_native_elf,
+        ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 
