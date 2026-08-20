@@ -1,5 +1,8 @@
 pub mod elf;
+pub mod layout;
+pub mod lower;
 pub mod patch;
+pub mod runtime_layout;
 pub mod x86;
 
 pub type Result<T> = core::result::Result<T, CodegenError>;
@@ -23,6 +26,13 @@ pub enum CodegenError {
     InvalidRegister {
         instruction: &'static str,
         register: x86::Register,
+    },
+    StackFrameTooLarge {
+        required: usize,
+        maximum: usize,
+    },
+    UnsupportedOpcode {
+        opcode: u16,
     },
     PatchOutOfBounds {
         offset: usize,

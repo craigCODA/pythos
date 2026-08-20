@@ -241,6 +241,15 @@ impl CodeBuffer {
         self.emit_reg_reg(0x09, src, dst)
     }
 
+    pub fn shl_reg64_imm8(&mut self, dst: Register, immediate: u8) -> Result<()> {
+        self.ensure_capacity(4)?;
+        self.emit_rex(true, false, false, dst.rex_bit());
+        self.bytes.push(0xC1);
+        self.bytes.push(modrm(0b11, 4, dst.low3()));
+        self.bytes.push(immediate);
+        Ok(())
+    }
+
     pub fn xor_reg64(&mut self, dst: Register, src: Register) -> Result<()> {
         self.emit_reg_reg(0x31, src, dst)
     }
