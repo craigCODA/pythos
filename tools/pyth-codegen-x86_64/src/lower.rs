@@ -1,6 +1,9 @@
-use pythos_shared::pyth_tig::{
-    NO_VALUE, NodeRecord, format::PythGraphPackage, opcode::Opcode, types::PythType,
-    verify::VerifiedGraph,
+use pythos_shared::{
+    pyth_runtime_abi::HOST_RESULT_UTF8,
+    pyth_tig::{
+        NO_VALUE, NodeRecord, format::PythGraphPackage, opcode::Opcode, types::PythType,
+        verify::VerifiedGraph,
+    },
 };
 
 use crate::{
@@ -9,10 +12,21 @@ use crate::{
     layout::{NativeLayout, VALUE_SLOT_TYPE_OFFSET},
     patch::Label,
     runtime_layout,
+    stubs::{
+        GRAPH_LOG_SYSCALL, HOST_RESULT_BYTES_OFFSET, HOST_RESULT_CAPABILITY_OFFSET,
+        HOST_RESULT_OBJECT_ID_OFFSET, HOST_RESULT_REVISION_OFFSET, HOST_RESULT_STATUS_OFFSET,
+        NativeStubDataLayout, OBJECT_QUERY_OUTPUT_BYTES, OBJECT_REQUEST_ABI_WORD,
+        OBJECT_REQUEST_BYTES, OBJECT_REQUEST_SYSCALL, OBJECT_RESPONSE_BYTES,
+        OBJECT_RESPONSE_BYTES_WRITTEN_OFFSET, OBJECT_RESPONSE_CAPABILITY_OFFSET,
+        OBJECT_RESPONSE_FIELD_BYTES_OFFSET, OBJECT_RESPONSE_OBJECT_ID_OFFSET,
+        OBJECT_RESPONSE_REVISION_COUNT_OFFSET, OBJECT_RESPONSE_REVISION_OFFSET,
+        OBJECT_RESPONSE_STATUS_OFFSET, ObjectStubOperation, host_result_field_offset,
+    },
     x86::{CodeBuffer, ConditionCode, Memory, Register},
 };
 
 const TEXT_BASE: u64 = 0x0040_0000;
+const PAGE_SIZE: u64 = 0x1000;
 const LABEL_INVALID_BOOTSTRAP: Label = Label::new(1);
 const LABEL_BUDGET_EXIT: Label = Label::new(2);
 const LABEL_RUNTIME_ERROR_EXIT: Label = Label::new(3);
@@ -35,25 +49,41 @@ pub struct NativeMetadata {
     pub block_parameter_moves: usize,
     pub value_slots: usize,
     pub stack_frame_bytes: usize,
+    pub capability_immediates: usize,
+    pub bootstrap_import_loads: usize,
+    pub system_log_syscalls: usize,
+    pub object_syscalls: usize,
+    pub task_syscalls: usize,
+    pub graph_exit_syscalls: usize,
+    pub host_result_loads: usize,
 }
 
 pub fn lower_verified_graph(graph: VerifiedGraph<'_>) -> Result<NativeImage> {
     let layout = NativeLayout::plan(&graph)?;
-    let lowerer = Lowerer::new(graph.package(), layout);
+    let lowerer = Lowerer::new(graph.package(), layout)?;
     lowerer.lower()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DataAddressPatch {
+    immediate_offset: usize,
+    data_offset: usize,
 }
 
 struct Lowerer<'a> {
     package: &'a PythGraphPackage<'a>,
     layout: NativeLayout,
+    data_layout: NativeStubDataLayout,
+    data_patches: Vec<DataAddressPatch>,
     code: CodeBuffer,
     metadata: NativeMetadata,
     next_local_label: u32,
 }
 
 impl<'a> Lowerer<'a> {
-    fn new(package: &'a PythGraphPackage<'a>, layout: NativeLayout) -> Self {
-        Self {
+    fn new(package: &'a PythGraphPackage<'a>, layout: NativeLayout) -> Result<Self> {
+        let data_layout = NativeStubDataLayout::new(package.nodes().len())?;
+        Ok(Self {
             package,
             metadata: NativeMetadata {
                 executable_nodes: package.nodes().len(),
@@ -62,9 +92,11 @@ impl<'a> Lowerer<'a> {
                 ..NativeMetadata::default()
             },
             layout,
+            data_layout,
+            data_patches: Vec::new(),
             code: CodeBuffer::new(),
             next_local_label: LABEL_LOCAL_BASE,
-        }
+        })
     }
 
     fn lower(mut self) -> Result<NativeImage> {
@@ -90,8 +122,10 @@ impl<'a> Lowerer<'a> {
         }
         self.emit_exits()?;
         self.code.resolve_labels()?;
+        let data_base = data_base_address(self.code.len())?;
+        self.apply_data_address_patches(data_base)?;
 
-        let data = vec![0; runtime_layout::GRAPH_EXIT_RECORD_BYTES];
+        let data = self.data_layout.data_bytes();
         let bytes = ElfImage::new(TEXT_BASE)
             .with_text(self.code.bytes())
             .with_rodata(&[])
@@ -197,6 +231,7 @@ impl<'a> Lowerer<'a> {
             | Opcode::ConstBytes
             | Opcode::ConstUtf8
             | Opcode::EffectStart => self.emit_simple_value(node_index, node, opcode),
+            Opcode::HostResult => self.emit_host_result(node_index, node),
             Opcode::Eq
             | Opcode::LessThanU64
             | Opcode::AddU64
@@ -205,6 +240,19 @@ impl<'a> Lowerer<'a> {
             | Opcode::BoolOr
             | Opcode::BoolNot
             | Opcode::Select => self.emit_pure_op(node_index, node, opcode),
+            Opcode::SystemLog => self.emit_system_log(node_index, node),
+            Opcode::ObjectCreate
+            | Opcode::ObjectQuery
+            | Opcode::ObjectInspect
+            | Opcode::ObjectRevise
+            | Opcode::ObjectHistory => {
+                let operation = ObjectStubOperation::from_opcode(opcode).ok_or(
+                    CodegenError::UnsupportedOpcode {
+                        opcode: node.opcode,
+                    },
+                )?;
+                self.emit_object_operation(node_index, node, operation)
+            }
             Opcode::Jump => self.emit_jump(node),
             Opcode::Branch => self.emit_branch(node),
             Opcode::Return => self.emit_return(node_index),
@@ -234,6 +282,7 @@ impl<'a> Lowerer<'a> {
                 Register::Rax,
                 Memory::base_disp32(Register::R15, i32_offset(import_offset)?),
             )?;
+            self.metadata.bootstrap_import_loads += 1;
             self.store_value_from_register(node_index, result_type, Register::Rax)?;
         }
         Ok(())
@@ -342,6 +391,264 @@ impl<'a> Lowerer<'a> {
         self.store_value_from_register(node_index, result_type, Register::Rax)?;
         self.code.bind_label(done_label)?;
         Ok(())
+    }
+
+    fn emit_system_log(&mut self, node_index: usize, node: NodeRecord) -> Result<()> {
+        self.load_value_payload(Register::Rdi, node.input1)?;
+        self.emit_package_slice_address(node.input2, Register::Rsi, Register::Rdx)?;
+        self.code.mov_imm64(Register::Rax, GRAPH_LOG_SYSCALL)?;
+        self.code.syscall()?;
+        self.metadata.system_log_syscalls += 1;
+        self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
+    }
+
+    fn emit_object_operation(
+        &mut self,
+        node_index: usize,
+        node: NodeRecord,
+        operation: ObjectStubOperation,
+    ) -> Result<()> {
+        if matches!(
+            operation,
+            ObjectStubOperation::Create | ObjectStubOperation::Query
+        ) {
+            self.validate_note_kind(node.input2, node.opcode)?;
+        }
+
+        self.clear_object_request()?;
+        self.write_object_request_header(operation)?;
+        self.load_value_payload(Register::Rcx, node.input1)?;
+        self.write_data_register(self.data_layout.object_request_offset() + 16, Register::Rcx)?;
+
+        match operation {
+            ObjectStubOperation::Create => {}
+            ObjectStubOperation::Query => {
+                self.emit_data_address(
+                    Register::Rax,
+                    self.data_layout.object_query_output_offset(),
+                )?;
+                self.write_data_register(
+                    self.data_layout.object_request_offset() + 48,
+                    Register::Rax,
+                )?;
+                self.write_data_immediate(
+                    self.data_layout.object_request_offset() + 56,
+                    OBJECT_QUERY_OUTPUT_BYTES as u64,
+                )?;
+            }
+            ObjectStubOperation::Inspect | ObjectStubOperation::History => {
+                self.load_value_payload(Register::Rax, node.input2)?;
+                self.write_data_register(
+                    self.data_layout.object_request_offset() + 24,
+                    Register::Rax,
+                )?;
+            }
+            ObjectStubOperation::Revise => {
+                self.load_value_payload(Register::Rax, node.input2)?;
+                self.write_data_register(
+                    self.data_layout.object_request_offset() + 24,
+                    Register::Rax,
+                )?;
+                self.emit_package_slice_address(node.input3, Register::Rax, Register::Rbx)?;
+                self.write_data_register(
+                    self.data_layout.object_request_offset() + 32,
+                    Register::Rax,
+                )?;
+                self.write_data_register(
+                    self.data_layout.object_request_offset() + 40,
+                    Register::Rbx,
+                )?;
+            }
+        }
+
+        self.emit_object_request_syscall()?;
+        self.copy_object_response_to_host_result(node_index, operation)?;
+        self.metadata.object_syscalls += 1;
+        self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
+    }
+
+    fn emit_host_result(&mut self, node_index: usize, node: NodeRecord) -> Result<()> {
+        let producer_index =
+            usize::try_from(node.input0).map_err(|_| CodegenError::AddressOverflow)?;
+        let result_type =
+            PythType::try_from(node.result_type).map_err(|_| CodegenError::UnsupportedOpcode {
+                opcode: node.opcode,
+            })?;
+        let field_offset =
+            host_result_field_offset(node.auxiliary0).ok_or(CodegenError::UnsupportedOpcode {
+                opcode: node.opcode,
+            })?;
+
+        if node.auxiliary0 == HOST_RESULT_UTF8 {
+            self.code
+                .mov_imm64(Register::Rax, u64::from(node.input0) << 32)?;
+        } else {
+            self.emit_data_address(
+                Register::R11,
+                self.data_layout
+                    .host_result_offset(producer_index)?
+                    .checked_add(field_offset)
+                    .ok_or(CodegenError::AddressOverflow)?,
+            )?;
+            self.code
+                .mov_reg64_mem64(Register::Rax, Memory::base(Register::R11))?;
+            if field_offset == HOST_RESULT_STATUS_OFFSET {
+                self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
+                self.code.and_reg64(Register::Rax, Register::Rbx)?;
+            }
+        }
+        self.metadata.host_result_loads += 1;
+        self.store_value_from_register(node_index, result_type, Register::Rax)
+    }
+
+    fn clear_object_request(&mut self) -> Result<()> {
+        for offset in [0, 8, 16, 24, 32, 40, 48, 56, 64, 72] {
+            self.write_data_immediate(self.data_layout.object_request_offset() + offset, 0)?;
+        }
+        Ok(())
+    }
+
+    fn write_object_request_header(&mut self, operation: ObjectStubOperation) -> Result<()> {
+        let header = OBJECT_REQUEST_ABI_WORD
+            | (u64::from(operation.request_operation()) << 32)
+            | (u64::from(operation.request_kind()) << 48);
+        self.write_data_immediate(self.data_layout.object_request_offset(), header)?;
+        self.write_data_immediate(
+            self.data_layout.object_request_offset() + 8,
+            u64::from(operation.request_field()),
+        )
+    }
+
+    fn emit_object_request_syscall(&mut self) -> Result<()> {
+        self.code.mov_imm64(Register::Rax, OBJECT_REQUEST_SYSCALL)?;
+        self.emit_data_address(Register::Rdi, self.data_layout.object_request_offset())?;
+        self.code
+            .mov_imm64(Register::Rsi, OBJECT_REQUEST_BYTES as u64)?;
+        self.emit_data_address(Register::Rdx, self.data_layout.object_response_offset())?;
+        self.code
+            .mov_imm64(Register::R10, OBJECT_RESPONSE_BYTES as u64)?;
+        self.code.mov_imm64(Register::R8, 0)?;
+        self.code.syscall()
+    }
+
+    fn copy_object_response_to_host_result(
+        &mut self,
+        node_index: usize,
+        operation: ObjectStubOperation,
+    ) -> Result<()> {
+        let response = self.data_layout.object_response_offset();
+        let result = self.data_layout.host_result_offset(node_index)?;
+
+        self.read_data_register(response + OBJECT_RESPONSE_STATUS_OFFSET, Register::Rax)?;
+        self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
+        self.code.and_reg64(Register::Rax, Register::Rbx)?;
+        if operation == ObjectStubOperation::Inspect {
+            self.read_data_register(
+                response + OBJECT_RESPONSE_BYTES_WRITTEN_OFFSET,
+                Register::Rbx,
+            )?;
+            self.code.mov_imm64(Register::Rcx, 0xFFFF)?;
+            self.code.and_reg64(Register::Rbx, Register::Rcx)?;
+            self.code.shl_reg64_imm8(Register::Rbx, 16)?;
+            self.code.or_reg64(Register::Rax, Register::Rbx)?;
+        }
+        self.write_data_register(result + HOST_RESULT_STATUS_OFFSET, Register::Rax)?;
+
+        self.read_data_register(response + OBJECT_RESPONSE_OBJECT_ID_OFFSET, Register::Rax)?;
+        if operation == ObjectStubOperation::Query {
+            self.read_data_register(self.data_layout.object_query_output_offset(), Register::Rax)?;
+        }
+        self.write_data_register(result + HOST_RESULT_OBJECT_ID_OFFSET, Register::Rax)?;
+
+        let revision_offset = if operation == ObjectStubOperation::History {
+            OBJECT_RESPONSE_REVISION_COUNT_OFFSET
+        } else {
+            OBJECT_RESPONSE_REVISION_OFFSET
+        };
+        self.read_data_register(response + revision_offset, Register::Rax)?;
+        self.write_data_register(result + HOST_RESULT_REVISION_OFFSET, Register::Rax)?;
+
+        self.read_data_register(response + OBJECT_RESPONSE_CAPABILITY_OFFSET, Register::Rax)?;
+        if operation == ObjectStubOperation::Query {
+            self.read_data_register(
+                self.data_layout.object_query_output_offset() + 8,
+                Register::Rax,
+            )?;
+        }
+        self.write_data_register(result + HOST_RESULT_CAPABILITY_OFFSET, Register::Rax)?;
+
+        for offset in [0, 8] {
+            self.read_data_register(
+                response + OBJECT_RESPONSE_FIELD_BYTES_OFFSET + offset,
+                Register::Rax,
+            )?;
+            self.write_data_register(result + HOST_RESULT_BYTES_OFFSET + offset, Register::Rax)?;
+        }
+        Ok(())
+    }
+
+    fn validate_note_kind(&self, input: u32, opcode: u16) -> Result<()> {
+        let node = self.node_for_input(input)?;
+        if Opcode::try_from(node.opcode) != Ok(Opcode::ConstUtf8) {
+            return Err(CodegenError::UnsupportedOpcode { opcode });
+        }
+        let len = u16::try_from(node.auxiliary1).map_err(|_| CodegenError::AddressOverflow)?;
+        let kind = self
+            .package
+            .string_at(node.auxiliary0, len)
+            .map_err(|_| CodegenError::UnsupportedOpcode { opcode })?;
+        if kind == b"note" {
+            Ok(())
+        } else {
+            Err(CodegenError::UnsupportedOpcode { opcode })
+        }
+    }
+
+    fn emit_package_slice_address(
+        &mut self,
+        input: u32,
+        ptr: Register,
+        len: Register,
+    ) -> Result<()> {
+        let node = self.node_for_input(input)?;
+        let (section_offset, offset, length) = match Opcode::try_from(node.opcode) {
+            Ok(Opcode::ConstUtf8) => (
+                self.package.header().string_table_offset,
+                node.auxiliary0,
+                node.auxiliary1,
+            ),
+            Ok(Opcode::ConstBytes) => (
+                self.package.header().constant_pool_offset,
+                node.auxiliary0,
+                node.auxiliary1,
+            ),
+            _ => {
+                return Err(CodegenError::UnsupportedOpcode {
+                    opcode: node.opcode,
+                });
+            }
+        };
+        let package_offset = u64::from(section_offset)
+            .checked_add(u64::from(offset))
+            .ok_or(CodegenError::AddressOverflow)?;
+        self.code.mov_reg64_mem64(
+            ptr,
+            Memory::base_disp32(Register::R15, runtime_layout::BOOTSTRAP_PACKAGE_PTR_OFFSET),
+        )?;
+        self.code.mov_imm64(Register::Rbx, package_offset)?;
+        self.code.add_reg64(ptr, Register::Rbx)?;
+        self.code.mov_imm64(len, u64::from(length))
+    }
+
+    fn node_for_input(&self, input: u32) -> Result<NodeRecord> {
+        if input == NO_VALUE {
+            return Err(CodegenError::AddressOverflow);
+        }
+        let index = usize::try_from(input).map_err(|_| CodegenError::AddressOverflow)?;
+        self.package
+            .nodes()
+            .get(index)
+            .ok_or(CodegenError::AddressOverflow)
     }
 
     fn emit_jump(&mut self, node: NodeRecord) -> Result<()> {
@@ -475,6 +782,7 @@ impl<'a> Lowerer<'a> {
             Register::Rsi,
             runtime_layout::GRAPH_EXIT_RECORD_BYTES as u64,
         )?;
+        self.metadata.graph_exit_syscalls += 1;
         self.code.syscall()
     }
 
@@ -561,6 +869,47 @@ impl<'a> Lowerer<'a> {
         self.store_scratch(offset, Register::Rcx)
     }
 
+    fn read_data_register(&mut self, data_offset: usize, dst: Register) -> Result<()> {
+        self.emit_data_address(Register::R11, data_offset)?;
+        self.code.mov_reg64_mem64(dst, Memory::base(Register::R11))
+    }
+
+    fn write_data_register(&mut self, data_offset: usize, src: Register) -> Result<()> {
+        self.emit_data_address(Register::R11, data_offset)?;
+        self.code.mov_mem64_reg64(Memory::base(Register::R11), src)
+    }
+
+    fn write_data_immediate(&mut self, data_offset: usize, value: u64) -> Result<()> {
+        self.code.mov_imm64(Register::Rax, value)?;
+        self.write_data_register(data_offset, Register::Rax)
+    }
+
+    fn emit_data_address(&mut self, dst: Register, data_offset: usize) -> Result<()> {
+        let immediate_offset = self
+            .code
+            .len()
+            .checked_add(2)
+            .ok_or(CodegenError::AddressOverflow)?;
+        self.code.mov_imm64(dst, 0)?;
+        self.data_patches.push(DataAddressPatch {
+            immediate_offset,
+            data_offset,
+        });
+        Ok(())
+    }
+
+    fn apply_data_address_patches(&mut self, data_base: u64) -> Result<()> {
+        for patch in &self.data_patches {
+            let value = data_base
+                .checked_add(
+                    u64::try_from(patch.data_offset).map_err(|_| CodegenError::AddressOverflow)?,
+                )
+                .ok_or(CodegenError::AddressOverflow)?;
+            self.code.patch_u64(patch.immediate_offset, value)?;
+        }
+        Ok(())
+    }
+
     fn value_offset_i32(&self, node_index: usize) -> Result<i32> {
         i32_offset(self.layout.value_slot_offset(node_index)?)
     }
@@ -593,4 +942,19 @@ fn node_budget_label(index: usize) -> Result<Label> {
 
 fn i32_offset(offset: usize) -> Result<i32> {
     i32::try_from(offset).map_err(|_| CodegenError::AddressOverflow)
+}
+
+fn data_base_address(text_len: usize) -> Result<u64> {
+    let text_end = TEXT_BASE
+        .checked_add(u64::try_from(text_len).map_err(|_| CodegenError::AddressOverflow)?)
+        .ok_or(CodegenError::AddressOverflow)?;
+    align_up_u64(text_end, PAGE_SIZE)
+}
+
+fn align_up_u64(value: u64, alignment: u64) -> Result<u64> {
+    debug_assert!(alignment.is_power_of_two());
+    value
+        .checked_add(alignment - 1)
+        .map(|value| value & !(alignment - 1))
+        .ok_or(CodegenError::AddressOverflow)
 }

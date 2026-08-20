@@ -13,6 +13,10 @@ const BLOCK_RECORD_SIZE: usize = 24;
 const NODE_RECORD_SIZE: usize = 40;
 const CHECKSUM_OFFSET: usize = 84;
 const CHECKSUM_END: usize = 92;
+const PF_X: u32 = 1;
+const PF_W: u32 = 2;
+const PF_R: u32 = 4;
+const PT_LOAD: u32 = 1;
 
 #[test]
 fn assigns_fixed_slots_and_emits_budget_check_per_node() {
@@ -52,15 +56,66 @@ fn records_block_parameter_moves_on_jump_edges() {
 }
 
 #[test]
-fn rejects_effectful_host_operations_until_syscall_stubs_exist() {
+fn host_operations_load_capabilities_from_bootstrap_not_immediates() {
+    let graph = verified_graph(
+        test_support::object_create_host_result(
+            PythType::ErrorCode,
+            pythos_shared::pyth_runtime_abi::HOST_RESULT_STATUS,
+        )
+        .to_vec(),
+    );
+
+    let image = lower_verified_graph(graph).unwrap();
+
+    assert_eq!(image.metadata.capability_immediates, 0);
+    assert!(image.metadata.bootstrap_import_loads >= 1);
+    assert!(image.metadata.object_syscalls >= 1);
+    assert!(image.metadata.host_result_loads >= 1);
+}
+
+#[test]
+fn generated_request_buffers_are_writable_non_executable_data() {
+    let graph = verified_graph(
+        test_support::object_create_host_result(
+            PythType::ErrorCode,
+            pythos_shared::pyth_runtime_abi::HOST_RESULT_STATUS,
+        )
+        .to_vec(),
+    );
+    let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
+
+    assert!(parsed.bytes_in_segment_with_flags(b"PYTH_OBJECT_REQUEST", PF_R | PF_W));
+    assert!(!parsed.bytes_in_segment_with_flags(b"PYTH_OBJECT_REQUEST", PF_R | PF_X));
+}
+
+#[test]
+fn canonical_object_flows_lower_to_object_stubs() {
+    for bytes in [
+        test_support::object_note_flow_package().to_vec(),
+        test_support::object_restore_package().to_vec(),
+        test_support::object_known_denied_package().to_vec(),
+    ] {
+        let graph = verified_graph(bytes);
+
+        let image = lower_verified_graph(graph).unwrap();
+
+        assert_eq!(image.metadata.capability_immediates, 0);
+        assert!(image.metadata.object_syscalls >= 1);
+        assert!(image.metadata.host_result_loads >= 1);
+    }
+}
+
+#[test]
+fn system_log_and_graph_exit_use_existing_graph_syscalls() {
     let graph = verified_graph(test_support::system_log_with_import_capability().to_vec());
 
-    assert_eq!(
-        lower_verified_graph(graph),
-        Err(CodegenError::UnsupportedOpcode {
-            opcode: Opcode::SystemLog.code()
-        })
-    );
+    let image = lower_verified_graph(graph).unwrap();
+
+    assert_eq!(image.metadata.capability_immediates, 0);
+    assert_eq!(image.metadata.bootstrap_import_loads, 1);
+    assert_eq!(image.metadata.system_log_syscalls, 1);
+    assert!(image.metadata.graph_exit_syscalls >= 1);
 }
 
 fn verified_graph(bytes: Vec<u8>) -> VerifiedGraph<'static> {
@@ -281,4 +336,85 @@ fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
 
 fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
     bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+#[derive(Debug)]
+struct ParsedElf<'a> {
+    bytes: &'a [u8],
+    program_headers: Vec<ProgramHeader>,
+}
+
+#[derive(Debug)]
+struct ProgramHeader {
+    kind: u32,
+    flags: u32,
+    offset: u64,
+    filesz: u64,
+}
+
+impl<'a> ParsedElf<'a> {
+    fn parse(bytes: &'a [u8]) -> Result<Self, String> {
+        if bytes.len() < 64 {
+            return Err("ELF header too short".to_string());
+        }
+        if &bytes[0..4] != b"\x7FELF" || bytes[4] != 2 || bytes[5] != 1 {
+            return Err("not ELF64 little-endian".to_string());
+        }
+        let phoff = read_u64_at(bytes, 32)? as usize;
+        let phentsize = read_u16_at(bytes, 54)? as usize;
+        let phnum = read_u16_at(bytes, 56)? as usize;
+        if phentsize != 56 {
+            return Err("unexpected program header size".to_string());
+        }
+
+        let mut program_headers = Vec::new();
+        for index in 0..phnum {
+            let offset = phoff + index * phentsize;
+            program_headers.push(ProgramHeader {
+                kind: read_u32_at(bytes, offset)?,
+                flags: read_u32_at(bytes, offset + 4)?,
+                offset: read_u64_at(bytes, offset + 8)?,
+                filesz: read_u64_at(bytes, offset + 32)?,
+            });
+        }
+
+        Ok(Self {
+            bytes,
+            program_headers,
+        })
+    }
+
+    fn bytes_in_segment_with_flags(&self, needle: &[u8], flags: u32) -> bool {
+        self.program_headers
+            .iter()
+            .filter(|header| header.kind == PT_LOAD && header.flags == flags)
+            .any(|header| {
+                let start = header.offset as usize;
+                let end = start + header.filesz as usize;
+                self.bytes
+                    .get(start..end)
+                    .is_some_and(|segment| segment.windows(needle.len()).any(|win| win == needle))
+            })
+    }
+}
+
+fn read_u16_at(bytes: &[u8], offset: usize) -> Result<u16, String> {
+    let value = bytes
+        .get(offset..offset + 2)
+        .ok_or_else(|| format!("u16 out of bounds at {offset}"))?;
+    Ok(u16::from_le_bytes(value.try_into().unwrap()))
+}
+
+fn read_u32_at(bytes: &[u8], offset: usize) -> Result<u32, String> {
+    let value = bytes
+        .get(offset..offset + 4)
+        .ok_or_else(|| format!("u32 out of bounds at {offset}"))?;
+    Ok(u32::from_le_bytes(value.try_into().unwrap()))
+}
+
+fn read_u64_at(bytes: &[u8], offset: usize) -> Result<u64, String> {
+    let value = bytes
+        .get(offset..offset + 8)
+        .ok_or_else(|| format!("u64 out of bounds at {offset}"))?;
+    Ok(u64::from_le_bytes(value.try_into().unwrap()))
 }

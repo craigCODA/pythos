@@ -3,6 +3,7 @@ pub mod layout;
 pub mod lower;
 pub mod patch;
 pub mod runtime_layout;
+pub mod stubs;
 pub mod x86;
 
 pub type Result<T> = core::result::Result<T, CodegenError>;

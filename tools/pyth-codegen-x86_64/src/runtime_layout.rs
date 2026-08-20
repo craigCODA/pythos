@@ -16,6 +16,8 @@ pub const BOOTSTRAP_BUDGET_OFFSET: i32 =
     core::mem::offset_of!(PythGraphBootstrapBlock, instruction_budget) as i32;
 pub const BOOTSTRAP_RESULT_PTR_OFFSET: i32 =
     core::mem::offset_of!(PythGraphBootstrapBlock, result_ptr) as i32;
+pub const BOOTSTRAP_PACKAGE_PTR_OFFSET: i32 =
+    core::mem::offset_of!(PythGraphBootstrapBlock, package_ptr) as i32;
 pub const BOOTSTRAP_IMPORTS_OFFSET: i32 =
     core::mem::offset_of!(PythGraphBootstrapBlock, imports) as i32;
 

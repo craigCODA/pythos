@@ -201,6 +201,16 @@ impl CodeBuffer {
         Ok(())
     }
 
+    pub fn patch_u64(&mut self, offset: usize, value: u64) -> Result<()> {
+        let len = self.bytes.len();
+        let range = self
+            .bytes
+            .get_mut(offset..offset + 8)
+            .ok_or(CodegenError::PatchOutOfBounds { offset, len })?;
+        range.copy_from_slice(&value.to_le_bytes());
+        Ok(())
+    }
+
     pub fn mov_imm64(&mut self, dst: Register, immediate: u64) -> Result<()> {
         self.ensure_capacity(10)?;
         self.emit_rex(true, false, false, dst.rex_bit());
