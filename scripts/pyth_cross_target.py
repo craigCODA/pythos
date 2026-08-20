@@ -16,6 +16,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 PYTH_TIG_DIR = TARGET / "pyth-tig"
+PYTHTIG_CORE_TARGET = TARGET / "pythtig-phase2-core"
+PYTHTIG_CORE_ELF = (
+    PYTHTIG_CORE_TARGET
+    / "x86_64-unknown-none"
+    / "debug"
+    / "pythcore"
+)
 QEMU_TARGET = "qemu-q35"
 GENERIC_PHYSICAL_TARGETS = {"", "physical", "unknown", "generic"}
 HELLO_PACKAGE = PYTH_TIG_DIR / "hello.tig"
@@ -250,6 +257,8 @@ def build_pythtig_hello_image() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--target-dir",
+            str(PYTHTIG_CORE_TARGET),
             "--no-default-features",
             "--features",
             "pythtig-phase2-test",
@@ -260,7 +269,15 @@ def build_pythtig_hello_image() -> None:
     run([sys.executable, "scripts/build-pyth-runtime.py"])
     run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
     run([sys.executable, "scripts/build-pyth-graph.py"])
-    run([sys.executable, "scripts/build-image.py", "--with-pythtig"])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            "--with-pythtig",
+        ]
+    )
 
 
 def prepare_storage_image(path: Path) -> None:

@@ -28,6 +28,51 @@ This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
 ever disagree.
 
+## PythTIG CI Artifact Isolation Hotfix (2026-08-20)
+
+After the Phase 7 merge, the hosted one-shot PythTIG runtime job reported a
+QEMU panic before `PYTHOS:PYTHTIG:RUNTIME_TERMINATED`. The pasted CI serial log
+showed normal-init markers through
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` followed by `PYTHOS:PANIC`.
+
+The local reproducer built default-feature `pythos-core`, then built the
+no-default `pythtig-phase2-test` core, then packaged
+`scripts/build-image.py --with-pythtig`. That polluted-artifact sequence booted
+a normal/default core path and timed out without PythTIG runtime markers,
+proving the class of failure: the one-shot PythTIG harnesses were relying on
+Cargo's shared final binary path `target/x86_64-unknown-none/debug/pythcore`.
+
+The fix is build orchestration only. PythTIG one-shot harnesses build
+`pythos-core --no-default-features --features pythtig-phase2-test` into
+`target/pythtig-phase2-core` and package that exact ELF via
+`scripts/build-image.py --kernel`. This does not change the PythTIG package ABI,
+runtime ABI, marker contract, or boot semantics.
+
+Required regression evidence:
+
+```powershell
+python -m unittest tests.test_build_orchestration
+cargo build -p pythos-core --target x86_64-unknown-none
+python scripts/test-pyth-graph-runtime.py
+```
+
+PR #10 follow-up: the first hosted run after this fix proved the original
+runtime-panic signature was gone because `scripts/test-pyth-graph-runtime.py`
+completed with `PYTH_GRAPH_RUNTIME_TEST_OK` and emitted
+`PYTHOS:PYTHTIG:RUNTIME_TERMINATED`. That same run later showed a separate
+`scripts/test-pyth-graph-object-flow.py` status-1 observation after
+`PYTHOS:PYTHTIG:OBJECT_CREATED`; do not classify that later object-flow signal
+as the shared-core-artifact collision. If it recurs, investigate retained object
+checkpoint persistence after a successful create marker.
+
+The PythTIG one-shot control sector is a test harness selector, not a package
+ABI surface. `PYTHOS:PYTHTIG:CONTROL_READ_FAILED` remains fatal because the
+selected launch mode was not measured. `PYTHOS:PYTHTIG:CONTROL_CLEAR_FAILED`
+is nonfatal after a valid selector has already been read; it records that the
+best-effort stale-selector clear did not persist. A pre-substrate
+`PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED` marker identifies the
+other failure point between block-device readiness and PythTIG launch.
+
 ## Interface Model Correction (2026-08-05)
 
 ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,

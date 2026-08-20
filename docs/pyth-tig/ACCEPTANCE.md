@@ -60,6 +60,43 @@ attempts to clippy host-target user binaries and fails before lint analysis
 with the no-std panic/unwind configuration. Use the target-specific clippy
 commands above.
 
+## Build Artifact Isolation
+
+The one-shot PythTIG QEMU harnesses must build the `pythtig-phase2-test`
+PythCore binary into the dedicated Cargo target directory
+`target/pythtig-phase2-core` and package that exact ELF with
+`scripts/build-image.py --kernel target/pythtig-phase2-core/x86_64-unknown-none/debug/pythcore`.
+
+This avoids a CI artifact collision where an earlier default-feature
+`pythos-core` build and a later no-default PythTIG test build both write through
+Cargo's shared final binary path
+`target/x86_64-unknown-none/debug/pythcore`. If the PythTIG one-shot image
+packages the wrong binary, QEMU can enter the normal boot path and fail before
+`PYTHOS:PYTHTIG:RUNTIME_TERMINATED`; observed failure signatures include
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` followed by `PYTHOS:PANIC`, or a
+normal boot timeout with no PythTIG runtime markers.
+
+Host-side coverage for this contract lives in:
+
+```powershell
+python -m unittest tests.test_build_orchestration
+```
+
+The artifact-collision signature is fixed only when the one-shot runtime harness
+packages the isolated kernel and reaches `PYTHOS:PYTHTIG:RUNTIME_TERMINATED`.
+If a later object-flow run emits `PYTHOS:PYTHTIG:OBJECT_CREATED` and then exits
+with runtime status 1, treat that as a separate retained-object persistence
+investigation rather than evidence that the wrong kernel was packaged.
+
+The one-shot control sector is harness state. Failure to read it is fatal and
+is marked by `PYTHOS:PYTHTIG:CONTROL_READ_FAILED`; failure to clear an already
+read selector is nonfatal and is marked by
+`PYTHOS:PYTHTIG:CONTROL_CLEAR_FAILED`. A panic between
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` and
+`PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY` with
+`PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED` belongs to retained
+object-service restore, not to PythTIG package verification.
+
 ## Required Markers
 
 Default normal boot must include, in order:

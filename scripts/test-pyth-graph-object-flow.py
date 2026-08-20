@@ -13,6 +13,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 ESP = ROOT / "image" / "esp"
+PYTHTIG_CORE_TARGET = TARGET / "pythtig-phase2-core"
+PYTHTIG_CORE_ELF = (
+    PYTHTIG_CORE_TARGET
+    / "x86_64-unknown-none"
+    / "debug"
+    / "pythcore"
+)
 SECTOR_SIZE = 512
 STORAGE_SIZE_BYTES = 16 * 1024 * 1024
 CONTROL_SECTOR = 95
@@ -84,6 +91,8 @@ def build_boot_image() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--target-dir",
+            str(PYTHTIG_CORE_TARGET),
             "--no-default-features",
             "--features",
             "pythtig-phase2-test",
@@ -91,7 +100,15 @@ def build_boot_image() -> None:
     )
     build_verified_user_shell()
     build_pyth_graph_artifacts()
-    run([sys.executable, "scripts/build-image.py", "--with-pythtig-object-flow"])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(PYTHTIG_CORE_ELF),
+            "--with-pythtig-object-flow",
+        ]
+    )
 
 
 def prepare_fresh_storage_image(path: Path) -> None:

@@ -43,11 +43,13 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         {
             Ok(mode) => mode,
             Err(_) => {
+                serial::write_line("PYTHOS:PYTHTIG:CONTROL_READ_FAILED");
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
         };
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
+        serial::write_line("PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED");
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }

@@ -1030,8 +1030,9 @@ pub fn read_and_clear_pyth_graph_control_sector(
     let had_magic = &sector[0..8] == PYTH_GRAPH_CONTROL_MAGIC;
     let mode = decode_and_clear_pyth_graph_control_sector(&mut sector);
     if had_magic {
-        block_device::write_sector(device, PYTH_GRAPH_CONTROL_SECTOR, &sector)
-            .map_err(|_| PythRuntimeLaunchError::ControlSector)?;
+        if block_device::write_sector(device, PYTH_GRAPH_CONTROL_SECTOR, &sector).is_err() {
+            serial::write_line("PYTHOS:PYTHTIG:CONTROL_CLEAR_FAILED");
+        }
     }
     Ok(mode)
 }

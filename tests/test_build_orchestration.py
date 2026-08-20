@@ -139,6 +139,32 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn("pythtig-phase2-test", core_build)
         self.assertIn("--with-pythtig", package)
 
+    def test_pyth_graph_runtime_uses_isolated_test_core_artifact(self) -> None:
+        module = load_script("test-pyth-graph-runtime.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_boot_image()
+        module.rebuild_image_with_current_runtime()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        packages = [
+            command for command in normalized if "scripts/build-image.py" in command
+        ]
+        self.assertIn("--target-dir", core_build)
+        target_dir = core_build[core_build.index("--target-dir") + 1]
+        expected_kernel = (
+            f"{target_dir}/x86_64-unknown-none/debug/pythcore"
+        )
+        for package in packages:
+            self.assertIn("--kernel", package)
+            self.assertEqual(package[package.index("--kernel") + 1], expected_kernel)
+
     def test_pyth_graph_object_flow_uses_test_feature_and_opt_in_bundle(self) -> None:
         module = load_script("test-pyth-graph-object-flow.py")
         calls: list[list[object]] = []
@@ -159,6 +185,75 @@ class BuildOrchestrationTest(unittest.TestCase):
         )
         self.assertIn("pythtig-phase2-test", core_build)
         self.assertIn("--with-pythtig-object-flow", package)
+
+    def test_pyth_graph_object_flow_uses_isolated_test_core_artifact(self) -> None:
+        module = load_script("test-pyth-graph-object-flow.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_boot_image()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        package = next(
+            command for command in normalized if "scripts/build-image.py" in command
+        )
+        self.assertIn("--target-dir", core_build)
+        target_dir = core_build[core_build.index("--target-dir") + 1]
+        expected_kernel = f"{target_dir}/x86_64-unknown-none/debug/pythcore"
+        self.assertIn("--kernel", package)
+        self.assertEqual(package[package.index("--kernel") + 1], expected_kernel)
+
+    def test_pyth_native_codegen_uses_isolated_test_core_artifact(self) -> None:
+        module = load_script("test-pyth-native-codegen.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_base_artifacts()
+        module.build_interpreter_image("--with-pythtig")
+        module.build_native_image(Path("target/pyth-native/hello.elf"))
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        packages = [
+            command for command in normalized if "scripts/build-image.py" in command
+        ]
+        self.assertIn("--target-dir", core_build)
+        target_dir = core_build[core_build.index("--target-dir") + 1]
+        expected_kernel = f"{target_dir}/x86_64-unknown-none/debug/pythcore"
+        for package in packages:
+            self.assertIn("--kernel", package)
+            self.assertEqual(package[package.index("--kernel") + 1], expected_kernel)
+
+    def test_pyth_cross_target_uses_isolated_test_core_artifact(self) -> None:
+        module = load_script("pyth_cross_target.py")
+        calls: list[list[object]] = []
+        module.run = lambda command: calls.append(command) or ""
+
+        module.build_pythtig_hello_image()
+
+        normalized = [normalize(command) for command in calls]
+        core_build = next(
+            command
+            for command in normalized
+            if command[:4] == ["cargo", "build", "-p", "pythos-core"]
+        )
+        package = next(
+            command for command in normalized if "scripts/build-image.py" in command
+        )
+        self.assertIn("--target-dir", core_build)
+        target_dir = core_build[core_build.index("--target-dir") + 1]
+        expected_kernel = f"{target_dir}/x86_64-unknown-none/debug/pythcore"
+        self.assertIn("--kernel", package)
+        self.assertEqual(package[package.index("--kernel") + 1], expected_kernel)
 
     def test_pyth_graph_runtime_copies_source_esp_for_each_scenario(self) -> None:
         module = load_script("test-pyth-graph-runtime.py")
