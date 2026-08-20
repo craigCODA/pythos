@@ -346,6 +346,9 @@ fn build_shell_process(launch: &normal_init::PreparedShellLaunch) -> Result<Acti
 fn build_bootstrap_block(process: ActiveUserProcess) -> Result<BootstrapCapabilityBlock, ()> {
     let console = syscall::grant_console_capability(process).map_err(|_| ())?;
     let system_control = syscall::grant_system_control_capability(process).map_err(|_| ())?;
+    let task_control =
+        retained_services::with_task_service(|service| service.user_task_control_capability())
+            .map_err(|_| ())?;
     let (workspace, objects) = retained_services::with_object_service(|service| {
         let workspace = service.shell_workspace_capability();
         service
@@ -364,6 +367,7 @@ fn build_bootstrap_block(process: ActiveUserProcess) -> Result<BootstrapCapabili
         console,
         workspace,
         system_control,
+        task_control,
         objects,
     })
 }

@@ -13,7 +13,7 @@ use pythos_shared::object_shell_abi::PackedCapability;
 pub use pythos_shared::task_abi::{
     TASK_RIGHT_APPEND_EVENT, TASK_RIGHT_APPROVE_PROPOSAL, TASK_RIGHT_CONTROL_STATE,
     TASK_RIGHT_CREATE_PROPOSAL, TASK_RIGHT_READ_CONTEXT, TaskContextSummary, TaskProposalKind,
-    TaskStatus,
+    TaskProposalListEntry, TaskStatus,
 };
 
 const TASK_SERVICE_RESOURCE_RAW: u64 = 0x5453_4B53_5643_0001;
@@ -381,6 +381,36 @@ impl<'a> TaskService<'a> {
         )?;
         *self.objects = staged;
         Ok(())
+    }
+
+    pub fn list_pending_proposals(
+        &self,
+        caller: ActiveUserProcess,
+        authority: PackedCapability,
+        output: &mut [TaskProposalListEntry],
+    ) -> Result<usize, TaskServiceError> {
+        self.validate(caller, authority, TASK_RIGHT_APPROVE_PROPOSAL)?;
+        let mut count = 0usize;
+        for record in self.objects.task_service_objects().into_iter().flatten() {
+            if record.object_kind() != ObjectKind::TaskProposal || count >= output.len() {
+                continue;
+            }
+            let proposal = stored_proposal(self.objects, record.object_id().raw())?;
+            if proposal.status != PROPOSAL_STATUS_PENDING {
+                continue;
+            }
+            output[count] = TaskProposalListEntry {
+                status: proposal.status,
+                proposal_kind: proposal.kind.code(),
+                reserved0: 0,
+                proposal_id: record.object_id().raw(),
+                target_task_id: proposal.target_task_id,
+                candidate_task_id: proposal.candidate_task_id,
+                score: proposal.score,
+            };
+            count += 1;
+        }
+        Ok(count)
     }
 
     pub fn read_active_task(
@@ -1238,6 +1268,54 @@ mod tests {
         );
         assert_eq!(service.active_task_id(), Some(task_a.task_id));
         assert!(!service.task_exists_for_title(b"Semantic Task Runtime"));
+    }
+
+    #[test]
+    fn user_can_list_pending_proposals_but_steward_cannot() {
+        let mut service = TaskService::new_for_test();
+        let user = service.user_caller();
+        let steward = service.steward_caller();
+        let user_control = service.user_task_control_capability();
+        let steward_propose = service.steward_proposal_capability();
+        let task_a = service
+            .create_task(user, user_control, b"Universal Boot")
+            .unwrap();
+        let proposal = service
+            .create_proposal(
+                steward,
+                steward_propose,
+                TaskProposalKind::NewTask,
+                task_a.task_id,
+                0,
+                85,
+                b"Semantic Task Runtime",
+                b"recent context diverged",
+            )
+            .unwrap();
+        let mut output = [TaskProposalListEntry {
+            status: 0,
+            proposal_kind: 0,
+            reserved0: 0,
+            proposal_id: 0,
+            target_task_id: 0,
+            candidate_task_id: 0,
+            score: 0,
+        }; 4];
+
+        assert_eq!(
+            service
+                .list_pending_proposals(steward, steward_propose, &mut output)
+                .unwrap_err(),
+            TaskServiceError::Denied
+        );
+        let count = service
+            .list_pending_proposals(user, user_control, &mut output)
+            .unwrap();
+
+        assert_eq!(count, 1);
+        assert_eq!(output[0].proposal_id, proposal.proposal_id);
+        assert_eq!(output[0].target_task_id, task_a.task_id);
+        assert_eq!(output[0].score, 85);
     }
 
     #[test]

@@ -33,6 +33,8 @@ pub const TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID: u32 = 1;
 pub const TASK_CONTEXT_RESULT_CONFIDENCE_SCORE: u32 = 2;
 pub const TASK_CONTEXT_RESULT_PROPOSAL_KIND: u32 = 3;
 pub const TASK_CONTEXT_RESULT_REASON_UTF8: u32 = 4;
+pub const MAX_TASK_PROPOSAL_RESULTS: usize = 4;
+pub const TASK_REQUEST_SUSPEND_CURRENT: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
@@ -103,6 +105,28 @@ pub struct TaskResponse {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TaskEventInput {
+    pub tag_hash: u64,
+    pub object_kind: u16,
+    pub tool_domain: u16,
+    pub flags: u16,
+    pub reserved0: u16,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TaskProposalListEntry {
+    pub status: u16,
+    pub proposal_kind: u16,
+    pub reserved0: u32,
+    pub proposal_id: u64,
+    pub target_task_id: u64,
+    pub candidate_task_id: u64,
+    pub score: u64,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TaskContextSummary {
     pub active_task_id: u64,
     pub matching_suspended_task_id: u64,
@@ -157,8 +181,12 @@ mod tests {
         assert_eq!(OP_COMPLETE_TASK, 10);
         assert_eq!(OP_ABANDON_TASK, 11);
         assert_eq!(OP_READ_CONTEXT_SUMMARY, 12);
+        assert_eq!(MAX_TASK_PROPOSAL_RESULTS, 4);
+        assert_eq!(TASK_REQUEST_SUSPEND_CURRENT, 1);
         assert_eq!(core::mem::size_of::<TaskRequest>(), 96);
         assert_eq!(core::mem::size_of::<TaskResponse>(), 64);
+        assert_eq!(core::mem::size_of::<TaskEventInput>(), 16);
+        assert_eq!(core::mem::size_of::<TaskProposalListEntry>(), 40);
         assert_eq!(core::mem::size_of::<TaskContextSummary>(), 80);
     }
 
@@ -227,5 +255,36 @@ mod tests {
             core::mem::offset_of!(TaskContextSummary, source_event_ids),
             48
         );
+    }
+
+    #[test]
+    fn task_event_input_offsets_are_stable() {
+        assert_eq!(core::mem::align_of::<TaskEventInput>(), 8);
+        assert_eq!(core::mem::offset_of!(TaskEventInput, tag_hash), 0);
+        assert_eq!(core::mem::offset_of!(TaskEventInput, object_kind), 8);
+        assert_eq!(core::mem::offset_of!(TaskEventInput, tool_domain), 10);
+        assert_eq!(core::mem::offset_of!(TaskEventInput, flags), 12);
+        assert_eq!(core::mem::offset_of!(TaskEventInput, reserved0), 14);
+    }
+
+    #[test]
+    fn task_proposal_list_entry_offsets_are_stable() {
+        assert_eq!(core::mem::align_of::<TaskProposalListEntry>(), 8);
+        assert_eq!(core::mem::offset_of!(TaskProposalListEntry, status), 0);
+        assert_eq!(
+            core::mem::offset_of!(TaskProposalListEntry, proposal_kind),
+            2
+        );
+        assert_eq!(core::mem::offset_of!(TaskProposalListEntry, reserved0), 4);
+        assert_eq!(core::mem::offset_of!(TaskProposalListEntry, proposal_id), 8);
+        assert_eq!(
+            core::mem::offset_of!(TaskProposalListEntry, target_task_id),
+            16
+        );
+        assert_eq!(
+            core::mem::offset_of!(TaskProposalListEntry, candidate_task_id),
+            24
+        );
+        assert_eq!(core::mem::offset_of!(TaskProposalListEntry, score), 32);
     }
 }

@@ -23,6 +23,8 @@ use crate::service_identity::{ServiceId, ServiceIdentityTable};
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::system_api::{SystemApiError, SystemApiHost};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use crate::task_context::TaskContextEvent;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service::{self, TaskServiceError};
 use crate::tasks::TaskId;
 use crate::user_copy::UserCopyError;
@@ -57,10 +59,11 @@ use pythos_shared::pyth_runtime_abi::{
 use pythos_shared::pyth_runtime_abi::{SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::task_abi::{
-    OP_ABANDON_TASK, OP_APPEND_TASK_EVENT, OP_APPROVE_PROPOSAL, OP_COMPLETE_TASK,
-    OP_CREATE_PROPOSAL, OP_CREATE_TASK, OP_READ_ACTIVE_TASK, OP_READ_CONTEXT_SUMMARY,
-    OP_REJECT_PROPOSAL, OP_REVIVE_TASK, OP_SUSPEND_TASK, SYSCALL_TASK_REQUEST, TASK_ABI_MAJOR,
-    TASK_ABI_MINOR, TaskContextSummary, TaskRequest, TaskResponse,
+    MAX_TASK_PROPOSAL_RESULTS, OP_ABANDON_TASK, OP_APPEND_TASK_EVENT, OP_APPROVE_PROPOSAL,
+    OP_COMPLETE_TASK, OP_CREATE_PROPOSAL, OP_CREATE_TASK, OP_LIST_PROPOSALS, OP_READ_ACTIVE_TASK,
+    OP_READ_CONTEXT_SUMMARY, OP_REJECT_PROPOSAL, OP_REVIVE_TASK, OP_SUSPEND_TASK,
+    SYSCALL_TASK_REQUEST, TASK_ABI_MAJOR, TASK_ABI_MINOR, TASK_REQUEST_SUSPEND_CURRENT,
+    TaskContextSummary, TaskEventInput, TaskProposalListEntry, TaskRequest, TaskResponse,
 };
 
 pub const SYSCALL_ABI_MAJOR: u16 = 1;
@@ -88,8 +91,6 @@ const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00)
 const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 const PYTH_GRAPH_SYSTEM_LOG_RESOURCE: ResourceId = ResourceId::new(0x5059_5447_4C4F_4700);
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
-const TASK_REQUEST_SUSPEND_CURRENT: u64 = 1;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 const MAX_TASK_INPUT_BYTES: u64 = 64;
 const SYSCALL_MESSAGE_TYPE: u16 = 0x88;
@@ -827,6 +828,16 @@ fn dispatch_task_request_with_raw_buffers(
     } else {
         None
     };
+    let mut proposal_output = if request.operation == OP_LIST_PROPOSALS {
+        if request.output_len
+            < size_of::<[TaskProposalListEntry; MAX_TASK_PROPOSAL_RESULTS]>() as u64
+        {
+            return Ok(task_buffer_too_small_response());
+        }
+        Some(checked_task_proposal_output(copy_map, &request)?)
+    } else {
+        None
+    };
 
     let response = retained_services::with_task_service(|service| {
         dispatch_task_request_to_service(
@@ -835,6 +846,7 @@ fn dispatch_task_request_with_raw_buffers(
             request,
             input,
             context_output.as_deref_mut(),
+            proposal_output.as_deref_mut(),
         )
     })
     .map_err(SyscallError::from)?;
@@ -854,6 +866,7 @@ fn dispatch_task_request_to_service(
     request: TaskRequest,
     input: &[u8],
     context_output: Option<&mut TaskContextSummary>,
+    proposal_output: Option<&mut [TaskProposalListEntry]>,
 ) -> TaskResponse {
     match request.operation {
         OP_CREATE_TASK => match service.create_task(caller, request_authority(request), input) {
@@ -876,11 +889,26 @@ fn dispatch_task_request_to_service(
             Err(error) => task_error_response(error),
         },
         OP_APPEND_TASK_EVENT => {
-            match service.append_task_event(caller, request_authority(request), request.task_id) {
+            let active_task_id = service.active_task_id().unwrap_or(0);
+            let task_id = if request.task_id == 0 {
+                active_task_id
+            } else {
+                request.task_id
+            };
+            let result = if input.is_empty() {
+                service.append_task_event(caller, request_authority(request), task_id)
+            } else if let Some(event) = task_event_input_from_bytes(input) {
+                service
+                    .append_task_context_event(caller, request_authority(request), task_id, event)
+                    .map(|_| ())
+            } else {
+                return bad_task_response();
+            };
+            match result {
                 Ok(()) => TaskResponse {
                     status: STATUS_OK,
                     operation: request.operation,
-                    task_id: request.task_id,
+                    task_id,
                     active_task_id: service.active_task_id().unwrap_or(0),
                     ..empty_task_response()
                 },
@@ -908,6 +936,21 @@ fn dispatch_task_request_to_service(
                     proposal_id: proposal.proposal_id,
                     active_task_id: service.active_task_id().unwrap_or(0),
                     score: request.score,
+                    ..empty_task_response()
+                },
+                Err(error) => task_error_response(error),
+            }
+        }
+        OP_LIST_PROPOSALS => {
+            let Some(output) = proposal_output else {
+                return bad_task_response();
+            };
+            match service.list_pending_proposals(caller, request_authority(request), output) {
+                Ok(count) => TaskResponse {
+                    status: STATUS_OK,
+                    operation: request.operation,
+                    active_task_id: service.active_task_id().unwrap_or(0),
+                    bytes_written: (count * size_of::<TaskProposalListEntry>()) as u64,
                     ..empty_task_response()
                 },
                 Err(error) => task_error_response(error),
@@ -1066,6 +1109,73 @@ fn checked_task_context_output<'a>(
     // 7. Concurrency: one syscall is handled at a time in this slice.
     // 8. Violation: stale map state could corrupt caller memory.
     Ok(unsafe { &mut *output_ptr })
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn checked_task_proposal_output<'a>(
+    copy_map: &UserCopyMap,
+    request: &TaskRequest,
+) -> Result<&'a mut [TaskProposalListEntry], SyscallError> {
+    let output_len = size_of::<[TaskProposalListEntry; MAX_TASK_PROPOSAL_RESULTS]>() as u64;
+    validate_user_buffer(
+        copy_map,
+        request.output_ptr,
+        output_len,
+        align_of::<TaskProposalListEntry>(),
+        UserCopyAccess::Write,
+    )?;
+    let output_ptr = request.output_ptr as *mut TaskProposalListEntry;
+    // SAFETY:
+    // 1. Invariant: output_ptr names a writable fixed proposal-list buffer in
+    //    the active caller's validated user copy map.
+    // 2. Established by: output_len is checked against the exact bounded ABI
+    //    array size and UserCopyMap writable-range validation above.
+    // 3. Lifetime: the slice is used only before syscall return.
+    // 4. Pointer ownership: user space owns the buffer; PythCore writes only
+    //    the bounded proposal-list records and retains no pointer.
+    // 5. Alignment: checked against TaskProposalListEntry alignment.
+    // 6. Mapped length: the full fixed list buffer size was validated.
+    // 7. Concurrency: one shell/runtime syscall is handled at a time here.
+    // 8. Violation: stale map state could corrupt caller memory.
+    Ok(unsafe { slice::from_raw_parts_mut(output_ptr, MAX_TASK_PROPOSAL_RESULTS) })
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn task_event_input_from_bytes(input: &[u8]) -> Option<TaskContextEvent> {
+    if input.len() != size_of::<TaskEventInput>() {
+        return None;
+    }
+    let tag_hash = read_u64_input(input, 0)?;
+    let object_kind = read_u16_input(input, 8)?;
+    let tool_domain = read_u16_input(input, 10)?;
+    let flags = read_u16_input(input, 12)?;
+    let reserved0 = read_u16_input(input, 14)?;
+    if reserved0 != 0 {
+        return None;
+    }
+    Some(TaskContextEvent::new(0, object_kind, tool_domain, tag_hash).with_flags(flags))
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn read_u16_input(input: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_le_bytes([
+        *input.get(offset)?,
+        *input.get(offset + 1)?,
+    ]))
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn read_u64_input(input: &[u8], offset: usize) -> Option<u64> {
+    Some(u64::from_le_bytes([
+        *input.get(offset)?,
+        *input.get(offset + 1)?,
+        *input.get(offset + 2)?,
+        *input.get(offset + 3)?,
+        *input.get(offset + 4)?,
+        *input.get(offset + 5)?,
+        *input.get(offset + 6)?,
+        *input.get(offset + 7)?,
+    ]))
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -1998,8 +2108,9 @@ mod tests {
         ObjectShellResponse, STATUS_DENIED, STATUS_OK,
     };
     use pythos_shared::task_abi::{
-        OP_CREATE_TASK, OP_READ_ACTIVE_TASK, TASK_ABI_MAJOR, TASK_ABI_MINOR, TaskRequest,
-        TaskResponse,
+        MAX_TASK_PROPOSAL_RESULTS, OP_APPEND_TASK_EVENT, OP_CREATE_PROPOSAL, OP_CREATE_TASK,
+        OP_LIST_PROPOSALS, OP_READ_ACTIVE_TASK, TASK_ABI_MAJOR, TASK_ABI_MINOR, TaskEventInput,
+        TaskProposalKind, TaskProposalListEntry, TaskRequest, TaskResponse,
     };
 
     static EXPECTED_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -2543,6 +2654,106 @@ mod tests {
     }
 
     #[test]
+    fn task_request_appends_context_event_to_active_task() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let (user_control, task_id) = retained_services::with_task_service(|service| {
+            let authority = service.user_task_control_capability();
+            let created = service
+                .create_task(shell, authority, b"Universal Boot")
+                .unwrap();
+            (authority, created.task_id)
+        })
+        .unwrap();
+        let input = Box::new(TaskEventInput {
+            tag_hash: 0x5059_5448,
+            object_kind: crate::task_context::object_kind_code(ObjectKind::Task),
+            tool_domain: crate::task_context::TOOL_DOMAIN_GRAPH,
+            flags: 0,
+            reserved0: 0,
+        });
+        let mut request = Box::new(task_request(
+            OP_APPEND_TASK_EVENT,
+            user_control,
+            task_event_input_bytes(&input),
+        ));
+        request.task_id = 0;
+        let mut response = Box::new(empty_task_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &*response, true, true);
+        map_value(&mut copy_map, &*input, true, false);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_task_request(task_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.task_id, task_id);
+        let summary = retained_services::with_task_service(|service| {
+            service.read_context_summary(shell, user_control).unwrap()
+        })
+        .unwrap();
+        assert_eq!(summary.event_count, 1);
+        assert_eq!(summary.candidate_tag_hash, 0x5059_5448);
+    }
+
+    #[test]
+    fn task_request_lists_pending_proposals_to_output_buffer() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let (user_control, proposal_id) = retained_services::with_task_service(|service| {
+            let user_control = service.user_task_control_capability();
+            let steward = service.steward_caller();
+            let steward_propose = service.steward_proposal_capability();
+            let task = service
+                .create_task(shell, user_control, b"Universal Boot")
+                .unwrap();
+            let proposal = service
+                .create_proposal(
+                    steward,
+                    steward_propose,
+                    TaskProposalKind::NewTask,
+                    task.task_id,
+                    0,
+                    85,
+                    b"Semantic Task Runtime",
+                    b"recent context diverged",
+                )
+                .unwrap();
+            (user_control, proposal.proposal_id)
+        })
+        .unwrap();
+        let mut request = Box::new(task_request(OP_LIST_PROPOSALS, user_control, &[]));
+        let mut response = Box::new(empty_task_test_response());
+        let mut output = Box::new(empty_task_proposal_output());
+        request.output_ptr = output.as_mut_ptr() as u64;
+        request.output_len = size_of::<[TaskProposalListEntry; MAX_TASK_PROPOSAL_RESULTS]>() as u64;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &*response, true, true);
+        map_slice(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_task_request(task_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(
+            response.bytes_written,
+            size_of::<TaskProposalListEntry>() as u64
+        );
+        assert_eq!(output[0].proposal_id, proposal_id);
+        assert_eq!(output[0].score, 85);
+    }
+
+    #[test]
     fn task_request_denies_steward_create_with_proposal_capability() {
         let mut service = ObjectService::new_for_test();
         let steward = crate::task_service::steward_process();
@@ -2701,6 +2912,33 @@ mod tests {
             reserved1: 0,
             reserved2: 0,
         }
+    }
+
+    const fn empty_task_proposal_output() -> [TaskProposalListEntry; MAX_TASK_PROPOSAL_RESULTS] {
+        [TaskProposalListEntry {
+            status: 0,
+            proposal_kind: 0,
+            reserved0: 0,
+            proposal_id: 0,
+            target_task_id: 0,
+            candidate_task_id: 0,
+            score: 0,
+        }; MAX_TASK_PROPOSAL_RESULTS]
+    }
+
+    fn task_event_input_bytes(input: &TaskEventInput) -> &[u8] {
+        let ptr = input as *const TaskEventInput as *const u8;
+        // SAFETY:
+        // 1. Invariant: `input` is a live TaskEventInput value.
+        // 2. Established by: the caller passes a reference to a stack/box
+        //    value that outlives the returned slice in the test.
+        // 3. Lifetime: the returned bytes are used only while `input` lives.
+        // 4. Pointer ownership: the test owns `input`; this borrows bytes.
+        // 5. Alignment: u8 has no stricter alignment.
+        // 6. Mapped length: exactly size_of::<TaskEventInput>() bytes.
+        // 7. Concurrency: unit test is single-threaded for this value.
+        // 8. Violation: a stale reference would make the syscall test invalid.
+        unsafe { core::slice::from_raw_parts(ptr, size_of::<TaskEventInput>()) }
     }
 
     fn task_args(request: &TaskRequest, response: &mut TaskResponse) -> SyscallArgs {

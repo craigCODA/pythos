@@ -61,6 +61,21 @@ capability; `query` returns fixed `ObjectListEntry { object_id, capability }`
 records; the shell stores those capabilities in a bounded shell-side map before
 `inspect`, `revise`, or `history`.
 
+The PythTIG Task Steward extension amends the bootstrap block at object-shell
+ABI minor version 1 by adding one user task-control capability. This capability
+is minted for the shell principal and is the only bootstrap authority that may
+create tasks, approve or reject proposals, or change task state. Task Steward
+graph runtimes never receive this bootstrap block; they continue to use the
+Pyth graph bootstrap ABI and receive only read-context/create-proposal task
+rights through their manifest policy.
+
+The user shell parses `task ...` and `proposal ...` command text into typed
+`TaskRequest` values for `SYSCALL_TASK_REQUEST`. `task event` carries a fixed
+binary `TaskEventInput`, and `proposal list` receives bounded
+`TaskProposalListEntry` records. PythCore still does not parse human command
+text, and semantic relevance or proposal score still cannot create task
+authority.
+
 Workspace authority is reconstructed from durable object relationships:
 
 ```text
