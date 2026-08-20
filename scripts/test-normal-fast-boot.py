@@ -85,7 +85,7 @@ def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
     build_verified_user_shell()
     build_pyth_graph_artifacts()
-    run([sys.executable, "scripts/build-image.py"])
+    run([sys.executable, "scripts/build-image.py", "--with-pythtig-default-services"])
 
 
 def main() -> int:

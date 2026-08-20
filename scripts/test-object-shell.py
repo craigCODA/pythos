@@ -198,9 +198,9 @@ def build_boot_image(config: BackendConfig) -> None:
     build_verified_user_shell()
     build_pyth_graph_artifacts()
     if config.build_iso:
-        run([sys.executable, "scripts/build-iso.py"])
+        run([sys.executable, "scripts/build-iso.py", "--with-pythtig-default-services"])
     else:
-        run([sys.executable, "scripts/build-image.py"])
+        run([sys.executable, "scripts/build-image.py", "--with-pythtig-default-services"])
 
 
 def terminate_process_tree(process: subprocess.Popen[str]) -> None:

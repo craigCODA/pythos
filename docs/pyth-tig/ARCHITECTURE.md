@@ -25,6 +25,10 @@ version behavior, canonicalization, checksum behavior, and verifier error
 identities. An incompatible byte-format change requires a new accepted ADR and a
 new major package version.
 
+ADR 0068 records the compatible version 1.1 command ABI extension and the Phase
+7 service package admission contract. It does not mutate the version 1.0 freeze
+baseline in place.
+
 ## Authority Boundary
 
 PythCore is the privileged capability and hardware substrate. It accepts only
@@ -45,9 +49,14 @@ authoritative task state. AI remains outside the trusted core.
 ## Normal Boot
 
 Phase 7 makes the Pyth-native service composition the normal boot layer. Normal
-boot launches the session-manager graph, binds validated shell/task authority to
-the retained object and task services, launches Task Steward, and reports
-default-service readiness through the PythTIG marker contract.
+boot validates and admits the session-manager and Task Steward graph packages
+from `INIT.PAK`, checks their expected service principals, binds readiness to
+the retained object and task service surface, and reports default-service
+readiness through the PythTIG marker contract.
+
+This is not a claim that Phase 7 has a long-lived independent graph-service
+daemon scheduler. The compatibility shell remains the persistent interactive
+process while default Pyth service package admission and readiness are proved.
 
 The Rust object shell remains in the image as a maintenance fallback selected by
 the `legacy-shell` build feature and as the recovery shell entered after a

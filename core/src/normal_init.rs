@@ -9,8 +9,12 @@
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
 use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
+#[cfg(feature = "pyth-tig-default")]
+use crate::pyth_graph_loader;
 #[cfg(feature = "pythtig-phase2-test")]
 use crate::pyth_runtime_launch;
+#[cfg(feature = "pyth-tig-default")]
+use crate::pyth_service_supervisor::{self, ServiceKind, ServicePackageAdmission};
 use crate::{
     architecture, kernel_stacks, runtime_loader, serial, syscall, tasks, user_elf, user_stacks,
 };
@@ -28,6 +32,10 @@ pub struct NormalBootSubstrate {
     pub kernel_address_space: KernelAddressSpace,
     pub block_device: BlockDeviceInfo,
     pub shell_launch: PreparedShellLaunch,
+    #[cfg(feature = "pyth-tig-default")]
+    pub session_manager_service_package: ServicePackageAdmission,
+    #[cfg(feature = "pyth-tig-default")]
+    pub task_steward_service_package: ServicePackageAdmission,
     #[cfg(feature = "pythtig-phase2-test")]
     pub pyth_runtime_launch: Option<&'static pyth_runtime_launch::PreparedPythRuntimeLaunch>,
     #[cfg(feature = "pythtig-phase2-test")]
@@ -128,6 +136,7 @@ pub enum NormalInitError {
     ShellProgram,
     ShellAddressSpace,
     ShellBootstrap,
+    DefaultServiceGraphPackage,
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
@@ -321,6 +330,20 @@ pub fn initialize_normal_substrate(
         bootstrap_kernel_ptr: bootstrap_frame,
         stack_region: user_stacks::regions()[0],
     };
+    #[cfg(feature = "pyth-tig-default")]
+    let session_manager_service_package = admit_default_service_package(
+        boot_info,
+        ServiceKind::SessionManager,
+        pyth_service_supervisor::SESSION_MANAGER_GRAPH_NAME,
+        pyth_service_supervisor::SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+    )?;
+    #[cfg(feature = "pyth-tig-default")]
+    let task_steward_service_package = admit_default_service_package(
+        boot_info,
+        ServiceKind::TaskSteward,
+        pyth_service_supervisor::TASK_STEWARD_GRAPH_NAME,
+        pyth_service_supervisor::TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+    )?;
     #[cfg(feature = "pythtig-phase2-test")]
     let pyth_runtime_launch = store_pyth_runtime_launch(
         &PYTH_RUNTIME_LAUNCH_SLOT,
@@ -548,6 +571,10 @@ pub fn initialize_normal_substrate(
         kernel_address_space,
         block_device,
         shell_launch,
+        #[cfg(feature = "pyth-tig-default")]
+        session_manager_service_package,
+        #[cfg(feature = "pyth-tig-default")]
+        task_steward_service_package,
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_runtime_launch,
         #[cfg(feature = "pythtig-phase2-test")]
@@ -607,4 +634,25 @@ fn initialize_task_process_and_kernel_stack_state(
 #[cfg(not(test))]
 fn initialize_guarded_user_stack_pool() -> Result<(), NormalInitError> {
     user_stacks::initialize().map_err(|_| NormalInitError::UserStacks)
+}
+
+#[cfg(feature = "pyth-tig-default")]
+fn admit_default_service_package(
+    boot_info: &'static PythBootInfo,
+    service: ServiceKind,
+    graph_name: &[u8],
+    expected_principal_id: u64,
+) -> Result<ServicePackageAdmission, NormalInitError> {
+    let graph = pyth_graph_loader::load_named_pyth_graph_for_admission(boot_info, graph_name)
+        .map_err(|_| NormalInitError::DefaultServiceGraphPackage)?;
+    if graph.manifest.principal_id() != expected_principal_id {
+        return Err(NormalInitError::DefaultServiceGraphPackage);
+    }
+    Ok(ServicePackageAdmission::new(
+        service,
+        expected_principal_id,
+        graph.manifest.package_digest(),
+        graph.verified.package().header().node_count,
+        graph.verified.package().header().block_count,
+    ))
 }

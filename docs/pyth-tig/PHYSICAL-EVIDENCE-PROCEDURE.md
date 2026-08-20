@@ -69,7 +69,10 @@ When the evidence terminal is the capture path, include:
 The verifier prints `PYTH_PHYSICAL_LOG_VERIFY_OK` only after the log matches the
 manifest package hash/digest, required marker order, backend selection marker,
 runtime exit status, forbidden-marker absence, raw-log SHA-256 recording, and
-the evidence-terminal zero-drop rule when requested.
+the evidence-terminal zero-drop rule when requested. `--target-id` must name the
+exact machine/controller; generic values such as `physical` or `unknown` are
+rejected. The requested backend must also be listed in the manifest's accepted
+backend markers.
 
 ## Claim Boundary
 

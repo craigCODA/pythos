@@ -66,7 +66,6 @@ def build_manifest(package_path: Path, control_image: Path) -> dict:
     expected_markers = [
         "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
         "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
-        "PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY",
         f"PYTHOS:PYTHTIG:PACKAGE_VALID package:{package_digest}",
         f"PYTHOS:PYTHTIG:RUNTIME_ENTER package:{package_digest}",
         "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",

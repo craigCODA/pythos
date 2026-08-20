@@ -1,11 +1,12 @@
 # PythOS Handover
 
 Current PythTIG branch boundary: `agent/pythtig-phase7-cutover-cross-target`
-contains the Phase 7 cutover/cross-target work. Normal boot now launches the
-Pyth-native session-manager/default-service composition; the Rust object shell
-is retained through `legacy-shell` and recovery after a contained default
-service fault. Phase 7 also adds QEMU virtio/AHCI unchanged-package comparison
-and physical-target preparation/import-verification tooling.
+contains the Phase 7 cutover/cross-target work. Normal boot now admits the
+Pyth-native session-manager/default-service graph packages before readiness;
+the Rust object shell is retained through `legacy-shell` and recovery after a
+contained default service fault. Phase 7 also adds QEMU virtio/AHCI
+unchanged-package comparison and physical-target preparation/import-verification
+tooling.
 
 The pre-Phase-7 `main` boundary remains: ADR 0063 physical evidence terminal is
 implemented on `main` from the former `agent/physical-evidence-terminal` line
@@ -365,9 +366,10 @@ and AI.
 
 ## Real-Hardware Boot Status (2026-07-25)
 
-PythOS now boots on real UEFI hardware, not only QEMU. A laptop boots a USB all
-the way to the milestone-1 cinematic wake screen (`PythOS [HISS] We Are Woken`).
-See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-boot*`.
+PythOS has target-specific real UEFI boot evidence, not only QEMU evidence. The
+recorded Phase 11 laptop run booted a USB image to the milestone-1 cinematic
+wake screen (`PythOS [HISS] We Are Woken`) on that named target only. See ADR
+0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-boot*`.
 
 - The loader identity-maps the low 512 GiB (1 GiB huge pages) so machines that
   load the loader / boot structures above 4 GiB survive the `CR3` handoff.
@@ -376,7 +378,8 @@ See ADR 0046 and `docs/superpowers/{specs,plans}/2026-07-24-real-hardware-usb-bo
   less machine the last color shown localizes how far boot reached.
 - Known-deferred: one desktop still stops at the loader's magenta pre-handoff
   color; the 512 GiB map is the leading fix but is unverified on that box. The
-  laptop is the working real-hardware oracle for now.
+  recorded laptop evidence is the working target-specific real-hardware oracle
+  for that branch note, not a generic hardware-support claim.
 - Secure Boot must stay disabled (loader is unsigned). Diagnostic paints fire on
   every boot, including successful ones; gating them to failures is a follow-up.
 

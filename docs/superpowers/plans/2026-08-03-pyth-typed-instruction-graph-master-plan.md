@@ -128,7 +128,9 @@ Run from a clean worktree after all merges:
 ```powershell
 cargo fmt --all -- --check
 cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
+cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 python scripts\test-boot.py
 python scripts\test-persistent-storage.py
 python scripts\test-normal-fast-boot.py

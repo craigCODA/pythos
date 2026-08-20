@@ -26,6 +26,13 @@ STORAGE_IMAGE = TARGET / "pyth-default-boot-store.img"
 RECOVERY_SERIAL_LOG = TARGET / "pyth-default-recovery-com1.log"
 RECOVERY_STORAGE_IMAGE = TARGET / "pyth-default-recovery-store.img"
 SHELL_PORT = 4591
+SERVICE_PACKAGE_ADMITTED_RE = re.compile(
+    r"^PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED "
+    r"service:(session-manager|task-steward) "
+    r"package:([0-9A-F]{16}) principal:([0-9A-F]{16}) "
+    r"nodes:(\d+) blocks:(\d+)$",
+    re.MULTILINE,
+)
 
 
 def run(command: list[str]) -> str:
@@ -170,6 +177,30 @@ def require_ordered_markers(serial: str, markers: list[str]) -> None:
         cursor = index
 
 
+def require_service_package_admission(
+    serial: str, service: str, principal_id: str
+) -> str:
+    matches = [
+        match
+        for match in SERVICE_PACKAGE_ADMITTED_RE.finditer(serial)
+        if match.group(1) == service
+    ]
+    if not matches:
+        raise AssertionError(f"missing service package admission for {service}")
+    for match in matches:
+        nodes = int(match.group(4))
+        blocks = int(match.group(5))
+        if match.group(3) != principal_id:
+            raise AssertionError(
+                f"unexpected principal for {service}: {match.group(3)}"
+            )
+        if nodes <= 0 or blocks <= 0:
+            raise AssertionError(
+                f"admission for {service} did not prove package shape: {match.group(0)}"
+            )
+    return matches[0].group(2)
+
+
 def drive_boot_and_reboot() -> None:
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
@@ -211,12 +242,18 @@ def drive_boot_and_reboot() -> None:
                 serial,
                 [
                     "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
+                    "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:session-manager",
                     "PYTHOS:PYTHTIG:SESSION_MANAGER_READY",
+                    "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:task-steward",
                     "PYTHOS:PYTHTIG:TASK_STEWARD_READY",
                     "PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY",
                     "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY",
                 ],
             )
+            require_service_package_admission(
+                serial, "session-manager", "50595448534D0001"
+            )
+            require_service_package_admission(serial, "task-steward", "5059544853540001")
             launcher_click.click_launcher_tile()
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 30)
             initial = read_until(sock, b"pyth> ", 10)
@@ -246,6 +283,18 @@ def drive_boot_and_reboot() -> None:
             wait_for_marker_count(SERIAL_LOG, "PYTHOS:LOADER:ENTER", 2, 30)
             wait_for_marker_count(
                 SERIAL_LOG, "PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY", 2, 30
+            )
+            wait_for_marker_count(
+                SERIAL_LOG,
+                "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:session-manager",
+                2,
+                30,
+            )
+            wait_for_marker_count(
+                SERIAL_LOG,
+                "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:task-steward",
+                2,
+                30,
             )
             wait_for_marker_count(
                 SERIAL_LOG, "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY", 2, 30
@@ -315,11 +364,15 @@ def drive_recovery_boot() -> None:
                 serial,
                 [
                     "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
+                    "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:session-manager",
                     "PYTHOS:CORE:CRASH:USER_FAULT",
                     "PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED service:session-manager",
                     "PYTHOS:PYTHTIG:RECOVERY_SHELL_ENTER",
                     "PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY",
                 ],
+            )
+            require_service_package_admission(
+                serial, "session-manager", "50595448534D0001"
             )
             launcher_click.click_launcher_tile()
             wait_for_file_marker(RECOVERY_SERIAL_LOG, "PYTHOS:SHELL:RING3_ENTER", 30)

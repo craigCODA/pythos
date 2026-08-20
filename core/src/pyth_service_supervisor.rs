@@ -1,3 +1,8 @@
+pub const SESSION_MANAGER_GRAPH_NAME: &[u8] = b"session-manager.tig";
+pub const TASK_STEWARD_GRAPH_NAME: &[u8] = b"task-steward.tig";
+pub const SESSION_MANAGER_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
+pub const TASK_STEWARD_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_5354_0001;
+pub const SERVICE_PACKAGE_ADMITTED_MARKER_PREFIX: &str = "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED";
 pub const SESSION_MANAGER_READY_MARKER: &str = "PYTHOS:PYTHTIG:SESSION_MANAGER_READY";
 pub const TASK_STEWARD_READY_MARKER: &str = "PYTHOS:PYTHTIG:TASK_STEWARD_READY";
 pub const DEFAULT_SERVICES_READY_MARKER: &str = "PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY";
@@ -47,6 +52,40 @@ pub enum ServiceKind {
 pub enum GraphExitStatus {
     Ok,
     Fault,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ServicePackageAdmission {
+    pub service: ServiceKind,
+    pub principal_id: u64,
+    pub package_digest: u64,
+    pub node_count: u32,
+    pub block_count: u32,
+}
+
+impl ServicePackageAdmission {
+    pub const fn new(
+        service: ServiceKind,
+        principal_id: u64,
+        package_digest: u64,
+        node_count: u32,
+        block_count: u32,
+    ) -> Self {
+        Self {
+            service,
+            principal_id,
+            package_digest,
+            node_count,
+            block_count,
+        }
+    }
+
+    pub const fn service_name(&self) -> &'static str {
+        match self.service {
+            ServiceKind::SessionManager => "session-manager",
+            ServiceKind::TaskSteward => "task-steward",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -163,6 +202,10 @@ mod tests {
         assert!(!supervisor.service_faulted(ServiceKind::TaskSteward));
 
         assert_eq!(
+            SERVICE_PACKAGE_ADMITTED_MARKER_PREFIX,
+            "PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED"
+        );
+        assert_eq!(
             SESSION_MANAGER_READY_MARKER,
             "PYTHOS:PYTHTIG:SESSION_MANAGER_READY"
         );
@@ -186,5 +229,24 @@ mod tests {
             RECOVERY_SHELL_ENTER_MARKER,
             "PYTHOS:PYTHTIG:RECOVERY_SHELL_ENTER"
         );
+    }
+
+    #[test]
+    fn service_package_admission_records_identity_and_shape() {
+        let admission = ServicePackageAdmission::new(
+            ServiceKind::SessionManager,
+            SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+            0xAABB_CCDD_EEFF_0011,
+            12,
+            3,
+        );
+
+        assert_eq!(admission.service_name(), "session-manager");
+        assert_eq!(admission.principal_id, SESSION_MANAGER_GRAPH_PRINCIPAL_ID);
+        assert_eq!(admission.package_digest, 0xAABB_CCDD_EEFF_0011);
+        assert_eq!(admission.node_count, 12);
+        assert_eq!(admission.block_count, 3);
+        assert_eq!(TASK_STEWARD_GRAPH_NAME, b"task-steward.tig");
+        assert_eq!(TASK_STEWARD_GRAPH_PRINCIPAL_ID, 0x5059_5448_5354_0001);
     }
 }

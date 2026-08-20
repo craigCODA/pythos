@@ -60,7 +60,7 @@ evidence from the accepted branch.
 
 - [ ] `cargo fmt --all -- --check`
 - [ ] `cargo test --workspace`
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] Target-specific no-std clippy gates for PythCore verify, PythCore verify plus SDHCI/eMMC, and UEFI boot pass with `-D warnings`.
 - [ ] Every command in `acceptance/test-matrix.md` exits zero with its exact success line.
 - [ ] Final whole-program reviewer returns `MERGE READY` with no load-bearing gap.
 - [ ] Public documentation maps each claim to exact evidence and lists exclusions.

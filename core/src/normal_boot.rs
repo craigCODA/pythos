@@ -9,7 +9,8 @@ use crate::memory::physical::PhysicalMemory;
 #[cfg(feature = "pythtig-phase2-test")]
 use crate::pyth_runtime_launch;
 use crate::pyth_service_supervisor::{
-    GraphExitStatus, NormalProgram, PythServiceSupervisor, ServiceKind, SupervisorAction,
+    GraphExitStatus, NormalProgram, PythServiceSupervisor, ServiceKind, ServicePackageAdmission,
+    SupervisorAction,
 };
 use crate::{
     audio, boot_assets, cinematic_boot, framebuffer, launcher_screen, normal_init,
@@ -54,7 +55,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 
     match pyth_service_supervisor::normal_program() {
         NormalProgram::PythServices => {
-            if run_default_pyth_services().is_err() {
+            if run_selected_pyth_services(&substrate).is_err() {
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
@@ -286,11 +287,41 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 }
 
 #[cfg(not(test))]
-fn run_default_pyth_services() -> Result<(), ()> {
+#[cfg(feature = "pyth-tig-default")]
+fn run_selected_pyth_services(substrate: &normal_init::NormalBootSubstrate) -> Result<(), ()> {
+    run_default_pyth_services(
+        substrate.session_manager_service_package,
+        substrate.task_steward_service_package,
+    )
+}
+
+#[cfg(not(test))]
+#[cfg(not(feature = "pyth-tig-default"))]
+fn run_selected_pyth_services(_substrate: &normal_init::NormalBootSubstrate) -> Result<(), ()> {
+    Err(())
+}
+
+#[cfg(not(test))]
+fn run_default_pyth_services(
+    session_manager_package: ServicePackageAdmission,
+    task_steward_package: ServicePackageAdmission,
+) -> Result<(), ()> {
     let mut supervisor = PythServiceSupervisor::new(
         cfg!(feature = "legacy-shell") || cfg!(feature = "pyth-tig-session-manager-fault-test"),
     );
+    if !service_package_matches(
+        session_manager_package,
+        ServiceKind::SessionManager,
+        pyth_service_supervisor::SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+    ) || !service_package_matches(
+        task_steward_package,
+        ServiceKind::TaskSteward,
+        pyth_service_supervisor::TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+    ) {
+        return Err(());
+    }
 
+    emit_service_package_admitted_marker(session_manager_package);
     if cfg!(feature = "pyth-tig-session-manager-fault-test") {
         serial::write_line("PYTHOS:CORE:CRASH:USER_FAULT");
         supervisor.record_exit(ServiceKind::SessionManager, GraphExitStatus::Fault);
@@ -308,6 +339,7 @@ fn run_default_pyth_services() -> Result<(), ()> {
         return Err(());
     }
 
+    emit_service_package_admitted_marker(task_steward_package);
     serial::write_line(pyth_service_supervisor::TASK_STEWARD_READY_MARKER);
     supervisor.record_exit(ServiceKind::TaskSteward, GraphExitStatus::Ok);
     if supervisor.service_faulted(ServiceKind::TaskSteward) {
@@ -316,6 +348,35 @@ fn run_default_pyth_services() -> Result<(), ()> {
 
     serial::write_line(pyth_service_supervisor::DEFAULT_SERVICES_READY_MARKER);
     Ok(())
+}
+
+#[cfg(not(test))]
+fn service_package_matches(
+    admission: ServicePackageAdmission,
+    expected_service: ServiceKind,
+    expected_principal_id: u64,
+) -> bool {
+    admission.service == expected_service
+        && admission.principal_id == expected_principal_id
+        && admission.package_digest != 0
+        && admission.node_count != 0
+        && admission.block_count != 0
+}
+
+#[cfg(not(test))]
+fn emit_service_package_admitted_marker(admission: ServicePackageAdmission) {
+    serial::write_str(pyth_service_supervisor::SERVICE_PACKAGE_ADMITTED_MARKER_PREFIX);
+    serial::write_str(" service:");
+    serial::write_str(admission.service_name());
+    serial::write_str(" package:");
+    serial::write_hex_u64_value(admission.package_digest);
+    serial::write_str(" principal:");
+    serial::write_hex_u64_value(admission.principal_id);
+    serial::write_str(" nodes:");
+    serial::write_dec_u64_value(u64::from(admission.node_count));
+    serial::write_str(" blocks:");
+    serial::write_dec_u64_value(u64::from(admission.block_count));
+    serial::write_str("\r\n");
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]

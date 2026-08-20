@@ -1,7 +1,7 @@
 # ADR 0065: Pyth Graph Package ABI
 
 Date: 2026-08-04
-Status: Accepted; PythTIG version 1 ABI frozen 2026-08-08
+Status: Accepted; PythTIG version 1.0 ABI frozen 2026-08-08; compatible minor 1 extension recorded by ADR 0068
 
 ## Context
 
@@ -103,11 +103,11 @@ The version 1 primitive type set is:
 The version 1 opcode families cover structural nodes, constants, pure
 arithmetic/boolean operations, control terminators, and typed host operations
 for system logging, object operations, task/proposal operations, graph
-relationship queries, relevance assertions, capability requests, and later
-command input/result operations.
+relationship queries, relevance assertions, capability requests, and the
+command input/result operations assigned by ADR 0068.
 
-Minor version 1 adds the command input/result family without changing existing
-major-version-1 record layouts:
+ADR 0068 assigns minor version 1 to the command input/result family without
+changing existing major-version-1 record layouts:
 
 ```text
 0x1500 CommandRead
@@ -177,9 +177,10 @@ Reserved fields must be zero unless a later accepted ADR assigns them.
 
 Record sizes, offsets, numeric type IDs, opcode IDs, limits, verifier error
 identities, version behavior, canonicalization, and checksum behavior are the
-stable PythTIG version 1 ABI. The owner froze this ABI on 2026-08-08 after the
-host-side encoder, decoder, verifier, canonical-format tests, and deterministic
-negative mutation corpus passed against real packages. An incompatible change
+stable PythTIG version 1.0 ABI. The owner froze this baseline on 2026-08-08
+after the host-side encoder, decoder, verifier, canonical-format tests, and
+deterministic negative mutation corpus passed against real packages. ADR 0068
+records the compatible version 1.1 command extension. An incompatible change
 requires a new accepted ADR and a new major package version; it must not be
 silently introduced under major version 1.
 

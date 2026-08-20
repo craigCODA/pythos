@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 PYTH_TIG_DIR = TARGET / "pyth-tig"
 QEMU_TARGET = "qemu-q35"
+GENERIC_PHYSICAL_TARGETS = {"", "physical", "unknown", "generic"}
 HELLO_PACKAGE = PYTH_TIG_DIR / "hello.tig"
 RUNTIME_TERMINATED_MARKER = "PYTHOS:PYTHTIG:RUNTIME_TERMINATED"
 CONTROL_SECTOR = 95
@@ -249,6 +250,7 @@ def build_pythtig_hello_image() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--no-default-features",
             "--features",
             "pythtig-phase2-test",
         ]
@@ -356,6 +358,10 @@ def physical_log_record(
     output_path: Path,
     target: str,
 ) -> CrossTargetRecord:
+    if target.strip().lower() in GENERIC_PHYSICAL_TARGETS:
+        raise CrossTargetError(
+            "physical-log target must name the exact machine/controller"
+        )
     if not package_path.exists():
         raise CrossTargetError(f"missing package: {package_path}")
     if not log_path.exists():
@@ -393,7 +399,7 @@ def main() -> int:
     physical.add_argument("--package", type=Path, required=True)
     physical.add_argument("--log", type=Path, required=True)
     physical.add_argument("--output", type=Path, required=True)
-    physical.add_argument("--target", default="physical")
+    physical.add_argument("--target", required=True)
 
     args = parser.parse_args()
     try:

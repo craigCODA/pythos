@@ -41,20 +41,24 @@ python scripts/verify-pyth-physical-log.py --self-test
 python scripts/prepare-pyth-physical-image.py --manifest target/pyth-physical-image-manifest.json
 python scripts/verify-pyth-physical-log.py --manifest target/pyth-physical-image-manifest.json --log target/pyth-cross-target-ahci.log --backend ahci --target-id qemu-ahci-import-smoke --output target/pyth-physical-log-verification-ahci.json
 python -m unittest tests.test_ci_workflow
-cargo fmt --check
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
+cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
+cargo fmt --all -- --check
 git diff --check
 ```
 
-The long whole-workspace commands remain standing quality gates when practical:
+The long whole-workspace test remains a standing quality gate when practical:
 
 ```powershell
 cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-Existing broad dead-code warnings are not acceptance failures unless new
-Phase 7 code introduces them or a future cleanup gate makes warning-free clippy
-mandatory.
+The broad `cargo clippy --workspace --all-targets -- -D warnings` command is
+not the accepted Phase 7 clippy gate for this no-std workspace layout. It
+attempts to clippy host-target user binaries and fails before lint analysis
+with the no-std panic/unwind configuration. Use the target-specific clippy
+commands above.
 
 ## Required Markers
 
@@ -62,11 +66,18 @@ Default normal boot must include, in order:
 
 ```text
 PYTHOS:CORE:NORMAL_BOOT:FAST_PATH
+PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:session-manager package:<hex> principal:50595448534D0001 nodes:<decimal> blocks:<decimal>
 PYTHOS:PYTHTIG:SESSION_MANAGER_READY
+PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:task-steward package:<hex> principal:5059544853540001 nodes:<decimal> blocks:<decimal>
 PYTHOS:PYTHTIG:TASK_STEWARD_READY
 PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY
 PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY
 ```
+
+`SERVICE_PACKAGE_ADMITTED` is emitted only after PythCore validates the named
+PythTIG graph manifest, shared package verifier result, expected service
+principal, and non-empty package shape. It is package-admission evidence, not a
+claim of independent daemon scheduling.
 
 The reboot restore path must prove an object-shell note revision and task state
 survive reboot under the default Pyth service composition.
@@ -74,6 +85,7 @@ survive reboot under the default Pyth service composition.
 The recovery path must contain the service fault and enter the recovery shell:
 
 ```text
+PYTHOS:PYTHTIG:SERVICE_PACKAGE_ADMITTED service:session-manager package:<hex> principal:50595448534D0001 nodes:<decimal> blocks:<decimal>
 PYTHOS:CORE:CRASH:USER_FAULT
 PYTHOS:PYTHTIG:SERVICE_FAULT_CONTAINED service:session-manager
 PYTHOS:PYTHTIG:RECOVERY_SHELL_ENTER

@@ -15,6 +15,7 @@ import pyth_cross_target
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = ROOT / "target" / "pyth-physical-log-verification.json"
+GENERIC_TARGET_IDS = {"", "physical", "unknown", "generic"}
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -43,6 +44,23 @@ def require_forbidden_absent(serial: str, markers: list[str]) -> None:
             )
 
 
+def require_specific_target_id(target_id: str) -> None:
+    if target_id.strip().lower() in GENERIC_TARGET_IDS:
+        raise pyth_cross_target.CrossTargetError(
+            "target-id must name the exact machine/controller, not a generic target"
+        )
+
+
+def require_manifest_backend(manifest: dict, backend: str) -> None:
+    expected_marker = pyth_cross_target.BACKEND_SELECTED_MARKERS.get(backend)
+    if expected_marker is None:
+        raise pyth_cross_target.CrossTargetError(f"unsupported backend {backend}")
+    if expected_marker not in set(manifest.get("expected_backend_markers", [])):
+        raise pyth_cross_target.CrossTargetError(
+            f"backend {backend} is not accepted by this manifest"
+        )
+
+
 def verify_log(
     *,
     manifest_path: Path,
@@ -55,6 +73,8 @@ def verify_log(
 ) -> dict:
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode("utf-8"))
+    require_specific_target_id(target_id)
+    require_manifest_backend(manifest, backend)
     package_path = resolve_manifest_path(manifest, "package_path")
     if not package_path.exists():
         raise pyth_cross_target.CrossTargetError(f"missing package: {package_path}")
@@ -121,9 +141,11 @@ def self_test() -> None:
             "package_checksum": pyth_cross_target.sha256_hex(package),
             "package_runtime_digest": digest,
             "image_sha256": "0" * 64,
+            "expected_backend_markers": [
+                pyth_cross_target.BACKEND_SELECTED_MARKERS["sdhci-emmc"]
+            ],
             "expected_markers": [
                 "PYTHOS:CORE:NORMAL_BOOT:FAST_PATH",
-                "PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY",
                 f"PYTHOS:PYTHTIG:PACKAGE_VALID package:{digest}",
                 f"PYTHOS:PYTHTIG:RUNTIME_ENTER package:{digest}",
                 "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",
@@ -137,7 +159,6 @@ def self_test() -> None:
         log = f"""
 PYTHOS:CORE:NORMAL_BOOT:FAST_PATH
 PYTHOS:CORE:BLOCK:DEVICE_SELECTED_SDHCI_EMMC
-PYTHOS:PYTHTIG:DEFAULT_SERVICES_READY
 PYTHOS:PYTHTIG:PACKAGE_VALID package:{digest} nodes:5 blocks:1
 PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:5059544847520001 imports:1
 PYTHOS:PYTHTIG:RUNTIME_ENTER package:{digest}
@@ -174,6 +195,34 @@ PYTHOS:CORE:EVIDENCE_TERMINAL_READY
             pass
         else:
             raise AssertionError("bad package digest log was accepted")
+        try:
+            verify_log(
+                manifest_path=manifest_path,
+                log_path=log_path,
+                backend="sdhci-emmc",
+                output_path=temp / "generic-target.json",
+                target_id="physical",
+                evidence_terminal=True,
+                evidence_terminal_drop_count=0,
+            )
+        except pyth_cross_target.CrossTargetError:
+            pass
+        else:
+            raise AssertionError("generic physical target id was accepted")
+        try:
+            verify_log(
+                manifest_path=manifest_path,
+                log_path=log_path,
+                backend="nvme",
+                output_path=temp / "nvme.json",
+                target_id="self-test-o2-micro",
+                evidence_terminal=True,
+                evidence_terminal_drop_count=0,
+            )
+        except pyth_cross_target.CrossTargetError:
+            pass
+        else:
+            raise AssertionError("backend outside manifest was accepted")
     print("PYTH_PHYSICAL_LOG_SELF_TEST_OK")
 
 
