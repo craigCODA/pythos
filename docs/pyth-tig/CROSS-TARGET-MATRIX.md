@@ -26,7 +26,7 @@ with:
 | --- | --- | --- | --- | --- |
 | QEMU q35 | legacy virtio-blk | automated | `python scripts/test-pyth-cross-target.py --automated-only` | Package/runtime semantics match AHCI for the same package bytes. |
 | QEMU q35 | polling AHCI | automated | `python scripts/test-pyth-cross-target.py --automated-only` | Package/runtime semantics match virtio with virtio disabled and AHCI selected. |
-| O2 Micro `1217:8620` | SDHCI/eMMC | physical-log pending for PythTIG package | `python scripts/pyth_cross_target.py physical-log --backend sdhci-emmc --package <tig> --log <serial.txt> --output <json>` | Accept only exact target/controller logs containing matching package digest and required serial markers. |
+| O2 Micro `1217:8620` | SDHCI/eMMC | physical-log pending for PythTIG package | [Physical evidence procedure](PHYSICAL-EVIDENCE-PROCEDURE.md), `python scripts/verify-pyth-physical-log.py --backend sdhci-emmc ...` | Accept only exact target/controller logs containing matching package digest and required serial markers. |
 | NVMe | none accepted | pending | none | No PythTIG backend support claim. |
 | Other Intel/AMD PCs | target-specific | pending | none | Add only after exact boot/backend evidence. |
 | Apple Intel | target-specific | pending | none | Add only after exact boot/backend evidence. |
@@ -41,3 +41,6 @@ The adapter rejects logs with panic/package-rejection markers, missing backend
 selection, wrong package digest, missing runtime entry/exit, or out-of-order
 PythTIG markers. It does not manufacture missing markers and does not accept
 screenshot-only evidence.
+
+Physical preparation is handled by `scripts/prepare-pyth-physical-image.py`.
+Physical import verification is handled by `scripts/verify-pyth-physical-log.py`.
