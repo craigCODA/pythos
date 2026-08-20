@@ -389,7 +389,12 @@ cargo test -p pythos-user-pyth-runtime steward_program
 
 - [ ] **Step 3: Implement task host operations**
 
-`task.context(read_cap)` returns active/candidate task ids, score, kind, and reason through context-sensitive HostResult fields. `task.propose(proposal_cap, kind, candidate_task, score, reason)` calls `SYSCALL_TASK_REQUEST` operation `CreateProposal`.
+`task.context_*` accessors lower to a `TaskContextRead` producer plus closed
+HostResult fields for active/candidate task ids, score, kind, and reason.
+`task.propose(proposal_cap, candidate_task, score)` lowers to the frozen ADR
+0065 `TaskProposalEmit` signature `[Effect, Capability, TaskId, U64]` and calls
+`SYSCALL_TASK_REQUEST` operation `CreateProposal`. Do not add kind or reason
+operands to the graph opcode without a new accepted ADR/package version.
 
 The verifier requires TaskProposalEmit imports to have `TASK_RIGHT_CREATE_PROPOSAL`; it never accepts `TASK_RIGHT_APPROVE_PROPOSAL` or `TASK_RIGHT_CONTROL_STATE` for the Task Steward manifest policy.
 
@@ -437,9 +442,7 @@ program task_steward principal 0x5059544853540001 {
             return;
         } else {
             let candidate: task_id = task.context_candidate(context);
-            let kind: u64 = task.context_kind(context);
-            let reason: utf8 = task.context_reason(context);
-            task.propose(proposals, kind, candidate, score, reason);
+            task.propose(proposals, candidate, score);
             system.log(log, "task-proposal-created");
             return;
         }
@@ -447,7 +450,9 @@ program task_steward principal 0x5059544853540001 {
 }
 ```
 
-Add the context accessor intrinsics as immediate HostResult accessors tied to the preceding `task.context` call.
+Add the context accessor intrinsics as immediate HostResult accessors tied to a
+matching `TaskContextRead` capability. Reuse is allowed only for consecutive
+accessors from the same context capability.
 
 - [ ] **Step 2: Compile and verify**
 

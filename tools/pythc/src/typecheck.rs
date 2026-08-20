@@ -406,7 +406,7 @@ fn resource_kind(resource: &str) -> Option<u16> {
         "system.log" => RESOURCE_SYSTEM_LOG,
         "object.workspace" => RESOURCE_OBJECT_WORKSPACE,
         "object" => RESOURCE_OBJECT,
-        "task" => RESOURCE_TASK,
+        "task" | "task.context" | "task.proposal" => RESOURCE_TASK,
         "graph" => RESOURCE_GRAPH,
         "command" => RESOURCE_COMMAND,
         _ => return None,

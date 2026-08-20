@@ -18,6 +18,11 @@ use pythos_shared::{
             RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ, RIGHTS_REVISE,
         },
     },
+    task_abi::{
+        TASK_CONTEXT_RESULT_ACTIVE_TASK_ID, TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID,
+        TASK_CONTEXT_RESULT_CONFIDENCE_SCORE, TASK_CONTEXT_RESULT_PROPOSAL_KIND,
+        TASK_CONTEXT_RESULT_REASON_UTF8,
+    },
 };
 
 pub fn lower_program(typed: &TypedProgram) -> Result<OwnedGraph, Diagnostic> {
@@ -28,6 +33,7 @@ struct Lowerer<'a> {
     program: &'a Program,
     builder: GraphBuilder,
     pending_host_producer: Option<(HostProducer, u32)>,
+    pending_task_context_producer: Option<(u32, u32)>,
 }
 
 impl<'a> Lowerer<'a> {
@@ -36,6 +42,7 @@ impl<'a> Lowerer<'a> {
             program,
             builder: GraphBuilder::new(program.principal_id, &program.name.text),
             pending_host_producer: None,
+            pending_task_context_producer: None,
         }
     }
 
@@ -291,6 +298,14 @@ impl<'a> Lowerer<'a> {
                 self.lower_object_read_intrinsic(intrinsic, args, span, expected)
             }
             Intrinsic::ObjectRevise => self.lower_object_revise(args, expected),
+            Intrinsic::TaskContextActive
+            | Intrinsic::TaskContextCandidate
+            | Intrinsic::TaskContextScore
+            | Intrinsic::TaskContextKind
+            | Intrinsic::TaskContextReason => {
+                self.lower_task_context_accessor(intrinsic, args, span)
+            }
+            Intrinsic::TaskPropose => self.lower_task_propose(args, expected, span),
             _ => self.lower_generic_effectful_intrinsic(intrinsic, args, span),
         }
     }
@@ -404,6 +419,58 @@ impl<'a> Lowerer<'a> {
         Ok(self.push_host_result(node, field, result_type))
     }
 
+    fn lower_task_context_accessor(
+        &mut self,
+        intrinsic: Intrinsic,
+        args: &[Expression],
+        span: Span,
+    ) -> Result<u32, Diagnostic> {
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let producer = match self.pending_task_context_producer {
+            Some((pending_capability, producer))
+                if pending_capability == capability && self.builder.current_effect == producer =>
+            {
+                producer
+            }
+            _ => self.push_effect_node(
+                Opcode::TaskContextRead,
+                [self.builder.current_effect, capability, NO_VALUE, NO_VALUE],
+                None,
+            ),
+        };
+        self.pending_task_context_producer = Some((capability, producer));
+        let (field, result_type) = match intrinsic {
+            Intrinsic::TaskContextActive => (TASK_CONTEXT_RESULT_ACTIVE_TASK_ID, PythType::TaskId),
+            Intrinsic::TaskContextCandidate => {
+                (TASK_CONTEXT_RESULT_CANDIDATE_TASK_ID, PythType::TaskId)
+            }
+            Intrinsic::TaskContextScore => (TASK_CONTEXT_RESULT_CONFIDENCE_SCORE, PythType::U64),
+            Intrinsic::TaskContextKind => (TASK_CONTEXT_RESULT_PROPOSAL_KIND, PythType::U64),
+            Intrinsic::TaskContextReason => (TASK_CONTEXT_RESULT_REASON_UTF8, PythType::Utf8),
+            _ => return Err(compiler_rejected(span)),
+        };
+        Ok(self.push_host_result(producer, field, result_type))
+    }
+
+    fn lower_task_propose(
+        &mut self,
+        args: &[Expression],
+        expected: Option<PythType>,
+        span: Span,
+    ) -> Result<u32, Diagnostic> {
+        if expected.is_some() {
+            return Err(compiler_rejected(span));
+        }
+        let capability = self.lower_expression(&args[0], Some(PythType::Capability))?;
+        let candidate = self.lower_expression(&args[1], Some(PythType::TaskId))?;
+        let score = self.lower_expression(&args[2], Some(PythType::U64))?;
+        Ok(self.push_effect_node(
+            Opcode::TaskProposalEmit,
+            [self.builder.current_effect, capability, candidate, score],
+            None,
+        ))
+    }
+
     fn lower_object_kind(&mut self, expr: &Expression) -> Result<u32, Diagnostic> {
         let Expression::Literal(Literal::Integer { text, span }) = expr else {
             return Err(compiler_rejected(expr.span()));
@@ -442,6 +509,9 @@ impl<'a> Lowerer<'a> {
             .builder
             .push_node(opcode, PythType::Effect, inputs, 0, 0, 0);
         self.builder.current_effect = effect_node;
+        if opcode != Opcode::TaskContextRead {
+            self.pending_task_context_producer = None;
+        }
         self.pending_host_producer = producer.map(|producer| (producer, effect_node));
         effect_node
     }
@@ -724,7 +794,7 @@ fn import_contract(
         "system.log" => RESOURCE_SYSTEM_LOG,
         "object.workspace" => RESOURCE_OBJECT_WORKSPACE,
         "object" => RESOURCE_OBJECT,
-        "task" => RESOURCE_TASK,
+        "task" | "task.context" | "task.proposal" => RESOURCE_TASK,
         "graph" => RESOURCE_GRAPH,
         "command" => RESOURCE_COMMAND,
         _ => return Err(("G0001", "shared verifier rejected compiler output")),

@@ -14,12 +14,7 @@ const CAP_OBJECT_U64_UTF8: [PythType; 4] = [
     PythType::Utf8,
 ];
 const CAP_ONLY: [PythType; 1] = [PythType::Capability];
-const TASK_PROPOSE: [PythType; 4] = [
-    PythType::Capability,
-    PythType::Utf8,
-    PythType::Utf8,
-    PythType::U64,
-];
+const TASK_PROPOSE: [PythType; 3] = [PythType::Capability, PythType::TaskId, PythType::U64];
 const GRAPH_RELATED: [PythType; 3] = [PythType::Capability, PythType::TaskId, PythType::U64];
 const RELEVANCE_EMIT: [PythType; 4] = [
     PythType::Capability,
@@ -43,6 +38,11 @@ pub enum Intrinsic {
     ObjectRevise,
     ObjectHistory,
     TaskActive,
+    TaskContextActive,
+    TaskContextCandidate,
+    TaskContextScore,
+    TaskContextKind,
+    TaskContextReason,
     TaskPropose,
     GraphRelated,
     RelevanceEmit,
@@ -84,6 +84,11 @@ impl Intrinsic {
             "object.revise" => Self::ObjectRevise,
             "object.history" => Self::ObjectHistory,
             "task.active" => Self::TaskActive,
+            "task.context_active" => Self::TaskContextActive,
+            "task.context_candidate" => Self::TaskContextCandidate,
+            "task.context_score" => Self::TaskContextScore,
+            "task.context_kind" => Self::TaskContextKind,
+            "task.context_reason" => Self::TaskContextReason,
             "task.propose" => Self::TaskPropose,
             "graph.related" => Self::GraphRelated,
             "relevance.emit" => Self::RelevanceEmit,
@@ -102,7 +107,12 @@ impl Intrinsic {
             | Self::ObjectInspectedRevision => &NO_ARGS,
             Self::ObjectInspect | Self::ObjectHistory => &CAP_OBJECT_ID,
             Self::ObjectRevise => &CAP_OBJECT_U64_UTF8,
-            Self::TaskActive => &CAP_ONLY,
+            Self::TaskActive
+            | Self::TaskContextActive
+            | Self::TaskContextCandidate
+            | Self::TaskContextScore
+            | Self::TaskContextKind
+            | Self::TaskContextReason => &CAP_ONLY,
             Self::TaskPropose => &TASK_PROPOSE,
             Self::GraphRelated => &GRAPH_RELATED,
             Self::RelevanceEmit => &RELEVANCE_EMIT,
@@ -120,8 +130,13 @@ impl Intrinsic {
             }
             Self::ObjectInspect => PythType::Utf8,
             Self::ObjectHistory => PythType::U64,
-            Self::TaskActive => PythType::TaskId,
-            Self::TaskPropose | Self::CapabilityRequest => PythType::ProposalId,
+            Self::TaskActive | Self::TaskContextActive | Self::TaskContextCandidate => {
+                PythType::TaskId
+            }
+            Self::TaskContextScore | Self::TaskContextKind => PythType::U64,
+            Self::TaskContextReason => PythType::Utf8,
+            Self::TaskPropose => PythType::Unit,
+            Self::CapabilityRequest => PythType::ProposalId,
         }
     }
 
@@ -147,11 +162,20 @@ impl Intrinsic {
                 resource_kind: RESOURCE_OBJECT,
                 rights: RIGHTS_REVISE,
             }),
-            Self::TaskActive => Some(CapabilityRequirement {
+            Self::TaskActive
+            | Self::TaskContextActive
+            | Self::TaskContextCandidate
+            | Self::TaskContextScore
+            | Self::TaskContextKind
+            | Self::TaskContextReason => Some(CapabilityRequirement {
                 resource_kind: RESOURCE_TASK,
                 rights: RIGHTS_READ,
             }),
-            Self::TaskPropose | Self::CapabilityRequest => Some(CapabilityRequirement {
+            Self::TaskPropose => Some(CapabilityRequirement {
+                resource_kind: RESOURCE_TASK,
+                rights: RIGHTS_CREATE,
+            }),
+            Self::CapabilityRequest => Some(CapabilityRequirement {
                 resource_kind: RESOURCE_TASK,
                 rights: RIGHTS_APPEND,
             }),

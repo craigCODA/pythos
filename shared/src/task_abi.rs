@@ -1,5 +1,6 @@
 pub const TASK_ABI_MAJOR: u16 = 1;
 pub const TASK_ABI_MINOR: u16 = 0;
+pub const SYSCALL_TASK_REQUEST: u64 = 0x5059_0140;
 
 pub const OBJECT_KIND_TASK: u16 = 20;
 pub const OBJECT_KIND_TASK_PROPOSAL: u16 = 21;
@@ -130,6 +131,7 @@ mod tests {
     #[test]
     fn task_codes_and_layouts_are_stable() {
         assert_eq!(TASK_ABI_MAJOR, 1);
+        assert_eq!(SYSCALL_TASK_REQUEST, 0x5059_0140);
         assert_eq!(OBJECT_KIND_TASK, 20);
         assert_eq!(OBJECT_KIND_TASK_PROPOSAL, 21);
         assert_eq!(OBJECT_KIND_TASK_EVENT, 22);
