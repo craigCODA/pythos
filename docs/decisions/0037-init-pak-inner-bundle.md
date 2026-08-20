@@ -81,7 +81,7 @@ offset  size  field
 48      N     graph_name bytes, then elf_name bytes
 ```
 
-The digest fields use the same wrapping 64-bit byte-sum helper as the named
+The digest fields use the same FNV-1a 64-bit `digest64` helper as the named
 graph and named user-program manifests. This binding is not a signature claim
 and does not authorize native launch by itself.
 

@@ -221,6 +221,42 @@ class IsoImageTest(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "not an ELF64 file"):
                     module.native_pyth_graph_records(elf)
 
+    def test_native_packaging_rejects_invalid_load_ranges(self) -> None:
+        def make_filesz_greater_than_memsz(elf: bytearray) -> None:
+            elf[64 + 32 : 64 + 40] = (2).to_bytes(8, "little")
+            elf[64 + 40 : 64 + 48] = (1).to_bytes(8, "little")
+
+        def make_file_range_outside_elf(elf: bytearray) -> None:
+            elf[64 + 8 : 64 + 16] = len(elf).to_bytes(8, "little")
+            elf[64 + 32 : 64 + 40] = (1).to_bytes(8, "little")
+
+        for module in (load_build_image_module(), load_build_iso_module()):
+            for label, mutate, expected in (
+                (
+                    "filesz-greater-than-memsz",
+                    make_filesz_greater_than_memsz,
+                    "file size exceeds memory size",
+                ),
+                (
+                    "file-range-outside-elf",
+                    make_file_range_outside_elf,
+                    "file range is outside",
+                ),
+            ):
+                with tempfile.TemporaryDirectory() as temp:
+                    temp_path = Path(temp)
+                    graph_dir = temp_path / "graphs"
+                    graph_dir.mkdir()
+                    (graph_dir / f"{label}.tig").write_bytes(b"PYTHTIG1" + bytes(24))
+                    elf = temp_path / f"{label}.elf"
+                    elf_bytes = bytearray(native_elf_fixture())
+                    mutate(elf_bytes)
+                    elf.write_bytes(bytes(elf_bytes))
+                    module.PYTH_GRAPH_OUTPUT_DIR = graph_dir
+
+                    with self.assertRaisesRegex(ValueError, expected):
+                        module.native_pyth_graph_records(elf)
+
     def test_default_init_pak_excludes_phase2_runtime_and_graphs(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):
             init_pak = build_init_pak_without_phase2_programs(module)
