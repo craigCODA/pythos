@@ -65,6 +65,14 @@ completed with `PYTH_GRAPH_RUNTIME_TEST_OK` and emitted
 as the shared-core-artifact collision. If it recurs, investigate retained object
 checkpoint persistence after a successful create marker.
 
+The PythTIG one-shot control sector is a test harness selector, not a package
+ABI surface. `PYTHOS:PYTHTIG:CONTROL_READ_FAILED` remains fatal because the
+selected launch mode was not measured. `PYTHOS:PYTHTIG:CONTROL_CLEAR_FAILED`
+is nonfatal after a valid selector has already been read; it records that the
+best-effort stale-selector clear did not persist. A pre-substrate
+`PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED` marker identifies the
+other failure point between block-device readiness and PythTIG launch.
+
 ## Interface Model Correction (2026-08-05)
 
 ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,

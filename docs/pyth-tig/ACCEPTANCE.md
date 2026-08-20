@@ -88,6 +88,15 @@ If a later object-flow run emits `PYTHOS:PYTHTIG:OBJECT_CREATED` and then exits
 with runtime status 1, treat that as a separate retained-object persistence
 investigation rather than evidence that the wrong kernel was packaged.
 
+The one-shot control sector is harness state. Failure to read it is fatal and
+is marked by `PYTHOS:PYTHTIG:CONTROL_READ_FAILED`; failure to clear an already
+read selector is nonfatal and is marked by
+`PYTHOS:PYTHTIG:CONTROL_CLEAR_FAILED`. A panic between
+`PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY` and
+`PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY` with
+`PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED` belongs to retained
+object-service restore, not to PythTIG package verification.
+
 ## Required Markers
 
 Default normal boot must include, in order:
