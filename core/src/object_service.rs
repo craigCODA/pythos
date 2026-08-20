@@ -421,6 +421,19 @@ impl ObjectService {
         self.shell_caller
     }
 
+    pub fn bind_shell_caller(
+        &mut self,
+        caller: ActiveUserProcess,
+    ) -> Result<(), ObjectServiceError> {
+        if caller.service_id() != self.shell_caller.service_id()
+            || caller.principal_id() != SHELL_PRINCIPAL_ID
+        {
+            return Err(ObjectServiceError::Denied);
+        }
+        self.shell_caller = caller;
+        Ok(())
+    }
+
     pub const fn shell_workspace_capability(&self) -> PackedCapability {
         self.shell_workspace_capability
     }

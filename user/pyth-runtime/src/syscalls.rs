@@ -156,6 +156,19 @@ impl Host for GraphSyscallHost {
             Err(HostError::Failed)
         }
     }
+
+    fn command_read(&mut self, _capability: PackedCapability) -> Result<HostCallResult, HostError> {
+        Err(HostError::Denied)
+    }
+
+    fn command_result_emit(
+        &mut self,
+        _capability: PackedCapability,
+        _status: u16,
+        _text: &[u8],
+    ) -> Result<(), HostError> {
+        Err(HostError::Denied)
+    }
 }
 
 fn base_object_request(operation: u16, authority: PackedCapability) -> ObjectShellRequest {

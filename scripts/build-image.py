@@ -29,6 +29,7 @@ PYTH_OBJECT_KNOWN_DENIED_GRAPH_PACKAGE = (
 PYTH_OBJECT_FORGERY_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "object-forgery.tig"
 PYTH_GRAPH_OUTPUT_DIR = ROOT / "target" / "pyth-tig"
 PYTH_TASK_STEWARD_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "task-steward.tig"
+PYTH_SESSION_MANAGER_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "session-manager.tig"
 BOOT_CFG = b"serial=true\nlog_level=trace\npanic=halt\nruntime_bundle=/PYTHOS/INIT.PAK\n"
 INIT_PAK_MAGIC = b"PYTHOS_INIT_PAK_V0"
 INIT_PAK_HEADER_LEN = 64
@@ -63,6 +64,7 @@ OBJECT_RESTORE_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0007
 OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0008
 OBJECT_FORGERY_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0009
 TASK_STEWARD_GRAPH_PRINCIPAL_ID = 0x5059_5448_5354_0001
+SESSION_MANAGER_GRAPH_PRINCIPAL_ID = 0x5059_5448_534D_0001
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -218,6 +220,7 @@ def named_graph_principal_id(graph_name: bytes, package: bytes) -> int:
         b"object-known-denied.tig": OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID,
         b"object-forgery.tig": OBJECT_FORGERY_GRAPH_PRINCIPAL_ID,
         b"task-steward.tig": TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+        b"session-manager.tig": SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
     }
     return known.get(graph_name, graph_principal_id(package))
 
@@ -358,6 +361,30 @@ def phase5_task_steward_pyth_graph_records() -> list[tuple[int, bytes]]:
     ]
 
 
+def phase7_default_service_pyth_graph_records() -> list[tuple[int, bytes]]:
+    graph_specs = [
+        (
+            b"session-manager.tig",
+            SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+            PYTH_SESSION_MANAGER_GRAPH_PACKAGE,
+            "PythTIG session-manager graph package",
+        ),
+        (
+            b"task-steward.tig",
+            TASK_STEWARD_GRAPH_PRINCIPAL_ID,
+            PYTH_TASK_STEWARD_GRAPH_PACKAGE,
+            "PythTIG task-steward graph package",
+        ),
+    ]
+    return [
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(name, principal_id, require_file(path, description)),
+        )
+        for name, principal_id, path, description in graph_specs
+    ]
+
+
 def build_user_elf_payload(text: bytes) -> bytes:
     data = b"DATA"
     text_offset = 0x1000
@@ -400,6 +427,7 @@ def build_default_init_pak(
     include_pythtig_object_flow: bool = False,
     pyth_native_elf: Path | None = None,
     include_pythtig_task_steward: bool = False,
+    include_pythtig_default_services: bool = False,
 ) -> bytes:
     selected_pythtig_sets = sum(
         [
@@ -407,6 +435,7 @@ def build_default_init_pak(
             bool(include_pythtig_object_flow),
             pyth_native_elf is not None,
             bool(include_pythtig_task_steward),
+            bool(include_pythtig_default_services),
         ]
     )
     if selected_pythtig_sets > 1:
@@ -433,6 +462,9 @@ def build_default_init_pak(
     if include_pythtig_task_steward:
         records.append(pyth_runtime_record())
         records.extend(phase5_task_steward_pyth_graph_records())
+    if include_pythtig_default_services:
+        records.append(pyth_runtime_record())
+        records.extend(phase7_default_service_pyth_graph_records())
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -479,6 +511,7 @@ def main() -> int:
     parser.add_argument("--with-pythtig-object-flow", action="store_true")
     parser.add_argument("--pyth-native-elf", type=Path)
     parser.add_argument("--with-pythtig-task-steward", action="store_true")
+    parser.add_argument("--with-pythtig-default-services", action="store_true")
     args = parser.parse_args()
 
     loader = args.loader
@@ -503,6 +536,7 @@ def main() -> int:
             args.with_pythtig_object_flow,
             args.pyth_native_elf,
             args.with_pythtig_task_steward,
+            args.with_pythtig_default_services,
         ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)

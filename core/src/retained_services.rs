@@ -10,6 +10,7 @@ use crate::block_device::BlockDeviceInfo;
 #[cfg(not(test))]
 use crate::general_storage_persistence::GeneralStoragePersistenceError;
 use crate::object_service::{ObjectService, ObjectServiceError};
+use crate::process_context::ActiveUserProcess;
 use crate::task_service::{TaskAuthorityState, TaskService, TaskServiceError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -255,6 +256,30 @@ pub fn with_task_service<R>(
         Ok(f(&mut tasks))
     })?;
     result
+}
+
+pub fn bind_shell_process(shell_caller: ActiveUserProcess) -> Result<(), RetainedServiceError> {
+    with_object_service(|service| service.bind_shell_caller(shell_caller))?
+        .map_err(RetainedServiceError::ObjectService)?;
+    // SAFETY:
+    // 1. Invariant: task authority storage is paired with the initialized
+    //    retained object service and can be rewritten before shell entry.
+    // 2. Established by: normal boot calls this after validating the shell
+    //    launch process and before ring-3 shell execution/syscall dispatch.
+    // 3. Lifetime: the written TaskAuthorityState remains in static storage
+    //    for the rest of this boot.
+    // 4. Pointer ownership: TASK_AUTHORITY owns the storage; no TaskService
+    //    borrow is live because with_object_service returned before this write.
+    // 5. Alignment: MaybeUninit<TaskAuthorityState> provides the required
+    //    alignment.
+    // 6. Mapped length: exactly one TaskAuthorityState value is written.
+    // 7. Concurrency: ADR 0051 normal boot is single-core before shell entry.
+    // 8. Violation: calling while a TaskService borrow is live could replace
+    //    authority under an active syscall; this hook is only pre-launch.
+    unsafe {
+        (*TASK_AUTHORITY.0.get()).write(TaskAuthorityState::new(shell_caller));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

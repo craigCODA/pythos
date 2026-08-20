@@ -21,6 +21,30 @@ mediation, network security, partition/filesystem security, DMA isolation
 across physical controllers, package trust, update security, or a generic
 hardware support claim.
 
+## PythTIG Phase 7 Boundary
+
+PythTIG Phase 7 makes verified Pyth graph services the normal boot layer, but
+it does not move source parsing, prompt parsing, semantic task authority, agent
+policy, or hardware authority into PythCore. PythCore accepts canonical typed
+graph packages and typed syscalls only.
+
+Threats and mitigations:
+
+| Threat | Mitigation |
+| --- | --- |
+| Malformed package | Shared verifier rejects before package mapping or ring-3 entry. |
+| Compiler bug | Compiler output must pass the shared verifier, golden tests, and interpreter/native differential tests. |
+| Capability forgery | Capability origin verification and caller-derived syscall validation reject copied or fabricated handles before mutation. |
+| Effect reordering | The graph ABI enforces a single effect-token chain for host-visible effects. |
+| Native backend drift | Interpreter/native differential suite compares status, denial class, object revision/history, and marker order. |
+| Agent overreach | Task Steward is proposal-only and cannot approve or create authoritative task state without user-held authority. |
+| Graph denial loop | Runtime instruction budgets and service-supervisor fault handling bound graph execution. |
+| Physical backend variance | Cross-target acceptance compares unchanged package SHA-256, runtime digest, semantic markers, and target-specific evidence. |
+
+The Rust object shell remains as an explicit maintenance and recovery fallback.
+Fallback availability does not revive a desktop/window/application authority
+model superseded by ADR 0066.
+
 ## Trusted Components
 
 For milestone 1, the trusted components are:

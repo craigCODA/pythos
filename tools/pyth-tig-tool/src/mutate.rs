@@ -21,7 +21,7 @@ pub(crate) fn run_mutation_suite(valid_fixture: &[u8]) -> Result<(), String> {
     cases.push(("unknown major", unknown_major, "Decode(UnsupportedMajor)"));
 
     let mut unknown_minor = valid_fixture.to_vec();
-    encode::write_u16(&mut unknown_minor, encode::MINOR_OFFSET, 1);
+    encode::write_u16(&mut unknown_minor, encode::MINOR_OFFSET, 2);
     encode::refresh_checksum(&mut unknown_minor);
     cases.push(("unknown minor", unknown_minor, "Decode(UnsupportedMinor)"));
 

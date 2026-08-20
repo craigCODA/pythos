@@ -84,6 +84,7 @@ def build_boot_image() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--no-default-features",
             "--features",
             "pythtig-phase2-test",
         ]

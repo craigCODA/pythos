@@ -154,6 +154,7 @@ def build_base_artifacts() -> None:
             "pythos-core",
             "--target",
             "x86_64-unknown-none",
+            "--no-default-features",
             "--features",
             "pythtig-phase2-test",
         ]

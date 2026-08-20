@@ -1,7 +1,8 @@
 use crate::types::PythType;
 use pythos_shared::pyth_tig::opcode::{
-    RESOURCE_GRAPH, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK,
-    RIGHTS_APPEND, RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ, RIGHTS_REVISE,
+    RESOURCE_COMMAND, RESOURCE_GRAPH, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE,
+    RESOURCE_SYSTEM_LOG, RESOURCE_TASK, RIGHTS_APPEND, RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ,
+    RIGHTS_REVISE,
 };
 
 const CAP_UTF8: [PythType; 2] = [PythType::Capability, PythType::Utf8];
@@ -15,6 +16,8 @@ const CAP_OBJECT_U64_UTF8: [PythType; 4] = [
 ];
 const CAP_ONLY: [PythType; 1] = [PythType::Capability];
 const TASK_PROPOSE: [PythType; 3] = [PythType::Capability, PythType::TaskId, PythType::U64];
+const COMMAND_RESULT_EMIT: [PythType; 3] =
+    [PythType::Capability, PythType::ErrorCode, PythType::Utf8];
 const GRAPH_RELATED: [PythType; 3] = [PythType::Capability, PythType::TaskId, PythType::U64];
 const RELEVANCE_EMIT: [PythType; 4] = [
     PythType::Capability,
@@ -44,6 +47,12 @@ pub enum Intrinsic {
     TaskContextKind,
     TaskContextReason,
     TaskPropose,
+    CommandKind,
+    CommandObject,
+    CommandTask,
+    CommandProposal,
+    CommandText,
+    CommandResultEmit,
     GraphRelated,
     RelevanceEmit,
     CapabilityRequest,
@@ -90,6 +99,12 @@ impl Intrinsic {
             "task.context_kind" => Self::TaskContextKind,
             "task.context_reason" => Self::TaskContextReason,
             "task.propose" => Self::TaskPropose,
+            "command.kind" => Self::CommandKind,
+            "command.object" => Self::CommandObject,
+            "command.task" => Self::CommandTask,
+            "command.proposal" => Self::CommandProposal,
+            "command.text" => Self::CommandText,
+            "command.result_emit" => Self::CommandResultEmit,
             "graph.related" => Self::GraphRelated,
             "relevance.emit" => Self::RelevanceEmit,
             "capability.request" => Self::CapabilityRequest,
@@ -112,8 +127,14 @@ impl Intrinsic {
             | Self::TaskContextCandidate
             | Self::TaskContextScore
             | Self::TaskContextKind
-            | Self::TaskContextReason => &CAP_ONLY,
+            | Self::TaskContextReason
+            | Self::CommandKind
+            | Self::CommandObject
+            | Self::CommandTask
+            | Self::CommandProposal
+            | Self::CommandText => &CAP_ONLY,
             Self::TaskPropose => &TASK_PROPOSE,
+            Self::CommandResultEmit => &COMMAND_RESULT_EMIT,
             Self::GraphRelated => &GRAPH_RELATED,
             Self::RelevanceEmit => &RELEVANCE_EMIT,
             Self::CapabilityRequest => &CAPABILITY_REQUEST,
@@ -122,7 +143,7 @@ impl Intrinsic {
 
     pub const fn result_type(self) -> PythType {
         match self {
-            Self::SystemLog | Self::RelevanceEmit => PythType::Unit,
+            Self::SystemLog | Self::CommandResultEmit | Self::RelevanceEmit => PythType::Unit,
             Self::ObjectCreate | Self::ObjectQuery | Self::GraphRelated => PythType::ObjectId,
             Self::ObjectCreatedCapability | Self::ObjectQueriedCapability => PythType::Capability,
             Self::ObjectCreatedRevision | Self::ObjectInspectedRevision | Self::ObjectRevise => {
@@ -136,6 +157,11 @@ impl Intrinsic {
             Self::TaskContextScore | Self::TaskContextKind => PythType::U64,
             Self::TaskContextReason => PythType::Utf8,
             Self::TaskPropose => PythType::Unit,
+            Self::CommandKind => PythType::U64,
+            Self::CommandObject => PythType::ObjectId,
+            Self::CommandTask => PythType::TaskId,
+            Self::CommandProposal => PythType::ProposalId,
+            Self::CommandText => PythType::Utf8,
             Self::CapabilityRequest => PythType::ProposalId,
         }
     }
@@ -174,6 +200,18 @@ impl Intrinsic {
             Self::TaskPropose => Some(CapabilityRequirement {
                 resource_kind: RESOURCE_TASK,
                 rights: RIGHTS_CREATE,
+            }),
+            Self::CommandKind
+            | Self::CommandObject
+            | Self::CommandTask
+            | Self::CommandProposal
+            | Self::CommandText => Some(CapabilityRequirement {
+                resource_kind: RESOURCE_COMMAND,
+                rights: RIGHTS_READ,
+            }),
+            Self::CommandResultEmit => Some(CapabilityRequirement {
+                resource_kind: RESOURCE_COMMAND,
+                rights: RIGHTS_APPEND,
             }),
             Self::CapabilityRequest => Some(CapabilityRequirement {
                 resource_kind: RESOURCE_TASK,

@@ -57,6 +57,23 @@ program task_steward principal 0x5059544853540001 {
 }
 "#;
 
+const SESSION_MANAGER_COMMAND_INTRINSICS: &str = r#"
+program session_manager principal 0x50595448534D0001 {
+    import commands: capability<command, read|append>;
+    fn main() -> unit {
+        let kind: u64 = command.kind(commands);
+        let text: utf8 = command.text(commands);
+        if kind == 3 {
+            command.result_emit(commands, 0, text);
+            return;
+        } else {
+            command.result_emit(commands, 0, "tasks-listed");
+            return;
+        }
+    }
+}
+"#;
+
 #[test]
 fn typechecks_object_capability_flow() {
     let typed = typecheck_source(include_str!("fixtures/object-note.pyth")).unwrap();
@@ -81,6 +98,20 @@ fn typechecks_task_context_and_proposal_intrinsics_with_proposal_only_rights() {
             .contains(&Intrinsic::TaskContextCandidate)
     );
     assert!(typed.required_intrinsics.contains(&Intrinsic::TaskPropose));
+}
+
+#[test]
+fn typechecks_command_read_and_result_intrinsics() {
+    let typed = typecheck_source(SESSION_MANAGER_COMMAND_INTRINSICS).unwrap();
+
+    assert_eq!(typed.main.result_type, PythType::Unit);
+    assert!(typed.required_intrinsics.contains(&Intrinsic::CommandKind));
+    assert!(typed.required_intrinsics.contains(&Intrinsic::CommandText));
+    assert!(
+        typed
+            .required_intrinsics
+            .contains(&Intrinsic::CommandResultEmit)
+    );
 }
 
 #[test]

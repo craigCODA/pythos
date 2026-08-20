@@ -8,7 +8,7 @@ invokes this phase.
 
 **Goal:** Make Pyth-native graph services the accepted normal-boot execution layer, retain the Rust object shell as an explicit maintenance fallback, prove reboot recovery, and run one unchanged graph package across every currently accepted storage/hardware target.
 
-**Architecture:** Normal boot launches a Pyth session-manager graph through the interpreter or native backend, then launches Task Steward. The Rust shell is available under `legacy-shell` and as a recovery path. Cross-target acceptance compares the package checksum and semantic evidence, not timing or device-specific logs.
+**Architecture:** Normal boot admits the Pyth session-manager and Task Steward graph packages through the shared verifier before default-service readiness. The Rust shell is available under `legacy-shell` and as a recovery path. Cross-target acceptance compares the package checksum and semantic evidence, not timing or device-specific logs.
 
 **Tech Stack:** Existing normal boot, Pyth runtime/native backend, task/object services, QEMU virtio/AHCI, physical evidence import, expanding universal-boot backend adapters.
 
@@ -70,7 +70,7 @@ Add opcodes in the next PythTIG minor version:
 0x1501 CommandResultEmit
 ```
 
-Update ADR 0065 minor to 1 while preserving major 1 and version-0 package acceptance. Version 1.1 runtime accepts 1.0 packages; version 1.0 runtime rejects 1.1 packages.
+Record the compatible minor-version-1 extension in ADR 0068 while preserving the ADR 0065 version 1.0 freeze baseline and version-0 package acceptance. Version 1.1 runtime accepts 1.0 packages; version 1.0 runtime rejects 1.1 packages.
 
 - [ ] **Step 4: Write session manager**
 
@@ -86,7 +86,7 @@ cargo run -p pyth-tig-tool -- verify target/pyth-tig/session-manager.tig
 - [ ] **Step 6: Commit**
 
 ```powershell
-git add shared\src\pyth_command_abi.rs shared\src\pyth_tig user\pyth-runtime tools\pythc programs\session-manager docs\decisions\0065-pyth-graph-package-abi.md
+git add shared\src\pyth_command_abi.rs shared\src\pyth_tig user\pyth-runtime tools\pythc programs\session-manager docs\decisions\0065-pyth-graph-package-abi.md docs\decisions\0068-pythtig-command-abi-and-service-admission.md
 git commit -m "feat(pyth-tig): add native typed session manager"
 ```
 

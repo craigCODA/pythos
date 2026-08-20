@@ -1,6 +1,10 @@
 use crate::value::Value;
 use pythos_shared::{
     object_shell_abi::PackedCapability,
+    pyth_command_abi::{
+        COMMAND_FIELD_KIND, COMMAND_FIELD_OBJECT_ID, COMMAND_FIELD_PROPOSAL_ID,
+        COMMAND_FIELD_TASK_ID, COMMAND_FIELD_TEXT_UTF8, command_kind_is_known,
+    },
     pyth_runtime_abi::{
         GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_RUNTIME_ERROR, GraphExitRecord,
         HOST_RESULT_CAPABILITY, HOST_RESULT_OBJECT_ID, HOST_RESULT_REVISION, HOST_RESULT_STATUS,
@@ -62,6 +66,13 @@ pub trait Host {
         capability: PackedCapability,
         candidate_task_id: u64,
         score: u64,
+    ) -> Result<(), HostError>;
+    fn command_read(&mut self, capability: PackedCapability) -> Result<HostCallResult, HostError>;
+    fn command_result_emit(
+        &mut self,
+        capability: PackedCapability,
+        status: u16,
+        text: &[u8],
     ) -> Result<(), HostError>;
 }
 
@@ -227,6 +238,10 @@ impl<'a> Interpreter<'a> {
             Opcode::ObjectHistory => self.execute_object_history(node_index, &node, host),
             Opcode::TaskContextRead => self.execute_task_context(node_index, &node, host),
             Opcode::TaskProposalEmit => self.execute_task_proposal_emit(node_index, &node, host),
+            Opcode::CommandRead => self.execute_command_read(node_index, &node, host),
+            Opcode::CommandResultEmit => {
+                self.execute_command_result_emit(package, node_index, &node, host)
+            }
             Opcode::Jump => Ok(()),
             Opcode::Branch => Ok(()),
             Opcode::Return => Ok(()),
@@ -284,6 +299,12 @@ impl<'a> Interpreter<'a> {
             PythType::RevisionId => self.store_value(node_index, Value::RevisionId(node.immediate)),
             PythType::TaskId => self.store_value(node_index, Value::TaskId(node.immediate)),
             PythType::ProposalId => self.store_value(node_index, Value::ProposalId(node.immediate)),
+            PythType::ErrorCode => self.store_value(
+                node_index,
+                Value::ErrorCode(
+                    u16::try_from(node.immediate).map_err(|_| RuntimeError::InvalidValue)?,
+                ),
+            ),
             _ => Err(RuntimeError::UnsupportedOpcode),
         }
     }
@@ -366,10 +387,14 @@ impl<'a> Interpreter<'a> {
             .copied()
             .flatten()
             .ok_or(RuntimeError::InvalidValue)?;
-        let value = if producer_opcode == Opcode::TaskContextRead {
-            self.task_context_host_result_value(node.input0, node.auxiliary0, result)?
-        } else {
-            match node.auxiliary0 {
+        let value = match producer_opcode {
+            Opcode::TaskContextRead => {
+                self.task_context_host_result_value(node.input0, node.auxiliary0, result)?
+            }
+            Opcode::CommandRead => {
+                self.command_host_result_value(node.input0, node.auxiliary0, result)?
+            }
+            _ => match node.auxiliary0 {
                 HOST_RESULT_STATUS => Value::ErrorCode(result.status),
                 HOST_RESULT_OBJECT_ID => Value::ObjectId(result.object_id),
                 HOST_RESULT_REVISION => Value::RevisionId(result.revision),
@@ -381,7 +406,7 @@ impl<'a> Interpreter<'a> {
                 }
                 HOST_RESULT_UTF8 => self.host_utf8_value(node.input0, result)?,
                 _ => return Err(RuntimeError::InvalidValue),
-            }
+            },
         };
         self.store_value(node_index, value)
     }
@@ -398,6 +423,22 @@ impl<'a> Interpreter<'a> {
             TASK_CONTEXT_RESULT_CONFIDENCE_SCORE => Ok(Value::U64(result.capability.raw())),
             TASK_CONTEXT_RESULT_PROPOSAL_KIND => Ok(Value::U64(u64::from(result.reserved0))),
             TASK_CONTEXT_RESULT_REASON_UTF8 => self.host_utf8_value(producer_node, result),
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
+    fn command_host_result_value(
+        &self,
+        producer_node: u32,
+        field: u32,
+        result: HostCallResult,
+    ) -> Result<Value, RuntimeError> {
+        match field {
+            COMMAND_FIELD_KIND => Ok(Value::U64(u64::from(result.reserved0))),
+            COMMAND_FIELD_OBJECT_ID => Ok(Value::ObjectId(result.object_id)),
+            COMMAND_FIELD_TASK_ID => Ok(Value::TaskId(result.revision)),
+            COMMAND_FIELD_PROPOSAL_ID => Ok(Value::ProposalId(result.capability.raw())),
+            COMMAND_FIELD_TEXT_UTF8 => self.host_utf8_value(producer_node, result),
             _ => Err(RuntimeError::InvalidValue),
         }
     }
@@ -544,6 +585,40 @@ impl<'a> Interpreter<'a> {
         self.store_value(node_index, Value::Effect(node_index as u64))
     }
 
+    fn execute_command_read(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let result = host.command_read(capability).map_err(RuntimeError::Host)?;
+        validate_command_read_result(result)?;
+        let slot = self
+            .host_results
+            .get_mut(node_index)
+            .ok_or(RuntimeError::InvalidValue)?;
+        *slot = Some(result);
+        self.store_value(node_index, Value::Effect(node_index as u64))
+    }
+
+    fn execute_command_result_emit(
+        &mut self,
+        package: &PythGraphPackage<'a>,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+        host: &mut impl Host,
+    ) -> Result<(), RuntimeError> {
+        let _effect = self.expect_effect(node.input0)?;
+        let capability = self.expect_capability(node.input1)?;
+        let status = self.expect_error_code(node.input2)?;
+        let text = self.expect_utf8_bytes(package, node.input3)?;
+        host.command_result_emit(capability, status, text)
+            .map_err(RuntimeError::Host)?;
+        self.store_value(node_index, Value::Effect(node_index as u64))
+    }
+
     fn store_host_result(
         &mut self,
         node_index: usize,
@@ -662,6 +737,13 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    fn expect_error_code(&self, node_index: u32) -> Result<u16, RuntimeError> {
+        match self.load_value(node_index)? {
+            Value::ErrorCode(value) => Ok(value),
+            _ => Err(RuntimeError::InvalidValue),
+        }
+    }
+
     fn expect_bool(&self, node_index: u32) -> Result<bool, RuntimeError> {
         match self.load_value(node_index)? {
             Value::Bool(value) => Ok(value),
@@ -747,11 +829,27 @@ fn validate_task_context_result(result: HostCallResult) -> Result<(), RuntimeErr
     Ok(())
 }
 
+fn validate_command_read_result(result: HostCallResult) -> Result<(), RuntimeError> {
+    let command_kind = u16::try_from(result.reserved0).map_err(|_| RuntimeError::InvalidValue)?;
+    if result.reserved1 != [0; 16]
+        || usize::from(result.bytes_len) > MAX_HOST_RESULT_BYTES
+        || !command_kind_is_known(command_kind)
+    {
+        return Err(RuntimeError::InvalidValue);
+    }
+    let len = usize::from(result.bytes_len);
+    if core::str::from_utf8(&result.bytes[..len]).is_err() {
+        return Err(RuntimeError::InvalidString);
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
+        pyth_command_abi::COMMAND_KIND_CREATE_NOTE,
         pyth_runtime_abi::{HOST_RESULT_STATUS, HostCallResult, MAX_PYTH_GRAPH_IMPORTS},
         pyth_tig::{
             format::PythGraphPackage,
@@ -903,6 +1001,31 @@ mod tests {
             self.proposal_count += 1;
             self.last_candidate_task_id = candidate_task_id;
             self.last_score = score;
+            Ok(())
+        }
+
+        fn command_read(
+            &mut self,
+            _capability: PackedCapability,
+        ) -> Result<HostCallResult, HostError> {
+            self.create_count += 1;
+            let mut result = HostCallResult::empty(0);
+            result.reserved0 = u32::from(COMMAND_KIND_CREATE_NOTE);
+            result.bytes_len = 16;
+            result.bytes[..16].copy_from_slice(b"command-accepted");
+            Ok(result)
+        }
+
+        fn command_result_emit(
+            &mut self,
+            _capability: PackedCapability,
+            status: u16,
+            text: &[u8],
+        ) -> Result<(), HostError> {
+            self.proposal_count += 1;
+            self.last_score = u64::from(status);
+            self.last_text[..text.len()].copy_from_slice(text);
+            self.last_text_len = text.len();
             Ok(())
         }
     }
@@ -1276,5 +1399,43 @@ mod tests {
 
         assert_eq!(exit.status, GRAPH_EXIT_OK);
         assert_eq!(values[3], Some(Value::U64(85)));
+    }
+
+    #[test]
+    fn command_read_and_result_emit_execute_through_typed_host_surface() {
+        let bytes = test_support::command_read_result_emit_with_import_rights(
+            RIGHTS_READ | pythos_shared::pyth_tig::opcode::RIGHTS_APPEND,
+        );
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+            proposal_count: 0,
+            last_candidate_task_id: 0,
+            last_score: 0,
+        };
+        let imports = [PackedCapability::from_parts(12, 1); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(host.create_count, 1);
+        assert_eq!(host.proposal_count, 1);
+        assert_eq!(host.last_score, 0);
+        assert_eq!(&host.last_text[..host.last_text_len], b"command-accepted");
+        assert_eq!(values[3], Some(Value::U64(3)));
     }
 }
