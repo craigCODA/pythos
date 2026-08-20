@@ -1131,6 +1131,7 @@ fn task_operation_mutates(operation: u16) -> bool {
             | OP_REVIVE_TASK
             | OP_COMPLETE_TASK
             | OP_ABANDON_TASK
+            | OP_READ_CONTEXT_SUMMARY
     )
 }
 

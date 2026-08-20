@@ -1,10 +1,12 @@
 //! Authoritative task-state adapter over the retained object service.
 
 use crate::{
+    dynamic_object_store::MAX_DYNAMIC_OBJECTS,
     object_service::{ObjectService, ObjectServiceError},
     process_context::ActiveUserProcess,
     service_identity::ServiceId,
     shell_objects::{ObjectId, ObjectKind},
+    task_context::{self, TaskContextEvent, TaskFingerprint},
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
 use pythos_shared::object_shell_abi::PackedCapability;
@@ -31,10 +33,12 @@ const TASK_ID_BASE: u64 = 3000;
 const PROPOSAL_ID_BASE: u64 = 4000;
 const EVENT_ID_BASE: u64 = 5000;
 const RELATION_ID_BASE: u64 = 6000;
+const RELEVANCE_ASSERTION_ID_BASE: u64 = 7000;
 const ID_SPACE: u64 = 1000;
 
 const FIELD_TASK_STATUS: u16 = 1;
 const FIELD_TASK_TITLE_HASH: u16 = 2;
+const FIELD_TASK_FINGERPRINT: u16 = 3;
 const FIELD_PROPOSAL_META: u16 = 1;
 const FIELD_PROPOSAL_TARGET_TASK: u16 = 2;
 const FIELD_PROPOSAL_CANDIDATE_TASK: u16 = 3;
@@ -42,9 +46,14 @@ const FIELD_PROPOSAL_TITLE_REASON_HASH: u16 = 4;
 const FIELD_EVENT_META: u16 = 1;
 const FIELD_EVENT_TASK: u16 = 2;
 const FIELD_EVENT_PROPOSAL: u16 = 3;
+const FIELD_EVENT_CONTEXT: u16 = 4;
 const FIELD_RELATION_SOURCE: u16 = 1;
 const FIELD_RELATION_TARGET: u16 = 2;
 const FIELD_RELATION_KIND: u16 = 3;
+const FIELD_RELEVANCE_DOMINANCE: u16 = 1;
+const FIELD_RELEVANCE_SCORE: u16 = 2;
+const FIELD_RELEVANCE_TASKS: u16 = 3;
+const FIELD_RELEVANCE_SOURCES_HEAD: u16 = 4;
 
 const PROPOSAL_STATUS_PENDING: u16 = 1;
 const PROPOSAL_STATUS_APPROVED: u16 = 2;
@@ -103,14 +112,26 @@ impl<'a> TaskService<'a> {
         let title_hash = stable_hash(title);
         if let Some(active_task_id) = active_task_id_in(&staged) {
             set_task_status_on(&mut staged, caller, active_task_id, TaskStatus::Suspended)?;
-            append_event_on(&mut staged, caller, EVENT_TASK_SUSPENDED, active_task_id, 0)?;
+            append_event_on(
+                &mut staged,
+                caller,
+                EVENT_TASK_SUSPENDED,
+                active_task_id,
+                0,
+                None,
+            )?;
         }
         let task_id = allocate_object_id(&staged, TASK_ID_BASE);
         staged.create_task_service_object(
             caller,
-            task_record(task_id, TaskStatus::Active, title_hash)?,
+            task_record(
+                task_id,
+                TaskStatus::Active,
+                title_hash,
+                default_task_fingerprint(title_hash),
+            )?,
         )?;
-        append_event_on(&mut staged, caller, EVENT_TASK_CREATED, task_id, 0)?;
+        append_event_on(&mut staged, caller, EVENT_TASK_CREATED, task_id, 0, None)?;
         *self.objects = staged;
         Ok(TaskCreateResult { task_id })
     }
@@ -148,6 +169,7 @@ impl<'a> TaskService<'a> {
             EVENT_PROPOSAL_CREATED,
             target_task_id,
             proposal_id,
+            None,
         )?;
         *self.objects = staged;
         Ok(TaskProposalResult { proposal_id })
@@ -185,7 +207,12 @@ impl<'a> TaskService<'a> {
                 let created = allocate_object_id(&staged, TASK_ID_BASE);
                 staged.create_task_service_object(
                     caller,
-                    task_record(created, TaskStatus::Active, proposal.title_hash)?,
+                    task_record(
+                        created,
+                        TaskStatus::Active,
+                        proposal.title_hash,
+                        proposed_task_fingerprint(proposal.title_hash),
+                    )?,
                 )?;
                 created
             }
@@ -202,6 +229,7 @@ impl<'a> TaskService<'a> {
                 EVENT_TASK_SUSPENDED,
                 active_task_id,
                 proposal_id,
+                None,
             )?;
         }
         staged.create_task_service_object(
@@ -232,6 +260,7 @@ impl<'a> TaskService<'a> {
             EVENT_PROPOSAL_APPROVED,
             task_id,
             proposal_id,
+            None,
         )?;
         *self.objects = staged;
         Ok(TaskCreateResult { task_id })
@@ -279,14 +308,42 @@ impl<'a> TaskService<'a> {
         authority: PackedCapability,
         task_id: u64,
     ) -> Result<(), TaskServiceError> {
+        self.append_task_event_with_context(caller, authority, task_id, None)
+            .map(|_| ())
+    }
+
+    pub fn append_task_context_event(
+        &mut self,
+        caller: ActiveUserProcess,
+        authority: PackedCapability,
+        task_id: u64,
+        event: TaskContextEvent,
+    ) -> Result<u64, TaskServiceError> {
+        self.append_task_event_with_context(caller, authority, task_id, Some(event))
+    }
+
+    fn append_task_event_with_context(
+        &mut self,
+        caller: ActiveUserProcess,
+        authority: PackedCapability,
+        task_id: u64,
+        context: Option<TaskContextEvent>,
+    ) -> Result<u64, TaskServiceError> {
         self.validate(caller, authority, TASK_RIGHT_APPEND_EVENT)?;
         let mut staged = *self.objects;
         if task_status_in(&staged, task_id).is_none() {
             return Err(TaskServiceError::NotFound);
         }
-        append_event_on(&mut staged, caller, EVENT_TASK_APPENDED, task_id, 0)?;
+        let event_id = append_event_on(
+            &mut staged,
+            caller,
+            EVENT_TASK_APPENDED,
+            task_id,
+            0,
+            context,
+        )?;
         *self.objects = staged;
-        Ok(())
+        Ok(event_id)
     }
 
     pub fn reject_proposal(
@@ -320,6 +377,7 @@ impl<'a> TaskService<'a> {
             EVENT_PROPOSAL_REJECTED,
             proposal.target_task_id,
             proposal_id,
+            None,
         )?;
         *self.objects = staged;
         Ok(())
@@ -335,26 +393,35 @@ impl<'a> TaskService<'a> {
     }
 
     pub fn read_context_summary(
-        &self,
+        &mut self,
         caller: ActiveUserProcess,
         authority: PackedCapability,
     ) -> Result<TaskContextSummary, TaskServiceError> {
         self.validate(caller, authority, TASK_RIGHT_READ_CONTEXT)?;
-        Ok(TaskContextSummary {
-            active_task_id: self.active_task_id().unwrap_or(0),
-            matching_suspended_task_id: 0,
-            dominant_object_kind: 0,
-            dominant_tool_domain: 0,
-            proposal_kind: 0,
-            event_count: event_count_in(self.objects),
-            active_match_count: 0,
-            candidate_match_count: 0,
-            tool_domain_changed: 0,
-            reserved0: 0,
-            confidence_score: 0,
-            candidate_tag_hash: 0,
-            source_event_ids: [0; 4],
-        })
+        let active_task_id = self.active_task_id().unwrap_or(0);
+        let active = if active_task_id == 0 {
+            default_task_fingerprint(0)
+        } else {
+            task_fingerprint_in(self.objects, active_task_id)
+                .unwrap_or_else(|| default_task_fingerprint(0))
+        };
+        let (events, event_count) = context_events_in(self.objects);
+        let suspended = matching_suspended_task_in(self.objects);
+        let mut summary =
+            task_context::summarize_context(active, &events[..event_count], suspended);
+        summary.active_task_id = active_task_id;
+
+        if caller == steward_process() {
+            let mut staged = *self.objects;
+            let assertion_id = allocate_object_id(&staged, RELEVANCE_ASSERTION_ID_BASE);
+            staged.create_task_service_object(
+                caller,
+                relevance_assertion_record(assertion_id, summary)?,
+            )?;
+            *self.objects = staged;
+        }
+
+        Ok(summary)
     }
 
     pub fn active_task_id(&self) -> Option<u64> {
@@ -367,6 +434,10 @@ impl<'a> TaskService<'a> {
 
     pub fn task_status(&self, task_id: u64) -> TaskStatus {
         task_status_in(self.objects, task_id).unwrap_or(TaskStatus::Abandoned)
+    }
+
+    pub fn relevance_assertion_count(&self) -> u16 {
+        object_count_by_kind_in(self.objects, ObjectKind::RelevanceAssertion)
     }
 
     pub const fn user_task_control_capability(&self) -> PackedCapability {
@@ -401,7 +472,7 @@ impl<'a> TaskService<'a> {
             TaskStatus::Completed => EVENT_TASK_COMPLETED,
             TaskStatus::Abandoned => EVENT_TASK_ABANDONED,
         };
-        append_event_on(&mut staged, caller, event_kind, task_id, 0)?;
+        append_event_on(&mut staged, caller, event_kind, task_id, 0, None)?;
         *self.objects = staged;
         Ok(())
     }
@@ -613,10 +684,12 @@ fn task_record(
     task_id: u64,
     status: TaskStatus,
     title_hash: u64,
+    fingerprint: TaskFingerprint,
 ) -> Result<TypedObjectRecord, TaskServiceError> {
     let mut record = TypedObjectRecord::new(ObjectId::new(task_id), ObjectKind::Task, 1);
     record.push_field(u16_field(FIELD_TASK_STATUS, status.code())?)?;
     record.push_field(u64_field(FIELD_TASK_TITLE_HASH, title_hash)?)?;
+    record.push_field(fingerprint_field(FIELD_TASK_FINGERPRINT, fingerprint)?)?;
     Ok(record)
 }
 
@@ -656,11 +729,15 @@ fn event_record(
     event_kind: u16,
     task_id: u64,
     proposal_id: u64,
+    context: Option<TaskContextEvent>,
 ) -> Result<TypedObjectRecord, TaskServiceError> {
     let mut record = TypedObjectRecord::new(ObjectId::new(event_id), ObjectKind::TaskEvent, 1);
     record.push_field(u16_field(FIELD_EVENT_META, event_kind)?)?;
     record.push_field(u64_field(FIELD_EVENT_TASK, task_id)?)?;
     record.push_field(u64_field(FIELD_EVENT_PROPOSAL, proposal_id)?)?;
+    if let Some(context) = context {
+        record.push_field(context_event_field(FIELD_EVENT_CONTEXT, context)?)?;
+    }
     Ok(record)
 }
 
@@ -678,6 +755,51 @@ fn relation_record(
     Ok(record)
 }
 
+fn relevance_assertion_record(
+    assertion_id: u64,
+    summary: TaskContextSummary,
+) -> Result<TypedObjectRecord, TaskServiceError> {
+    let mut dominance = [0; 16];
+    write_u16(&mut dominance, 0, summary.dominant_object_kind);
+    write_u16(&mut dominance, 2, summary.dominant_tool_domain);
+    write_u16(&mut dominance, 4, summary.proposal_kind);
+    write_u16(&mut dominance, 6, summary.event_count);
+    write_u16(&mut dominance, 8, summary.active_match_count);
+    write_u16(&mut dominance, 10, summary.candidate_match_count);
+    write_u16(&mut dominance, 12, summary.tool_domain_changed);
+
+    let mut score = [0; 16];
+    write_u64(&mut score, 0, summary.confidence_score);
+    write_u64(&mut score, 8, summary.candidate_tag_hash);
+
+    let mut tasks = [0; 16];
+    write_u64(&mut tasks, 0, summary.active_task_id);
+    write_u64(&mut tasks, 8, summary.matching_suspended_task_id);
+
+    let mut sources = [0; 16];
+    write_u64(&mut sources, 0, summary.source_event_ids[0]);
+    write_u64(&mut sources, 8, summary.source_event_ids[1]);
+
+    let mut record = TypedObjectRecord::new(
+        ObjectId::new(assertion_id),
+        ObjectKind::RelevanceAssertion,
+        1,
+    );
+    record.push_field(TypedObjectField::new(
+        FIELD_RELEVANCE_DOMINANCE,
+        1,
+        &dominance,
+    )?)?;
+    record.push_field(TypedObjectField::new(FIELD_RELEVANCE_SCORE, 1, &score)?)?;
+    record.push_field(TypedObjectField::new(FIELD_RELEVANCE_TASKS, 1, &tasks)?)?;
+    record.push_field(TypedObjectField::new(
+        FIELD_RELEVANCE_SOURCES_HEAD,
+        1,
+        &sources,
+    )?)?;
+    Ok(record)
+}
+
 fn set_task_status_on(
     objects: &mut ObjectService,
     caller: ActiveUserProcess,
@@ -691,7 +813,12 @@ fn set_task_status_on(
         return Err(TaskServiceError::NotFound);
     }
     let title_hash = task_title_hash(record).ok_or(TaskServiceError::BadRequest)?;
-    objects.revise_task_service_object(caller, task_record(task_id, status, title_hash)?)?;
+    let fingerprint =
+        task_fingerprint(record).unwrap_or_else(|| default_task_fingerprint(title_hash));
+    objects.revise_task_service_object(
+        caller,
+        task_record(task_id, status, title_hash, fingerprint)?,
+    )?;
     Ok(())
 }
 
@@ -701,13 +828,20 @@ fn append_event_on(
     event_kind: u16,
     task_id: u64,
     proposal_id: u64,
-) -> Result<(), TaskServiceError> {
+    context: Option<TaskContextEvent>,
+) -> Result<u64, TaskServiceError> {
     let event_id = allocate_object_id(objects, EVENT_ID_BASE);
     objects.create_task_service_object(
         caller,
-        event_record(event_id, event_kind, task_id, proposal_id)?,
+        event_record(
+            event_id,
+            event_kind,
+            task_id,
+            proposal_id,
+            context.map(|event| event.with_event_id(event_id)),
+        )?,
     )?;
-    Ok(())
+    Ok(event_id)
 }
 
 fn active_task_id_in(objects: &ObjectService) -> Option<u64> {
@@ -737,13 +871,46 @@ fn task_exists_for_title_in(objects: &ObjectService, title_hash: u64) -> bool {
         })
 }
 
-fn event_count_in(objects: &ObjectService) -> u16 {
+fn object_count_by_kind_in(objects: &ObjectService, kind: ObjectKind) -> u16 {
     objects
         .task_service_objects()
         .into_iter()
         .flatten()
-        .filter(|record| record.object_kind() == ObjectKind::TaskEvent)
+        .filter(|record| record.object_kind() == kind)
         .count() as u16
+}
+
+fn task_fingerprint_in(objects: &ObjectService, task_id: u64) -> Option<TaskFingerprint> {
+    objects
+        .task_service_object(ObjectId::new(task_id))
+        .and_then(task_fingerprint)
+}
+
+fn matching_suspended_task_in(objects: &ObjectService) -> Option<(u64, TaskFingerprint)> {
+    for record in objects.task_service_objects().into_iter().flatten() {
+        if record.object_kind() == ObjectKind::Task
+            && task_status(record) == Some(TaskStatus::Suspended)
+            && let Some(fingerprint) = task_fingerprint(record)
+        {
+            return Some((record.object_id().raw(), fingerprint));
+        }
+    }
+    None
+}
+
+fn context_events_in(objects: &ObjectService) -> ([TaskContextEvent; MAX_DYNAMIC_OBJECTS], usize) {
+    let mut events = [TaskContextEvent::new(0, 0, 0, 0); MAX_DYNAMIC_OBJECTS];
+    let mut count = 0;
+    for record in objects.task_service_objects().into_iter().flatten() {
+        if record.object_kind() == ObjectKind::TaskEvent
+            && let Some(event) = context_event(record)
+            && count < events.len()
+        {
+            events[count] = event.with_event_id(record.object_id().raw());
+            count += 1;
+        }
+    }
+    (events, count)
 }
 
 fn stored_proposal(
@@ -791,6 +958,26 @@ fn task_title_hash(record: TypedObjectRecord) -> Option<u64> {
     field_value(record, FIELD_TASK_TITLE_HASH).map(|value| read_u64(&value, 0))
 }
 
+fn task_fingerprint(record: TypedObjectRecord) -> Option<TaskFingerprint> {
+    field_value(record, FIELD_TASK_FINGERPRINT).map(|value| TaskFingerprint {
+        object_kind: read_u16(&value, 0),
+        tool_domain: read_u16(&value, 2),
+        tag_hash: read_u64(&value, 8),
+    })
+}
+
+fn context_event(record: TypedObjectRecord) -> Option<TaskContextEvent> {
+    field_value(record, FIELD_EVENT_CONTEXT).map(|value| {
+        TaskContextEvent::new(
+            record.object_id().raw(),
+            read_u16(&value, 0),
+            read_u16(&value, 2),
+            read_u64(&value, 8),
+        )
+        .with_flags(read_u16(&value, 4))
+    })
+}
+
 fn field_value(record: TypedObjectRecord, field_id: u16) -> Option<[u8; 16]> {
     let mut index = 0;
     while index < record.field_count() {
@@ -821,6 +1008,45 @@ fn u16_field(field_id: u16, value: u16) -> Result<TypedObjectField, ObjectFormat
 
 fn u64_field(field_id: u16, value: u64) -> Result<TypedObjectField, ObjectFormatError> {
     TypedObjectField::new(field_id, 1, &value.to_le_bytes())
+}
+
+fn fingerprint_field(
+    field_id: u16,
+    fingerprint: TaskFingerprint,
+) -> Result<TypedObjectField, ObjectFormatError> {
+    let mut value = [0; 16];
+    write_u16(&mut value, 0, fingerprint.object_kind);
+    write_u16(&mut value, 2, fingerprint.tool_domain);
+    write_u64(&mut value, 8, fingerprint.tag_hash);
+    TypedObjectField::new(field_id, 1, &value)
+}
+
+fn context_event_field(
+    field_id: u16,
+    event: TaskContextEvent,
+) -> Result<TypedObjectField, ObjectFormatError> {
+    let mut value = [0; 16];
+    write_u16(&mut value, 0, event.object_kind);
+    write_u16(&mut value, 2, event.tool_domain);
+    write_u16(&mut value, 4, event.flags);
+    write_u64(&mut value, 8, event.tag_hash);
+    TypedObjectField::new(field_id, 1, &value)
+}
+
+fn default_task_fingerprint(title_hash: u64) -> TaskFingerprint {
+    TaskFingerprint::new(
+        task_context::object_kind_code(ObjectKind::Note),
+        task_context::TOOL_DOMAIN_STORAGE,
+        title_hash,
+    )
+}
+
+fn proposed_task_fingerprint(title_hash: u64) -> TaskFingerprint {
+    TaskFingerprint::new(
+        task_context::object_kind_code(ObjectKind::Task),
+        task_context::TOOL_DOMAIN_GRAPH,
+        title_hash,
+    )
 }
 
 fn stable_hash(bytes: &[u8]) -> u64 {
@@ -1041,12 +1267,68 @@ mod tests {
             .approve_proposal(user, user_control, proposal.proposal_id, true)
             .unwrap();
 
-        service
-            .append_task_event(user, user_control, task_b.task_id)
-            .unwrap();
+        for _ in 0..5 {
+            service
+                .append_task_context_event(
+                    user,
+                    user_control,
+                    task_b.task_id,
+                    TaskContextEvent::new(
+                        0,
+                        task_context::object_kind_code(ObjectKind::Task),
+                        task_context::TOOL_DOMAIN_GRAPH,
+                        stable_hash(b"semantic"),
+                    ),
+                )
+                .unwrap();
+        }
 
         let summary = service.read_context_summary(user, user_control).unwrap();
         assert_eq!(summary.active_task_id, task_b.task_id);
         assert!(summary.event_count >= 5);
+    }
+
+    #[test]
+    fn steward_context_summary_records_relevance_without_task_control() {
+        let mut service = TaskService::new_for_test();
+        let user = service.user_caller();
+        let steward = service.steward_caller();
+        let user_control = service.user_task_control_capability();
+        let steward_context = service.steward_proposal_capability();
+        let task_a = service
+            .create_task(user, user_control, b"Universal Boot")
+            .unwrap();
+        let semantic_tag = stable_hash(b"semantic");
+
+        for _ in 0..8 {
+            service
+                .append_task_context_event(
+                    user,
+                    user_control,
+                    task_a.task_id,
+                    TaskContextEvent::new(
+                        0,
+                        task_context::object_kind_code(ObjectKind::Task),
+                        task_context::TOOL_DOMAIN_GRAPH,
+                        semantic_tag,
+                    ),
+                )
+                .unwrap();
+        }
+
+        let summary = service
+            .read_context_summary(steward, steward_context)
+            .unwrap();
+
+        assert_eq!(summary.active_task_id, task_a.task_id);
+        assert_eq!(summary.confidence_score, 85);
+        assert_eq!(summary.proposal_kind, TaskProposalKind::NewTask.code());
+        assert_eq!(summary.source_event_ids, [5001, 5002, 5003, 5004]);
+        assert_eq!(service.active_task_id(), Some(task_a.task_id));
+        assert_eq!(service.relevance_assertion_count(), 1);
+        assert_eq!(
+            service.approve_proposal(steward, steward_context, 1, true),
+            Err(TaskServiceError::Denied)
+        );
     }
 }

@@ -34,6 +34,7 @@ use pythos_shared::{
 
 const OBJECT_SERVICE_BASE_SECTOR: u64 = 96;
 const OBJECT_SERVICE_BLOCK_COUNT: u16 = MAX_DYNAMIC_OBJECTS as u16;
+const TASK_SERVICE_STORAGE_ID: ServiceId = ServiceId::from_raw(0x5059_5453_5354_5201);
 const FIRST_SHELL_NOTE_ID: u64 = 1042;
 const KNOWN_EXTERNAL_NOTE_ID: u64 = 2001;
 const SHELL_TASK_ID: u64 = 180;
@@ -450,15 +451,15 @@ impl ObjectService {
         if !is_task_service_kind(object.object_kind()) {
             return Err(ObjectServiceError::UnsupportedKind);
         }
-        self.ensure_storage_quota(caller.service_id())?;
-        self.quotas.charge_blocks(caller.service_id(), 1)?;
+        self.ensure_storage_quota(TASK_SERVICE_STORAGE_ID)?;
+        self.quotas.charge_blocks(TASK_SERVICE_STORAGE_ID, 1)?;
         if let Err(error) = self.objects.create_object(object) {
-            let _ = self.quotas.release_blocks(caller.service_id(), 1);
+            let _ = self.quotas.release_blocks(TASK_SERVICE_STORAGE_ID, 1);
             return Err(error.into());
         }
         if let Err(error) = self.relationships.insert_object(object) {
             let _ = self.objects.delete_object(object.object_id());
-            let _ = self.quotas.release_blocks(caller.service_id(), 1);
+            let _ = self.quotas.release_blocks(TASK_SERVICE_STORAGE_ID, 1);
             return Err(error.into());
         }
         self.relationships
@@ -694,10 +695,13 @@ impl ObjectService {
 
     fn ensure_storage_quota(&mut self, service_id: ServiceId) -> Result<(), ObjectServiceError> {
         match self.quotas.used_blocks(service_id) {
-            Ok(_) => Ok(()),
+            Ok(_) => self
+                .quotas
+                .ensure_minimum_limit(service_id, MAX_DYNAMIC_OBJECTS as u64)
+                .map_err(ObjectServiceError::from),
             Err(StorageQuotaError::UnknownService) => self
                 .quotas
-                .register(service_id, MAX_QUERY_RESULTS as u64)
+                .register(service_id, MAX_DYNAMIC_OBJECTS as u64)
                 .map_err(ObjectServiceError::from),
             Err(error) => Err(error.into()),
         }
@@ -1000,6 +1004,33 @@ mod tests {
             MAX_QUERY_RESULTS
         );
         assert!(results.iter().all(|entry| entry.object_id != 2001));
+    }
+
+    #[test]
+    fn task_storage_quota_does_not_expand_shell_note_quota() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        service
+            .create_task_service_object(
+                shell,
+                TypedObjectRecord::new(ObjectId::new(5000), ObjectKind::TaskEvent, 1),
+            )
+            .unwrap();
+
+        for _ in 0..MAX_QUERY_RESULTS {
+            service
+                .create_object(shell, workspace, ObjectKind::Note)
+                .unwrap();
+        }
+
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::Note),
+            Err(ObjectServiceError::Quota(
+                StorageQuotaError::StorageQuotaExceeded
+            ))
+        );
     }
 
     #[test]
