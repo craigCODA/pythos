@@ -11,8 +11,12 @@ tooling.
 The pre-Phase-7 `main` boundary has been reconciled: Phase 10 remains complete,
 and Phase 11 physical-hardware smoke-test findings are recorded on `main`
 through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The current
-numbered-roadmap stop boundary is Phase 11 -> Phase 12. ADR 0063 physical
-evidence terminal is implemented on `main` from the former
+numbered-roadmap stop boundary is Phase 12 slice 1 -> Phase 12 slice 2. Phase
+12 `path-vs-graph-decision` is recorded through ADR 0069, which chooses a
+capability-scoped object locator namespace rather than POSIX paths, and through
+`docs/semantic-checkpoint-contract.md`, which defines the build-evidence
+comparison contract for future parallel lanes. ADR 0063 physical evidence
+terminal is implemented on `main` from the former
 `agent/physical-evidence-terminal` line and is QEMU-accepted through
 `scripts\test-evidence-terminal.py`. Main also carries the 2026-08-08 physical
 evidence-terminal validation record for the disposable O2 Micro `1217:8620`
@@ -1101,9 +1105,11 @@ until a later phase defines one.
 
 Phase 10 is complete, and Phase 11 physical-hardware smoke-test findings are
 recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The
-current numbered-roadmap stop boundary is Phase 11 -> Phase 12. On the Phase 7
-PythTIG branch, the current PythTIG stop boundary is Phase 7 -> later PythTIG
-phases. `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
+Phase 12 `path-vs-graph-decision` slice is recorded through ADR 0069 and
+`docs/semantic-checkpoint-contract.md`. The current numbered-roadmap stop
+boundary is Phase 12 slice 1 -> Phase 12 slice 2. On the Phase 7 PythTIG
+branch, the current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
+`docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
 Before starting later-phase work, re-read:
@@ -1115,7 +1121,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin the Phase 12 `path-vs-graph-decision`, networking, package
-management, updates, AI, SMP, hardware expansion, or later PythTIG work by
-momentum. Pick one later phase, write its detailed slice sequence and required
-artifacts, then start with a failing automated test where code is involved.
+Do not begin Phase 12 `path-resolution`, networking, package management,
+updates, AI, SMP, hardware expansion, or later PythTIG work by momentum. Pick
+one later phase, write its detailed slice sequence and required artifacts, then
+start with a failing automated test where code is involved.

@@ -20,11 +20,15 @@ Phase 10         complete   general-purpose-storage
 Phase 11         recorded   physical-hardware-boot-smoke-test
                               ADR 0046
                               findings: docs/phase-11-real-hardware-findings.md
+Phase 12 slice 1 recorded   path-vs-graph-decision
+                              ADR 0069
+                              contract: docs/semantic-checkpoint-contract.md
 ```
 
-Next unallocated ADR number: **0069**. Hard stop is the Phase 11 -> Phase 12
-boundary, already recorded in `AGENTS.md`. Nothing below is authorized to start
-without explicit re-invocation, same as every phase before it.
+Next unallocated ADR number: **0070**. Hard stop is the Phase 12 slice 1 ->
+Phase 12 slice 2 boundary, already recorded in `AGENTS.md`. Phase 12
+`path-resolution` is not authorized to start without explicit re-invocation,
+same as every phase before it.
 
 ---
 
@@ -80,7 +84,7 @@ on real firmware.
 
 ---
 
-## Phase 12: General-Purpose Filesystem Path Layer
+## Phase 12: General-Purpose Object Locator Namespace
 
 ### Purpose
 
@@ -93,6 +97,10 @@ namespace underneath?
 
 Applications and packaging silently assumed this question was already answered.
 It is not. Resolve it here before packaging needs an answer it does not have.
+ADR 0069 resolves the decision: PythOS uses a capability-scoped object locator
+namespace. Locator strings may look path-like for manifests and diagnostics,
+but canonical identity remains typed object identity and authority remains
+capability based.
 
 ### Preconditions
 
@@ -100,34 +108,32 @@ Phase 10 exit condition reproducible.
 
 ### Locked Slice Sequence
 
-1. `path-vs-graph-decision` - ADR only, no code. Decide and justify: pure
-   object-graph addressing, a thin path layer over the object graph, or a
-   genuine POSIX-adjacent hierarchy. Given `ADR 0018`'s existing direction, the
-   thin-path-layer option is the default unless a specific reason justifies
-   divergence.
-2. `path-resolution` - implement whatever slice 1 decided, capability-gated the
-   same way every other Phase 3/8/10 resource access is.
+1. `path-vs-graph-decision` - COMPLETE. ADR 0069 chooses a
+   capability-scoped object locator namespace and records the semantic
+   checkpoint contract used to compare future parallel evidence lanes.
+2. `path-resolution` - implement ADR 0069's object locator resolution,
+   capability-gated the same way every other Phase 3/8/10 resource access is.
 3. `path-adversarial-suite` - prove the corresponding attack class is denied
-   specifically, not generically. If paths exist, that includes traversal
-   attempts such as `../`; if symlink-equivalent relationships exist, that
-   includes confusion attacks.
+   specifically, not generically. For ADR 0069 that includes denied `..`, `.`,
+   empty-segment, stale-binding, missing-traversal-capability, missing
+   final-object-capability, link-confusion, and global-root assumptions.
 
 ### Exit Condition
 
 A capability-scoped service can resolve and access a stored object via the
-chosen addressing scheme, with a specific proven-denied case for the
-corresponding attack class.
+ADR 0069 object locator namespace, with specific proven-denied cases for the
+corresponding namespace-confusion and authority-bypass attack classes.
 
 ### Scope Boundary
 
-Do not build a general POSIX filesystem - permissions bits, hard links, mount
-points - unless slice 1's ADR specifically concludes that is the right target.
-The default assumption is the thinner option.
+Do not build a general POSIX filesystem, permissions bits, hard links, symlinks,
+mount points, file descriptors, or ambient current-directory authority. ADR
+0069 specifically rejects those as Phase 12's target.
 
 ### Required Artifacts
 
-The slice-1 ADR is the actual deliverable of this phase; everything else is
-downstream of that decision.
+ADR 0069 is the slice-1 deliverable. `docs/semantic-checkpoint-contract.md` is
+the accepted comparison contract for future build and evidence lanes.
 
 ---
 
@@ -254,9 +260,10 @@ regressed."
 ## What Changed From The Original Later-Phases Sketch
 
 1. Phase 9 and Phase 10 are verified-complete rather than planned.
-2. Phase 12, `general-purpose-filesystem-path-layer`, is new. It surfaced
+2. Phase 12, `general-purpose-object-locator-namespace`, is new. It surfaced
    because Phase 10 delivered object-graph storage without deciding whether
    paths exist on top of it, while Applications and Packaging silently assumed
-   an answer that was never given.
+   an answer that was never given. ADR 0069 records that the answer is a
+   capability-scoped object locator namespace, not POSIX paths.
 3. Every phase after Phase 12 is renumbered by one.
 4. SMP's audit scope now explicitly covers everything built through Phase 17.
