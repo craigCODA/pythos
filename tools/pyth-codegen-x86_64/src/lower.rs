@@ -22,7 +22,7 @@ use crate::{
         OBJECT_RESPONSE_CAPABILITY_OFFSET, OBJECT_RESPONSE_FIELD_BYTES_OFFSET,
         OBJECT_RESPONSE_OBJECT_ID_OFFSET, OBJECT_RESPONSE_REVISION_COUNT_OFFSET,
         OBJECT_RESPONSE_REVISION_OFFSET, OBJECT_RESPONSE_STATUS_OFFSET, ObjectStubOperation,
-        TASK_CONTEXT_ACTIVE_TASK_ID_OFFSET, TASK_CONTEXT_BYTES,
+        SYSCALL_OK_VALUE, TASK_CONTEXT_ACTIVE_TASK_ID_OFFSET, TASK_CONTEXT_BYTES,
         TASK_CONTEXT_CONFIDENCE_SCORE_OFFSET, TASK_CONTEXT_MATCHING_TASK_ID_OFFSET,
         TASK_CONTEXT_OPERATION, TASK_CONTEXT_PROPOSAL_KIND_OFFSET, TASK_PROPOSAL_KIND_RELATED_CODE,
         TASK_PROPOSAL_OPERATION, TASK_REQUEST_ABI_WORD, TASK_REQUEST_AUTHORITY_OFFSET,
@@ -413,6 +413,7 @@ impl<'a> Lowerer<'a> {
         self.code.mov_imm64(Register::R10, 0)?;
         self.code.mov_imm64(Register::R8, 0)?;
         self.code.syscall()?;
+        self.ensure_syscall_ok()?;
         self.metadata.system_log_syscalls += 1;
         self.store_typed_immediate(node_index, PythType::Effect, node_index as u64)
     }
@@ -615,7 +616,8 @@ impl<'a> Lowerer<'a> {
         self.code
             .mov_imm64(Register::R10, OBJECT_RESPONSE_BYTES as u64)?;
         self.code.mov_imm64(Register::R8, 0)?;
-        self.code.syscall()
+        self.code.syscall()?;
+        self.ensure_syscall_ok()
     }
 
     fn copy_object_response_to_host_result(
@@ -710,7 +712,8 @@ impl<'a> Lowerer<'a> {
         self.code
             .mov_imm64(Register::R10, TASK_RESPONSE_BYTES as u64)?;
         self.code.mov_imm64(Register::R8, 0)?;
-        self.code.syscall()
+        self.code.syscall()?;
+        self.ensure_syscall_ok()
     }
 
     fn ensure_task_response_ok(&mut self) -> Result<()> {
@@ -721,6 +724,12 @@ impl<'a> Lowerer<'a> {
         self.code.mov_imm64(Register::Rbx, 0xFFFF)?;
         self.code.and_reg64(Register::Rax, Register::Rbx)?;
         self.code.mov_imm64(Register::Rbx, 0)?;
+        self.code.cmp_reg64(Register::Rax, Register::Rbx)?;
+        self.emit_jcc(ConditionCode::NotEqual, LABEL_RUNTIME_ERROR_EXIT)
+    }
+
+    fn ensure_syscall_ok(&mut self) -> Result<()> {
+        self.code.mov_imm64(Register::Rbx, SYSCALL_OK_VALUE)?;
         self.code.cmp_reg64(Register::Rax, Register::Rbx)?;
         self.emit_jcc(ConditionCode::NotEqual, LABEL_RUNTIME_ERROR_EXIT)
     }

@@ -729,15 +729,22 @@ fn dispatch_object_request_with_raw_buffers(
     } else {
         &[]
     };
+    let mut query_marker_entry = None;
     let response = if request.operation == OP_QUERY_OBJECTS {
         if request.output_len < size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64 {
             return Ok(buffer_too_small_response());
         }
         let output = checked_query_output(copy_map, &request)?;
-        retained_services::with_object_service(|service| {
+        let response = retained_services::with_object_service(|service| {
             dispatch_object_request_to_service(service, caller, request, input, output)
         })
-        .map_err(SyscallError::from)?
+        .map_err(SyscallError::from)?;
+        if response.status == STATUS_OK
+            && response.bytes_written >= size_of::<ObjectListEntry>() as u64
+        {
+            query_marker_entry = Some(output[0]);
+        }
+        response
     } else {
         retained_services::with_object_service(|service| {
             dispatch_object_request_to_service(service, caller, request, input, &mut [])
@@ -750,13 +757,18 @@ fn dispatch_object_request_with_raw_buffers(
     // comment above `syscall_entry_abi` for why this needed a larger kernel
     // stack before it could be wired in safely.
     #[cfg(not(test))]
-    if response.status == STATUS_OK
-        && matches!(request.operation, OP_CREATE_OBJECT | OP_REVISE_FIELD)
-    {
+    if response.status == STATUS_OK && object_operation_mutates(request.operation) {
         retained_services::persist_object_service().map_err(SyscallError::from)?;
     }
 
+    emit_pythtig_object_success_marker(caller, request.operation, response, query_marker_entry);
+
     Ok(response)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+const fn object_operation_mutates(operation: u16) -> bool {
+    matches!(operation, OP_CREATE_OBJECT | OP_REVISE_FIELD)
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -1499,18 +1511,14 @@ fn dispatch_object_request_to_service(
         OP_CREATE_OBJECT => match request_object_kind(request.object_kind)
             .and_then(|kind| service.create_object(caller, request.authority, kind))
         {
-            Ok(created) => {
-                let response = ObjectShellResponse {
-                    status: STATUS_OK,
-                    object_kind: request.object_kind,
-                    object_id: created.object_id.raw(),
-                    revision: created.revision,
-                    capability: created.object_capability,
-                    ..empty_response()
-                };
-                emit_pythtig_object_success_marker(caller, request.operation, response, None);
-                response
-            }
+            Ok(created) => ObjectShellResponse {
+                status: STATUS_OK,
+                object_kind: request.object_kind,
+                object_id: created.object_id.raw(),
+                revision: created.revision,
+                capability: created.object_capability,
+                ..empty_response()
+            },
             Err(error) => object_error_response(caller, request, error),
         },
         OP_QUERY_OBJECTS => {
@@ -1532,12 +1540,6 @@ fn dispatch_object_request_to_service(
                         bytes_written: (count * size_of::<ObjectListEntry>()) as u64,
                         ..empty_response()
                     };
-                    emit_pythtig_object_success_marker(
-                        caller,
-                        request.operation,
-                        response,
-                        Some(output[0]),
-                    );
                     response
                 }
                 Err(error) => object_error_response(caller, request, error),
@@ -1561,7 +1563,6 @@ fn dispatch_object_request_to_service(
                     field_bytes,
                     ..empty_response()
                 };
-                emit_pythtig_object_success_marker(caller, request.operation, response, None);
                 response
             }
             Err(error) => object_error_response(caller, request, error),
@@ -1581,7 +1582,6 @@ fn dispatch_object_request_to_service(
                     revision,
                     ..empty_response()
                 };
-                emit_pythtig_object_success_marker(caller, request.operation, response, None);
                 response
             }
             Err(error) => object_error_response(caller, request, error),
@@ -1595,7 +1595,6 @@ fn dispatch_object_request_to_service(
                         revision_count,
                         ..empty_response()
                     };
-                    emit_pythtig_object_success_marker(caller, request.operation, response, None);
                     response
                 }
                 Err(error) => object_error_response(caller, request, error),
