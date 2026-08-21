@@ -463,14 +463,14 @@ pub fn run_self_test() -> Result<(), ObjectLocatorError> {
             ResourceId::new(root.raw()),
             RightsMask::new(RightsMask::READ),
         )
-        .map_err(|error| ObjectLocatorError::TraversalAuthorityDenied(error))?;
+        .map_err(ObjectLocatorError::TraversalAuthorityDenied)?;
     let target_capability = capabilities
         .grant(
             caller,
             ResourceId::new(TARGET_OBJECT_ID.raw()),
             RightsMask::new(RightsMask::READ),
         )
-        .map_err(|error| ObjectLocatorError::FinalObjectAuthorityDenied(error))?;
+        .map_err(ObjectLocatorError::FinalObjectAuthorityDenied)?;
 
     let request = ObjectLocatorRequest::new(
         caller,
