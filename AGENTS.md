@@ -79,12 +79,13 @@ universal-device work.
 
 ## Active Milestone
 
-The current checked-in stop boundary is Phase 11 -> Phase 12 on `main`.
-Milestone 1.5 and Phases 2 through 10 are complete through
-`PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11 physical-hardware smoke-test
-findings are recorded through ADR 0046 and
-`docs/phase-11-real-hardware-findings.md`. No implementation milestone is
-active until the owner explicitly invokes the next phase. Treat the older
+The current checked-in stop boundary is Phase 12 slice 1 -> Phase 12 slice 2 on
+`main`. Milestone 1.5 and Phases 2 through 10 are complete through
+`PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11 physical-hardware smoke-test findings
+are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`.
+Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and
+`docs/semantic-checkpoint-contract.md`. No implementation milestone is active
+until the owner explicitly invokes Phase 12 `path-resolution`. Treat the older
 `milestone/phase8-real-hardware-isolation` and
 `milestone/phase11-real-hardware-boot` branch names as historical context, not
 the current branch target.
@@ -421,7 +422,7 @@ The Phase 10 `concurrent-write-safety` slice serializes capability-gated storage
 
 The Phase 10 `storage-adversarial-suite` slice proves repeated dynamic create/delete cycles, an out-of-quota write denial, in-boot dynamic torn-write rollback, and a separate `scripts/test-persistent-storage.py` killed-mid-commit QEMU recovery path for Phase 10 dynamic allocation. It emits `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` and completes Phase 10 with `PYTHOS:CORE:PHASE_10_COMPLETE`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, and Phase 10 are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Halt at the Phase 11 -> Phase 12 boundary; do not begin Phase 12 `path-vs-graph-decision` or any later package-management, networking, updates, AI, hardware-expansion, or SMP work without explicit re-invocation.
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, and Phase 10 are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`. Halt at the Phase 12 slice 1 -> Phase 12 slice 2 boundary; do not begin Phase 12 `path-resolution` or any later package-management, networking, updates, AI, hardware-expansion, or SMP work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 

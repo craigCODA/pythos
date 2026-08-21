@@ -1120,8 +1120,11 @@ before any AI can invoke privileged operations.
 The current Phase 11 closure state and Phase 12 onward roadmap are maintained in
 [`docs/ROADMAP-LATER-PHASES.md`](ROADMAP-LATER-PHASES.md). That document is
 canonical after verified Phase 9 and Phase 10 completion and recorded Phase 11
-physical-hardware smoke-test findings. The older detailed planning sketch below
-is retained only as historical context and must not be used to start new work.
+physical-hardware smoke-test findings. ADR 0069 records the Phase 12
+`path-vs-graph-decision`, selecting a capability-scoped object locator
+namespace and the semantic-checkpoint comparison contract. The older detailed
+planning sketch below is retained only as historical context and must not be
+used to start new work.
 
 This extends `docs/ROADMAP.md`'s deliberately coarse "Later Phases" section
 now that Phase 8 is complete. It uses the same format as Phases 1.5-8:
@@ -1148,7 +1151,7 @@ The current canonical order is:
 Phase 9   general-purpose-process-model   (generalizes Phase 8)
 Phase 10  general-purpose-storage          (generalizes Phase 7)
 Phase 11  physical-hardware-boot-smoke-test (recorded, target-specific)
-Phase 12  general-purpose-filesystem-path-layer
+Phase 12  general-purpose-object-locator-namespace (slice 1 recorded)
 Phase 13  applications-and-packaging       (needs 9 + 10 + 12)
 Phase 14  networking
 Phase 15  hardware-driver-expansion
@@ -1248,7 +1251,8 @@ grants is complete. ADR 0041 for process argv/environment launch data is
 complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
 for the process-model adversarial suite is complete. Phase 9 is complete;
 Phase 10 follows below as historical context. The active hard stop is now the
-Phase 11 -> Phase 12 boundary recorded in `docs/ROADMAP-LATER-PHASES.md`.
+Phase 12 slice 1 -> Phase 12 slice 2 boundary recorded in
+`docs/ROADMAP-LATER-PHASES.md`.
 
 ---
 
@@ -1291,9 +1295,10 @@ as Phase 7's proof, generalized past the single fixed checkpoint.
 
 Status: complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11
 physical-hardware smoke-test findings are recorded through ADR 0046 and
-`docs/phase-11-real-hardware-findings.md`. Halt at the Phase 11 -> Phase 12
-boundary; do not begin Phase 12 `path-vs-graph-decision` without explicit
-re-invocation.
+`docs/phase-11-real-hardware-findings.md`. Phase 12
+`path-vs-graph-decision` is recorded through ADR 0069. Halt at the Phase 12
+slice 1 -> Phase 12 slice 2 boundary; do not begin Phase 12 `path-resolution`
+without explicit re-invocation.
 
 ### Scope boundary
 
