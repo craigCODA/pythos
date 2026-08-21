@@ -23,12 +23,19 @@ Phase 11         recorded   physical-hardware-boot-smoke-test
 Phase 12 slice 1 recorded   path-vs-graph-decision
                               ADR 0069
                               contract: docs/semantic-checkpoint-contract.md
+Phase 12 slice 2 recorded   path-resolution
+                              ADR 0070
+                              loader bound: ADR 0071
+                              marker: PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY
+Phase 12 slice 3 recorded   path-adversarial-suite
+                              ADR 0072
+                              marker: PYTHOS:CORE:PHASE_12_COMPLETE
 ```
 
-Next unallocated ADR number: **0070**. Hard stop is the Phase 12 slice 1 ->
-Phase 12 slice 2 boundary, already recorded in `AGENTS.md`. Phase 12
-`path-resolution` is not authorized to start without explicit re-invocation,
-same as every phase before it.
+Next unallocated ADR number: **0073**. Hard stop is the Phase 12 -> Phase 13
+boundary, already recorded in `AGENTS.md`. Phase 13 package work is not
+authorized to start without explicit re-invocation, same as every phase before
+it.
 
 ---
 
@@ -111,12 +118,15 @@ Phase 10 exit condition reproducible.
 1. `path-vs-graph-decision` - COMPLETE. ADR 0069 chooses a
    capability-scoped object locator namespace and records the semantic
    checkpoint contract used to compare future parallel evidence lanes.
-2. `path-resolution` - implement ADR 0069's object locator resolution,
+2. `path-resolution` - COMPLETE. ADR 0070 records the internal object-locator
+   0.1 resolver ABI, the `NameBinding` typed-object code, name-binding
+   relationship kinds, denial identities, and serial markers. The resolver is
    capability-gated the same way every other Phase 3/8/10 resource access is.
-3. `path-adversarial-suite` - prove the corresponding attack class is denied
-   specifically, not generically. For ADR 0069 that includes denied `..`, `.`,
-   empty-segment, stale-binding, missing-traversal-capability, missing
-   final-object-capability, link-confusion, and global-root assumptions.
+3. `path-adversarial-suite` - COMPLETE. ADR 0072 records the adversarial
+   denial suite over ADR 0070's resolver ABI: empty-segment grammar denial,
+   stale binding, missing segment, missing traversal capability, missing final
+   object authority, name collision, link confusion, and global-root fallback
+   assumptions.
 
 ### Exit Condition
 
@@ -134,6 +144,11 @@ mount points, file descriptors, or ambient current-directory authority. ADR
 
 ADR 0069 is the slice-1 deliverable. `docs/semantic-checkpoint-contract.md` is
 the accepted comparison contract for future build and evidence lanes.
+ADR 0070 plus `scripts/test-boot.py --slice path-resolution` are the Slice 2
+deliverables. ADR 0071 records the finite loader read-bound increase needed
+for the Slice 2 debug acceptance image to reach PythCore. ADR 0072 plus
+`scripts/test-boot.py --slice path-adversarial-suite` are the Slice 3
+deliverables.
 
 ---
 

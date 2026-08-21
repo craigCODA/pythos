@@ -313,6 +313,8 @@ fn relationship_kind_code(kind: RelationshipKind) -> u16 {
         RelationshipKind::CreatedBy => 2,
         RelationshipKind::DependsOn => 3,
         RelationshipKind::BelongsTo => 4,
+        RelationshipKind::NameBinding => 5,
+        RelationshipKind::BindingTarget => 6,
     }
 }
 
@@ -322,6 +324,8 @@ fn relationship_kind_from_code(code: u16) -> Result<RelationshipKind, Persistent
         2 => Ok(RelationshipKind::CreatedBy),
         3 => Ok(RelationshipKind::DependsOn),
         4 => Ok(RelationshipKind::BelongsTo),
+        5 => Ok(RelationshipKind::NameBinding),
+        6 => Ok(RelationshipKind::BindingTarget),
         _ => Err(PersistentObjectError::BadSnapshot),
     }
 }

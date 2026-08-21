@@ -75,6 +75,7 @@ pub const fn object_kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::WorkspaceSession => 8,
         ObjectKind::ObjectBrowserWindow => 9,
         ObjectKind::Note => 10,
+        ObjectKind::NameBinding => 11,
         ObjectKind::Task => OBJECT_KIND_TASK,
         ObjectKind::TaskProposal => OBJECT_KIND_TASK_PROPOSAL,
         ObjectKind::TaskEvent => OBJECT_KIND_TASK_EVENT,

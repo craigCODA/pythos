@@ -30,7 +30,7 @@ const PYTHCORE_PATH: &[u16] = &[
     0,
 ];
 
-const MAX_KERNEL_FILE_SIZE: usize = 4 * 1024 * 1024;
+const MAX_KERNEL_FILE_SIZE: usize = 8 * 1024 * 1024;
 const PAGE_SIZE: u64 = 4096;
 const EI_CLASS_64: u8 = 2;
 const EI_DATA_LITTLE_ENDIAN: u8 = 1;
@@ -504,4 +504,14 @@ fn read_u64(bytes: &[u8], offset: usize) -> Result<u64, ()> {
     Ok(u64::from_le_bytes([
         raw[0], raw[1], raw[2], raw[3], raw[4], raw[5], raw[6], raw[7],
     ]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn phase_12_kernel_file_read_bound_is_finite() {
+        assert_eq!(MAX_KERNEL_FILE_SIZE, 8 * 1024 * 1024);
+    }
 }

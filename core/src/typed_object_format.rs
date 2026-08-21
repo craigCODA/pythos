@@ -254,6 +254,7 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::WorkspaceSession => 8,
         ObjectKind::ObjectBrowserWindow => 9,
         ObjectKind::Note => 10,
+        ObjectKind::NameBinding => 11,
         ObjectKind::Task => OBJECT_KIND_TASK,
         ObjectKind::TaskProposal => OBJECT_KIND_TASK_PROPOSAL,
         ObjectKind::TaskEvent => OBJECT_KIND_TASK_EVENT,
@@ -275,6 +276,7 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         8 => Ok(ObjectKind::WorkspaceSession),
         9 => Ok(ObjectKind::ObjectBrowserWindow),
         10 => Ok(ObjectKind::Note),
+        11 => Ok(ObjectKind::NameBinding),
         OBJECT_KIND_TASK => Ok(ObjectKind::Task),
         OBJECT_KIND_TASK_PROPOSAL => Ok(ObjectKind::TaskProposal),
         OBJECT_KIND_TASK_EVENT => Ok(ObjectKind::TaskEvent),
@@ -365,6 +367,21 @@ mod tests {
         assert_eq!(field.field_id(), 1);
         assert_eq!(field.value_len(), 5);
         assert_eq!(&field.value()[..5], b"hello");
+    }
+
+    #[test]
+    fn name_binding_kind_round_trips_with_stable_code() {
+        let mut record = TypedObjectRecord::new(ObjectId::new(0xA120), ObjectKind::NameBinding, 1);
+        record
+            .push_field(TypedObjectField::new(0x1201, 1, b"notes").unwrap())
+            .unwrap();
+
+        let encoded = record.encode();
+        let decoded = TypedObjectRecord::decode(&encoded).unwrap();
+
+        assert_eq!(read_u16(&encoded, 16), 11);
+        assert_eq!(decoded.object_kind(), ObjectKind::NameBinding);
+        assert_eq!(decoded.object_id(), ObjectId::new(0xA120));
     }
 
     #[test]

@@ -48,6 +48,7 @@ mod normal_boot;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_init;
 mod object_browser;
+mod object_locator;
 mod object_relationships;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 mod object_service;
@@ -1589,6 +1590,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY");
         serial::write_line("PYTHOS:CORE:PHASE_10_COMPLETE");
+        if object_locator::run_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        if object_locator::run_adversarial_self_test().is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
 
         #[cfg(feature = "sdhci-emmc-backend")]
         if storage_backend_screen::render(&boot_info.framebuffer, _block_device).is_err() {

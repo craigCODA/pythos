@@ -36,6 +36,7 @@ pub enum ObjectKind {
     ButtonWidget,
     TextFieldWidget,
     Note,
+    NameBinding,
     Task,
     TaskProposal,
     TaskEvent,

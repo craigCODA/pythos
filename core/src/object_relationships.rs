@@ -39,6 +39,8 @@ pub enum RelationshipKind {
     CreatedBy,
     DependsOn,
     BelongsTo,
+    NameBinding,
+    BindingTarget,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
