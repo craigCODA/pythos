@@ -26,12 +26,11 @@ docs/superpowers/specs/2026-08-03-pyth-typed-instruction-graph-design.md
 docs/superpowers/plans/2026-08-03-pyth-typed-instruction-graph-master-plan.md
 ```
 
-PythTIG Phase 1 through Phase 7 have been owner-invoked in order on the Phase 7
-cutover/cross-target branch. Phase 7 changes normal boot to admit the
-Pyth-native session-manager and default service graph packages before
-readiness, while retaining the Rust object shell under the `legacy-shell`
-maintenance fallback and as the recovery shell after a contained
-default-service fault.
+PythTIG Phase 1 through Phase 7 have been owner-invoked in order and merged to
+`main` through PR #9. Phase 7 changes normal boot to admit the Pyth-native
+session-manager and default service graph packages before readiness, while
+retaining the Rust object shell under the `legacy-shell` maintenance fallback
+and as the recovery shell after a contained default-service fault.
 
 PythCore still accepts only typed graph packages and typed syscalls. It must not
 parse Pyth source, human command text, semantic prompts, or agent policy. Task
@@ -88,7 +87,7 @@ PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
-## Phase 1.5: Kernel-Owned Execution Substrate - IN PROGRESS
+## Phase 1.5: Kernel-Owned Execution Substrate - COMPLETE
 
 ### Purpose
 

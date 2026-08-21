@@ -56,10 +56,12 @@ set, limits, version behavior, canonicalization, checksum behavior, and
 verifier error identities are frozen. An incompatible change requires a new
 accepted ADR and a new major package version.
 
-This adoption status does not make PythTIG the active implementation program.
-Do not implement the PythTIG verifier, runtime, compiler, Task Steward, native
-backend, marker-contract scripts, CI behavior, session cutover, or production
-boot behavior until the owner explicitly invokes the corresponding phase.
+PythTIG Phase 1 through Phase 7 have been owner-invoked and merged to `main`.
+That does not authorize later PythTIG work by momentum. Do not extend the
+PythTIG verifier, runtime, compiler, Task Steward, native backend,
+marker-contract scripts, CI behavior, session cutover, or production boot
+behavior beyond the accepted Phase 7 contracts until the owner explicitly
+invokes the corresponding next phase.
 
 - PythCore may accept typed graph packages and typed syscalls only; it must not
   parse Pyth source, human command text, semantic prompts, or agent policy.

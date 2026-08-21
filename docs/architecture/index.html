@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Architecture - PythOS</title>
-    <meta name="description" content="PythOS architecture: UEFI loader, PythCore native executive, capabilities, ring-3 shell, typed objects, and storage proofs.">
+    <meta name="description" content="PythOS architecture: UEFI loader, PythCore native executive, capabilities, ring-3 services, typed objects, PythTIG graph packages, and object locators.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/architecture/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -36,7 +36,8 @@
 -&gt; PythOS UEFI loader
 -&gt; PythCore native executive
 -&gt; capability-gated ring-3 services
--&gt; typed task environments, typed objects, tool objects, and projections</code></pre>
+-&gt; PythTIG graph packages and typed service syscalls
+-&gt; typed task environments, typed objects, object locators, tool objects, and projections</code></pre>
         </div>
       </section>
       <section class="band">
@@ -52,6 +53,14 @@
           <article class="tile">
             <h3>Object Storage</h3>
             <p>Typed object records carry stable IDs, schema versions, relationships, revisions, provenance, and persisted workspace state.</p>
+          </article>
+          <article class="tile">
+            <h3>PythTIG</h3>
+            <p>Accepted graph packages run through shared verification, bounded ring-3 execution, native backend comparison, and service-admission gates.</p>
+          </article>
+          <article class="tile">
+            <h3>Object Locators</h3>
+            <p>ADR 0069 chooses capability-scoped locator namespaces over POSIX paths; resolver implementation remains a later Phase 12 slice.</p>
           </article>
           <article class="tile">
             <h3>Hardware Backends</h3>

@@ -7,11 +7,10 @@ Date: 2026-08-04
 This is the historical Phase 0 reconciliation record. PythTIG Phase 0 is
 merged, owner review accepted ADR 0064 as the architecture direction, and ADR
 0065 is now accepted with the tested PythTIG version 1 package ABI frozen as of
-2026-08-08. Subsequent work on `main` implemented the Phase 1 format/verifier,
-Phase 2 ring-3 runtime, and Phase 3 object/capability proof paths as explicit
-opt-in acceptance paths. The repository still does not implement the Pyth
-source compiler, Task Steward, native backend, production session cutover, or
-default boot replacement behavior.
+2026-08-08. Subsequent work on `main` implemented PythTIG Phase 1 through Phase
+7, including the host compiler, Task Steward, native backend, and
+cutover/cross-target acceptance line. Later PythTIG phases remain gated and
+require explicit owner re-invocation.
 
 ## Worktree
 
@@ -66,18 +65,18 @@ Reason: the live repository already contains:
 - `docs/decisions/0053-interactive-object-shell-launcher.md`
 - `docs/decisions/0054-polling-ahci-block-backend.md`
 
-ADR 0063 is already used by the physical evidence terminal, so PythTIG starts
-at ADR 0064 on this branch.
+ADR 0063 is already used by the physical evidence terminal, so the imported
+PythTIG ADR sequence starts at ADR 0064.
 
 ## Corrected Assumptions
 
 - The original PythTIG handoff was a proposal package, not an executable
   implementation branch.
-- PythTIG is now accepted as an architecture direction through ADR 0064, but is
-  not the active implementation program.
-- ADR 0065's package ABI is provisionally accepted for Phase 1 verifier
-  experimentation only; exact bytes are not permanent stable ABI until Phase 1
-  evidence exists and the owner freezes the format.
+- PythTIG is now accepted as an architecture direction through ADR 0064, and
+  Phase 1 through Phase 7 are implemented on `main`.
+- ADR 0065's package ABI is accepted and frozen for tested version 1 layouts.
+  Incompatible byte-format changes require a new accepted ADR and a new major
+  package version.
 - The physical-evidence review baseline was `agent/physical-evidence-terminal`,
   not the older `main` snapshot.
 - After the merge sequence, ADR 0063's implementation files, Cargo features,

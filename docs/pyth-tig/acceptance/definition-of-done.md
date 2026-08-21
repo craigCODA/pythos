@@ -1,10 +1,11 @@
 # PythTIG Version 1 Definition of Done
 
-Status: Phase 7 cutover and cross-target implementation complete on the Phase
-7 branch when `docs/pyth-tig/ACCEPTANCE.md` commands pass fresh.
+Status: Phase 7 cutover and cross-target implementation merged to `main`.
+Fresh acceptance is established when `docs/pyth-tig/ACCEPTANCE.md` commands
+pass on the checked-out branch being claimed.
 
 PythTIG version 1 is complete only when every item below is supported by fresh
-evidence from the accepted branch.
+evidence from the checked-out branch being claimed.
 
 ## Architecture
 

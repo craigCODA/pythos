@@ -1,35 +1,39 @@
 # PythOS Handover
 
-Current PythTIG branch boundary: `agent/pythtig-phase7-cutover-cross-target`
-contains the Phase 7 cutover/cross-target work. Normal boot now admits the
-Pyth-native session-manager/default-service graph packages before readiness;
-the Rust object shell is retained through `legacy-shell` and recovery after a
-contained default service fault. Phase 7 also adds QEMU virtio/AHCI
-unchanged-package comparison and physical-target preparation/import-verification
-tooling.
+Current checked-in boundary: `main` is stopped at Phase 12 slice 1 -> Phase 12
+slice 2. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069, which
+chooses a capability-scoped object locator namespace rather than POSIX paths,
+and through `docs/semantic-checkpoint-contract.md`, which defines the
+build-evidence comparison contract for future parallel lanes. Do not begin
+Phase 12 `path-resolution` without explicit owner re-invocation.
 
-The pre-Phase-7 `main` boundary has been reconciled: Phase 10 remains complete,
-and Phase 11 physical-hardware smoke-test findings are recorded on `main`
-through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The current
-numbered-roadmap stop boundary is Phase 12 slice 1 -> Phase 12 slice 2. Phase
-12 `path-vs-graph-decision` is recorded through ADR 0069, which chooses a
-capability-scoped object locator namespace rather than POSIX paths, and through
-`docs/semantic-checkpoint-contract.md`, which defines the build-evidence
-comparison contract for future parallel lanes. ADR 0063 physical evidence
-terminal is implemented on `main` from the former
-`agent/physical-evidence-terminal` line and is QEMU-accepted through
-`scripts\test-evidence-terminal.py`. Main also carries the 2026-08-08 physical
-evidence-terminal validation record for the disposable O2 Micro `1217:8620`
-target: five readable terminal-page photos and one continuous boot video report
-`count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The `count` field is
-hexadecimal, so `00000139` is 313 decimal markers. COM1/QEMU acceptance remains
-the automated oracle.
+Recent merged decisions and fixes:
+
+- PR #9 merged PythTIG Phase 7 cutover/cross-target evidence to `main`.
+  Normal boot admits the Pyth-native session-manager/default-service graph
+  packages before readiness; the Rust object shell is retained through
+  `legacy-shell` and recovery after a contained default-service fault.
+- PR #10 fixed PythTIG CI artifact isolation. One-shot PythTIG harnesses now
+  package an isolated no-default PythCore ELF instead of relying on Cargo's
+  shared final binary path. This is build orchestration only, not a PythTIG ABI
+  or marker-contract change.
+- PR #11 recorded Phase 12 slice 1: ADR 0069 plus
+  `docs/semantic-checkpoint-contract.md`.
+- Phase 11 physical-hardware smoke-test findings remain recorded through ADR
+  0046 and `docs/phase-11-real-hardware-findings.md`.
+
+ADR 0063 physical evidence terminal is implemented on `main` and QEMU-accepted
+through `scripts\test-evidence-terminal.py`. Main also carries the 2026-08-08
+physical evidence-terminal validation record for the disposable O2 Micro
+`1217:8620` target: five readable terminal-page photos and one continuous boot
+video report `count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The
+`count` field is hexadecimal, so `00000139` is 313 decimal markers. COM1/QEMU
+acceptance remains the automated oracle.
 
 The earlier Phase 11 targeted SDHCI/eMMC backend panel validation remains
-recorded on branch `feature/sdhci-emmc-backend`. Two operator-supplied physical
-boot artifacts from the disposable O2 Micro `1217:8620` laptop reached the
-final Phase 10 backend panel: the JPG is the first run and the MP4 is the
-second run.
+target-specific evidence for the disposable O2 Micro `1217:8620` laptop. Two
+operator-supplied physical boot artifacts reached the final Phase 10 backend
+panel: the JPG is the first run and the MP4 is the second run.
 
 This file is a session-continuity aid, not the source of truth. Trust the live
 repository, the current branch, and QEMU serial output over this file if they
@@ -104,8 +108,9 @@ implementation merge.
 
 Owner review accepted ADR 0064 as the PythTIG architecture direction. ADR 0065
 is accepted, and the tested PythTIG version 1 package ABI is frozen as of
-2026-08-08. PythTIG Phase 1 through Phase 7 have been owner-invoked in order on
-the Phase 7 cutover/cross-target branch.
+2026-08-08. PythTIG Phase 1 through Phase 7 were owner-invoked in order and
+merged to `main` through PR #9. The current PythTIG stop boundary is Phase 7 ->
+later PythTIG phases.
 
 Phase 7 acceptance means:
 
@@ -481,7 +486,7 @@ Timeout termination is not success evidence.
 Expected branch:
 
 ```text
-agent/pythtig-phase7-cutover-cross-target
+main
 ```
 
 Expected state:
@@ -504,11 +509,13 @@ PythTIG Phase 3 object/capability proof path complete
 PythTIG Phase 4 host compiler proof path complete
 PythTIG Phase 5 Task Steward proof path complete
 PythTIG Phase 6 native backend proof path complete
-PythTIG Phase 7 cutover/cross-target proof path complete on this branch
-Next allowed work: none by momentum. Merge/review of this branch, Phase 11,
-later PythTIG phases, networking, package management, updates, AI, SMP, or
-hardware expansion require explicit re-invocation and the corresponding
-roadmap or phase plan.
+PythTIG Phase 7 cutover/cross-target proof path merged to main
+PR #10 PythTIG one-shot CI artifact isolation fix merged
+Phase 11 physical-hardware smoke-test findings recorded
+Phase 12 path-vs-graph-decision recorded through ADR 0069
+Next allowed work: none by momentum. Phase 12 path-resolution, later PythTIG
+phases, networking, package management, updates, AI, SMP, or hardware expansion
+require explicit re-invocation and the corresponding roadmap or phase plan.
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -1107,8 +1114,8 @@ Phase 10 is complete, and Phase 11 physical-hardware smoke-test findings are
 recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The
 Phase 12 `path-vs-graph-decision` slice is recorded through ADR 0069 and
 `docs/semantic-checkpoint-contract.md`. The current numbered-roadmap stop
-boundary is Phase 12 slice 1 -> Phase 12 slice 2. On the Phase 7 PythTIG
-branch, the current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
+boundary is Phase 12 slice 1 -> Phase 12 slice 2. The current PythTIG stop
+boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 

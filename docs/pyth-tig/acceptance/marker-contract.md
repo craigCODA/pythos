@@ -1,9 +1,8 @@
 # PythTIG Acceptance Marker Contract
 
 **Status:** Phase 1 through Phase 7 markers are active in their accepted
-verification paths on the Phase 7 cutover/cross-target branch. Later-phase
-markers remain reserved until their corresponding implementation phase is
-explicitly authorized and verified.
+verification paths on `main`. Later-phase markers remain reserved until their
+corresponding implementation phase is explicitly authorized and verified.
 
 **Namespace:** `PYTHOS:PYTHTIG:`
 

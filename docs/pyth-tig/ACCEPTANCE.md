@@ -1,7 +1,7 @@
 # PythTIG Acceptance
 
 Status: Phase 7 acceptance record for the PythTIG version 1 cutover and
-cross-target branch.
+cross-target line merged to `main`.
 
 The acceptance oracle is automated command output, QEMU serial output, and
 recorded package/evidence artifacts. A successful compile is not a successful

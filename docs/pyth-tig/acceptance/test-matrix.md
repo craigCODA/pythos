@@ -1,7 +1,7 @@
 # PythTIG Test and Evidence Matrix
 
-Status: Phase 1 through Phase 7 rows are implemented on the Phase 7
-cutover/cross-target branch.
+Status: Phase 1 through Phase 7 rows are implemented on `main` through the
+Phase 7 cutover/cross-target line.
 
 Every command is run from a clean phase worktree with fresh build artifacts.
 Exact command options may be reconciled when the live tree differs. ADR 0065's
