@@ -26,6 +26,9 @@ STORAGE_QUOTA_PER_SERVICE_READY = "PYTHOS:CORE:STORAGE_QUOTA_PER_SERVICE_READY"
 CONCURRENT_WRITE_SAFETY_READY = "PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY"
 STORAGE_ADVERSARIAL_SUITE_READY = "PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY"
 PHASE_10_COMPLETE = "PYTHOS:CORE:PHASE_10_COMPLETE"
+OBJECT_LOCATOR_RESOLUTION_READY = "PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY"
+PATH_ADVERSARIAL_SUITE_READY = "PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY"
+PHASE_12_COMPLETE = "PYTHOS:CORE:PHASE_12_COMPLETE"
 
 
 def load_test_boot_module():
@@ -255,6 +258,40 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_markers.index(PHASE_10_COMPLETE),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_path_resolution_extends_phase_10_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        locator_markers = test_boot.SLICE_MARKERS["path-resolution"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            locator_markers.index(PHASE_10_COMPLETE),
+            locator_markers.index(OBJECT_LOCATOR_RESOLUTION_READY),
+        )
+        self.assertLess(
+            milestone_markers.index(OBJECT_LOCATOR_RESOLUTION_READY),
+            milestone_markers.index(FRAMEBUFFER_READY),
+        )
+
+    def test_path_adversarial_suite_completes_phase_12_before_framebuffer(self) -> None:
+        test_boot = load_test_boot_module()
+
+        adversarial_markers = test_boot.SLICE_MARKERS["path-adversarial-suite"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            adversarial_markers.index(OBJECT_LOCATOR_RESOLUTION_READY),
+            adversarial_markers.index(PATH_ADVERSARIAL_SUITE_READY),
+        )
+        self.assertLess(
+            adversarial_markers.index(PATH_ADVERSARIAL_SUITE_READY),
+            adversarial_markers.index(PHASE_12_COMPLETE),
+        )
+        self.assertLess(
+            milestone_markers.index(PHASE_12_COMPLETE),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 

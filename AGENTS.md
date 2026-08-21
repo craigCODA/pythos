@@ -81,13 +81,17 @@ universal-device work.
 
 ## Active Milestone
 
-The current checked-in stop boundary is Phase 12 slice 1 -> Phase 12 slice 2 on
+The current checked-in stop boundary is Phase 12 -> Phase 13 on
 `main`. Milestone 1.5 and Phases 2 through 10 are complete through
 `PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11 physical-hardware smoke-test findings
 are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`.
 Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and
-`docs/semantic-checkpoint-contract.md`. No implementation milestone is active
-until the owner explicitly invokes Phase 12 `path-resolution`. Treat the older
+`docs/semantic-checkpoint-contract.md`. Phase 12 `path-resolution` is recorded
+through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071
+records the finite loader read-bound increase required for the Slice 2 debug
+acceptance image. Phase 12 `path-adversarial-suite` is recorded through ADR
+0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. No implementation milestone is
+active until the owner explicitly invokes Phase 13. Treat the older
 `milestone/phase8-real-hardware-isolation` and
 `milestone/phase11-real-hardware-boot` branch names as historical context, not
 the current branch target.
@@ -379,6 +383,21 @@ OVMF
 -> PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
 -> PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
 -> PYTHOS:CORE:PHASE_10_COMPLETE
+-> PYTHOS:CORE:LOCATOR:RESOLVED
+-> PYTHOS:CORE:LOCATOR:INVALID_NAVIGATION_DENIED
+-> PYTHOS:CORE:LOCATOR:TRAVERSAL_AUTH_DENIED
+-> PYTHOS:CORE:LOCATOR:FINAL_AUTH_DENIED
+-> PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY
+-> PYTHOS:CORE:LOCATOR:EMPTY_SEGMENT_DENIED
+-> PYTHOS:CORE:LOCATOR:STALE_BINDING_DENIED
+-> PYTHOS:CORE:LOCATOR:MISSING_SEGMENT_DENIED
+-> PYTHOS:CORE:LOCATOR:MISSING_TRAVERSAL_DENIED
+-> PYTHOS:CORE:LOCATOR:MISSING_FINAL_AUTH_DENIED
+-> PYTHOS:CORE:LOCATOR:NAME_COLLISION_DENIED
+-> PYTHOS:CORE:LOCATOR:LINK_CONFUSION_DENIED
+-> PYTHOS:CORE:LOCATOR:GLOBAL_ROOT_DENIED
+-> PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY
+-> PYTHOS:CORE:PHASE_12_COMPLETE
 -> PYTHOS:CORE:FRAMEBUFFER_READY
 -> PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
@@ -424,7 +443,11 @@ The Phase 10 `concurrent-write-safety` slice serializes capability-gated storage
 
 The Phase 10 `storage-adversarial-suite` slice proves repeated dynamic create/delete cycles, an out-of-quota write denial, in-boot dynamic torn-write rollback, and a separate `scripts/test-persistent-storage.py` killed-mid-commit QEMU recovery path for Phase 10 dynamic allocation. It emits `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` and completes Phase 10 with `PYTHOS:CORE:PHASE_10_COMPLETE`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, and Phase 10 are complete through `PYTHOS:CORE:PHASE_10_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`. Halt at the Phase 12 slice 1 -> Phase 12 slice 2 boundary; do not begin Phase 12 `path-resolution` or any later package-management, networking, updates, AI, hardware-expansion, or SMP work without explicit re-invocation.
+The Phase 12 `path-resolution` slice records ADR 0070, adds the internal `object-locator 0.1` resolver ABI, resolves bounded locator segments through typed name-binding relationships, rejects `.`/`..` navigation syntax during grammar validation, validates traversal authority separately from final-object authority, returns typed object identity/revision/relationship path, and emits `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`. ADR 0071 records the finite loader read-bound increase required by the Slice 2 debug acceptance image.
+
+The Phase 12 `path-adversarial-suite` slice records ADR 0072, reuses the ADR 0070 resolver ABI and denial identities, proves denied empty segments, stale bindings, missing segments, missing traversal authority, missing final authority, name collisions, link confusion, and global-root fallback assumptions, emits `PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY`, and completes Phase 12 with `PYTHOS:CORE:PHASE_12_COMPLETE`.
+
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, and Phase 12 are complete through `PYTHOS:CORE:PHASE_12_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12 `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite loader read-bound increase required by the Slice 2 debug acceptance image; Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Halt at the Phase 12 -> Phase 13 boundary; do not begin package-management, networking, updates, AI, hardware-expansion, SMP, or later PythTIG work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
@@ -703,6 +726,21 @@ PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED
 PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED
 PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY
 PYTHOS:CORE:PHASE_10_COMPLETE
+PYTHOS:CORE:LOCATOR:RESOLVED
+PYTHOS:CORE:LOCATOR:INVALID_NAVIGATION_DENIED
+PYTHOS:CORE:LOCATOR:TRAVERSAL_AUTH_DENIED
+PYTHOS:CORE:LOCATOR:FINAL_AUTH_DENIED
+PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY
+PYTHOS:CORE:LOCATOR:EMPTY_SEGMENT_DENIED
+PYTHOS:CORE:LOCATOR:STALE_BINDING_DENIED
+PYTHOS:CORE:LOCATOR:MISSING_SEGMENT_DENIED
+PYTHOS:CORE:LOCATOR:MISSING_TRAVERSAL_DENIED
+PYTHOS:CORE:LOCATOR:MISSING_FINAL_AUTH_DENIED
+PYTHOS:CORE:LOCATOR:NAME_COLLISION_DENIED
+PYTHOS:CORE:LOCATOR:LINK_CONFUSION_DENIED
+PYTHOS:CORE:LOCATOR:GLOBAL_ROOT_DENIED
+PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY
+PYTHOS:CORE:PHASE_12_COMPLETE
 PYTHOS:CORE:FRAMEBUFFER_READY
 PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```

@@ -244,6 +244,7 @@ Known comparison modes:
 
 Compare:
 
+- same object-locator ABI version;
 - same namespace root authority;
 - same locator input;
 - same resolved object identity;
@@ -251,6 +252,13 @@ Compare:
 - same relationship path;
 - same denial identity for missing rights, missing segment, stale binding, and
   namespace escape attempts.
+
+The Slice 2 object-locator ABI version is `object-locator 0.1`. Its stable
+denial identities are recorded in ADR 0070. ADR 0072 records the Slice 3
+adversarial matrix for the same ABI: empty segment, stale binding, missing
+segment, missing traversal authority, missing final authority, name collision,
+link confusion, and global-root fallback denial must compare by the same
+stable denial identity, not by incidental wording.
 
 ### PythTIG Differential Execution
 

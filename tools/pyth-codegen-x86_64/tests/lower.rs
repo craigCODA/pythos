@@ -131,6 +131,19 @@ fn canonical_object_flows_lower_to_object_stubs() {
 }
 
 #[test]
+fn object_host_syscalls_check_kernel_return_status() {
+    let graph = verified_graph(test_support::object_note_flow_package().to_vec());
+
+    let image = lower_verified_graph(graph).unwrap();
+    let parsed = ParsedElf::parse(&image.bytes).unwrap();
+
+    assert!(parsed.executable_bytes_contain(&mov_imm64(
+        RegisterEncoding::Rbx,
+        pythos_shared::object_shell_abi::SYSCALL_OK
+    )));
+}
+
+#[test]
 fn task_context_read_lowers_to_task_request_stub() {
     let graph = verified_graph(
         test_support::task_context_score_with_import_rights(
@@ -478,6 +491,7 @@ impl<'a> ParsedElf<'a> {
 }
 
 enum RegisterEncoding {
+    Rbx,
     R11,
 }
 
@@ -511,6 +525,7 @@ fn push_mov_imm64(bytes: &mut Vec<u8>, rex: u8, opcode: u8, immediate: u64) {
 fn mov_imm64(register: RegisterEncoding, immediate: u64) -> Vec<u8> {
     let mut bytes = Vec::new();
     match register {
+        RegisterEncoding::Rbx => push_mov_imm64(&mut bytes, 0x48, 0xBB, immediate),
         RegisterEncoding::R11 => push_mov_imm64(&mut bytes, 0x49, 0xBB, immediate),
     }
     bytes

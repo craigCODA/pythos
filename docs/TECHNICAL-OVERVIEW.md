@@ -9,11 +9,14 @@ object shell, and verifies storage through virtio, AHCI, and opt-in
 SDHCI/eMMC block backends in QEMU. `main` also contains the accepted PythTIG
 version 1 graph-package implementation through Phase 7 cutover/cross-target
 evidence, followed by the Phase 12 slice-1 decision that PythOS will use a
-capability-scoped object locator namespace rather than POSIX paths.
+capability-scoped object locator namespace rather than POSIX paths and the
+Phase 12 slice-2 and slice-3 implementation and adversarial validation of that
+resolver.
 
-The current checked-in stop boundary is Phase 12 slice 1 -> Phase 12 slice 2:
-ADR 0069 and `docs/semantic-checkpoint-contract.md` are recorded, but Phase 12
-`path-resolution` is not implemented. The SDHCI/eMMC backend has
+The current checked-in stop boundary is Phase 12 -> Phase 13: ADR 0069,
+`docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072, and
+`PYTHOS:CORE:PHASE_12_COMPLETE` are recorded. Phase 13 package work is not
+implemented or authorized by momentum. The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro
 `1217:8620` target. ADR 0063's evidence terminal is implemented on `main` with
 QEMU acceptance through `scripts/test-evidence-terminal.py`. On 2026-08-08 the
@@ -45,7 +48,7 @@ and where the boundary of the work still is.
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
-| ADR 0069 object-locator decision and semantic-checkpoint contract | Phase 12 resolver implementation or package install |
+| ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | Phase 13 package install or launch |
 
 ## What PythOS Is
 
@@ -72,10 +75,10 @@ Hardware
 The project has completed the roadmap's bounded architecture proofs through
 Phase 10, `general-purpose-storage`, in QEMU. `main` also contains the first
 persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
-PythTIG Phase 1-7 acceptance implementation, and the Phase 12 slice-1
-object-locator decision. Later implementation work such as Phase 12
-`path-resolution`, package management, networking, updates, broad physical
-hardware expansion, SMP, semantic indexing, and optional AI remains
+PythTIG Phase 1-7 acceptance implementation, and the Phase 12 slice-2
+object-locator resolver plus Slice 3 adversarial denial suite. Later
+implementation work such as package management, networking, updates, broad
+physical hardware expansion, SMP, semantic indexing, and optional AI remains
 intentionally unimplemented until explicitly invoked.
 
 ## Development Method
@@ -277,6 +280,18 @@ Phase 10 marker is:
 PYTHOS:CORE:PHASE_10_COMPLETE
 ```
 
+Phase 12 slice 2 adds the internal `object-locator 0.1` resolver ABI. It
+resolves bounded locator segments through typed name-binding relationships,
+rejects `.` and `..` during grammar validation, validates namespace traversal
+authority separately from final-object authority, and returns typed identity,
+revision, and relationship-path information. The Slice 2 marker is:
+
+```text
+PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY
+PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY
+PYTHOS:CORE:PHASE_12_COMPLETE
+```
+
 The normal object-shell path uses COM2 as an interactive transport and proves a
 create/inspect/revise/history/reboot/restore lifecycle over the same typed
 object storage model.
@@ -307,8 +322,14 @@ capability-scoped object locator namespace: locator strings may look path-like
 for manifests and diagnostics, but canonical identity remains typed object
 identity and authority remains capability based. The same ADR accepts
 `docs/semantic-checkpoint-contract.md` as the comparison language for future
-parallel build and evidence lanes. Phase 12 `path-resolution` and its
-adversarial suite are not implemented yet.
+parallel build and evidence lanes. ADR 0070 implements Slice 2 path resolution
+through the internal `object-locator 0.1` resolver, and ADR 0071 records the
+finite loader read-bound increase needed for that debug acceptance image. ADR
+0072 adds the Slice 3 adversarial suite over the same resolver ABI, proving
+denials for empty segments, stale bindings, missing segments, missing traversal
+authority, missing final authority, name collisions, link confusion, and
+global-root fallback assumptions. Phase 12 completes at
+`PYTHOS:CORE:PHASE_12_COMPLETE`.
 
 ### Block Backends And Physical Evidence
 
@@ -393,7 +414,6 @@ implemented or not claimed:
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * POSIX paths as authoritative object identity;
-* Phase 12 object-locator resolution or namespace adversarial proofs;
 * package installation or launch;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * physical interactive object-shell use through built-in keyboard or trackpad;
@@ -476,6 +496,9 @@ docs/decisions/0064-pyth-native-typed-instruction-graph.md
 docs/decisions/0065-pyth-graph-package-abi.md
 docs/decisions/0068-pythtig-command-abi-and-service-admission.md
 docs/decisions/0069-phase-12-object-locator-and-semantic-checkpoints.md
+docs/decisions/0070-phase-12-object-locator-resolution-abi.md
+docs/decisions/0071-loader-kernel-file-bound-extension.md
+docs/decisions/0072-phase-12-path-adversarial-suite.md
 ```
 
 Verification entry points:

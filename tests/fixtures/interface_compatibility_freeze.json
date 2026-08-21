@@ -74,7 +74,8 @@
     "TextFieldWidget": 7,
     "WorkspaceSession": 8,
     "ObjectBrowserWindow": 9,
-    "Note": 10
+    "Note": 10,
+    "NameBinding": 11
   },
   "shell_apps": [
     {

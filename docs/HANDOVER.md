@@ -1,11 +1,16 @@
 # PythOS Handover
 
-Current checked-in boundary: `main` is stopped at Phase 12 slice 1 -> Phase 12
-slice 2. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069, which
+Current checked-in boundary: `main` is stopped at Phase 12 -> Phase 13. Phase
+12 `path-vs-graph-decision` is recorded through ADR 0069, which
 chooses a capability-scoped object locator namespace rather than POSIX paths,
 and through `docs/semantic-checkpoint-contract.md`, which defines the
-build-evidence comparison contract for future parallel lanes. Do not begin
-Phase 12 `path-resolution` without explicit owner re-invocation.
+build-evidence comparison contract for future parallel lanes. Phase 12
+`path-resolution` is recorded through ADR 0070 and
+`PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite
+loader read-bound increase required by the Slice 2 debug acceptance image.
+Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and
+`PYTHOS:CORE:PHASE_12_COMPLETE`. Do not begin Phase 13 package work without
+explicit owner re-invocation.
 
 Recent merged decisions and fixes:
 
@@ -19,6 +24,18 @@ Recent merged decisions and fixes:
   or marker-contract change.
 - PR #11 recorded Phase 12 slice 1: ADR 0069 plus
   `docs/semantic-checkpoint-contract.md`.
+- Phase 12 slice 2 implemented capability-scoped object locator resolution:
+  `ObjectKind::NameBinding = 11`, `RelationshipKind::NameBinding`,
+  `RelationshipKind::BindingTarget`, and `object-locator 0.1` denial
+  identities are recorded in ADR 0070.
+- ADR 0071 raised the loader's finite `PYTHCORE.ELF` read cap from 4 MiB to
+  8 MiB after the Slice 2 debug kernel crossed the ADR 0021 bound; the exact
+  full-buffer rejection remains in place.
+- Phase 12 slice 3 implemented the path adversarial suite over the ADR 0070
+  resolver ABI. ADR 0072 records explicit denial proofs for empty segments,
+  stale bindings, missing segments, missing traversal authority, missing final
+  authority, name collisions, link confusion, and global-root fallback
+  assumptions.
 - Phase 11 physical-hardware smoke-test findings remain recorded through ADR
   0046 and `docs/phase-11-real-hardware-findings.md`.
 
@@ -513,9 +530,12 @@ PythTIG Phase 7 cutover/cross-target proof path merged to main
 PR #10 PythTIG one-shot CI artifact isolation fix merged
 Phase 11 physical-hardware smoke-test findings recorded
 Phase 12 path-vs-graph-decision recorded through ADR 0069
-Next allowed work: none by momentum. Phase 12 path-resolution, later PythTIG
-phases, networking, package management, updates, AI, SMP, or hardware expansion
-require explicit re-invocation and the corresponding roadmap or phase plan.
+Phase 12 path-resolution recorded through ADR 0070; loader bound through ADR 0071
+Phase 12 loader read-bound extension recorded through ADR 0071
+Phase 12 path-adversarial-suite recorded through ADR 0072
+Next allowed work: none by momentum. Phase 13 package work, later PythTIG
+phases, networking, updates, AI, SMP, or hardware expansion require explicit
+re-invocation and the corresponding roadmap or phase plan.
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -1113,9 +1133,13 @@ until a later phase defines one.
 Phase 10 is complete, and Phase 11 physical-hardware smoke-test findings are
 recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The
 Phase 12 `path-vs-graph-decision` slice is recorded through ADR 0069 and
-`docs/semantic-checkpoint-contract.md`. The current numbered-roadmap stop
-boundary is Phase 12 slice 1 -> Phase 12 slice 2. The current PythTIG stop
-boundary is Phase 7 -> later PythTIG phases.
+`docs/semantic-checkpoint-contract.md`. The Phase 12 `path-resolution` slice is
+recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`.
+ADR 0071 records the finite loader read-bound increase required by the Slice 2
+debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
+through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`.
+The current numbered-roadmap stop boundary is Phase 12 -> Phase 13. The current
+PythTIG stop boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
@@ -1128,7 +1152,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin Phase 12 `path-resolution`, networking, package management,
+Do not begin Phase 13 package work, networking, package-management details,
 updates, AI, SMP, hardware expansion, or later PythTIG work by momentum. Pick
 one later phase, write its detailed slice sequence and required artifacts, then
 start with a failing automated test where code is involved.
