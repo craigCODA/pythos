@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Status - PythOS</title>
-    <meta name="description" content="Implemented versus not claimed for the current public PythOS milestone.">
+    <meta name="description" content="Implemented versus not claimed for the current checked-in PythOS state.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/status/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -26,8 +26,8 @@
           <p class="kicker">Claims boundary</p>
           <h1>Status</h1>
           <p class="lede">
-            PythOS publishes the strongest verified claim it can support and names
-            what is deliberately outside the current milestone.
+            PythOS publishes the strongest checked-in claim it can support and
+            names what is deliberately outside the current boundary.
           </p>
         </div>
       </section>
@@ -55,7 +55,17 @@
               <tr>
                 <td>Objects</td>
                 <td>Persistent typed/versioned objects, relationships, revision history, workspace snapshot restoration.</td>
-                <td>General-purpose POSIX filesystem or package-management surface.</td>
+                <td>POSIX filesystem identity, Phase 12 object-locator resolution, or package-management surface.</td>
+              </tr>
+              <tr>
+                <td>PythTIG</td>
+                <td>ADR 0064/0065/0068 graph-package architecture, frozen package ABI, verifier/runtime/compiler/native-backend/Task Steward evidence, and Phase 7 cutover/cross-target line merged to <code>main</code>.</td>
+                <td>Later PythTIG phases, PythCore parsing of source text or prompts, AI authority, self-hosting, CPython compatibility, or cryptographic package signing.</td>
+              </tr>
+              <tr>
+                <td>Current phase boundary</td>
+                <td>Phase 12 slice 1 is recorded through ADR 0069 and <code>docs/semantic-checkpoint-contract.md</code>.</td>
+                <td>Phase 12 <code>path-resolution</code>, namespace adversarial suite, package install, networking, updates, hardware expansion, or SMP.</td>
               </tr>
               <tr>
                 <td>Storage</td>

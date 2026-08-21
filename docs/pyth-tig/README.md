@@ -3,8 +3,8 @@
 Status: ADR 0064 accepted as architecture direction; ADR 0065 accepted and its
 tested PythTIG version 1.0 ABI frozen on 2026-08-08; ADR 0068 records the
 compatible version 1.1 command ABI and Phase 7 service-admission extension.
-PythTIG Phase 1 through Phase 7 are implemented on the Phase 7
-cutover/cross-target branch.
+PythTIG Phase 1 through Phase 7 are merged to `main` through the Phase 7
+cutover/cross-target line.
 
 This directory contains the architecture, frozen package/verifier contract,
 ring-3 runtime evidence, retained object/capability evidence, host compiler

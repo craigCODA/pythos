@@ -145,7 +145,9 @@ The first phase where PythOS runs software it did not compile itself.
 
 ### Preconditions
 
-Phase 9 is complete. Phase 12 is complete, so the addressing scheme is decided.
+Phase 9 is complete. Phase 12 must be complete, including `path-resolution`
+and `path-adversarial-suite`, so the addressing scheme is implemented and
+verified before package work starts.
 
 ### Locked Slice Sequence
 

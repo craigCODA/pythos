@@ -6,15 +6,23 @@ takes ownership of memory and execution from firmware, builds a native PythCore
 execution substrate, brings up service identity and capability mechanisms,
 persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
-SDHCI/eMMC block backends in QEMU. The SDHCI/eMMC backend has target-specific
-physical evidence on the confirmed disposable O2 Micro `1217:8620` target.
-ADR 0063's evidence terminal is implemented on `main` with QEMU acceptance
-through `scripts/test-evidence-terminal.py`. On 2026-08-08 the terminal was
-captured on the physical O2 Micro target across five readable pages showing
-`count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The count field is
-hexadecimal, so `0x139` is 313 decimal markers. Two separate physical boots
-reproduced the same count, zero-drop state, and CRC, and the reconstructed
-hardware-path stream recomputes to 313 markers with CRC `176F4C6E`.
+SDHCI/eMMC block backends in QEMU. `main` also contains the accepted PythTIG
+version 1 graph-package implementation through Phase 7 cutover/cross-target
+evidence, followed by the Phase 12 slice-1 decision that PythOS will use a
+capability-scoped object locator namespace rather than POSIX paths.
+
+The current checked-in stop boundary is Phase 12 slice 1 -> Phase 12 slice 2:
+ADR 0069 and `docs/semantic-checkpoint-contract.md` are recorded, but Phase 12
+`path-resolution` is not implemented. The SDHCI/eMMC backend has
+target-specific physical evidence on the confirmed disposable O2 Micro
+`1217:8620` target. ADR 0063's evidence terminal is implemented on `main` with
+QEMU acceptance through `scripts/test-evidence-terminal.py`. On 2026-08-08 the
+terminal was captured on the physical O2 Micro target across five readable
+pages showing `count 00000139`, `drop 00000000`, and CRC `176F4C6E`. The count
+field is hexadecimal, so `0x139` is 313 decimal markers. Two separate physical
+boots reproduced the same count, zero-drop state, and CRC, and the
+reconstructed hardware-path stream recomputes to 313 markers with CRC
+`176F4C6E`.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -36,6 +44,8 @@ and where the boundary of the work still is.
 | Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
+| PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
+| ADR 0069 object-locator decision and semantic-checkpoint contract | Phase 12 resolver implementation or package install |
 
 ## What PythOS Is
 
@@ -60,11 +70,13 @@ Hardware
 ```
 
 The project has completed the roadmap's bounded architecture proofs through
-Phase 10, `general-purpose-storage`, in QEMU. The current active branch also
-contains the first persistent ring-3 object shell and an opt-in polling
-SDHCI/eMMC backend. Later phases such as networking, package management,
-updates, broad physical hardware expansion, SMP, semantic indexing, and
-optional AI remain intentionally unimplemented.
+Phase 10, `general-purpose-storage`, in QEMU. `main` also contains the first
+persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
+PythTIG Phase 1-7 acceptance implementation, and the Phase 12 slice-1
+object-locator decision. Later implementation work such as Phase 12
+`path-resolution`, package management, networking, updates, broad physical
+hardware expansion, SMP, semantic indexing, and optional AI remains
+intentionally unimplemented until explicitly invoked.
 
 ## Development Method
 
@@ -269,6 +281,35 @@ The normal object-shell path uses COM2 as an interactive transport and proves a
 create/inspect/revise/history/reboot/restore lifecycle over the same typed
 object storage model.
 
+### PythTIG And Semantic Checkpoints
+
+ADR 0064 accepts PythTIG, the Pyth Native Typed Instruction Graph, as the
+future execution-model architecture direction. ADR 0065 freezes the tested
+version 1 package ABI; ADR 0068 records the compatible version 1.1 command ABI
+and service-admission extension. PythTIG Phase 1 through Phase 7 are merged to
+`main` through the cutover/cross-target line, with the Rust object shell
+retained as a maintenance and recovery fallback.
+
+The PythTIG claim is still bounded. PythCore accepts typed graph packages and
+typed syscalls; it does not parse Pyth source, human command text, semantic
+prompts, or agent policy. Task Steward can propose but cannot approve or mutate
+authoritative task state without user-held authority. Cross-target claims
+require unchanged graph package bytes, matching runtime digest, normalized
+semantic marker comparison, and target-specific evidence.
+
+PR #10 records a build-orchestration fix for the PythTIG one-shot QEMU
+harnesses: test images package an isolated no-default PythCore ELF instead of
+trusting Cargo's shared final binary path. That fix does not change package
+bytes, marker contracts, runtime ABI, or boot semantics.
+
+Phase 12 slice 1 then records the namespace decision. ADR 0069 chooses a
+capability-scoped object locator namespace: locator strings may look path-like
+for manifests and diagnostics, but canonical identity remains typed object
+identity and authority remains capability based. The same ADR accepts
+`docs/semantic-checkpoint-contract.md` as the comparison language for future
+parallel build and evidence lanes. Phase 12 `path-resolution` and its
+adversarial suite are not implemented yet.
+
 ### Block Backends And Physical Evidence
 
 The original persistent-storage path uses legacy virtio-blk in QEMU. Later
@@ -351,15 +392,20 @@ implemented or not claimed:
 * generic SDHCI/eMMC support;
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
+* POSIX paths as authoritative object identity;
+* Phase 12 object-locator resolution or namespace adversarial proofs;
+* package installation or launch;
+* later PythTIG phases beyond the merged Phase 7 acceptance line;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;
 * CRC-32 as collision-proof proof of transcript identity;
 * AI inside the trusted core;
 * Patch, Open Surface, Causal Lens UI, or semantic indexing.
 
-The Phase 8 through Phase 10 proofs are real, but they are bounded. They prove
-the current ring-3/syscall/capability/storage surfaces, not arbitrary
-third-party user programs, a mature application platform, or broad hardware
+The Phase 8 through Phase 10 proofs and the PythTIG Phase 1-7 work are real,
+but they are bounded. They prove the current ring-3/syscall/capability/storage
+and graph-package surfaces, not arbitrary third-party user programs, a mature
+application platform, ambient filesystem behavior, or broad hardware
 compatibility.
 
 ## Why This Is Different From "It Boots"
@@ -383,7 +429,11 @@ make narrower but stronger claims:
   same count and CRC;
 * two separate physical boots reproduced the same terminal header;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
-  denial, and hardware-resource denial at the syscall gate.
+  denial, and hardware-resource denial at the syscall gate;
+* PythTIG packages are verified before ring-3 entry and compared across
+  interpreter/native/cross-target evidence with normalized semantic markers;
+* Phase 12 names the object-locator namespace and checkpoint contract before
+  package management can depend on path-like spelling.
 
 The value of the project is the discipline around those claims. The repo does
 not ask the reader to believe a status document. It gives them marker contracts,
@@ -398,10 +448,13 @@ Primary architecture and scope:
 docs/PythOS-SAS-001.md
 docs/PythOS-TDD-001.md
 docs/ROADMAP.md
+docs/ROADMAP-LATER-PHASES.md
 docs/HANDOVER.md
 docs/THREAT-MODEL.md
 docs/milestones/2026-08-01-physical-emmc-phase10.md
 docs/evidence/2026-08-08-physical-evidence-terminal.md
+docs/semantic-checkpoint-contract.md
+docs/pyth-tig/ACCEPTANCE.md
 ```
 
 Key late-phase ADRs:
@@ -419,6 +472,10 @@ docs/decisions/0052-object-shell-service-abi.md
 docs/decisions/0054-polling-ahci-block-backend.md
 docs/decisions/0062-polling-sdhci-emmc-block-backend.md
 docs/decisions/0063-physical-evidence-terminal.md
+docs/decisions/0064-pyth-native-typed-instruction-graph.md
+docs/decisions/0065-pyth-graph-package-abi.md
+docs/decisions/0068-pythtig-command-abi-and-service-admission.md
+docs/decisions/0069-phase-12-object-locator-and-semantic-checkpoints.md
 ```
 
 Verification entry points:

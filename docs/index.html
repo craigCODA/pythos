@@ -3,8 +3,8 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>PythOS - Persistent Object Operating System for x86-64</title>
-    <meta name="description" content="PythOS is a verification-driven x86-64 operating system with a capability-gated ring-3 object shell and target-specific physical SDHCI/eMMC evidence.">
+    <title>PythOS - Verification-Driven Object Operating System</title>
+    <meta name="description" content="PythOS is a verification-driven x86-64 operating system with typed objects, capability-gated services, PythTIG graph-package evidence, and scoped physical hardware records.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/">
     <link rel="stylesheet" href="assets/site.css">
   </head>
@@ -24,16 +24,18 @@
     <main>
       <section class="hero">
         <div class="hero-inner">
-          <p class="kicker">Physical Phase 10 evidence terminal</p>
+          <p class="kicker">Current checked-in boundary: Phase 12 slice 1</p>
           <h1>PythOS</h1>
           <p>
             A from-scratch, verification-driven x86-64 operating system that boots
             through UEFI, runs a capability-controlled ring-3 object shell, and
             persists typed/versioned objects across verified storage backends.
+            Current <code>main</code> records the Phase 12 object-locator
+            decision and the accepted PythTIG Phase 7 cutover/cross-target line.
           </p>
           <div class="actions">
-            <a class="button primary" href="milestones/">Read milestone</a>
-            <a class="button secondary" href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Release assets</a>
+            <a class="button primary" href="status/">Read current status</a>
+            <a class="button secondary" href="architecture/">Read architecture</a>
           </div>
         </div>
       </section>
@@ -41,22 +43,20 @@
       <section class="band">
         <div class="content split">
           <div>
-            <h2>Current Proof</h2>
+            <h2>Current Repository State</h2>
             <p class="lede">
-              PythOS reached its Phase 10 storage path on a disposable O2 Micro
-              <code>1217:8620</code> SDHCI/eMMC laptop target. The 2026-08-08
-              physical evidence-terminal capture shows five readable pages with
-              hexadecimal <code>count 00000139</code>, which is 313 decimal
-              markers, zero dropped markers, and CRC <code>176F4C6E</code>.
-              The evidence-terminal implementation, feature, and QEMU acceptance
-              harness are present on <code>main</code>. The result remains
-              target-specific physical evidence, not a generic storage-support
-              claim.
+              Milestone 1.5 and Phases 2 through 10 are complete through
+              <code>PYTHOS:CORE:PHASE_10_COMPLETE</code>. Phase 11 findings are
+              recorded through ADR 0046. PythTIG Phase 1 through Phase 7 are
+              merged to <code>main</code>. Phase 12 slice 1 is recorded through
+              ADR 0069 and the semantic-checkpoint contract; Phase 12
+              <code>path-resolution</code> has not started.
             </p>
             <div class="fact-list">
               <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
-              <p class="fact"><strong>Storage path</strong> QEMU-backed virtio-blk, polling AHCI, and polling SDHCI/eMMC acceptance coverage.</p>
-              <p class="fact"><strong>Evidence gallery</strong> <span class="mark">count 00000139</span> = 313 decimal markers, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>; QEMU harness present on <code>main</code>.</p>
+              <p class="fact"><strong>Graph path</strong> ADR 0064/0065/0068 PythTIG packages, verifier, runtime, compiler, Task Steward, native backend, and cutover evidence.</p>
+              <p class="fact"><strong>Locator path</strong> ADR 0069 chooses capability-scoped object locators rather than POSIX paths.</p>
+              <p class="fact"><strong>Physical evidence</strong> O2 Micro <code>1217:8620</code> terminal capture: <span class="mark">count 00000139</span> = 313 decimal markers, <span class="mark">drop 00000000</span>, <span class="mark">crc 176F4C6E</span>.</p>
             </div>
           </div>
           <figure>
@@ -103,19 +103,19 @@
           <h2>Evidence Map</h2>
           <div class="grid">
             <article class="tile">
+              <h3>Current Boundary</h3>
+              <p>ADR 0069 records the object-locator decision and checkpoint contract. Phase 12 resolver implementation remains gated.</p>
+              <p><a href="status/">Open status page</a></p>
+            </article>
+            <article class="tile">
               <h3>Milestone Record</h3>
-              <p>The stable milestone page records the hardware identity, exact markers, physical artifacts, QEMU acceptance commands, and scope boundary.</p>
+              <p>The stable milestone page records hardware identity, exact markers, physical artifacts, QEMU acceptance commands, and scope boundary.</p>
               <p><a href="milestones/2026-08-01-physical-emmc-phase10/">Open milestone page</a></p>
             </article>
             <article class="tile">
-              <h3>Release Assets</h3>
-              <p>The raw physical photos and MP4 belong with the GitHub milestone release instead of as large repository blobs; the repository records their SHA-256 hashes.</p>
-              <p><a href="https://github.com/craigCODA/pythos/releases/tag/milestone-1-physical-storage">Open release</a></p>
-            </article>
-            <article class="tile">
-              <h3>Claim Boundary</h3>
-              <p>The repo names what is verified and what remains unfinished: no DMA/ADMA, interrupts, partitions, generic SDHCI/eMMC, or broad physical input claim.</p>
-              <p><a href="status/">Read status</a></p>
+              <h3>PythTIG Acceptance</h3>
+              <p>The PythTIG docs record the accepted graph-package, verifier, runtime, compiler, native backend, Task Steward, and cross-target gates.</p>
+              <p><a href="pyth-tig/ACCEPTANCE.md">Open acceptance record</a></p>
             </article>
           </div>
         </div>
