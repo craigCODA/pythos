@@ -57,6 +57,8 @@ mod package_acceptance;
 #[cfg(test)]
 mod package_content_store;
 #[cfg(test)]
+mod package_registry;
+#[cfg(test)]
 mod package_source;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 mod object_service;
