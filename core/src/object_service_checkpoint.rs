@@ -11,6 +11,7 @@ use crate::revision_history::{MAX_REVISIONS, RevisionRecord};
 use crate::service_identity::ServiceId;
 use crate::shell_objects::ObjectId;
 use crate::typed_object_format::{RECORD_SIZE, TypedObjectRecord};
+use pythos_shared::sha256::Sha256;
 
 pub const OBJECT_SERVICE_SLOT_A_HEADER_SECTOR: u64 = 192;
 pub const OBJECT_SERVICE_SLOT_A_OBJECT_TABLE_SECTOR: u64 = 193;
@@ -89,6 +90,12 @@ pub struct ObjectServiceSnapshot {
     pub prior_revisions: [Option<RevisionRecord>; OBJECT_SERVICE_PRIOR_REVISION_CAPACITY],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectCheckpointIdentity {
+    pub generation: u64,
+    pub root_digest: [u8; 32],
+}
+
 impl ObjectServiceSnapshot {
     #[cfg(test)]
     pub fn contains_runtime_handle_for_test(
@@ -115,6 +122,29 @@ impl ObjectServiceSnapshot {
             relationship_index += 1;
         }
         false
+    }
+}
+
+pub fn object_checkpoint_identity(snapshot: &ObjectServiceSnapshot) -> ObjectCheckpointIdentity {
+    let slot = slot_for_generation(snapshot.generation);
+    #[cfg(test)]
+    {
+        let image = encode_slot(slot, snapshot, true);
+        ObjectCheckpointIdentity {
+            generation: snapshot.generation,
+            root_digest: slot_image_digest(&image),
+        }
+    }
+
+    #[cfg(not(test))]
+    {
+        with_slot_scratch(|image| {
+            encode_slot_into(image, slot, snapshot, true);
+            ObjectCheckpointIdentity {
+                generation: snapshot.generation,
+                root_digest: slot_image_digest(image),
+            }
+        })
     }
 }
 
@@ -433,6 +463,14 @@ fn encode_slot_into_with_generation(
         image.sectors[COMMIT_IMAGE_INDEX][0..8].copy_from_slice(&COMMIT_MAGIC);
         write_u64(&mut image.sectors[COMMIT_IMAGE_INDEX], 8, generation);
     }
+}
+
+fn slot_image_digest(image: &ObjectServiceSlotImage) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    for sector in image.sectors.iter() {
+        hasher.update(sector);
+    }
+    hasher.finalize()
 }
 
 #[cfg(not(test))]
@@ -1107,6 +1145,38 @@ mod tests {
             ObjectId::new(SHELL_WORKSPACE_OBJECT_ID)
         );
         assert_eq!(decoded.current_revisions[0].unwrap().revision(), 1);
+    }
+
+    #[test]
+    fn object_checkpoint_identity_identical_snapshots_have_identical_root_digest() {
+        let first = snapshot(8, 1042, SHELL_WORKSPACE_OBJECT_ID);
+        let second = snapshot(8, 1042, SHELL_WORKSPACE_OBJECT_ID);
+
+        assert_eq!(
+            object_checkpoint_identity(&first).root_digest,
+            object_checkpoint_identity(&second).root_digest
+        );
+    }
+
+    #[test]
+    fn object_checkpoint_identity_changes_when_object_record_changes() {
+        let first = snapshot(8, 1042, SHELL_WORKSPACE_OBJECT_ID);
+        let mut second = snapshot(8, 1042, SHELL_WORKSPACE_OBJECT_ID);
+        second.objects[0].as_mut().unwrap().object = note(1042, b"changed");
+
+        assert_ne!(
+            object_checkpoint_identity(&first).root_digest,
+            object_checkpoint_identity(&second).root_digest
+        );
+    }
+
+    #[test]
+    fn object_checkpoint_identity_preserves_generation() {
+        let snapshot = snapshot(13, 1042, SHELL_WORKSPACE_OBJECT_ID);
+        let identity = object_checkpoint_identity(&snapshot);
+
+        assert_eq!(identity.generation, 13);
+        assert_ne!(identity.root_digest, [0; 32]);
     }
 
     #[test]
