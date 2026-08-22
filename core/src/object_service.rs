@@ -487,6 +487,31 @@ impl ObjectService {
         Ok(())
     }
 
+    pub(crate) fn create_package_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object_id: ObjectId,
+        _release_digest: [u8; 32],
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.create_internal_object(
+            caller,
+            TypedObjectRecord::new(object_id, ObjectKind::Package, 1),
+        )
+    }
+
+    pub(crate) fn create_schema_definition_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object_id: ObjectId,
+        _package_object_id: ObjectId,
+        _descriptor_digest: [u8; 32],
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.create_internal_object(
+            caller,
+            TypedObjectRecord::new(object_id, ObjectKind::SchemaDefinition, 1),
+        )
+    }
+
     pub(crate) fn revise_task_service_object(
         &mut self,
         caller: ActiveUserProcess,
@@ -704,6 +729,29 @@ impl ObjectService {
             ResourceId::new(object_id.raw()),
             OBJECT_RIGHTS,
         )?))
+    }
+
+    fn create_internal_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object: TypedObjectRecord,
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        let mut staged = *self;
+        staged.ensure_storage_quota(caller.service_id())?;
+        staged.quotas.charge_blocks(caller.service_id(), 1)?;
+        staged.objects.create_object(object)?;
+        staged.relationships.insert_object(object)?;
+        let timestamp = staged.take_timestamp();
+        staged
+            .revisions
+            .create_object(object, timestamp, caller.service_id())?;
+        let object_capability = staged.grant_object_capability(caller, object.object_id())?;
+        *self = staged;
+        Ok(ObjectCreateResult {
+            object_id: object.object_id(),
+            revision: 1,
+            object_capability,
+        })
     }
 
     fn ensure_storage_quota(&mut self, service_id: ServiceId) -> Result<(), ObjectServiceError> {
@@ -1143,6 +1191,53 @@ mod tests {
     }
 
     #[test]
+    fn package_schema_object_creation_public_create_denies_package_kind() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::Package),
+            Err(ObjectServiceError::UnsupportedKind)
+        );
+    }
+
+    #[test]
+    fn package_schema_object_creation_internal_helpers_create_objects_with_revisions() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+
+        let package = service
+            .create_package_object(shell, ObjectId::new(7000), digest(1))
+            .unwrap();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                package.object_id,
+                digest(2),
+            )
+            .unwrap();
+
+        let package_inspection = service
+            .inspect_object(shell, package.object_capability, package.object_id)
+            .unwrap();
+        let schema_inspection = service
+            .inspect_object(shell, schema.object_capability, schema.object_id)
+            .unwrap();
+
+        assert_eq!(package.revision, 1);
+        assert_eq!(schema.revision, 1);
+        assert_eq!(package_inspection.object.object_kind(), ObjectKind::Package);
+        assert_eq!(
+            schema_inspection.object.object_kind(),
+            ObjectKind::SchemaDefinition
+        );
+        assert_eq!(package_inspection.revision, 1);
+        assert_eq!(schema_inspection.revision, 1);
+    }
+
+    #[test]
     fn repeated_queries_reuse_existing_object_capabilities() {
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
@@ -1208,5 +1303,9 @@ mod tests {
 
         let after = service.dynamic_object_for_test(created.object_id).unwrap();
         assert_eq!(after, before);
+    }
+
+    fn digest(seed: u8) -> [u8; 32] {
+        [seed; 32]
     }
 }

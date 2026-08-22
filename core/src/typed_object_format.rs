@@ -4,6 +4,7 @@
 #[cfg(not(test))]
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
+use pythos_shared::package_abi::{OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION};
 use pythos_shared::task_abi::{
     OBJECT_KIND_CAPABILITY_REQUEST, OBJECT_KIND_RELEVANCE_ASSERTION, OBJECT_KIND_TASK,
     OBJECT_KIND_TASK_EVENT, OBJECT_KIND_TASK_PROPOSAL, OBJECT_KIND_TASK_RELATION,
@@ -261,6 +262,8 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::TaskRelation => OBJECT_KIND_TASK_RELATION,
         ObjectKind::RelevanceAssertion => OBJECT_KIND_RELEVANCE_ASSERTION,
         ObjectKind::CapabilityRequest => OBJECT_KIND_CAPABILITY_REQUEST,
+        ObjectKind::Package => OBJECT_KIND_PACKAGE,
+        ObjectKind::SchemaDefinition => OBJECT_KIND_SCHEMA_DEFINITION,
     }
 }
 
@@ -283,6 +286,8 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         OBJECT_KIND_TASK_RELATION => Ok(ObjectKind::TaskRelation),
         OBJECT_KIND_RELEVANCE_ASSERTION => Ok(ObjectKind::RelevanceAssertion),
         OBJECT_KIND_CAPABILITY_REQUEST => Ok(ObjectKind::CapabilityRequest),
+        OBJECT_KIND_PACKAGE => Ok(ObjectKind::Package),
+        OBJECT_KIND_SCHEMA_DEFINITION => Ok(ObjectKind::SchemaDefinition),
         _ => Err(ObjectFormatError::InvalidKind),
     }
 }
@@ -415,6 +420,42 @@ mod tests {
                 kind
             );
         }
+    }
+
+    #[test]
+    fn package_schema_object_creation_kinds_round_trip_with_stable_codes() {
+        let cases = [
+            (
+                ObjectKind::Package,
+                pythos_shared::package_abi::OBJECT_KIND_PACKAGE,
+            ),
+            (
+                ObjectKind::SchemaDefinition,
+                pythos_shared::package_abi::OBJECT_KIND_SCHEMA_DEFINITION,
+            ),
+        ];
+
+        for (kind, code) in cases {
+            let record = TypedObjectRecord::new(ObjectId::new(u64::from(code)), kind, 1);
+            let encoded = record.encode();
+            let decoded = TypedObjectRecord::decode(&encoded).unwrap();
+
+            assert_eq!(read_u16(&encoded, 16), code);
+            assert_eq!(decoded.object_kind(), kind);
+        }
+    }
+
+    #[test]
+    fn package_schema_object_creation_unknown_code_still_denies() {
+        let record = TypedObjectRecord::new(ObjectId::new(1), ObjectKind::ButtonWidget, 1);
+        let mut bytes = record.encode();
+
+        write_u16(&mut bytes, 16, 0x1300);
+
+        assert_eq!(
+            TypedObjectRecord::decode(&bytes),
+            Err(ObjectFormatError::InvalidKind)
+        );
     }
 
     #[test]

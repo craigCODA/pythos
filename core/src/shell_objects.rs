@@ -43,6 +43,8 @@ pub enum ObjectKind {
     TaskRelation,
     RelevanceAssertion,
     CapabilityRequest,
+    Package,
+    SchemaDefinition,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
