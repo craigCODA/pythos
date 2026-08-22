@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import shutil
 from pathlib import Path
@@ -43,6 +44,8 @@ INIT_BUNDLE_USER_ELF_TYPE = 0x0000_0002
 INIT_BUNDLE_NAMED_USER_ELF_TYPE = 0x0000_0003
 INIT_BUNDLE_PYTH_GRAPH_TYPE = 0x0000_0004
 INIT_BUNDLE_PYTH_NATIVE_BINDING_TYPE = 0x0000_0005
+INIT_BUNDLE_PACKAGE_SOURCE_TYPE = 0x0000_0006
+MAX_INIT_BUNDLE_RECORDS = 16
 NAMED_USER_PROGRAM_MAGIC = b"PYUPGM01"
 NAMED_USER_PROGRAM_HEADER_LEN = 40
 MAX_NAMED_PROGRAM_NAME_LEN = 32
@@ -51,6 +54,12 @@ NAMED_PYTH_GRAPH_HEADER_LEN = 40
 MAX_NAMED_PYTH_GRAPH_NAME_LEN = 32
 PYTH_NATIVE_BINDING_MAGIC = b"PYTNAT01"
 PYTH_NATIVE_BINDING_HEADER_LEN = 48
+PHASE13_PACKAGE_SOURCE_MAGIC = b"PYPKGS01"
+PHASE13_PACKAGE_SOURCE_HEADER_LEN = 64
+PHASE13_PACKAGE_FIXTURE_LABEL = b"phase13-format-fixture.pkg"
+MAX_PACKAGE_ARTIFACT_BYTES = 4 * 1024 * 1024
+MAX_PACKAGE_SOURCES = 8
+MAX_PACKAGE_SOURCE_LABEL_BYTES = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
@@ -104,6 +113,8 @@ def build_runtime_payload(source: bytes = RUNTIME_SOURCE) -> bytes:
 
 
 def build_init_bundle(records: list[tuple[int, bytes]]) -> bytes:
+    if len(records) > MAX_INIT_BUNDLE_RECORDS:
+        raise SystemExit("too many INIT.PAK bundle records")
     table_len = len(records) * INIT_BUNDLE_RECORD_LEN
     cursor = INIT_BUNDLE_HEADER_LEN + table_len
     header = bytearray(INIT_BUNDLE_HEADER_LEN)
@@ -199,6 +210,73 @@ def build_pyth_native_binding(
     header[24:32] = digest64(graph).to_bytes(8, "little")
     header[32:40] = digest64(elf).to_bytes(8, "little")
     return bytes(header) + graph_name + elf_name
+
+
+def load_phase13_package_fixture_builder():
+    path = ROOT / "scripts" / "build-phase13-package-fixture.py"
+    spec = importlib.util.spec_from_file_location("build_phase13_package_fixture", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_phase13_package_source_record(source_id: int, label: bytes, artifact: bytes) -> bytes:
+    if source_id < 0 or source_id >= MAX_PACKAGE_SOURCES:
+        raise SystemExit("too many Phase 13 package sources")
+    if not label:
+        raise ValueError("Phase 13 package source label is empty")
+    if len(label) > MAX_PACKAGE_SOURCE_LABEL_BYTES:
+        raise ValueError("Phase 13 package source label is too long")
+    if len(artifact) > MAX_PACKAGE_ARTIFACT_BYTES:
+        raise ValueError("Phase 13 package source artifact is too large")
+
+    artifact_offset = PHASE13_PACKAGE_SOURCE_HEADER_LEN + len(label)
+    header = bytearray(PHASE13_PACKAGE_SOURCE_HEADER_LEN)
+    header[0:8] = PHASE13_PACKAGE_SOURCE_MAGIC
+    header[8:10] = source_id.to_bytes(2, "little")
+    header[10:12] = len(label).to_bytes(2, "little")
+    header[16:24] = artifact_offset.to_bytes(8, "little")
+    header[24:32] = len(artifact).to_bytes(8, "little")
+    header[32:64] = hashlib.sha256(artifact).digest()
+    return bytes(header) + label + artifact
+
+
+def build_phase13_package_source_records(
+    sources: list[tuple[Path, bytes]],
+) -> list[tuple[int, bytes]]:
+    return build_phase13_package_source_records_from_bytes(
+        [
+            (label, require_file(path, f"Phase 13 package source {path}"))
+            for path, label in sources
+        ]
+    )
+
+
+def build_phase13_package_source_records_from_bytes(
+    sources: list[tuple[bytes, bytes]],
+) -> list[tuple[int, bytes]]:
+    if len(sources) > MAX_PACKAGE_SOURCES:
+        raise SystemExit("too many Phase 13 package sources")
+    return [
+        (
+            INIT_BUNDLE_PACKAGE_SOURCE_TYPE,
+            build_phase13_package_source_record(index, label, artifact),
+        )
+        for index, (label, artifact) in enumerate(sources)
+    ]
+
+
+def parse_phase13_package_source_spec(spec: str) -> tuple[Path, bytes]:
+    path = Path(spec)
+    if path.exists():
+        return path, path.name.encode("ascii")
+
+    raw_path, separator, raw_label = spec.rpartition(":")
+    if separator and raw_path:
+        return Path(raw_path), raw_label.encode("ascii")
+    return path, path.name.encode("ascii")
 
 
 def graph_principal_id(package: bytes) -> int:
@@ -428,6 +506,8 @@ def build_default_init_pak(
     pyth_native_elf: Path | None = None,
     include_pythtig_task_steward: bool = False,
     include_pythtig_default_services: bool = False,
+    include_phase13_package_format_fixture: bool = False,
+    phase13_package_sources: list[tuple[Path, bytes]] | None = None,
 ) -> bytes:
     selected_pythtig_sets = sum(
         [
@@ -465,6 +545,24 @@ def build_default_init_pak(
     if include_pythtig_default_services:
         records.append(pyth_runtime_record())
         records.extend(phase7_default_service_pyth_graph_records())
+
+    source_artifacts: list[tuple[bytes, bytes]] = []
+    if include_phase13_package_format_fixture:
+        source_artifacts.append(
+            (
+                PHASE13_PACKAGE_FIXTURE_LABEL,
+                load_phase13_package_fixture_builder().build_format_fixture(),
+            )
+        )
+    if phase13_package_sources:
+        source_artifacts.extend(
+            [
+                (label, require_file(path, f"Phase 13 package source {path}"))
+                for path, label in phase13_package_sources
+            ]
+        )
+    records.extend(build_phase13_package_source_records_from_bytes(source_artifacts))
+
     records.extend(
         [
             (INIT_BUNDLE_USER_ELF_TYPE, build_user_elf_payload(b"\xCC\xF4")),
@@ -512,6 +610,8 @@ def main() -> int:
     parser.add_argument("--pyth-native-elf", type=Path)
     parser.add_argument("--with-pythtig-task-steward", action="store_true")
     parser.add_argument("--with-pythtig-default-services", action="store_true")
+    parser.add_argument("--with-phase13-package-format-fixture", action="store_true")
+    parser.add_argument("--phase13-package-source", action="append", default=[])
     args = parser.parse_args()
 
     loader = args.loader
@@ -537,6 +637,11 @@ def main() -> int:
             args.pyth_native_elf,
             args.with_pythtig_task_steward,
             args.with_pythtig_default_services,
+            args.with_phase13_package_format_fixture,
+            [
+                parse_phase13_package_source_spec(source)
+                for source in args.phase13_package_source
+            ],
         ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
