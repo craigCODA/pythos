@@ -161,7 +161,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn package_handle_layout_is_stable() {
+    fn package_source_handle_layout_is_stable() {
         let handle = PackageSourceHandle::from_parts(0x1234, 0x5678);
 
         assert_eq!(PACKAGE_SOURCE_HANDLE_MAGIC, 0x5059_504B);
