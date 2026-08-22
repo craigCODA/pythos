@@ -87,6 +87,15 @@ impl PackageInstallResult {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRecoveryReport {
+    pub committed_anchored_generation_selected: bool,
+    pub previous_valid_anchored_generation_selected: bool,
+    pub staged_uncommitted_install_rolled_back: bool,
+    pub orphan_content_reclaimed: bool,
+    pub locator_mirrors_require_rebuild: bool,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageService<'a> {
     registry: PackageRegistry,
@@ -94,6 +103,14 @@ pub struct PackageService<'a> {
     staged_content: PackageContentTransaction<'a>,
     staged_registry: PackageRegistry,
     registry_snapshot: [u8; 4096],
+    object_checkpoint_identity: ObjectCheckpointIdentity,
+    anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+    anchored_generation_available: bool,
+    previous_registry: PackageRegistry,
+    previous_registry_snapshot: [u8; 4096],
+    previous_object_checkpoint_identity: ObjectCheckpointIdentity,
+    previous_anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+    previous_anchored_generation_available: bool,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -108,6 +125,20 @@ impl<'a> PackageService<'a> {
             staged_content: PackageContentTransaction::new(0, [0; 32]),
             staged_registry: PackageRegistry::empty(),
             registry_snapshot: [0; 4096],
+            object_checkpoint_identity: ObjectCheckpointIdentity {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+            anchored_generation_available: false,
+            previous_registry: PackageRegistry::empty(),
+            previous_registry_snapshot: [0; 4096],
+            previous_object_checkpoint_identity: ObjectCheckpointIdentity {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            previous_anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+            previous_anchored_generation_available: false,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -145,6 +176,11 @@ impl<'a> PackageService<'a> {
         result: &mut PackageInstallResult,
     ) -> Result<(), PackageStatus> {
         validate_install_authority(request.caller, capabilities, request.install_capability)?;
+        let previous_registry = self.registry.clone();
+        let previous_registry_snapshot = self.registry_snapshot;
+        let previous_object_checkpoint_identity = self.object_checkpoint_identity;
+        let previous_anchor_bytes = self.anchor_bytes;
+        let previous_anchored_generation_available = self.anchored_generation_available;
         let artifact_len = source_service.read(
             request.caller.service_id(),
             capabilities,
@@ -246,6 +282,14 @@ impl<'a> PackageService<'a> {
         self.staged_registry
             .record_committed_generation(registry_generation);
         self.registry.copy_from_committed(&self.staged_registry);
+        self.previous_registry = previous_registry;
+        self.previous_registry_snapshot = previous_registry_snapshot;
+        self.previous_object_checkpoint_identity = previous_object_checkpoint_identity;
+        self.previous_anchor_bytes = previous_anchor_bytes;
+        self.previous_anchored_generation_available = previous_anchored_generation_available;
+        self.object_checkpoint_identity = object_identity;
+        self.anchor_bytes = anchor_bytes;
+        self.anchored_generation_available = true;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
@@ -272,6 +316,68 @@ impl<'a> PackageService<'a> {
 
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
         &self.content_store
+    }
+
+    pub fn recover(&mut self) -> Result<PackageRecoveryReport, PackageStatus> {
+        let current_valid = self.anchored_generation_available
+            && PackageTransactionCommitV0::decode(
+                &self.anchor_bytes,
+                self.registry_generation(),
+                self.object_checkpoint_identity,
+            )
+            .is_ok();
+        let previous_valid = self.previous_anchored_generation_available
+            && PackageTransactionCommitV0::decode(
+                &self.previous_anchor_bytes,
+                self.previous_registry_generation(),
+                self.previous_object_checkpoint_identity,
+            )
+            .is_ok();
+
+        let current_snapshot = if current_valid {
+            &self.registry_snapshot[..self.registry.encoded_len()]
+        } else {
+            &[]
+        };
+        let previous_snapshot = if previous_valid {
+            &self.previous_registry_snapshot[..self.previous_registry.encoded_len()]
+        } else {
+            &[]
+        };
+        let selected = PackageRegistry::select_generation(current_snapshot, previous_snapshot)?;
+        let selected_generation = PackageRegistryGeneration {
+            generation: selected.generation(),
+            root_digest: selected.root_digest(),
+        };
+        let selected_current = current_valid && selected_generation == self.registry_generation();
+        let selected_previous =
+            previous_valid && selected_generation == self.previous_registry_generation();
+        if !selected_current && !selected_previous {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+        self.registry = selected;
+        if selected_previous {
+            self.locator_mirror_visible = false;
+        }
+
+        let staged_uncommitted_install_rolled_back = self.staged_content.staged_count() != 0
+            || self
+                .content_store
+                .staged_bitmap()
+                .iter()
+                .any(|word| *word != 0);
+        if staged_uncommitted_install_rolled_back {
+            self.content_store.rollback(&mut self.staged_content);
+        }
+
+        Ok(PackageRecoveryReport {
+            committed_anchored_generation_selected: true,
+            previous_valid_anchored_generation_selected: selected_previous,
+            staged_uncommitted_install_rolled_back,
+            orphan_content_reclaimed: staged_uncommitted_install_rolled_back,
+            locator_mirrors_require_rebuild: self.registry.package_count() != 0
+                && !self.locator_mirror_visible,
+        })
     }
 
     pub fn rebuild_locator_mirrors(
@@ -348,6 +454,20 @@ impl<'a> PackageService<'a> {
 
     pub const fn locator_mirror_visible_for_test(&self) -> bool {
         self.locator_mirror_visible
+    }
+
+    fn registry_generation(&self) -> PackageRegistryGeneration {
+        PackageRegistryGeneration {
+            generation: self.registry.generation(),
+            root_digest: self.registry.root_digest(),
+        }
+    }
+
+    fn previous_registry_generation(&self) -> PackageRegistryGeneration {
+        PackageRegistryGeneration {
+            generation: self.previous_registry.generation(),
+            root_digest: self.previous_registry.root_digest(),
+        }
     }
 }
 
@@ -466,7 +586,7 @@ fn package_locator_segment(package_object_id: u64) -> [u8; 16] {
 mod tests {
     extern crate std;
 
-    use super::{PackageInstallRequest, PackageService};
+    use super::{PackageInstallRequest, PackageRecoveryReport, PackageService};
     use crate::{
         capabilities::{CapabilityTable, ResourceId, RightsMask},
         object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, RelationshipKind},
@@ -481,7 +601,7 @@ mod tests {
         init_bundle::{self, INIT_BUNDLE_HEADER_LEN, RECORD_ENTRY_LEN, TYPE_PACKAGE_SOURCE},
         package_abi::{
             MAX_PACKAGE_ARTIFACT_BYTES, PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT,
-            PACKAGE_SOURCE_READ_RIGHT, PACKAGE_SOURCE_RESOURCE_ID,
+            PACKAGE_SOURCE_READ_RIGHT, PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
         },
         package_format::{CONTENT_ENTRY_V0_LEN, PACKAGE_ARTIFACT_HEADER_LEN},
         sha256::{Sha256, sha256},
@@ -491,6 +611,141 @@ mod tests {
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
+    const ORPHAN_CONTENT: &[u8] = b"orphan";
+
+    #[test]
+    fn package_service_recovery_selects_clean_committed_generation() {
+        with_installed_package(|package_service| {
+            package_service.rebuild_locator_mirrors().unwrap();
+
+            assert_eq!(
+                package_service.recover(),
+                Ok(PackageRecoveryReport {
+                    committed_anchored_generation_selected: true,
+                    previous_valid_anchored_generation_selected: false,
+                    staged_uncommitted_install_rolled_back: false,
+                    orphan_content_reclaimed: false,
+                    locator_mirrors_require_rebuild: false,
+                })
+            );
+        });
+    }
+
+    #[test]
+    fn package_service_recovery_rolls_back_unanchored_staged_install() {
+        with_installed_package(|package_service| {
+            package_service
+                .content_store
+                .stage_content(
+                    &mut package_service.staged_content,
+                    1,
+                    1,
+                    ORPHAN_CONTENT,
+                    sha256(ORPHAN_CONTENT),
+                )
+                .unwrap();
+
+            let report = package_service.recover().unwrap();
+
+            assert!(report.staged_uncommitted_install_rolled_back);
+            assert!(report.orphan_content_reclaimed);
+            assert_eq!(package_service.staged_content.staged_count(), 0);
+            assert!(
+                package_service
+                    .content_store
+                    .staged_bitmap()
+                    .iter()
+                    .all(|word| *word == 0)
+            );
+        });
+    }
+
+    #[test]
+    fn package_service_recovery_selects_previous_valid_pair_after_mismatched_current_anchor() {
+        with_installed_package(|package_service| {
+            package_service.previous_registry = package_service.registry.clone();
+            package_service.previous_registry_snapshot = package_service.registry_snapshot;
+            package_service.previous_object_checkpoint_identity =
+                package_service.object_checkpoint_identity;
+            package_service.previous_anchor_bytes = package_service.anchor_bytes;
+            package_service.previous_anchored_generation_available = true;
+            package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+
+            let report = package_service.recover().unwrap();
+
+            assert!(report.committed_anchored_generation_selected);
+            assert!(report.previous_valid_anchored_generation_selected);
+        });
+    }
+
+    #[test]
+    fn package_service_recovery_reports_missing_locator_mirrors_without_publishing_them() {
+        with_installed_package(|package_service| {
+            assert!(!package_service.locator_mirror_visible_for_test());
+
+            let report = package_service.recover().unwrap();
+
+            assert!(report.locator_mirrors_require_rebuild);
+            assert!(!package_service.locator_mirror_visible_for_test());
+        });
+    }
+
+    #[test]
+    fn package_service_recovery_denies_without_valid_anchor_and_leaves_object_recovery_unchanged() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let object_service = ObjectService::new_for_test();
+        let before = object_service.checkpoint_identity().unwrap();
+
+        assert_eq!(
+            package_service.recover(),
+            Err(PackageStatus::RegistryRecoveryDenied)
+        );
+        assert_eq!(object_service.checkpoint_identity().unwrap(), before);
+    }
+
+    fn with_installed_package(f: impl FnOnce(&mut PackageService<'_>)) {
+        let artifact = build_schema_package_artifact();
+        let source_record = build_source_record(0, b"phase13-recovery.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_5245_4356, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let mut object_service = ObjectService::new_for_test();
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut artifact_buffer = vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES];
+
+        package_service
+            .install(
+                PackageInstallRequest {
+                    caller,
+                    source_handle,
+                    source_read_capability,
+                    install_capability,
+                },
+                &source_service,
+                &capabilities,
+                &mut object_service,
+                &mut artifact_buffer,
+            )
+            .unwrap();
+        f(&mut package_service);
+    }
 
     #[test]
     fn package_install_transaction_commits_package_schema_content_registry_and_anchor_as_one_unit()
