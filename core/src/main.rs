@@ -58,6 +58,8 @@ mod package_acceptance;
 mod package_content_store;
 #[cfg(test)]
 mod package_registry;
+#[cfg(any(test, feature = "phase13-package-test"))]
+mod package_service;
 #[cfg(test)]
 mod package_source;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]

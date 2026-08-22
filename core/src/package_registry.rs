@@ -422,6 +422,13 @@ impl PackageRegistry {
         self.root_digest
     }
 
+    pub fn record_committed_generation(&mut self, generation: PackageRegistryGeneration) {
+        self.generation = generation.generation;
+        self.root_digest = generation.root_digest;
+        self.committed_root_digest = generation.root_digest;
+        self.active_transaction_id = 0;
+    }
+
     pub const fn package_count(&self) -> usize {
         self.package_count as usize
     }
