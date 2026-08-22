@@ -43,8 +43,7 @@ static mut PACKAGE_ACCEPTANCE_ARTIFACT_BUFFER: [u8; PACKAGE_ACCEPTANCE_ARTIFACT_
 static mut PACKAGE_ACCEPTANCE_CAPABILITIES: CapabilityTable = CapabilityTable::new();
 static mut PACKAGE_ACCEPTANCE_SOURCE_SERVICE: PackageSourceService<'static> =
     PackageSourceService::empty();
-static mut PACKAGE_ACCEPTANCE_INSTALL_RESULT: MaybeUninit<PackageInstallResult> =
-    MaybeUninit::uninit();
+static mut PACKAGE_ACCEPTANCE_INSTALL_RESULT: PackageInstallResult = PackageInstallResult::empty();
 static mut PACKAGE_ACCEPTANCE_LOCATOR_MIRRORS: PackageLocatorRelationshipStore =
     PackageLocatorRelationshipStore::new();
 
@@ -429,23 +428,19 @@ fn package_source_service_for_acceptance(
 
 fn install_result_for_acceptance() -> &'static mut PackageInstallResult {
     // SAFETY:
-    // 1. Invariant: this slot is written by `PackageService::install_into`
-    //    before success-path acceptance reads it.
-    // 2. Established by: callers only inspect the returned reference after
-    //    `install_into` returns `Ok(())`; denial scenarios ignore the slot.
+    // 1. Invariant: this statically initialized slot contains a valid empty
+    //    `PackageInstallResult` before any mutable reference is formed.
+    // 2. Established by: `PackageInstallResult::empty()` is a const initializer.
+    //    `install_into` may overwrite it on success; denial scenarios retain
+    //    the initialized empty value and do not inspect success-only fields.
     // 3. Lifetime: the static result slot lives for the remainder of the boot.
     // 4. Pointer ownership: package acceptance holds the only mutable
     //    reference for the active scenario.
-    // 5. Alignment: `MaybeUninit<PackageInstallResult>` provides result
-    //    alignment.
+    // 5. Alignment: the static item has `PackageInstallResult` alignment.
     // 6. Mapped length: exactly one result object is referenced.
     // 7. Concurrency: no SMP or reentrant package acceptance path exists.
-    // 8. Violation: reading before successful initialization would be UB and
-    //    is forbidden by the scenario control flow above.
-    unsafe {
-        &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_INSTALL_RESULT)
-            .cast::<PackageInstallResult>()
-    }
+    // 8. Violation: reentry would alias mutable access and must not occur.
+    unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_INSTALL_RESULT) }
 }
 
 fn locator_mirrors_for_acceptance() -> &'static mut PackageLocatorRelationshipStore {
