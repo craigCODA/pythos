@@ -260,9 +260,10 @@ impl<'a> PackageService<'a> {
                 descriptor_entry.sha256,
             ))?;
 
+        let mut staged_registry_snapshot = [0; 4096];
         let registry_generation = self
             .staged_registry
-            .encode_snapshot(&mut self.registry_snapshot)?;
+            .encode_snapshot(&mut staged_registry_snapshot)?;
         let object_identity = object_service
             .checkpoint_identity()
             .map_err(map_object_error)?;
@@ -282,6 +283,7 @@ impl<'a> PackageService<'a> {
         self.staged_registry
             .record_committed_generation(registry_generation);
         self.registry.copy_from_committed(&self.staged_registry);
+        self.registry_snapshot = staged_registry_snapshot;
         self.previous_registry = previous_registry;
         self.previous_registry_snapshot = previous_registry_snapshot;
         self.previous_object_checkpoint_identity = previous_object_checkpoint_identity;
@@ -355,9 +357,10 @@ impl<'a> PackageService<'a> {
         if !selected_current && !selected_previous {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
-        self.registry = selected;
         if selected_previous {
-            self.locator_mirror_visible = false;
+            self.replace_current_with_previous(selected);
+        } else {
+            self.registry = selected;
         }
 
         let staged_uncommitted_install_rolled_back = self.staged_content.staged_count() != 0
@@ -468,6 +471,23 @@ impl<'a> PackageService<'a> {
             generation: self.previous_registry.generation(),
             root_digest: self.previous_registry.root_digest(),
         }
+    }
+
+    fn replace_current_with_previous(&mut self, selected: PackageRegistry) {
+        self.registry = selected;
+        self.registry_snapshot = self.previous_registry_snapshot;
+        self.object_checkpoint_identity = self.previous_object_checkpoint_identity;
+        self.anchor_bytes = self.previous_anchor_bytes;
+        self.anchored_generation_available = self.previous_anchored_generation_available;
+        self.previous_registry = PackageRegistry::empty();
+        self.previous_registry_snapshot = [0; 4096];
+        self.previous_object_checkpoint_identity = ObjectCheckpointIdentity {
+            generation: 0,
+            root_digest: [0; 32],
+        };
+        self.previous_anchor_bytes = [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        self.previous_anchored_generation_available = false;
+        self.locator_mirror_visible = false;
     }
 }
 
@@ -586,12 +606,15 @@ fn package_locator_segment(package_object_id: u64) -> [u8; 16] {
 mod tests {
     extern crate std;
 
-    use super::{PackageInstallRequest, PackageRecoveryReport, PackageService};
+    use super::{
+        PackageInstallRequest, PackageInstallResult, PackageRecoveryReport, PackageService,
+    };
     use crate::{
         capabilities::{CapabilityTable, ResourceId, RightsMask},
         object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, RelationshipKind},
         object_service::ObjectService,
-        package_content_store::ContentId,
+        package_content_store::{ContentId, PackageContentTransaction},
+        package_registry::PackageTransactionCommitV0,
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
         service_identity::ServiceId,
@@ -600,14 +623,15 @@ mod tests {
     use pythos_shared::{
         init_bundle::{self, INIT_BUNDLE_HEADER_LEN, RECORD_ENTRY_LEN, TYPE_PACKAGE_SOURCE},
         package_abi::{
-            MAX_PACKAGE_ARTIFACT_BYTES, PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT,
-            PACKAGE_SOURCE_READ_RIGHT, PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
+            MAX_PACKAGE_ARTIFACT_BYTES, PACKAGE_CONTENT_MAX_STAGED_RECORDS,
+            PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PACKAGE_SOURCE_READ_RIGHT,
+            PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
         },
         package_format::{CONTENT_ENTRY_V0_LEN, PACKAGE_ARTIFACT_HEADER_LEN},
         sha256::{Sha256, sha256},
     };
-    use std::vec;
     use std::vec::Vec;
+    use std::{boxed::Box, vec};
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
@@ -661,21 +685,106 @@ mod tests {
     }
 
     #[test]
-    fn package_service_recovery_selects_previous_valid_pair_after_mismatched_current_anchor() {
-        with_installed_package(|package_service| {
-            package_service.previous_registry = package_service.registry.clone();
-            package_service.previous_registry_snapshot = package_service.registry_snapshot;
-            package_service.previous_object_checkpoint_identity =
-                package_service.object_checkpoint_identity;
-            package_service.previous_anchor_bytes = package_service.anchor_bytes;
-            package_service.previous_anchored_generation_available = true;
-            package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+    fn package_service_recovery_selects_older_committed_registry_after_newest_anchor_mismatch() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let first = install_recovery_package(&mut package_service).unwrap();
+        let first_generation = package_service.registry_generation();
+        let second = install_recovery_package(&mut package_service).unwrap();
 
-            let report = package_service.recover().unwrap();
+        assert_eq!(package_service.registry().package_count(), 2);
+        assert_eq!(package_service.previous_registry.package_count(), 1);
+        assert_ne!(package_service.registry_generation(), first_generation);
+        package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
 
-            assert!(report.committed_anchored_generation_selected);
-            assert!(report.previous_valid_anchored_generation_selected);
-        });
+        let report = package_service.recover().unwrap();
+
+        assert!(report.committed_anchored_generation_selected);
+        assert!(report.previous_valid_anchored_generation_selected);
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            first.package_object_id
+        );
+        assert_ne!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            second.package_object_id
+        );
+        assert!(
+            PackageTransactionCommitV0::decode(
+                &package_service.anchor_bytes,
+                package_service.registry_generation(),
+                package_service.object_checkpoint_identity,
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn package_service_recovery_normalizes_fallback_pair_before_a_later_install() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let first = install_recovery_package(&mut package_service).unwrap();
+        install_recovery_package(&mut package_service).unwrap();
+        package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+        package_service.recover().unwrap();
+
+        install_recovery_package(&mut package_service).unwrap();
+        package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+
+        let report = package_service.recover().unwrap();
+
+        assert!(report.previous_valid_anchored_generation_selected);
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            first.package_object_id
+        );
+    }
+
+    #[test]
+    fn package_service_recovery_keeps_committed_snapshot_after_content_commit_failure() {
+        let mut package_service = PackageService::new_empty_for_test();
+        install_recovery_package(&mut package_service).unwrap();
+        let committed_snapshot = package_service.registry_snapshot;
+
+        for filler in 0..(PACKAGE_CONTENT_MAX_STAGED_RECORDS - 1) {
+            let mut transaction = PackageContentTransaction::new(
+                0x5059_504B_4649_4C4C + filler as u64,
+                [filler as u8; 32],
+            );
+            package_service
+                .content_store
+                .stage_content(
+                    &mut transaction,
+                    1,
+                    1,
+                    ORPHAN_CONTENT,
+                    sha256(ORPHAN_CONTENT),
+                )
+                .unwrap();
+            package_service
+                .content_store
+                .commit(&mut transaction)
+                .unwrap();
+        }
+
+        assert_eq!(
+            install_recovery_package(&mut package_service),
+            Err(PackageStatus::QuotaDenied)
+        );
+        assert_eq!(package_service.registry_snapshot, committed_snapshot);
+        assert!(package_service.recover().is_ok());
     }
 
     #[test]
@@ -704,6 +813,14 @@ mod tests {
     }
 
     fn with_installed_package(f: impl FnOnce(&mut PackageService<'_>)) {
+        let mut package_service = PackageService::new_empty_for_test();
+        install_recovery_package(&mut package_service).unwrap();
+        f(&mut package_service);
+    }
+
+    fn install_recovery_package(
+        package_service: &mut PackageService<'static>,
+    ) -> Result<PackageInstallResult, PackageStatus> {
         let artifact = build_schema_package_artifact();
         let source_record = build_source_record(0, b"phase13-recovery.pkg", &artifact);
         let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
@@ -727,24 +844,20 @@ mod tests {
             )
             .unwrap();
         let mut object_service = ObjectService::new_for_test();
-        let mut package_service = PackageService::new_empty_for_test();
-        let mut artifact_buffer = vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES];
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
 
-        package_service
-            .install(
-                PackageInstallRequest {
-                    caller,
-                    source_handle,
-                    source_read_capability,
-                    install_capability,
-                },
-                &source_service,
-                &capabilities,
-                &mut object_service,
-                &mut artifact_buffer,
-            )
-            .unwrap();
-        f(&mut package_service);
+        package_service.install(
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            &mut object_service,
+            artifact_buffer,
+        )
     }
 
     #[test]
