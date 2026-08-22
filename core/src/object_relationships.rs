@@ -10,6 +10,7 @@ use crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS;
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::typed_object_format::TypedObjectRecord;
+use pythos_shared::package_abi::MAX_SCHEMA_DECLARATIONS;
 
 pub const SHELL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4845_4C01;
 pub const EXTERNAL_WORKSPACE_OBJECT_ID: u64 = 0x5059_5753_4558_5401;
@@ -17,11 +18,19 @@ const LEGACY_RELATIONSHIP_OBJECTS: usize = 4;
 const LEGACY_RELATIONSHIPS: usize = 8;
 pub const OBJECT_SERVICE_RELATIONSHIP_OBJECTS: usize = MAX_DYNAMIC_OBJECTS + 2;
 pub const OBJECT_SERVICE_RELATIONSHIPS: usize = MAX_DYNAMIC_OBJECTS;
+pub const PACKAGE_LOCATOR_ROOT_OBJECT_ID: u64 = 0x5059_504B_4C4F_4301;
+pub const PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID: u64 = 0x5059_504B_424E_0000;
+pub const PACKAGE_LOCATOR_MIRROR_OBJECTS: usize = 1 + (MAX_SCHEMA_DECLARATIONS * 2);
+pub const PACKAGE_LOCATOR_MIRROR_RELATIONSHIPS: usize = MAX_SCHEMA_DECLARATIONS * 2;
 
 pub type RelationshipStore =
     BoundedRelationshipStore<LEGACY_RELATIONSHIP_OBJECTS, LEGACY_RELATIONSHIPS>;
 pub type ObjectServiceRelationshipStore =
     BoundedRelationshipStore<OBJECT_SERVICE_RELATIONSHIP_OBJECTS, OBJECT_SERVICE_RELATIONSHIPS>;
+pub type PackageLocatorRelationshipStore = BoundedRelationshipStore<
+    PACKAGE_LOCATOR_MIRROR_OBJECTS,
+    PACKAGE_LOCATOR_MIRROR_RELATIONSHIPS,
+>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelationshipError {

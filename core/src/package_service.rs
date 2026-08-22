@@ -2,6 +2,11 @@ use crate::{
     capabilities::{CapabilityHandle, CapabilityTable, ResourceId, RightsMask},
     object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
     object_service_checkpoint::{ObjectCheckpointIdentity, object_checkpoint_identity},
+    object_locator::LOCATOR_FIELD_SEGMENT,
+    object_relationships::{
+        ObjectRelationship, PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID, PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+        PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
+    },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
@@ -11,7 +16,8 @@ use crate::{
     },
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
-    shell_objects::ObjectId,
+    shell_objects::{ObjectId, ObjectKind},
+    typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
 use pythos_shared::{
     package_abi::{PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageStatus},
@@ -202,6 +208,65 @@ impl<'a> PackageService<'a> {
         &self.content_store
     }
 
+    pub fn rebuild_locator_mirrors(
+        &mut self,
+    ) -> Result<PackageLocatorRelationshipStore, PackageStatus> {
+        let mut mirrors = PackageLocatorRelationshipStore::new();
+        if self.registry.package_count() == 0 {
+            self.locator_mirror_visible = false;
+            return Ok(mirrors);
+        }
+
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        mirrors
+            .insert_object(TypedObjectRecord::new(root, ObjectKind::WorkspaceSession, 1))
+            .map_err(map_relationship_error)?;
+
+        let mut index = 0usize;
+        while index < self.registry.package_count() {
+            if let Some(record) = self.registry.package_record(index)
+                && record.status == PackageStatus::Ok as u16
+            {
+                let package = ObjectId::new(record.package_object_id);
+                let binding = ObjectId::new(PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID + index as u64);
+                let mut binding_record =
+                    TypedObjectRecord::new(binding, ObjectKind::NameBinding, 1);
+                let segment = package_locator_segment(record.package_object_id);
+                binding_record
+                    .push_field(
+                        TypedObjectField::new(LOCATOR_FIELD_SEGMENT, 1, &segment)
+                            .map_err(map_object_format_error)?,
+                    )
+                    .map_err(map_object_format_error)?;
+
+                mirrors
+                    .insert_object(binding_record)
+                    .map_err(map_relationship_error)?;
+                mirrors
+                    .insert_object(TypedObjectRecord::new(package, ObjectKind::Package, 1))
+                    .map_err(map_relationship_error)?;
+                mirrors
+                    .add_relationship(ObjectRelationship::new(
+                        root,
+                        RelationshipKind::NameBinding,
+                        binding,
+                    ))
+                    .map_err(map_relationship_error)?;
+                mirrors
+                    .add_relationship(ObjectRelationship::new(
+                        binding,
+                        RelationshipKind::BindingTarget,
+                        package,
+                    ))
+                    .map_err(map_relationship_error)?;
+            }
+            index += 1;
+        }
+
+        self.locator_mirror_visible = mirrors.relationship_count() != 0;
+        Ok(mirrors)
+    }
+
     pub const fn locator_mirror_visible_for_test(&self) -> bool {
         self.locator_mirror_visible
     }
@@ -294,6 +359,30 @@ fn map_object_error(error: ObjectServiceError) -> PackageStatus {
     }
 }
 
+fn map_relationship_error(_error: RelationshipError) -> PackageStatus {
+    PackageStatus::RegistryRecoveryDenied
+}
+
+fn map_object_format_error(_error: ObjectFormatError) -> PackageStatus {
+    PackageStatus::InvalidLocator
+}
+
+fn package_locator_segment(package_object_id: u64) -> [u8; 16] {
+    let mut segment = [0u8; 16];
+    let mut index = 0usize;
+    while index < segment.len() {
+        let shift = 60 - (index * 4);
+        let nibble = ((package_object_id >> shift) & 0xF) as u8;
+        segment[index] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + (nibble - 10)
+        };
+        index += 1;
+    }
+    segment
+}
+
 #[cfg(test)]
 mod tests {
     extern crate std;
@@ -302,6 +391,7 @@ mod tests {
     use crate::{
         capabilities::{CapabilityTable, ResourceId, RightsMask},
         object_service::ObjectService,
+        object_relationships::{RelationshipKind, PACKAGE_LOCATOR_ROOT_OBJECT_ID},
         package_content_store::ContentId,
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
@@ -418,6 +508,78 @@ mod tests {
             ObjectKind::Package
         );
         assert!(!package_service.locator_mirror_visible_for_test());
+    }
+
+    #[test]
+    fn package_locator_mirrors_are_rebuilt_from_committed_registry_generation() {
+        let artifact = build_schema_package_artifact();
+        let source_record = build_source_record(0, b"phase13-mirror.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4D49_5252, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let mut object_service = ObjectService::new_for_test();
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut artifact_buffer = vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES];
+
+        let installed = package_service
+            .install(
+                PackageInstallRequest {
+                    caller,
+                    source_handle,
+                    source_read_capability,
+                    install_capability,
+                },
+                &source_service,
+                &capabilities,
+                &mut object_service,
+                &mut artifact_buffer,
+            )
+            .unwrap();
+
+        let mirrors = package_service.rebuild_locator_mirrors().unwrap();
+        let relationships = mirrors.relationship_records();
+        let root = crate::shell_objects::ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let package = crate::shell_objects::ObjectId::new(installed.package_object_id);
+        let mut binding = None;
+        for relationship in relationships.into_iter().flatten() {
+            if relationship.source() == root && relationship.kind() == RelationshipKind::NameBinding
+            {
+                binding = Some(relationship.target());
+            }
+        }
+        let binding = binding.unwrap();
+
+        assert_eq!(mirrors.relationship_count(), 2);
+        assert!(package_service.locator_mirror_visible_for_test());
+        assert!(mirrors.has_object(root));
+        assert!(mirrors.has_object(package));
+        assert!(relationships.into_iter().flatten().any(|relationship| {
+            relationship.source() == binding
+                && relationship.kind() == RelationshipKind::BindingTarget
+                && relationship.target() == package
+        }));
+
+        let mut empty_service = PackageService::new_empty_for_test();
+        let empty_mirrors = empty_service.rebuild_locator_mirrors().unwrap();
+        assert_eq!(empty_mirrors.relationship_count(), 0);
+        assert!(!empty_service.locator_mirror_visible_for_test());
     }
 
     fn build_schema_package_artifact() -> Vec<u8> {
