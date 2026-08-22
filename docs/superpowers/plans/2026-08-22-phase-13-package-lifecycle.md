@@ -1547,6 +1547,91 @@ git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs
 git commit -m "test(qemu): prove package install and source denial"
 ```
 
+### Task 2.12.x: Package Service Recovery Surface
+
+**Purpose:** expose the already-designed package-registry/object-checkpoint
+recovery machinery through `PackageService` so later QEMU recovery scenarios
+invoke one stable package-domain recovery operation rather than reconstructing
+recovery policy inside the acceptance harness.
+
+**Files:**
+- Modify: `core/src/package_service.rs`
+- Test: `core/src/package_service.rs`
+
+Do not modify `scripts/test-phase13-package-install.py` or
+`core/src/package_acceptance.rs` in this inserted task. Those remain Task 2.13.
+
+**Interfaces Consumed:** newest-valid anchored object-checkpoint /
+package-registry pair selection, mismatched-anchor rejection, unanchored
+staged-state rollback/reclaim result, locator-mirror rebuild requirement/state,
+and package-registry recovery denial state.
+
+**Interfaces Produced:**
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRecoveryReport {
+    pub committed_anchored_generation_selected: bool,
+    pub previous_valid_anchored_generation_selected: bool,
+    pub staged_uncommitted_install_rolled_back: bool,
+    pub orphan_content_reclaimed: bool,
+    pub locator_mirrors_require_rebuild: bool,
+}
+
+impl<'a> PackageService<'a> {
+    pub fn recover(&mut self) -> Result<PackageRecoveryReport, PackageStatus>;
+}
+```
+
+`PackageRecoveryReport` describes recovery facts only. It is not an authority
+source, does not publish locator mirrors by itself, and does not replace object
+checkpoint or package-registry validation.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add focused `package_service_recovery` tests for at least:
+
+- clean committed recovery;
+- unanchored staged install -> rollback report;
+- mismatched newest anchor -> previous valid pair report;
+- committed generation with missing mirrors -> rebuild report;
+- no valid package anchor -> `PackageStatus::RegistryRecoveryDenied` without
+  weakening existing object-store recovery.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```powershell
+cargo test -p pythos-core package_service_recovery
+```
+
+Expected: FAIL because `PackageService::recover` and `PackageRecoveryReport`
+do not exist.
+
+- [ ] **Step 3: Minimum implementation**
+
+Implement only the minimal service orchestration/reporting needed to delegate
+to the already-completed recovery primitives. Do not invent a second recovery
+algorithm inside `PackageService`.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```powershell
+cargo test -p pythos-core package_service_recovery
+cargo test -p pythos-core package_registry
+cargo test -p pythos-core package_content_store
+cargo test -p pythos-core object_service_checkpoint
+py -3 -m unittest tests.test_interface_compatibility_freeze
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add core/src/package_service.rs
+git commit -m "feat(core): expose package recovery service"
+```
+
 ### Task 2.13: killed-before-anchor Recovery
 
 **Files:**
