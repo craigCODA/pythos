@@ -1,12 +1,12 @@
 use crate::{
     capabilities::{CapabilityHandle, CapabilityTable, ResourceId, RightsMask},
-    object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
-    object_service_checkpoint::{ObjectCheckpointIdentity, object_checkpoint_identity},
     object_locator::LOCATOR_FIELD_SEGMENT,
     object_relationships::{
         ObjectRelationship, PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID, PACKAGE_LOCATOR_ROOT_OBJECT_ID,
         PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
     },
+    object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
+    object_service_checkpoint::ObjectCheckpointIdentity,
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
@@ -52,10 +52,48 @@ pub struct PackageInstallResult {
     pub anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
 }
 
+impl PackageInstallResult {
+    pub const fn empty() -> Self {
+        Self {
+            transaction_id: 0,
+            package_object_id: 0,
+            package_revision: 0,
+            schema_object_id: 0,
+            schema_revision: 0,
+            release_digest: [0; 32],
+            schema_descriptor_content_id: ContentId::new(0, [0; 32], 0),
+            content_commit: PackageContentCommit::empty(),
+            registry_generation: PackageRegistryGeneration {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            object_checkpoint_identity: ObjectCheckpointIdentity {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            anchor: PackageTransactionCommitV0 {
+                transaction_id: 0,
+                operation: 0,
+                package_registry_generation: 0,
+                package_registry_root_digest: [0; 32],
+                object_checkpoint_generation: 0,
+                object_checkpoint_root_digest: [0; 32],
+                package_object_id: 0,
+                package_installed_revision: 0,
+                commit_crc32c: 0,
+            },
+            anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageService<'a> {
     registry: PackageRegistry,
     content_store: PackageContentStore<'a>,
+    staged_content: PackageContentTransaction<'a>,
+    staged_registry: PackageRegistry,
+    registry_snapshot: [u8; 4096],
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -67,6 +105,9 @@ impl<'a> PackageService<'a> {
         Self {
             registry: PackageRegistry::empty(),
             content_store: PackageContentStore::empty(),
+            staged_content: PackageContentTransaction::new(0, [0; 32]),
+            staged_registry: PackageRegistry::empty(),
+            registry_snapshot: [0; 4096],
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -82,6 +123,27 @@ impl<'a> PackageService<'a> {
         object_service: &mut ObjectService,
         artifact_buffer: &'a mut [u8],
     ) -> Result<PackageInstallResult, PackageStatus> {
+        let mut result = PackageInstallResult::empty();
+        self.install_into(
+            request,
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+            &mut result,
+        )?;
+        Ok(result)
+    }
+
+    pub fn install_into(
+        &mut self,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &mut ObjectService,
+        artifact_buffer: &'a mut [u8],
+        result: &mut PackageInstallResult,
+    ) -> Result<(), PackageStatus> {
         validate_install_authority(request.caller, capabilities, request.install_capability)?;
         let artifact_len = source_service.read(
             request.caller.service_id(),
@@ -102,14 +164,14 @@ impl<'a> PackageService<'a> {
         let package_object_id = ObjectId::new(self.next_package_object_id);
         let schema_object_id = ObjectId::new(self.next_schema_object_id);
 
-        let mut staged_content =
-            PackageContentTransaction::new(package_object_id.raw(), release_digest);
+        self.staged_content
+            .reset(package_object_id.raw(), release_digest);
         let mut descriptor_content_id = None;
         let mut entry_index = 0u16;
         while let Some(entry) = artifact.content_entry(entry_index) {
             let content_bytes = artifact.content_bytes(entry).map_err(map_format_error)?;
             let content_id = self.content_store.stage_content(
-                &mut staged_content,
+                &mut self.staged_content,
                 entry.role,
                 entry.format,
                 content_bytes,
@@ -123,7 +185,7 @@ impl<'a> PackageService<'a> {
         let schema_descriptor_content_id =
             descriptor_content_id.ok_or(PackageStatus::InvalidSchema)?;
         if descriptor_bytes.is_empty() {
-            self.content_store.rollback(&mut staged_content);
+            self.content_store.rollback(&mut self.staged_content);
             return Err(PackageStatus::InvalidSchema);
         }
 
@@ -133,7 +195,7 @@ impl<'a> PackageService<'a> {
             package_object_id,
             release_digest,
             &mut self.content_store,
-            &mut staged_content,
+            &mut self.staged_content,
         )?;
         let schema = create_schema_or_rollback(
             object_service,
@@ -142,28 +204,32 @@ impl<'a> PackageService<'a> {
             package_object_id,
             descriptor_entry.sha256,
             &mut self.content_store,
-            &mut staged_content,
+            &mut self.staged_content,
         )?;
 
-        let mut staged_registry = self.registry.clone();
-        staged_registry.add_package_record(PackageRegistryPackageRecord::new(
-            package.object_id.raw(),
-            package.revision,
-            release_digest,
-            PackageStatus::Ok as u16,
-        ))?;
-        staged_registry.add_schema_record(PackageRegistrySchemaRecord::new(
-            schema.object_id.raw(),
-            schema.revision,
-            package.object_id.raw(),
-            descriptor_entry.content_index,
-            descriptor_entry.sha256,
-        ))?;
+        self.staged_registry.copy_from_committed(&self.registry);
+        self.staged_registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                package.object_id.raw(),
+                package.revision,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))?;
+        self.staged_registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(
+                schema.object_id.raw(),
+                schema.revision,
+                package.object_id.raw(),
+                descriptor_entry.content_index,
+                descriptor_entry.sha256,
+            ))?;
 
-        let mut registry_snapshot = [0u8; 4096];
-        let registry_generation = staged_registry.encode_snapshot(&mut registry_snapshot)?;
-        let object_snapshot = object_service.encode_snapshot().map_err(map_object_error)?;
-        let object_identity = object_checkpoint_identity(&object_snapshot);
+        let registry_generation = self
+            .staged_registry
+            .encode_snapshot(&mut self.registry_snapshot)?;
+        let object_identity = object_service
+            .checkpoint_identity()
+            .map_err(map_object_error)?;
         let transaction_id = self.next_transaction_id;
         let anchor = PackageTransactionCommitV0::new(
             transaction_id,
@@ -175,29 +241,29 @@ impl<'a> PackageService<'a> {
         );
         let mut anchor_bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         anchor.encode(&mut anchor_bytes)?;
-        let content_commit = self.content_store.commit(&mut staged_content)?;
+        let content_commit = self.content_store.commit(&mut self.staged_content)?;
 
-        staged_registry.record_committed_generation(registry_generation);
-        self.registry = staged_registry;
+        self.staged_registry
+            .record_committed_generation(registry_generation);
+        self.registry.copy_from_committed(&self.staged_registry);
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
         self.locator_mirror_visible = false;
 
-        Ok(PackageInstallResult {
-            transaction_id,
-            package_object_id: package.object_id.raw(),
-            package_revision: package.revision,
-            schema_object_id: schema.object_id.raw(),
-            schema_revision: schema.revision,
-            release_digest,
-            schema_descriptor_content_id,
-            content_commit,
-            registry_generation,
-            object_checkpoint_identity: object_identity,
-            anchor,
-            anchor_bytes,
-        })
+        result.transaction_id = transaction_id;
+        result.package_object_id = package.object_id.raw();
+        result.package_revision = package.revision;
+        result.schema_object_id = schema.object_id.raw();
+        result.schema_revision = schema.revision;
+        result.release_digest = release_digest;
+        result.schema_descriptor_content_id = schema_descriptor_content_id;
+        result.content_commit = content_commit;
+        result.registry_generation = registry_generation;
+        result.object_checkpoint_identity = object_identity;
+        result.anchor = anchor;
+        result.anchor_bytes = anchor_bytes;
+        Ok(())
     }
 
     pub const fn registry(&self) -> &PackageRegistry {
@@ -212,14 +278,27 @@ impl<'a> PackageService<'a> {
         &mut self,
     ) -> Result<PackageLocatorRelationshipStore, PackageStatus> {
         let mut mirrors = PackageLocatorRelationshipStore::new();
+        self.rebuild_locator_mirrors_into(&mut mirrors)?;
+        Ok(mirrors)
+    }
+
+    pub fn rebuild_locator_mirrors_into(
+        &mut self,
+        mirrors: &mut PackageLocatorRelationshipStore,
+    ) -> Result<(), PackageStatus> {
+        mirrors.clear();
         if self.registry.package_count() == 0 {
             self.locator_mirror_visible = false;
-            return Ok(mirrors);
+            return Ok(());
         }
 
         let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
         mirrors
-            .insert_object(TypedObjectRecord::new(root, ObjectKind::WorkspaceSession, 1))
+            .insert_object(TypedObjectRecord::new(
+                root,
+                ObjectKind::WorkspaceSession,
+                1,
+            ))
             .map_err(map_relationship_error)?;
 
         let mut index = 0usize;
@@ -264,7 +343,7 @@ impl<'a> PackageService<'a> {
         }
 
         self.locator_mirror_visible = mirrors.relationship_count() != 0;
-        Ok(mirrors)
+        Ok(())
     }
 
     pub const fn locator_mirror_visible_for_test(&self) -> bool {
@@ -390,8 +469,8 @@ mod tests {
     use super::{PackageInstallRequest, PackageService};
     use crate::{
         capabilities::{CapabilityTable, ResourceId, RightsMask},
+        object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, RelationshipKind},
         object_service::ObjectService,
-        object_relationships::{RelationshipKind, PACKAGE_LOCATOR_ROOT_OBJECT_ID},
         package_content_store::ContentId,
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,

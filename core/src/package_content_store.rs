@@ -1,6 +1,6 @@
 use pythos_shared::package_abi::{
-    PackageStatus, MAX_CONTENT_BYTES, MAX_CONTENT_EXTENTS_PER_RECORD,
-    PACKAGE_CONTENT_BITMAP_WORDS, PACKAGE_CONTENT_MAX_BLOCKS, PACKAGE_CONTENT_MAX_STAGED_RECORDS,
+    MAX_CONTENT_BYTES, MAX_CONTENT_EXTENTS_PER_RECORD, PACKAGE_CONTENT_BITMAP_WORDS,
+    PACKAGE_CONTENT_MAX_BLOCKS, PACKAGE_CONTENT_MAX_STAGED_RECORDS, PackageStatus,
 };
 use pythos_shared::sha256::sha256;
 
@@ -34,11 +34,7 @@ pub struct ContentId {
 }
 
 impl ContentId {
-    pub const fn new(
-        package_object_id: u64,
-        release_digest: [u8; 32],
-        content_index: u16,
-    ) -> Self {
+    pub const fn new(package_object_id: u64, release_digest: [u8; 32], content_index: u16) -> Self {
         Self {
             package_object_id,
             release_digest,
@@ -86,6 +82,12 @@ impl<'a> PackageContentTransaction<'a> {
         }
     }
 
+    pub fn reset(&mut self, package_object_id: u64, release_digest: [u8; 32]) {
+        self.package_object_id = package_object_id;
+        self.release_digest = release_digest;
+        self.clear();
+    }
+
     pub const fn staged_count(&self) -> usize {
         self.staged_count as usize
     }
@@ -110,21 +112,20 @@ impl<'a> PackageContentTransaction<'a> {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageContentCommit {
-    records: [Option<PackageContentRecord>; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
     record_count: u16,
     committed_bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
 }
 
 impl PackageContentCommit {
-    pub const fn record_count(&self) -> usize {
-        self.record_count as usize
+    pub const fn empty() -> Self {
+        Self {
+            record_count: 0,
+            committed_bitmap: [0; PACKAGE_CONTENT_BITMAP_WORDS],
+        }
     }
 
-    pub fn record(&self, index: usize) -> Option<PackageContentRecord> {
-        if index >= self.record_count as usize {
-            return None;
-        }
-        self.records[index]
+    pub const fn record_count(&self) -> usize {
+        self.record_count as usize
     }
 
     pub const fn committed_bitmap(&self) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS] {
@@ -229,13 +230,11 @@ impl<'a> PackageContentStore<'a> {
             return Err(PackageStatus::QuotaDenied);
         }
 
-        let mut records = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
         let mut record_count = 0usize;
 
         for slot_index in 0..PACKAGE_CONTENT_MAX_STAGED_RECORDS {
             if let Some(mut slot) = transaction.staged[slot_index] {
                 slot.record.committed = true;
-                records[record_count] = Some(slot.record);
                 self.committed[self.committed_count as usize] = Some(slot);
                 self.committed_count += 1;
                 record_count += 1;
@@ -246,7 +245,6 @@ impl<'a> PackageContentStore<'a> {
         transaction.clear();
 
         Ok(PackageContentCommit {
-            records,
             record_count: record_count as u16,
             committed_bitmap,
         })
@@ -413,7 +411,7 @@ mod tests {
         PackageExtentAllocator,
     };
     use pythos_shared::package_abi::{
-        PackageStatus, PACKAGE_CONTENT_BITMAP_WORDS, PACKAGE_CONTENT_MAX_BLOCKS,
+        PACKAGE_CONTENT_BITMAP_WORDS, PACKAGE_CONTENT_MAX_BLOCKS, PackageStatus,
     };
     use pythos_shared::sha256::sha256;
 
@@ -441,11 +439,17 @@ mod tests {
             allocator.allocate_staged(2).unwrap(),
             PackageExtent::new(0, 2)
         );
-        assert_eq!(allocator.committed_bitmap(), [0; PACKAGE_CONTENT_BITMAP_WORDS]);
+        assert_eq!(
+            allocator.committed_bitmap(),
+            [0; PACKAGE_CONTENT_BITMAP_WORDS]
+        );
 
         allocator.rollback_staged();
 
-        assert_eq!(allocator.committed_bitmap(), [0; PACKAGE_CONTENT_BITMAP_WORDS]);
+        assert_eq!(
+            allocator.committed_bitmap(),
+            [0; PACKAGE_CONTENT_BITMAP_WORDS]
+        );
         assert_eq!(allocator.staged_bitmap(), [0; PACKAGE_CONTENT_BITMAP_WORDS]);
         assert_eq!(
             allocator.allocate_staged(1).unwrap(),
@@ -522,12 +526,14 @@ mod tests {
             .unwrap();
 
         assert_eq!(content_id, ContentId::new(11, release, 0));
-        assert_eq!(store.read_committed(content_id), Err(PackageStatus::NotFound));
+        assert_eq!(
+            store.read_committed(content_id),
+            Err(PackageStatus::NotFound)
+        );
 
         let commit = store.commit(&mut transaction).unwrap();
 
         assert_eq!(commit.record_count(), 1);
-        assert_eq!(commit.record(0).unwrap().content_id, content_id);
         assert_eq!(commit.committed_bitmap(), store.committed_bitmap());
         assert_eq!(store.read_committed(content_id), Ok(bytes.as_slice()));
     }
@@ -569,9 +575,13 @@ mod tests {
         let mut package_b = PackageContentTransaction::new(22, release_a);
         let mut package_a_new_release = PackageContentTransaction::new(21, release_b);
 
-        let id_a = store.stage_content(&mut package_a, 3, 0, bytes, digest).unwrap();
+        let id_a = store
+            .stage_content(&mut package_a, 3, 0, bytes, digest)
+            .unwrap();
         store.rollback(&mut package_a);
-        let id_b = store.stage_content(&mut package_b, 3, 0, bytes, digest).unwrap();
+        let id_b = store
+            .stage_content(&mut package_b, 3, 0, bytes, digest)
+            .unwrap();
         store.rollback(&mut package_b);
         let id_a_new_release = store
             .stage_content(&mut package_a_new_release, 3, 0, bytes, digest)

@@ -1,6 +1,6 @@
 use crate::object_service_checkpoint::ObjectCheckpointIdentity;
 use pythos_shared::package_abi::{
-    PackageStatus, MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION,
+    MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION, PackageStatus,
 };
 use pythos_shared::sha256::sha256;
 
@@ -384,19 +384,29 @@ impl PackageRegistry {
         write_u32(out, 60, self.package_count);
         write_u32(out, 64, self.schema_count);
 
-        let mut packages = self.package_records;
-        sort_package_records(&mut packages, self.package_count as usize);
-        let mut schemas = self.schema_records;
-        sort_schema_records(&mut schemas, self.schema_count as usize);
-
         let mut offset = PACKAGE_REGISTRY_HEADER_LEN;
-        for slot in packages.iter().take(self.package_count as usize) {
-            encode_package_record(slot.unwrap(), out, offset);
+        let mut encoded_packages = 0usize;
+        let mut previous_package_id = None;
+        while encoded_packages < self.package_count as usize {
+            let record = self
+                .next_package_record(previous_package_id)
+                .ok_or(PackageStatus::RegistryRecoveryDenied)?;
+            encode_package_record(record, out, offset);
             offset += PACKAGE_REGISTRY_PACKAGE_RECORD_LEN;
+            previous_package_id = Some(record.package_object_id);
+            encoded_packages += 1;
         }
-        for slot in schemas.iter().take(self.schema_count as usize) {
-            encode_schema_record(slot.unwrap(), out, offset);
+
+        let mut encoded_schemas = 0usize;
+        let mut previous_schema = None;
+        while encoded_schemas < self.schema_count as usize {
+            let record = self
+                .next_schema_record(previous_schema)
+                .ok_or(PackageStatus::RegistryRecoveryDenied)?;
+            encode_schema_record(record, out, offset);
             offset += PACKAGE_REGISTRY_SCHEMA_RECORD_LEN;
+            previous_schema = Some((record.schema_object_id, record.schema_revision));
+            encoded_schemas += 1;
         }
 
         let crc = crc32c_castagnoli(&out[..encoded_len]);
@@ -429,6 +439,17 @@ impl PackageRegistry {
         self.active_transaction_id = 0;
     }
 
+    pub fn copy_from_committed(&mut self, source: &Self) {
+        self.generation = source.generation;
+        self.active_transaction_id = source.active_transaction_id;
+        self.committed_root_digest = source.committed_root_digest;
+        self.root_digest = source.root_digest;
+        self.package_records = source.package_records;
+        self.package_count = source.package_count;
+        self.schema_records = source.schema_records;
+        self.schema_count = source.schema_count;
+    }
+
     pub const fn package_count(&self) -> usize {
         self.package_count as usize
     }
@@ -450,6 +471,52 @@ impl PackageRegistry {
         }
         self.schema_records[index]
     }
+
+    fn next_package_record(
+        &self,
+        previous_package_id: Option<u64>,
+    ) -> Option<PackageRegistryPackageRecord> {
+        let mut selected = None;
+        let mut index = 0usize;
+        while index < self.package_count as usize {
+            if let Some(record) = self.package_records[index] {
+                let after_previous =
+                    previous_package_id.is_none_or(|previous| record.package_object_id > previous);
+                let before_selected =
+                    selected.is_none_or(|current: PackageRegistryPackageRecord| {
+                        record.package_object_id < current.package_object_id
+                    });
+                if after_previous && before_selected {
+                    selected = Some(record);
+                }
+            }
+            index += 1;
+        }
+        selected
+    }
+
+    fn next_schema_record(
+        &self,
+        previous_schema: Option<(u64, u64)>,
+    ) -> Option<PackageRegistrySchemaRecord> {
+        let mut selected = None;
+        let mut index = 0usize;
+        while index < self.schema_count as usize {
+            if let Some(record) = self.schema_records[index] {
+                let key = (record.schema_object_id, record.schema_revision);
+                let after_previous = previous_schema.is_none_or(|previous| key > previous);
+                let before_selected =
+                    selected.is_none_or(|current: PackageRegistrySchemaRecord| {
+                        key < (current.schema_object_id, current.schema_revision)
+                    });
+                if after_previous && before_selected {
+                    selected = Some(record);
+                }
+            }
+            index += 1;
+        }
+        selected
+    }
 }
 
 fn encoded_len_for(package_count: u32, schema_count: u32) -> Result<usize, PackageStatus> {
@@ -466,11 +533,7 @@ fn encoded_len_for(package_count: u32, schema_count: u32) -> Result<usize, Packa
         .ok_or(PackageStatus::LengthOverflow)
 }
 
-fn encode_package_record(
-    record: PackageRegistryPackageRecord,
-    out: &mut [u8],
-    offset: usize,
-) {
+fn encode_package_record(record: PackageRegistryPackageRecord, out: &mut [u8], offset: usize) {
     write_u64(out, offset, record.package_object_id);
     write_u64(out, offset + 8, record.installed_revision);
     out[offset + 16..offset + 48].copy_from_slice(&record.release_digest);
@@ -509,48 +572,6 @@ fn decode_schema_record(bytes: &[u8], offset: usize) -> PackageRegistrySchemaRec
         flags: read_u16(bytes, offset + SCHEMA_RECORD_FLAGS_OFFSET),
         object_kind: read_u16(bytes, offset + 28),
         descriptor_digest: read_sha256(bytes, offset + 32),
-    }
-}
-
-fn sort_package_records(
-    records: &mut [Option<PackageRegistryPackageRecord>; MAX_REGISTRY_PACKAGES],
-    count: usize,
-) {
-    let mut i = 0;
-    while i < count {
-        let mut min = i;
-        let mut j = i + 1;
-        while j < count {
-            if records[j].unwrap().package_object_id < records[min].unwrap().package_object_id {
-                min = j;
-            }
-            j += 1;
-        }
-        records.swap(i, min);
-        i += 1;
-    }
-}
-
-fn sort_schema_records(
-    records: &mut [Option<PackageRegistrySchemaRecord>; MAX_REGISTRY_SCHEMAS],
-    count: usize,
-) {
-    let mut i = 0;
-    while i < count {
-        let mut min = i;
-        let mut j = i + 1;
-        while j < count {
-            let left = records[j].unwrap();
-            let right = records[min].unwrap();
-            if (left.schema_object_id, left.schema_revision)
-                < (right.schema_object_id, right.schema_revision)
-            {
-                min = j;
-            }
-            j += 1;
-        }
-        records.swap(i, min);
-        i += 1;
     }
 }
 
@@ -637,11 +658,10 @@ fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        crc32c_castagnoli, PackageRegistry, PackageRegistryGeneration,
-        PackageRegistryPackageRecord, PackageRegistrySchemaRecord, PackageTransactionCommitV0,
         PACKAGE_RECORD_FLAGS_OFFSET, PACKAGE_REGISTRY_HEADER_LEN,
-        PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET, PACKAGE_TRANSACTION_COMMIT_V0_LEN,
-        REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT,
+        PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET, PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry,
+        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistrySchemaRecord,
+        PackageTransactionCommitV0, REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT, crc32c_castagnoli,
     };
     use crate::object_service_checkpoint::ObjectCheckpointIdentity;
     use pythos_shared::package_abi::PackageStatus;
@@ -782,9 +802,11 @@ mod tests {
         unsupported_newer[8..10].copy_from_slice(&1u16.to_le_bytes());
         refresh_crc(&mut unsupported_newer[..newer_len]);
 
-        let selected =
-            PackageRegistry::select_generation(&unsupported_newer[..newer_len], &older[..older_len])
-                .unwrap();
+        let selected = PackageRegistry::select_generation(
+            &unsupported_newer[..newer_len],
+            &older[..older_len],
+        )
+        .unwrap();
 
         assert_eq!(selected.generation(), 2);
     }
@@ -798,7 +820,10 @@ mod tests {
         refresh_crc(&mut unsupported[..unsupported_len]);
 
         assert_eq!(
-            PackageRegistry::select_generation(&corrupt[..corrupt_len], &unsupported[..unsupported_len]),
+            PackageRegistry::select_generation(
+                &corrupt[..corrupt_len],
+                &unsupported[..unsupported_len]
+            ),
             Err(PackageStatus::RegistryRecoveryDenied)
         );
     }
@@ -829,11 +854,7 @@ mod tests {
         object_identity.root_digest = digest(0xEE);
 
         assert_eq!(
-            PackageTransactionCommitV0::decode(
-                &encoded,
-                registry_generation,
-                object_identity
-            ),
+            PackageTransactionCommitV0::decode(&encoded, registry_generation, object_identity),
             Err(PackageStatus::TransactionAnchorMismatch)
         );
     }
@@ -846,11 +867,7 @@ mod tests {
         registry_generation.root_digest = digest(0xDD);
 
         assert_eq!(
-            PackageTransactionCommitV0::decode(
-                &encoded,
-                registry_generation,
-                object_identity
-            ),
+            PackageTransactionCommitV0::decode(&encoded, registry_generation, object_identity),
             Err(PackageStatus::TransactionAnchorMismatch)
         );
     }
@@ -862,11 +879,7 @@ mod tests {
         anchor.encode(&mut encoded).unwrap();
 
         assert_eq!(
-            PackageTransactionCommitV0::decode(
-                &encoded,
-                registry_generation,
-                object_identity
-            ),
+            PackageTransactionCommitV0::decode(&encoded, registry_generation, object_identity),
             Ok(anchor)
         );
     }
@@ -912,14 +925,7 @@ mod tests {
             root_digest: digest(0xB2),
         };
         (
-            PackageTransactionCommitV0::new(
-                99,
-                1,
-                registry_generation,
-                object_identity,
-                42,
-                7,
-            ),
+            PackageTransactionCommitV0::new(99, 1, registry_generation, object_identity, 42, 7),
             registry_generation,
             object_identity,
         )

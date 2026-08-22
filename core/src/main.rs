@@ -52,20 +52,28 @@ mod normal_init;
 mod object_browser;
 mod object_locator;
 mod object_relationships;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
+mod object_service;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
+mod object_service_checkpoint;
 #[cfg(any(test, feature = "phase13-package-test"))]
 mod package_acceptance;
-#[cfg(test)]
+#[cfg(any(test, feature = "phase13-package-test"))]
 mod package_content_store;
-#[cfg(test)]
+#[cfg(any(test, feature = "phase13-package-test"))]
 mod package_registry;
 #[cfg(any(test, feature = "phase13-package-test"))]
 mod package_service;
-#[cfg(test)]
+#[cfg(any(test, feature = "phase13-package-test"))]
 mod package_source;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
-mod object_service;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
-mod object_service_checkpoint;
 mod permission_validation;
 mod persistent_objects;
 mod process;
@@ -1613,7 +1621,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(feature = "phase13-package-test")]
         {
-            if package_acceptance::run_package_format_acceptance(boot_info).is_err() {
+            if package_acceptance::run_package_format_acceptance(boot_info, _block_device).is_err()
+            {
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }

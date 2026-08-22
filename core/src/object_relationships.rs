@@ -27,10 +27,8 @@ pub type RelationshipStore =
     BoundedRelationshipStore<LEGACY_RELATIONSHIP_OBJECTS, LEGACY_RELATIONSHIPS>;
 pub type ObjectServiceRelationshipStore =
     BoundedRelationshipStore<OBJECT_SERVICE_RELATIONSHIP_OBJECTS, OBJECT_SERVICE_RELATIONSHIPS>;
-pub type PackageLocatorRelationshipStore = BoundedRelationshipStore<
-    PACKAGE_LOCATOR_MIRROR_OBJECTS,
-    PACKAGE_LOCATOR_MIRROR_RELATIONSHIPS,
->;
+pub type PackageLocatorRelationshipStore =
+    BoundedRelationshipStore<PACKAGE_LOCATOR_MIRROR_OBJECTS, PACKAGE_LOCATOR_MIRROR_RELATIONSHIPS>;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RelationshipError {
@@ -100,6 +98,11 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
         }
     }
 
+    pub fn clear(&mut self) {
+        self.objects = [None; OBJECT_CAPACITY];
+        self.relationships = [None; RELATIONSHIP_CAPACITY];
+    }
+
     pub fn insert_object(&mut self, object: TypedObjectRecord) -> Result<(), RelationshipError> {
         if self.contains_object(object.object_id()) {
             return Err(RelationshipError::DuplicateObject);
@@ -140,7 +143,7 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
     }
 
     pub fn query_first(
-        self,
+        &self,
         source: ObjectId,
         kind: RelationshipKind,
     ) -> Option<ObjectRelationship> {
@@ -157,7 +160,7 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
         None
     }
 
-    pub fn relationship_count(self) -> usize {
+    pub fn relationship_count(&self) -> usize {
         let mut count = 0;
         let mut index = 0;
         while index < RELATIONSHIP_CAPACITY {
@@ -169,7 +172,7 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
         count
     }
 
-    pub fn has_object(self, object_id: ObjectId) -> bool {
+    pub fn has_object(&self, object_id: ObjectId) -> bool {
         self.contains_object(object_id)
     }
 
@@ -177,7 +180,7 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
         self.relationships
     }
 
-    fn contains_object(self, object_id: ObjectId) -> bool {
+    fn contains_object(&self, object_id: ObjectId) -> bool {
         let mut index = 0;
         while index < OBJECT_CAPACITY {
             if let Some(object) = self.objects[index]
@@ -190,7 +193,7 @@ impl<const OBJECT_CAPACITY: usize, const RELATIONSHIP_CAPACITY: usize>
         false
     }
 
-    fn contains_relationship(self, relationship: ObjectRelationship) -> bool {
+    fn contains_relationship(&self, relationship: ObjectRelationship) -> bool {
         let mut index = 0;
         while index < RELATIONSHIP_CAPACITY {
             if self.relationships[index] == Some(relationship) {

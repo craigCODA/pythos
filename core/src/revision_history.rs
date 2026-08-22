@@ -223,6 +223,20 @@ impl<const CURRENT_CAPACITY: usize, const REVISION_CAPACITY: usize>
         self.revisions
     }
 
+    pub fn current_record_at(&self, index: usize) -> Option<RevisionRecord> {
+        if index >= CURRENT_CAPACITY {
+            return None;
+        }
+        self.current[index].map(CurrentObject::as_revision)
+    }
+
+    pub fn prior_record_at(&self, index: usize) -> Option<RevisionRecord> {
+        if index >= REVISION_CAPACITY {
+            return None;
+        }
+        self.revisions[index]
+    }
+
     pub fn restore_from_records(
         current: [Option<RevisionRecord>; CURRENT_CAPACITY],
         revisions: [Option<RevisionRecord>; REVISION_CAPACITY],

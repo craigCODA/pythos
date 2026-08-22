@@ -14,7 +14,8 @@ use crate::{
         RelationshipError, RelationshipKind, SHELL_WORKSPACE_OBJECT_ID,
     },
     object_service_checkpoint::{
-        ObjectExtentRecord, ObjectServiceSnapshot, WorkspaceRelationshipRecord,
+        ObjectCheckpointIdentity, ObjectExtentRecord, ObjectServiceSnapshot,
+        WorkspaceRelationshipRecord, object_checkpoint_identity,
     },
     process_context::ActiveUserProcess,
     revision_history::{ObjectServiceRevisionHistory, RevisionHistoryError},
@@ -618,14 +619,48 @@ impl ObjectService {
     }
 
     pub fn encode_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
-        let object_records = self.objects.object_records();
-        let mut objects = [None; crate::object_service_checkpoint::OBJECT_SERVICE_OBJECT_CAPACITY];
-        let mut relationships = [None;
-            crate::object_service_checkpoint::OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY];
+        let mut snapshot = ObjectServiceSnapshot::empty();
+        self.encode_snapshot_into(&mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn encode_snapshot_into(
+        &self,
+        snapshot: &mut ObjectServiceSnapshot,
+    ) -> Result<(), ObjectServiceError> {
+        snapshot.generation = self.generation;
+        snapshot.allocated_bitmap = self.objects.allocator_bitmap();
+
         let mut index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_OBJECT_CAPACITY {
+            snapshot.objects[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index
+            < crate::object_service_checkpoint::OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY
+        {
+            snapshot.workspace_relationships[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_CURRENT_REVISION_CAPACITY {
+            snapshot.current_revisions[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_PRIOR_REVISION_CAPACITY {
+            snapshot.prior_revisions[index] = None;
+            index += 1;
+        }
+
+        index = 0;
         while index < MAX_DYNAMIC_OBJECTS {
-            if let Some(record) = object_records[index] {
-                objects[index] = Some(ObjectExtentRecord {
+            if let Some(record) = self.objects.object_record_at(index) {
+                snapshot.objects[index] = Some(ObjectExtentRecord {
                     extent_start: u64::from(record.extent.start_block()),
                     extent_len: record.extent.block_count(),
                     object: record.object,
@@ -634,7 +669,7 @@ impl ObjectService {
                     .relationships
                     .query_first(record.object.object_id(), RelationshipKind::BelongsTo)
                 {
-                    relationships[index] = Some(WorkspaceRelationshipRecord {
+                    snapshot.workspace_relationships[index] = Some(WorkspaceRelationshipRecord {
                         object_id: relationship.source(),
                         workspace_id: relationship.target(),
                     });
@@ -642,14 +677,36 @@ impl ObjectService {
             }
             index += 1;
         }
-        Ok(ObjectServiceSnapshot {
-            generation: self.generation,
-            allocated_bitmap: self.objects.allocator_bitmap(),
-            objects,
-            workspace_relationships: relationships,
-            current_revisions: self.revisions.current_records(),
-            prior_revisions: self.revisions.prior_records(),
-        })
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_CURRENT_REVISION_CAPACITY {
+            snapshot.current_revisions[index] = self.revisions.current_record_at(index);
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_PRIOR_REVISION_CAPACITY {
+            snapshot.prior_revisions[index] = self.revisions.prior_record_at(index);
+            index += 1;
+        }
+
+        Ok(())
+    }
+
+    pub fn checkpoint_identity(&self) -> Result<ObjectCheckpointIdentity, ObjectServiceError> {
+        #[cfg(test)]
+        {
+            let snapshot = self.encode_snapshot()?;
+            Ok(object_checkpoint_identity(&snapshot))
+        }
+
+        #[cfg(not(test))]
+        {
+            crate::object_service_checkpoint::with_object_identity_snapshot_scratch(|snapshot| {
+                self.encode_snapshot_into(snapshot)?;
+                Ok(object_checkpoint_identity(snapshot))
+            })
+        }
     }
 
     fn seed_workspace_roots(&mut self) -> Result<(), ObjectServiceError> {

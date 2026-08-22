@@ -97,6 +97,17 @@ pub struct ObjectCheckpointIdentity {
 }
 
 impl ObjectServiceSnapshot {
+    pub const fn empty() -> Self {
+        Self {
+            generation: 0,
+            allocated_bitmap: 0,
+            objects: [None; OBJECT_SERVICE_OBJECT_CAPACITY],
+            workspace_relationships: [None; OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY],
+            current_revisions: [None; OBJECT_SERVICE_CURRENT_REVISION_CAPACITY],
+            prior_revisions: [None; OBJECT_SERVICE_PRIOR_REVISION_CAPACITY],
+        }
+    }
+
     #[cfg(test)]
     pub fn contains_runtime_handle_for_test(
         &self,
@@ -206,6 +217,47 @@ unsafe impl Sync for SnapshotScratch {}
 
 #[cfg(not(test))]
 static SNAPSHOT_SCRATCH: SnapshotScratch = SnapshotScratch(UnsafeCell::new([None; 2]));
+
+#[cfg(not(test))]
+struct IdentitySnapshotScratch(UnsafeCell<ObjectServiceSnapshot>);
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: the identity snapshot scratch is borrowed only through one
+//    synchronous checkpoint-root identity computation.
+// 2. Established by: ADR 0051 normal boot is single-core and Phase 13 package
+//    install computes one transaction anchor at a time.
+// 3. Lifetime: scratch storage is static for the whole boot.
+// 4. Pointer ownership: this module exclusively owns the scratch snapshot.
+// 5. Alignment: `UnsafeCell<ObjectServiceSnapshot>` preserves alignment.
+// 6. Mapped length: exactly one object-service snapshot is borrowed.
+// 7. Concurrency: no SMP or concurrent package install exists in this slice.
+// 8. Violation: concurrent use could mix object state from separate anchors.
+unsafe impl Sync for IdentitySnapshotScratch {}
+
+#[cfg(not(test))]
+static IDENTITY_SNAPSHOT_SCRATCH: IdentitySnapshotScratch =
+    IdentitySnapshotScratch(UnsafeCell::new(ObjectServiceSnapshot::empty()));
+
+#[cfg(not(test))]
+pub fn with_object_identity_snapshot_scratch<R>(
+    f: impl FnOnce(&mut ObjectServiceSnapshot) -> R,
+) -> R {
+    // SAFETY:
+    // 1. Invariant: callers borrow the scratch snapshot for one synchronous
+    //    identity computation and do not retain references beyond the closure.
+    // 2. Established by: this helper takes a non-storing closure and Phase 13
+    //    package install is non-reentrant in the current single-core kernel.
+    // 3. Lifetime: `IDENTITY_SNAPSHOT_SCRATCH` is initialized for the whole
+    //    boot.
+    // 4. Pointer ownership: this module owns the scratch snapshot exclusively.
+    // 5. Alignment: `UnsafeCell<ObjectServiceSnapshot>` preserves alignment.
+    // 6. Mapped length: exactly one `ObjectServiceSnapshot` is accessed.
+    // 7. Concurrency: no SMP or concurrent package install path exists.
+    // 8. Violation: concurrent mutation would corrupt transaction anchor
+    //    identity input.
+    unsafe { f(&mut *IDENTITY_SNAPSHOT_SCRATCH.0.get()) }
+}
 
 pub fn write_object_service_checkpoint(
     device: BlockDeviceInfo,

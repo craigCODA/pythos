@@ -25,25 +25,40 @@ pub struct PackageSourceService<'a> {
 }
 
 impl<'a> PackageSourceService<'a> {
-    pub fn from_init_bundle(bundle: &'a InitBundle<'a>) -> Result<Self, PackageStatus> {
-        let mut service = Self {
+    pub const fn empty() -> Self {
+        Self {
             sources: [None; MAX_PACKAGE_SOURCES],
             count: 0,
             generation: PACKAGE_SOURCE_GENERATION,
-        };
+        }
+    }
+
+    pub fn from_init_bundle(bundle: &'a InitBundle<'a>) -> Result<Self, PackageStatus> {
+        let mut service = Self::empty();
+        service.load_from_init_bundle(bundle)?;
+        Ok(service)
+    }
+
+    pub fn load_from_init_bundle(
+        &mut self,
+        bundle: &'a InitBundle<'a>,
+    ) -> Result<(), PackageStatus> {
+        self.sources = [None; MAX_PACKAGE_SOURCES];
+        self.count = 0;
+        self.generation = PACKAGE_SOURCE_GENERATION;
         let mut ordinal = 0usize;
         while let Some(record) = bundle.record_at(RecordType::PackageSource, ordinal) {
             if ordinal >= MAX_PACKAGE_SOURCES {
                 return Err(PackageStatus::BoundsExceeded);
             }
-            service.sources[ordinal] = Some(parse_source_record(record.bytes(), ordinal)?);
-            service.count += 1;
+            self.sources[ordinal] = Some(parse_source_record(record.bytes(), ordinal)?);
+            self.count += 1;
             ordinal += 1;
         }
-        if service.count == 0 {
+        if self.count == 0 {
             return Err(PackageStatus::SourceMissing);
         }
-        Ok(service)
+        Ok(())
     }
 
     pub fn handle_at(&self, ordinal: usize) -> Option<PackageSourceHandle> {
@@ -123,10 +138,10 @@ fn parse_source_record(
     if bytes[12..16].iter().any(|&byte| byte != 0) {
         return Err(PackageStatus::BadRequest);
     }
-    let artifact_offset = usize::try_from(read_u64(bytes, 16)?)
-        .map_err(|_| PackageStatus::BoundsExceeded)?;
-    let artifact_len = usize::try_from(read_u64(bytes, 24)?)
-        .map_err(|_| PackageStatus::BoundsExceeded)?;
+    let artifact_offset =
+        usize::try_from(read_u64(bytes, 16)?).map_err(|_| PackageStatus::BoundsExceeded)?;
+    let artifact_len =
+        usize::try_from(read_u64(bytes, 24)?).map_err(|_| PackageStatus::BoundsExceeded)?;
     if artifact_len == 0 || artifact_len > MAX_PACKAGE_ARTIFACT_BYTES {
         return Err(PackageStatus::BoundsExceeded);
     }
