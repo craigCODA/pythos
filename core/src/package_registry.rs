@@ -227,6 +227,24 @@ impl PackageRegistry {
         Ok(registry)
     }
 
+    pub fn select_generation(slot_a: &[u8], slot_b: &[u8]) -> Result<Self, PackageStatus> {
+        let candidate_a = Self::decode_snapshot(slot_a).ok();
+        let candidate_b = Self::decode_snapshot(slot_b).ok();
+
+        match (candidate_a, candidate_b) {
+            (Some(a), Some(b)) => {
+                if a.generation >= b.generation {
+                    Ok(a)
+                } else {
+                    Ok(b)
+                }
+            }
+            (Some(a), None) => Ok(a),
+            (None, Some(b)) => Ok(b),
+            (None, None) => Err(PackageStatus::RegistryRecoveryDenied),
+        }
+    }
+
     pub fn encode_snapshot(
         &self,
         out: &mut [u8],
@@ -273,6 +291,10 @@ impl PackageRegistry {
             + self.package_count as usize * PACKAGE_REGISTRY_PACKAGE_RECORD_LEN
             + self.schema_count as usize * PACKAGE_REGISTRY_SCHEMA_RECORD_LEN
             + PACKAGE_REGISTRY_CRC_LEN
+    }
+
+    pub const fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub const fn root_digest(&self) -> [u8; 32] {
@@ -587,6 +609,58 @@ mod tests {
         );
     }
 
+    #[test]
+    fn package_registry_recovery_selects_highest_valid_generation() {
+        let (older, older_len) = encoded_registry_generation(1);
+        let (newer, newer_len) = encoded_registry_generation(3);
+
+        let selected =
+            PackageRegistry::select_generation(&older[..older_len], &newer[..newer_len]).unwrap();
+
+        assert_eq!(selected.generation(), 3);
+    }
+
+    #[test]
+    fn package_registry_recovery_ignores_corrupt_crc_generation() {
+        let (older, older_len) = encoded_registry_generation(1);
+        let (mut corrupt_newer, newer_len) = encoded_registry_generation(4);
+        corrupt_newer[newer_len - 1] ^= 0x55;
+
+        let selected =
+            PackageRegistry::select_generation(&older[..older_len], &corrupt_newer[..newer_len])
+                .unwrap();
+
+        assert_eq!(selected.generation(), 1);
+    }
+
+    #[test]
+    fn package_registry_recovery_ignores_unsupported_major_generation() {
+        let (older, older_len) = encoded_registry_generation(2);
+        let (mut unsupported_newer, newer_len) = encoded_registry_generation(5);
+        unsupported_newer[8..10].copy_from_slice(&1u16.to_le_bytes());
+        refresh_crc(&mut unsupported_newer[..newer_len]);
+
+        let selected =
+            PackageRegistry::select_generation(&unsupported_newer[..newer_len], &older[..older_len])
+                .unwrap();
+
+        assert_eq!(selected.generation(), 2);
+    }
+
+    #[test]
+    fn package_registry_recovery_denies_when_no_valid_package_generation_exists() {
+        let (mut corrupt, corrupt_len) = encoded_registry_generation(1);
+        corrupt[corrupt_len - 1] ^= 0xAA;
+        let (mut unsupported, unsupported_len) = encoded_registry_generation(2);
+        unsupported[8..10].copy_from_slice(&1u16.to_le_bytes());
+        refresh_crc(&mut unsupported[..unsupported_len]);
+
+        assert_eq!(
+            PackageRegistry::select_generation(&corrupt[..corrupt_len], &unsupported[..unsupported_len]),
+            Err(PackageStatus::RegistryRecoveryDenied)
+        );
+    }
+
     fn registry_with_one_package_and_schema() -> PackageRegistry {
         let mut registry = PackageRegistry::empty();
         registry
@@ -602,6 +676,16 @@ mod tests {
         let mut encoded = [0u8; 512];
         registry.encode_snapshot(&mut encoded).unwrap();
         PackageRegistry::decode_snapshot(&encoded[..registry.encoded_len()]).unwrap()
+    }
+
+    fn encoded_registry_generation(generation: u64) -> ([u8; 512], usize) {
+        let registry = registry_with_one_package_and_schema();
+        let mut encoded = [0u8; 512];
+        registry.encode_snapshot(&mut encoded).unwrap();
+        let used = registry.encoded_len();
+        encoded[12..20].copy_from_slice(&generation.to_le_bytes());
+        refresh_crc(&mut encoded[..used]);
+        (encoded, used)
     }
 
     fn refresh_crc(bytes: &mut [u8]) {
