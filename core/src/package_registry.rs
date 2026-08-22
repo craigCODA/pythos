@@ -1,3 +1,4 @@
+use crate::object_service_checkpoint::ObjectCheckpointIdentity;
 use pythos_shared::package_abi::{
     PackageStatus, MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION,
 };
@@ -13,6 +14,8 @@ pub const PACKAGE_REGISTRY_SCHEMA_RECORD_LEN: usize = 96;
 pub const PACKAGE_RECORD_FLAGS_OFFSET: usize = 50;
 const SCHEMA_RECORD_FLAGS_OFFSET: usize = 26;
 pub const REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT: u16 = 0x8000;
+pub const PACKAGE_TRANSACTION_COMMIT_V0_LEN: usize = 128;
+pub const PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET: usize = 112;
 const MAX_REGISTRY_PACKAGES: usize = MAX_SCHEMA_DECLARATIONS;
 const MAX_REGISTRY_SCHEMAS: usize = MAX_SCHEMA_DECLARATIONS;
 
@@ -20,6 +23,124 @@ const MAX_REGISTRY_SCHEMAS: usize = MAX_SCHEMA_DECLARATIONS;
 pub struct PackageRegistryGeneration {
     pub generation: u64,
     pub root_digest: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageTransactionCommitV0 {
+    pub transaction_id: u64,
+    pub operation: u16,
+    pub package_registry_generation: u64,
+    pub package_registry_root_digest: [u8; 32],
+    pub object_checkpoint_generation: u64,
+    pub object_checkpoint_root_digest: [u8; 32],
+    pub package_object_id: u64,
+    pub package_installed_revision: u64,
+    pub commit_crc32c: u32,
+}
+
+impl PackageTransactionCommitV0 {
+    pub fn new(
+        transaction_id: u64,
+        operation: u16,
+        registry: PackageRegistryGeneration,
+        object: ObjectCheckpointIdentity,
+        package_object_id: u64,
+        package_installed_revision: u64,
+    ) -> Self {
+        let mut anchor = Self {
+            transaction_id,
+            operation,
+            package_registry_generation: registry.generation,
+            package_registry_root_digest: registry.root_digest,
+            object_checkpoint_generation: object.generation,
+            object_checkpoint_root_digest: object.root_digest,
+            package_object_id,
+            package_installed_revision,
+            commit_crc32c: 0,
+        };
+        anchor.commit_crc32c = anchor.computed_crc32c();
+        anchor
+    }
+
+    pub fn encode(&self, out: &mut [u8]) -> Result<(), PackageStatus> {
+        if out.len() < PACKAGE_TRANSACTION_COMMIT_V0_LEN {
+            return Err(PackageStatus::BufferTooSmall);
+        }
+        self.encode_without_crc(out);
+        write_u32(
+            out,
+            PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET,
+            self.computed_crc32c(),
+        );
+        Ok(())
+    }
+
+    pub fn decode(
+        bytes: &[u8],
+        expected_registry: PackageRegistryGeneration,
+        expected_object: ObjectCheckpointIdentity,
+    ) -> Result<Self, PackageStatus> {
+        if bytes.len() != PACKAGE_TRANSACTION_COMMIT_V0_LEN {
+            return Err(PackageStatus::BoundsExceeded);
+        }
+        if bytes[10..16].iter().any(|byte| *byte != 0)
+            || bytes[116..128].iter().any(|byte| *byte != 0)
+        {
+            return Err(PackageStatus::BadRequest);
+        }
+
+        let stored_crc = read_u32(bytes, PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET);
+        if stored_crc != transaction_anchor_crc32c(bytes) {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+
+        let anchor = Self {
+            transaction_id: read_u64(bytes, 0),
+            operation: read_u16(bytes, 8),
+            package_registry_generation: read_u64(bytes, 16),
+            package_registry_root_digest: read_sha256(bytes, 24),
+            object_checkpoint_generation: read_u64(bytes, 56),
+            object_checkpoint_root_digest: read_sha256(bytes, 64),
+            package_object_id: read_u64(bytes, 96),
+            package_installed_revision: read_u64(bytes, 104),
+            commit_crc32c: stored_crc,
+        };
+
+        if !anchor.matches_pair(expected_registry, expected_object) {
+            return Err(PackageStatus::TransactionAnchorMismatch);
+        }
+
+        Ok(anchor)
+    }
+
+    pub fn matches_pair(
+        &self,
+        expected_registry: PackageRegistryGeneration,
+        expected_object: ObjectCheckpointIdentity,
+    ) -> bool {
+        self.package_registry_generation == expected_registry.generation
+            && self.package_registry_root_digest == expected_registry.root_digest
+            && self.object_checkpoint_generation == expected_object.generation
+            && self.object_checkpoint_root_digest == expected_object.root_digest
+    }
+
+    fn computed_crc32c(&self) -> u32 {
+        let mut bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        self.encode_without_crc(&mut bytes);
+        crc32c_castagnoli(&bytes)
+    }
+
+    fn encode_without_crc(&self, out: &mut [u8]) {
+        out[..PACKAGE_TRANSACTION_COMMIT_V0_LEN].fill(0);
+        write_u64(out, 0, self.transaction_id);
+        write_u16(out, 8, self.operation);
+        write_u64(out, 16, self.package_registry_generation);
+        out[24..56].copy_from_slice(&self.package_registry_root_digest);
+        write_u64(out, 56, self.object_checkpoint_generation);
+        out[64..96].copy_from_slice(&self.object_checkpoint_root_digest);
+        write_u64(out, 96, self.package_object_id);
+        write_u64(out, 104, self.package_installed_revision);
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -434,6 +555,17 @@ fn snapshot_crc32c(bytes: &[u8]) -> u32 {
     !crc
 }
 
+fn transaction_anchor_crc32c(bytes: &[u8]) -> u32 {
+    let mut crc = !0u32;
+    crc = crc32c_update(crc, &bytes[..PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET]);
+    crc = crc32c_update(crc, &[0, 0, 0, 0]);
+    crc = crc32c_update(
+        crc,
+        &bytes[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET + 4..PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+    );
+    !crc
+}
+
 pub(crate) fn crc32c_castagnoli(bytes: &[u8]) -> u32 {
     !crc32c_update(!0u32, bytes)
 }
@@ -498,10 +630,13 @@ fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::{
-        crc32c_castagnoli, PackageRegistry, PackageRegistryPackageRecord,
-        PackageRegistrySchemaRecord, PACKAGE_RECORD_FLAGS_OFFSET, PACKAGE_REGISTRY_HEADER_LEN,
+        crc32c_castagnoli, PackageRegistry, PackageRegistryGeneration,
+        PackageRegistryPackageRecord, PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+        PACKAGE_RECORD_FLAGS_OFFSET, PACKAGE_REGISTRY_HEADER_LEN,
+        PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET, PACKAGE_TRANSACTION_COMMIT_V0_LEN,
         REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT,
     };
+    use crate::object_service_checkpoint::ObjectCheckpointIdentity;
     use pythos_shared::package_abi::PackageStatus;
 
     #[test]
@@ -661,6 +796,74 @@ mod tests {
         );
     }
 
+    #[test]
+    fn package_transaction_anchor_crc32c_uses_zero_filled_commit_crc32c() {
+        let (anchor, _, _) = anchor_fixture();
+        let mut encoded = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+
+        anchor.encode(&mut encoded).unwrap();
+        let stored_crc = u32::from_le_bytes([
+            encoded[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET],
+            encoded[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET + 1],
+            encoded[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET + 2],
+            encoded[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET + 3],
+        ]);
+        encoded[PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET..PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET + 4]
+            .fill(0);
+
+        assert_eq!(stored_crc, crc32c_castagnoli(&encoded));
+    }
+
+    #[test]
+    fn package_transaction_anchor_rejects_wrong_object_digest() {
+        let (anchor, registry_generation, mut object_identity) = anchor_fixture();
+        let mut encoded = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        anchor.encode(&mut encoded).unwrap();
+        object_identity.root_digest = digest(0xEE);
+
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &encoded,
+                registry_generation,
+                object_identity
+            ),
+            Err(PackageStatus::TransactionAnchorMismatch)
+        );
+    }
+
+    #[test]
+    fn package_transaction_anchor_rejects_wrong_registry_digest() {
+        let (anchor, mut registry_generation, object_identity) = anchor_fixture();
+        let mut encoded = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        anchor.encode(&mut encoded).unwrap();
+        registry_generation.root_digest = digest(0xDD);
+
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &encoded,
+                registry_generation,
+                object_identity
+            ),
+            Err(PackageStatus::TransactionAnchorMismatch)
+        );
+    }
+
+    #[test]
+    fn package_transaction_anchor_accepts_exact_object_and_registry_pair() {
+        let (anchor, registry_generation, object_identity) = anchor_fixture();
+        let mut encoded = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        anchor.encode(&mut encoded).unwrap();
+
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &encoded,
+                registry_generation,
+                object_identity
+            ),
+            Ok(anchor)
+        );
+    }
+
     fn registry_with_one_package_and_schema() -> PackageRegistry {
         let mut registry = PackageRegistry::empty();
         registry
@@ -686,6 +889,33 @@ mod tests {
         encoded[12..20].copy_from_slice(&generation.to_le_bytes());
         refresh_crc(&mut encoded[..used]);
         (encoded, used)
+    }
+
+    fn anchor_fixture() -> (
+        PackageTransactionCommitV0,
+        PackageRegistryGeneration,
+        ObjectCheckpointIdentity,
+    ) {
+        let registry_generation = PackageRegistryGeneration {
+            generation: 12,
+            root_digest: digest(0xA1),
+        };
+        let object_identity = ObjectCheckpointIdentity {
+            generation: 44,
+            root_digest: digest(0xB2),
+        };
+        (
+            PackageTransactionCommitV0::new(
+                99,
+                1,
+                registry_generation,
+                object_identity,
+                42,
+                7,
+            ),
+            registry_generation,
+            object_identity,
+        )
     }
 
     fn refresh_crc(bytes: &mut [u8]) {
