@@ -13,6 +13,9 @@ pub const TYPE_PYTH_GRAPH_PACKAGE: u32 = 0x0000_0004;
 /// named graph package digest to one named native ELF digest before either is
 /// eligible for future native launch handling.
 pub const TYPE_PYTH_NATIVE_BINDING: u32 = 0x0000_0005;
+/// Phase 13 local package ingress. The record locates bounded package source
+/// bytes; a separate capability authorizes reading or installing them.
+pub const TYPE_PACKAGE_SOURCE: u32 = 0x0000_0006;
 const HEADER_RESERVED_OFFSET: usize = 26;
 const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
@@ -27,6 +30,7 @@ pub enum RecordType {
     NamedUserElf,
     PythGraphPackage,
     PythNativeBinding,
+    PackageSource,
 }
 
 impl RecordType {
@@ -37,6 +41,7 @@ impl RecordType {
             TYPE_NAMED_USER_ELF => Some(Self::NamedUserElf),
             TYPE_PYTH_GRAPH_PACKAGE => Some(Self::PythGraphPackage),
             TYPE_PYTH_NATIVE_BINDING => Some(Self::PythNativeBinding),
+            TYPE_PACKAGE_SOURCE => Some(Self::PackageSource),
             _ => None,
         }
     }

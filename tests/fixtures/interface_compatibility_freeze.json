@@ -77,6 +77,15 @@
     "Note": 10,
     "NameBinding": 11
   },
+  "phase13_package_abi": {
+    "object_kind_package": 30,
+    "object_kind_schema_definition": 31,
+    "object_kind_package_defined_object": 32,
+    "init_bundle_type_package_source": 6,
+    "syscall_package_context": 1348010752,
+    "package_defined_object_create_v0_size": 64,
+    "package_runtime_schema_binding_v0_size": 88
+  },
   "shell_apps": [
     {
       "kind": "Launcher",

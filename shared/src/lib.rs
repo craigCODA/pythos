@@ -5,6 +5,7 @@ pub mod evidence_log;
 pub mod init_bundle;
 pub mod init_pak;
 pub mod object_shell_abi;
+pub mod package_abi;
 pub mod pyth_command_abi;
 pub mod pyth_graph_manifest;
 pub mod pyth_native_binding;
