@@ -630,6 +630,10 @@ impl ObjectService {
         Ok(snapshot)
     }
 
+    pub(crate) fn publish_candidate_generation(&mut self, generation: u64) {
+        self.generation = generation;
+    }
+
     pub fn encode_snapshot_into(
         &self,
         snapshot: &mut ObjectServiceSnapshot,
