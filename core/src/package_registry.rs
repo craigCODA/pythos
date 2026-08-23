@@ -875,6 +875,9 @@ fn parse_export_locator(locator: &str) -> Result<ExportLocatorParts<'_>, Package
 fn copy_locator_segment(
     bytes: &[u8],
 ) -> Result<([u8; MAX_LOCATOR_SEGMENT_BYTES], u8), PackageStatus> {
+    if bytes.contains(&b'/') {
+        return Err(PackageStatus::InvalidLocator);
+    }
     let segment = core::str::from_utf8(bytes).map_err(|_| PackageStatus::InvalidLocator)?;
     validate_locator(segment).map_err(|_| PackageStatus::InvalidLocator)?;
     if bytes.len() > MAX_LOCATOR_SEGMENT_BYTES {
@@ -1137,8 +1140,8 @@ mod tests {
     use super::{
         PACKAGE_RECORD_FLAGS_OFFSET, PACKAGE_REGISTRY_HEADER_LEN,
         PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET, PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry,
-        PackageRegistryContentRecord, PackageRegistryGeneration, PackageRegistryPackageRecord,
-        PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+        PackageRegistryContentRecord, PackageRegistryExportRecord, PackageRegistryGeneration,
+        PackageRegistryPackageRecord, PackageRegistrySchemaRecord, PackageTransactionCommitV0,
         REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT, crc32c_castagnoli,
     };
     use crate::{
@@ -1197,6 +1200,44 @@ mod tests {
         encoded[crc_offset..crc_offset + 4].fill(0);
 
         assert_eq!(stored_crc, crc32c_castagnoli(&encoded[..used]));
+    }
+
+    #[test]
+    fn package_registry_export_record_rejects_multi_segment_storage_names() {
+        assert_eq!(
+            PackageRegistryExportRecord::new(
+                1,
+                b"seed/tools",
+                b"launch",
+                42,
+                7,
+                digest(4),
+                1,
+                0,
+                0,
+                77,
+                3,
+                digest(7),
+            ),
+            Err(PackageStatus::InvalidLocator)
+        );
+        assert_eq!(
+            PackageRegistryExportRecord::new(
+                1,
+                b"seed",
+                b"tools/launch",
+                42,
+                7,
+                digest(4),
+                1,
+                0,
+                0,
+                77,
+                3,
+                digest(7),
+            ),
+            Err(PackageStatus::InvalidLocator)
+        );
     }
 
     #[test]

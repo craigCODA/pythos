@@ -42,3 +42,37 @@ Status: DONE
 ## Commit
 
 - Message: `feat(core): resolve installed package exports`
+
+## Fix Round 1
+
+Status: DONE
+
+### Scope
+
+- Fixed only the Important review finding from `task-3.1-fix1-findings.md`.
+- Did not begin Task 3.2 and did not change the deferred Minor behavior for multi-segment `resolve_export` locator text.
+
+### TDD Red
+
+- Added `package_registry_export_record_rejects_multi_segment_storage_names` before changing production code.
+- Command: `cargo test -p pythos-core package_registry_export_record_rejects_multi_segment_storage_names`
+- RED result: failed as expected because `PackageRegistryExportRecord::new` returned `Ok(...)` for package locator `seed/tools`.
+
+### Implementation
+
+- Updated `copy_locator_segment` to reject slash-containing stored package-locator and export-name fields with `PackageStatus::InvalidLocator`.
+- Kept `parse_export_locator` behavior unchanged, preserving the deferred Minor as requested.
+
+### Verification
+
+- GREEN: `cargo test -p pythos-core package_registry_export_record_rejects_multi_segment_storage_names` -> 1 passed, 0 failed.
+- Existing export behavior: `cargo test -p pythos-core package_export_resolution` -> 4 passed, 0 failed.
+- Focused registry: `cargo test -p pythos-core package_registry` -> 16 passed, 0 failed.
+- Focused package service: `cargo test -p pythos-core package_service::tests` -> 41 passed, 0 failed.
+- Formatting: `cargo fmt -p pythos-core -- --check` -> passed.
+- Diff hygiene: `git diff --check` -> passed.
+
+### Notes
+
+- The focused Cargo test runs still print the pre-existing unrelated unused-code warnings noted above.
+- Commit message: `fix(core): reject multi-segment package export storage names`
