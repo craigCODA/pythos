@@ -76,6 +76,11 @@ const PACKAGE_LAUNCH_GRANT_DENIED_LABEL: &[u8] = b"phase13-launch-grant-denied.p
 const PACKAGE_LAUNCH_CORRUPT_CONTENT_LABEL: &[u8] = b"phase13-launch-corrupt-content.pkg";
 const PACKAGE_LAUNCH_PYTHTIG_DENIED_LABEL: &[u8] = b"phase13-launch-pythtig-denied.pkg";
 const PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_LABEL: &[u8] = b"phase13-launch-non-launch.pkg";
+const PACKAGE_UNINSTALL_DISABLE_LABEL: &[u8] = b"phase13-uninstall-disable.pkg";
+const PACKAGE_UNINSTALL_LIVE_DENIED_LABEL: &[u8] = b"phase13-uninstall-live-denied.pkg";
+const PACKAGE_UNINSTALL_TOMBSTONE_LABEL: &[u8] = b"phase13-uninstall-tombstone.pkg";
+const PACKAGE_UNINSTALL_REINSTALL_LABEL: &[u8] = b"phase13-uninstall-reinstall.pkg";
+const PACKAGE_UNINSTALL_KILL_DURING_LABEL: &[u8] = b"phase13-uninstall-kill-during.pkg";
 const PACKAGE_INSTALL_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5354);
 const PACKAGE_INSTALL_PRINCIPAL_ID: u64 = 0x5059_504B_494E_5354;
 const PACKAGE_INSTALL_PROGRAM_DIGEST: u64 = 0x5059_0013;
@@ -111,6 +116,16 @@ const PACKAGE_STACK_MODE_LAUNCH_CORRUPT_CONTENT: u8 = 7;
 const PACKAGE_STACK_MODE_LAUNCH_PYTHTIG_DENIED: u8 = 8;
 #[cfg(not(test))]
 const PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT: u8 = 9;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_DISABLE: u8 = 10;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_LIVE_DENIED: u8 = 11;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_TOMBSTONE: u8 = 12;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_REINSTALL: u8 = 13;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING: u8 = 14;
 
 static mut PACKAGE_ACCEPTANCE_OBJECT_SERVICE: MaybeUninit<ObjectService> = MaybeUninit::uninit();
 static mut PACKAGE_ACCEPTANCE_PACKAGE_SERVICE: PackageService<'static> =
@@ -228,6 +243,15 @@ enum PackageLaunchAcceptanceScenario {
     NonLaunchExport,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PackageUninstallAcceptanceScenario {
+    Disable,
+    LiveProcessDenied,
+    Tombstone,
+    ReinstallNewIdentity,
+    KillDuringUninstall,
+}
+
 struct PackageRestoreSmokeSeed {
     content_store: PackageContentStore<'static>,
     content: PackageContentTransaction<'static>,
@@ -329,6 +353,41 @@ pub fn run_package_format_acceptance(
             PackageLaunchAcceptanceScenario::NonLaunchExport,
         );
     }
+    if source.label == PACKAGE_UNINSTALL_DISABLE_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::Disable,
+        );
+    }
+    if source.label == PACKAGE_UNINSTALL_LIVE_DENIED_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::LiveProcessDenied,
+        );
+    }
+    if source.label == PACKAGE_UNINSTALL_TOMBSTONE_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::Tombstone,
+        );
+    }
+    if source.label == PACKAGE_UNINSTALL_REINSTALL_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::ReinstallNewIdentity,
+        );
+    }
+    if source.label == PACKAGE_UNINSTALL_KILL_DURING_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::KillDuringUninstall,
+        );
+    }
 
     Err(PackageAcceptanceError::UnexpectedScenario)
 }
@@ -420,6 +479,35 @@ fn run_package_launch_acceptance(
     #[cfg(test)]
     {
         run_package_launch_acceptance_inner(block_device, bundle, scenario)
+    }
+}
+
+fn run_package_uninstall_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    scenario: PackageUninstallAcceptanceScenario,
+) -> Result<(), PackageAcceptanceError> {
+    #[cfg(not(test))]
+    {
+        let mode = match scenario {
+            PackageUninstallAcceptanceScenario::Disable => PACKAGE_STACK_MODE_UNINSTALL_DISABLE,
+            PackageUninstallAcceptanceScenario::LiveProcessDenied => {
+                PACKAGE_STACK_MODE_UNINSTALL_LIVE_DENIED
+            }
+            PackageUninstallAcceptanceScenario::Tombstone => PACKAGE_STACK_MODE_UNINSTALL_TOMBSTONE,
+            PackageUninstallAcceptanceScenario::ReinstallNewIdentity => {
+                PACKAGE_STACK_MODE_UNINSTALL_REINSTALL
+            }
+            PackageUninstallAcceptanceScenario::KillDuringUninstall => {
+                PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING
+            }
+        };
+        return run_acceptance_on_static_stack(block_device, bundle, mode);
+    }
+
+    #[cfg(test)]
+    {
+        run_package_uninstall_acceptance_inner(block_device, bundle, scenario)
     }
 }
 
@@ -559,6 +647,31 @@ extern "C" fn package_acceptance_stack_entry(context: *mut core::ffi::c_void) ->
             context.block_device,
             bundle,
             PackageLaunchAcceptanceScenario::NonLaunchExport,
+        ),
+        PACKAGE_STACK_MODE_UNINSTALL_DISABLE => run_package_uninstall_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageUninstallAcceptanceScenario::Disable,
+        ),
+        PACKAGE_STACK_MODE_UNINSTALL_LIVE_DENIED => run_package_uninstall_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageUninstallAcceptanceScenario::LiveProcessDenied,
+        ),
+        PACKAGE_STACK_MODE_UNINSTALL_TOMBSTONE => run_package_uninstall_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageUninstallAcceptanceScenario::Tombstone,
+        ),
+        PACKAGE_STACK_MODE_UNINSTALL_REINSTALL => run_package_uninstall_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageUninstallAcceptanceScenario::ReinstallNewIdentity,
+        ),
+        PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING => run_package_uninstall_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageUninstallAcceptanceScenario::KillDuringUninstall,
         ),
         _ => Err(PackageAcceptanceError::UnexpectedScenario),
     };
@@ -1006,9 +1119,268 @@ fn run_package_launch_acceptance_inner(
     Ok(())
 }
 
-fn install_and_restore_launch_fixture(
+fn run_package_uninstall_acceptance_inner(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
+    scenario: PackageUninstallAcceptanceScenario,
+) -> Result<(), PackageAcceptanceError> {
+    match scenario {
+        PackageUninstallAcceptanceScenario::Disable => {
+            run_package_uninstall_disable_acceptance(block_device, bundle)
+        }
+        PackageUninstallAcceptanceScenario::LiveProcessDenied => {
+            run_package_uninstall_live_process_denied_acceptance(block_device, bundle)
+        }
+        PackageUninstallAcceptanceScenario::Tombstone => {
+            run_package_uninstall_tombstone_acceptance(block_device, bundle)
+        }
+        PackageUninstallAcceptanceScenario::ReinstallNewIdentity => {
+            run_package_uninstall_reinstall_acceptance(block_device, bundle)
+        }
+        PackageUninstallAcceptanceScenario::KillDuringUninstall => {
+            run_package_uninstall_recovery_acceptance(block_device, bundle)
+        }
+    }
+}
+
+fn run_package_uninstall_disable_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let installed = install_and_restore_launch_fixture(block_device, bundle)?;
+    let restored_service = restore_service_for_acceptance();
+    let namespace_root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+    let (process, capability, requirement) =
+        launch_package_for_acceptance(restored_service, namespace_root)?;
+    let binding_before_disable = restored_service
+        .runtime_schema_binding(process, 0)
+        .map_err(map_package_status)?;
+
+    restored_service
+        .disable(ObjectId::new(installed.package_object_id))
+        .map_err(map_package_status)?;
+    validate_disabled_package_state(restored_service, &installed)?;
+    if capabilities_state_for_acceptance().validate(
+        process.service_id(),
+        capability,
+        requirement.resource,
+        requirement.rights,
+    ) != Ok(())
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if restored_service
+        .runtime_schema_binding(process, 0)
+        .map_err(map_package_status)?
+        != binding_before_disable
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+
+    let second_process = ActiveUserProcess::new(
+        PACKAGE_LAUNCH_SERVICE_ID,
+        PACKAGE_LAUNCH_PRINCIPAL_ID.wrapping_add(1),
+        PACKAGE_LAUNCH_PROGRAM_DIGEST,
+    );
+    let denied =
+        launch_package_request_for_process(restored_service, namespace_root, second_process);
+    if denied.is_ok() {
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED_AFTER_DISABLE");
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if denied != Err(PackageStatus::PackageDisabled) {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+
+    restored_service.recover().map_err(map_package_status)?;
+    validate_disabled_package_state(restored_service, &installed)?;
+    if capabilities_state_for_acceptance().validate(
+        process.service_id(),
+        capability,
+        requirement.resource,
+        requirement.rights,
+    ) != Ok(())
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if restored_service
+        .runtime_schema_binding(process, 0)
+        .map_err(map_package_status)?
+        != binding_before_disable
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+
+    let fresh_service = package_service_for_acceptance();
+    *fresh_service = PackageService::new_empty_for_test();
+    let report = fresh_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected || report.previous_published_world_selected {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    validate_disabled_package_state(fresh_service, &installed)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_DISABLE_READY");
+    Ok(())
+}
+
+fn run_package_uninstall_live_process_denied_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let installed = install_and_restore_launch_fixture(block_device, bundle)?;
+    let restored_service = restore_service_for_acceptance();
+    let namespace_root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+    let (process, _, _) = launch_package_for_acceptance(restored_service, namespace_root)?;
+    let binding_before_uninstall = restored_service
+        .runtime_schema_binding(process, 0)
+        .map_err(map_package_status)?;
+
+    let denied = restored_service.uninstall(ObjectId::new(installed.package_object_id));
+    if denied.is_ok() {
+        serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED");
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if denied != Err(PackageStatus::LiveProcessExists) {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    validate_active_package_state(restored_service, &installed)?;
+    if restored_service
+        .runtime_schema_binding(process, 0)
+        .map_err(map_package_status)?
+        != binding_before_uninstall
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:LIVE_PROCESS_DENIED");
+    Ok(())
+}
+
+fn run_package_uninstall_tombstone_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let installed = install_and_restore_launch_fixture(block_device, bundle)?;
+    let restored_service = restore_service_for_acceptance();
+    validate_active_package_state(restored_service, &installed)?;
+
+    restored_service
+        .uninstall(ObjectId::new(installed.package_object_id))
+        .map_err(map_package_status)?;
+    validate_tombstoned_package_state(restored_service, &installed)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED");
+    if restored_service.registry().content_count() != 0 {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:CONTENT_RECLAIMED");
+    assert_locator_not_visible(restored_service, installed.package_object_id)?;
+
+    let fresh_service = package_service_for_acceptance();
+    *fresh_service = PackageService::new_empty_for_test();
+    let report = fresh_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected || report.previous_published_world_selected {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    validate_tombstoned_package_state(fresh_service, &installed)?;
+    assert_locator_not_visible(fresh_service, installed.package_object_id)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL_READY");
+    Ok(())
+}
+
+fn run_package_uninstall_reinstall_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let object_service = object_service_for_acceptance(block_device)?;
+    let package_service = package_service_for_acceptance();
+    let first = install_launch_fixture_into_service(
+        block_device,
+        bundle,
+        package_service,
+        object_service,
+        acceptance_artifact_buffer(),
+    )?;
+
+    let restored_service = restore_service_for_acceptance();
+    let report = restored_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected || report.previous_published_world_selected {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    restored_service
+        .uninstall(ObjectId::new(first.package_object_id))
+        .map_err(map_package_status)?;
+    validate_tombstoned_package_state(restored_service, &first)?;
+
+    let second = install_launch_fixture_into_service(
+        block_device,
+        bundle,
+        restored_service,
+        object_service,
+        second_acceptance_artifact_buffer(),
+    )?;
+    if second.package_object_id == first.package_object_id {
+        serial::write_line("PYTHOS:CORE:PACKAGE_REINSTALL:REUSED_TOMBSTONED_ID");
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if restored_service.registry().package_count() != 2 {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    validate_tombstoned_package_history(restored_service, &first)?;
+    validate_active_package_state(restored_service, &second)?;
+    let namespace_root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+    let export = restored_service
+        .resolve_export(namespace_root, PACKAGE_LAUNCH_LOCATOR)
+        .map_err(map_package_status)?;
+    if export.package_object_id != second.package_object_id {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_REINSTALL_IDENTITY_READY");
+    Ok(())
+}
+
+fn run_package_uninstall_recovery_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    if !publication_anchor_exists(block_device)? {
+        let installed = install_and_restore_launch_fixture(block_device, bundle)?;
+        let restored_service = restore_service_for_acceptance();
+        restored_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .map_err(map_package_status)?;
+        validate_tombstoned_package_state(restored_service, &installed)?;
+        serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONE_ANCHOR_PUBLISHED");
+        wait_for_power_cut();
+    }
+
+    let restored_service = restore_service_for_acceptance();
+    let report = restored_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let package = package_record_with_status(
+        restored_service.registry(),
+        PackageStatus::PackageTombstoned as u16,
+    )
+    .ok_or(PackageAcceptanceError::PackageOperation)?;
+    validate_tombstoned_registry_shape(restored_service, package.package_object_id)?;
+    assert_locator_not_half_visible(restored_service, package.package_object_id)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL_RECOVERY_READY");
+    Ok(())
+}
+
+fn install_launch_fixture_into_service(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    package_service: &mut PackageService<'static>,
+    object_service: &mut ObjectService,
+    artifact_buffer: &'static mut [u8],
 ) -> Result<PackageInstallResult, PackageAcceptanceError> {
     let source_service = package_source_service_for_acceptance(bundle)?;
     let source_handle = source_service
@@ -1034,10 +1406,7 @@ fn install_and_restore_launch_fixture(
             RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
         )
         .map_err(|_| PackageAcceptanceError::PackageOperation)?;
-    let object_service = object_service_for_acceptance(block_device)?;
-    let package_service = package_service_for_acceptance();
-    let artifact_buffer = acceptance_artifact_buffer();
-    let installed = package_service
+    package_service
         .install_with_candidate_checkpoint(
             block_device,
             PackageInstallRequest {
@@ -1051,7 +1420,22 @@ fn install_and_restore_launch_fixture(
             object_service,
             artifact_buffer,
         )
-        .map_err(map_package_status)?;
+        .map_err(map_package_status)
+}
+
+fn install_and_restore_launch_fixture(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<PackageInstallResult, PackageAcceptanceError> {
+    let object_service = object_service_for_acceptance(block_device)?;
+    let package_service = package_service_for_acceptance();
+    let installed = install_launch_fixture_into_service(
+        block_device,
+        bundle,
+        package_service,
+        object_service,
+        acceptance_artifact_buffer(),
+    )?;
 
     let restored_service = restore_service_for_acceptance();
     {
@@ -1087,6 +1471,272 @@ fn validate_launch_export(
         || export.content_index != PACKAGE_LAUNCH_CONTENT_INDEX
         || export.entrypoint != 0
     {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn launch_package_for_acceptance(
+    restored_service: &mut PackageService<'_>,
+    namespace_root: ObjectId,
+) -> Result<
+    (
+        ActiveUserProcess,
+        CapabilityHandle,
+        PackageLaunchRequirement,
+    ),
+    PackageAcceptanceError,
+> {
+    let export = restored_service
+        .resolve_export(namespace_root, PACKAGE_LAUNCH_LOCATOR)
+        .map_err(map_package_status)?;
+    let content = read_launch_content(
+        restored_service,
+        export,
+        content_read_buffer_for_acceptance(),
+    )
+    .map_err(map_package_status)?;
+    let verified =
+        verify::verify_bytes(content).map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let process = package_runtime_process_for_acceptance(content.len())?;
+    let requirement = launch_requirement();
+    restored_service
+        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, requirement)
+        .map_err(map_package_status)?;
+    let capabilities = capabilities_state_for_acceptance();
+    let capability = capabilities
+        .grant(
+            process.service_id(),
+            requirement.resource,
+            requirement.rights,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let supplied_grants = [PackageLaunchGrant {
+        requirement_id: requirement.requirement_id,
+        capability,
+    }];
+    let launch = restored_service
+        .launch(
+            PackageLaunchRequest {
+                caller: process,
+                namespace_root,
+                locator: PACKAGE_LAUNCH_LOCATOR,
+                supplied_grants: &supplied_grants,
+            },
+            capabilities,
+        )
+        .map_err(map_package_status)?;
+    let graph_import_grants = [launch
+        .graph_import_grant(0)
+        .ok_or(PackageAcceptanceError::PackageOperation)?];
+    pyth_runtime_launch::prepare_package_launch_runtime_bootstrap(
+        &verified,
+        content.len() as u64,
+        &graph_import_grants,
+    )
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    if launch.export != export
+        || launch.grant_count != 1
+        || launch.grant(0) != Some(supplied_grants[0])
+        || capabilities.validate(
+            process.service_id(),
+            capability,
+            requirement.resource,
+            requirement.rights,
+        ) != Ok(())
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok((process, capability, requirement))
+}
+
+fn launch_package_request_for_process(
+    restored_service: &mut PackageService<'_>,
+    namespace_root: ObjectId,
+    process: ActiveUserProcess,
+) -> Result<crate::package_service::PackageLaunchResult, PackageStatus> {
+    let requirement = launch_requirement();
+    let capabilities = capabilities_state_for_acceptance();
+    let capability = capabilities
+        .grant(
+            process.service_id(),
+            requirement.resource,
+            requirement.rights,
+        )
+        .map_err(|_| PackageStatus::Denied)?;
+    let supplied_grants = [PackageLaunchGrant {
+        requirement_id: requirement.requirement_id,
+        capability,
+    }];
+    restored_service.launch(
+        PackageLaunchRequest {
+            caller: process,
+            namespace_root,
+            locator: PACKAGE_LAUNCH_LOCATOR,
+            supplied_grants: &supplied_grants,
+        },
+        capabilities,
+    )
+}
+
+fn validate_active_package_state(
+    service: &PackageService<'_>,
+    installed: &PackageInstallResult,
+) -> Result<(), PackageAcceptanceError> {
+    let package = package_record_for_object(service.registry(), installed.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if package.installed_revision != installed.package_revision
+        || package.release_digest != installed.release_digest
+        || package.status != PackageStatus::Ok as u16
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let export = service
+        .resolve_export(
+            ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+            PACKAGE_LAUNCH_LOCATOR,
+        )
+        .map_err(map_package_status)?;
+    validate_launch_export(installed, export)?;
+    assert_installed_content_readable(service, installed)
+}
+
+fn validate_disabled_package_state(
+    service: &PackageService<'_>,
+    installed: &PackageInstallResult,
+) -> Result<(), PackageAcceptanceError> {
+    let package = package_record_for_object(service.registry(), installed.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if package.installed_revision != installed.package_revision
+        || package.release_digest != installed.release_digest
+        || package.status != PackageStatus::PackageDisabled as u16
+        || service.registry().schema_count() != 1
+        || service.registry().content_count() < 2
+        || service.resolve_export(
+            ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+            PACKAGE_LAUNCH_LOCATOR,
+        ) != Err(PackageStatus::PackageDisabled)
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    assert_installed_content_readable(service, installed)
+}
+
+fn validate_tombstoned_package_state(
+    service: &PackageService<'_>,
+    installed: &PackageInstallResult,
+) -> Result<(), PackageAcceptanceError> {
+    validate_tombstoned_package_history(service, installed)?;
+    validate_tombstoned_registry_shape(service, installed.package_object_id)
+}
+
+fn validate_tombstoned_package_history(
+    service: &PackageService<'_>,
+    installed: &PackageInstallResult,
+) -> Result<(), PackageAcceptanceError> {
+    let package = package_record_for_object(service.registry(), installed.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if package.installed_revision != installed.package_revision
+        || package.release_digest != installed.release_digest
+        || package.status != PackageStatus::PackageTombstoned as u16
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if let Ok(export) = service.resolve_export(
+        ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+        PACKAGE_LAUNCH_LOCATOR,
+    ) && export.package_object_id == installed.package_object_id
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if content_record_for_package(service.registry(), installed.package_object_id).is_some() {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn validate_tombstoned_registry_shape(
+    service: &PackageService<'_>,
+    package_object_id: u64,
+) -> Result<(), PackageAcceptanceError> {
+    let package = package_record_for_object(service.registry(), package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if package.status != PackageStatus::PackageTombstoned as u16
+        || service.registry().schema_count() == 0
+        || service.registry().content_count() != 0
+        || content_record_for_package(service.registry(), package_object_id).is_some()
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn assert_installed_content_readable(
+    service: &PackageService<'_>,
+    installed: &PackageInstallResult,
+) -> Result<(), PackageAcceptanceError> {
+    assert_content_readable(service, installed.schema_descriptor_content_id)?;
+    assert_content_readable(
+        service,
+        ContentId::new(
+            installed.package_object_id,
+            installed.release_digest,
+            PACKAGE_LAUNCH_CONTENT_INDEX,
+        ),
+    )
+}
+
+fn assert_content_readable(
+    service: &PackageService<'_>,
+    content_id: ContentId,
+) -> Result<(), PackageAcceptanceError> {
+    let content = content_record_for_id(service.registry(), content_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let out = content_read_buffer_for_acceptance();
+    let read_len = service
+        .content_store()
+        .read_published(content_id, out)
+        .map_err(map_package_status)?;
+    let expected_len =
+        usize::try_from(content.byte_len).map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    if read_len != expected_len || sha256(&out[..read_len]) != content.digest {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn assert_locator_not_visible(
+    service: &mut PackageService<'_>,
+    package_object_id: u64,
+) -> Result<(), PackageAcceptanceError> {
+    let mirrors = locator_mirrors_for_acceptance();
+    service
+        .rebuild_locator_mirrors_into(mirrors)
+        .map_err(map_package_status)?;
+    if locator_resolves_package(mirrors, package_object_id) {
+        serial::write_line("PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE");
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn assert_locator_not_half_visible(
+    service: &mut PackageService<'_>,
+    package_object_id: u64,
+) -> Result<(), PackageAcceptanceError> {
+    let mirrors = locator_mirrors_for_acceptance();
+    service
+        .rebuild_locator_mirrors_into(mirrors)
+        .map_err(map_package_status)?;
+    if locator_resolves_package(mirrors, package_object_id)
+        || service
+            .resolve_export(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                PACKAGE_LAUNCH_LOCATOR,
+            )
+            .is_ok()
+    {
+        serial::write_line("PYTHOS:CORE:PACKAGE_LOCATOR:HALF_VISIBLE");
         return Err(PackageAcceptanceError::PackageOperation);
     }
     Ok(())
@@ -1196,6 +1846,51 @@ fn content_record_for_export(
             && record.release_digest == export.release_digest
             && record.content_index == export.content_index
         {
+            return Some(record);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn content_record_for_id(
+    registry: &PackageRegistry,
+    content_id: ContentId,
+) -> Option<PackageRegistryContentRecord> {
+    let mut index = 0usize;
+    while let Some(record) = registry.content_record(index) {
+        if record.package_object_id == content_id.package_object_id
+            && record.release_digest == content_id.release_digest
+            && record.content_index == content_id.content_index
+        {
+            return Some(record);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn package_record_for_object(
+    registry: &PackageRegistry,
+    package_object_id: u64,
+) -> Option<PackageRegistryPackageRecord> {
+    let mut index = 0usize;
+    while let Some(record) = registry.package_record(index) {
+        if record.package_object_id == package_object_id {
+            return Some(record);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn package_record_with_status(
+    registry: &PackageRegistry,
+    status: u16,
+) -> Option<PackageRegistryPackageRecord> {
+    let mut index = 0usize;
+    while let Some(record) = registry.package_record(index) {
+        if record.status == status {
             return Some(record);
         }
         index += 1;
@@ -1798,6 +2493,23 @@ fn capabilities_for_acceptance() -> &'static mut CapabilityTable {
     let table = unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_CAPABILITIES) };
     table.clear();
     table
+}
+
+fn capabilities_state_for_acceptance() -> &'static mut CapabilityTable {
+    // SAFETY:
+    // 1. Invariant: the active acceptance scenario owns the static capability
+    //    table and intentionally preserves grants across a disable operation.
+    // 2. Established by: Task 4.5 QEMU uninstall scenarios run one scenario per
+    //    boot on the single-core verify path.
+    // 3. Lifetime: the static capability table lives for the full boot.
+    // 4. Pointer ownership: this helper is called only after scenario setup has
+    //    created the table owner; no other mutable reference is retained.
+    // 5. Alignment: the static item has `CapabilityTable` alignment.
+    // 6. Mapped length: exactly one capability table is referenced.
+    // 7. Concurrency: no SMP or reentrant acceptance path exists.
+    // 8. Violation: aliasing would invalidate the disable capability-retention
+    //    proof and must not be introduced.
+    unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_CAPABILITIES) }
 }
 
 fn package_source_service_for_acceptance(

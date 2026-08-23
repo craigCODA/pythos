@@ -2982,7 +2982,9 @@ git commit -m "feat(core): recover uninstall transactions atomically"
 
 **Interfaces Consumed:** disable/uninstall/recovery.
 
-**Interfaces Produced:** uninstall QEMU scenarios `disable`, `live-process-denied`, `tombstone`, `reinstall-new-identity`, `schema-retained`, `kill-during-uninstall`.
+**Interfaces Produced:** uninstall QEMU scenarios `disable`, `live-process-denied`, `tombstone`, `reinstall-new-identity`, `kill-during-uninstall`.
+
+**Deferred by dependency:** `schema-retained` QEMU acceptance is deferred to Slice 5 after the real production `PackageDefinedObjectCreateV0` creation path exists. Do not simulate it in Slice 4 with private retention helpers or acceptance-only object creation. The deferred proof remains required before `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 - [ ] **Step 1: Write the failing script**
 
@@ -3001,9 +3003,6 @@ tombstone forbidden: PACKAGE_LOCATOR:VISIBLE
 reinstall-new-identity required: PACKAGE_REINSTALL_IDENTITY_READY, QEMU_OUTCOME success
 reinstall-new-identity forbidden: PACKAGE_REINSTALL:REUSED_TOMBSTONED_ID
 
-schema-retained required: PACKAGE_UNINSTALL:SCHEMA_RETAINED, QEMU_OUTCOME success
-schema-retained forbidden: PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED
-
 kill-during-uninstall required: PACKAGE_UNINSTALL_RECOVERY_READY, QEMU_OUTCOME success
 kill-during-uninstall forbidden: PACKAGE_LOCATOR:HALF_VISIBLE
 ```
@@ -3015,7 +3014,6 @@ python scripts/test-phase13-package-uninstall.py --scenario disable
 python scripts/test-phase13-package-uninstall.py --scenario live-process-denied
 python scripts/test-phase13-package-uninstall.py --scenario tombstone
 python scripts/test-phase13-package-uninstall.py --scenario reinstall-new-identity
-python scripts/test-phase13-package-uninstall.py --scenario schema-retained
 python scripts/test-phase13-package-uninstall.py --scenario kill-during-uninstall
 ```
 
@@ -3032,7 +3030,6 @@ python scripts/test-phase13-package-uninstall.py --scenario disable
 python scripts/test-phase13-package-uninstall.py --scenario live-process-denied
 python scripts/test-phase13-package-uninstall.py --scenario tombstone
 python scripts/test-phase13-package-uninstall.py --scenario reinstall-new-identity
-python scripts/test-phase13-package-uninstall.py --scenario schema-retained
 python scripts/test-phase13-package-uninstall.py --scenario kill-during-uninstall
 ```
 
@@ -3041,8 +3038,8 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add scripts/test-phase13-package-uninstall.py core/src/package_acceptance.rs
-git commit -m "test(qemu): prove package uninstall recovery and retention"
+git add scripts/test-phase13-package-uninstall.py core/src/package_acceptance.rs docs/superpowers/plans/2026-08-22-phase-13-package-lifecycle.md
+git commit -m "test(qemu): prove package uninstall policy and recovery"
 ```
 
 ---
@@ -3174,6 +3171,49 @@ Expected: PASS.
 git add core/src/syscall.rs core/src/object_service.rs core/src/typed_object_format.rs
 git commit -m "feat(core): validate package-defined object creation"
 ```
+
+### Task 5.3.y: Deferred Schema-Retention QEMU Acceptance
+
+**Files:**
+- Modify: `scripts/test-phase13-package-uninstall.py` or the Slice 5 end-to-end QEMU harness
+- Modify: `core/src/package_acceptance.rs` or the Slice 5 package-defined-object acceptance path
+
+**Interfaces Consumed:** production `PackageDefinedObjectCreateV0` runtime/syscall/object-service path from Tasks 5.2 and 5.3, uninstall recovery/retention from Slice 4.
+
+**Interfaces Produced:** deferred `schema-retained` QEMU proof.
+
+- [ ] **Step 1: Write the failing acceptance path**
+
+Use a genuinely created package-defined object that references the installed schema revision. The proof must cover:
+
+```text
+create PackageDefinedObject
+-> uninstall defining package
+-> reboot
+-> instance remains
+-> exact schema revision remains
+-> schema descriptor bytes remain
+-> instance state/provenance remain interpretable
+```
+
+Required/forbidden highlights:
+
+```text
+schema-retained required: PACKAGE_UNINSTALL:SCHEMA_RETAINED, QEMU_OUTCOME success
+schema-retained forbidden: PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Expected: FAIL until the production package-defined-object path and acceptance scenario are connected.
+
+- [ ] **Step 3: Minimum implementation**
+
+Wire the QEMU proof through the real production package-defined-object creation path. Do not use private `PackageService` retention helpers.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Expected: PASS.
 
 ### Task 5.4: Independent Package Fixture
 
@@ -3356,7 +3396,7 @@ Every scenario must verify required markers, forbidden markers, order, and `QEMU
 | `scripts/test-phase13-package-uninstall.py` | `live-process-denied` | `PYTHOS:CORE:PACKAGE_UNINSTALL:LIVE_PROCESS_DENIED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED` |
 | `scripts/test-phase13-package-uninstall.py` | `tombstone` | `PYTHOS:CORE:PACKAGE_UNINSTALL_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE` |
 | `scripts/test-phase13-package-uninstall.py` | `reinstall-new-identity` | `PYTHOS:CORE:PACKAGE_REINSTALL_IDENTITY_READY` | `PYTHOS:CORE:PACKAGE_REINSTALL:REUSED_TOMBSTONED_ID` |
-| `scripts/test-phase13-package-uninstall.py` | `schema-retained` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED` |
+| Slice 5 `DEFERRED BY DEPENDENCY` proof | `schema-retained` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED` |
 | `scripts/test-phase13-package-uninstall.py` | `kill-during-uninstall` | `PYTHOS:CORE:PACKAGE_UNINSTALL_RECOVERY_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:HALF_VISIBLE` |
 | `scripts/test-phase13-independent-package.py` | default | `PYTHOS:CORE:PHASE_13_COMPLETE` | `PYTHOS:CORE:PACKAGE_SESSION_RUNTIME_READY`, `PYTHOS:CORE:KAI_READY`, `PYTHOS:PANIC` |
 
