@@ -1,5 +1,8 @@
-use crate::object_service_checkpoint::ObjectCheckpointIdentity;
+use crate::{
+    object_service_checkpoint::ObjectCheckpointIdentity, package_content_store::PackageExtent,
+};
 use pythos_shared::package_abi::{
+    MAX_CONTENT_BYTES, MAX_CONTENT_ENTRIES, MAX_CONTENT_EXTENTS_PER_RECORD,
     MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION, PackageStatus,
 };
 use pythos_shared::sha256::sha256;
@@ -11,6 +14,7 @@ pub const PACKAGE_REGISTRY_HEADER_LEN: usize = 88;
 pub const PACKAGE_REGISTRY_CRC_LEN: usize = 4;
 pub const PACKAGE_REGISTRY_PACKAGE_RECORD_LEN: usize = 64;
 pub const PACKAGE_REGISTRY_SCHEMA_RECORD_LEN: usize = 96;
+pub const PACKAGE_REGISTRY_CONTENT_RECORD_LEN: usize = 256;
 pub const PACKAGE_RECORD_FLAGS_OFFSET: usize = 50;
 const SCHEMA_RECORD_FLAGS_OFFSET: usize = 26;
 pub const REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT: u16 = 0x8000;
@@ -18,6 +22,7 @@ pub const PACKAGE_TRANSACTION_COMMIT_V0_LEN: usize = 128;
 pub const PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET: usize = 112;
 const MAX_REGISTRY_PACKAGES: usize = MAX_SCHEMA_DECLARATIONS;
 const MAX_REGISTRY_SCHEMAS: usize = MAX_SCHEMA_DECLARATIONS;
+const MAX_REGISTRY_CONTENT: usize = MAX_CONTENT_ENTRIES;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageRegistryGeneration {
@@ -124,6 +129,32 @@ impl PackageTransactionCommitV0 {
             && self.object_checkpoint_root_digest == expected_object.root_digest
     }
 
+    pub fn decode_stored(bytes: &[u8]) -> Result<Self, PackageStatus> {
+        if bytes.len() != PACKAGE_TRANSACTION_COMMIT_V0_LEN {
+            return Err(PackageStatus::BoundsExceeded);
+        }
+        if bytes[10..16].iter().any(|byte| *byte != 0)
+            || bytes[116..128].iter().any(|byte| *byte != 0)
+        {
+            return Err(PackageStatus::BadRequest);
+        }
+        let stored_crc = read_u32(bytes, PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET);
+        if stored_crc != transaction_anchor_crc32c(bytes) {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+        Ok(Self {
+            transaction_id: read_u64(bytes, 0),
+            operation: read_u16(bytes, 8),
+            package_registry_generation: read_u64(bytes, 16),
+            package_registry_root_digest: read_sha256(bytes, 24),
+            object_checkpoint_generation: read_u64(bytes, 56),
+            object_checkpoint_root_digest: read_sha256(bytes, 64),
+            package_object_id: read_u64(bytes, 96),
+            package_installed_revision: read_u64(bytes, 104),
+            commit_crc32c: stored_crc,
+        })
+    }
+
     fn computed_crc32c(&self) -> u32 {
         let mut bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         self.encode_without_crc(&mut bytes);
@@ -202,6 +233,21 @@ impl PackageRegistrySchemaRecord {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRegistryContentRecord {
+    pub package_object_id: u64,
+    pub release_digest: [u8; 32],
+    pub content_index: u16,
+    pub role: u16,
+    pub format: u16,
+    pub digest: [u8; 32],
+    pub byte_len: u64,
+    pub extents: [PackageExtent; MAX_CONTENT_EXTENTS_PER_RECORD],
+    pub extent_count: u16,
+    pub retention_count: u16,
+    pub flags: u16,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageRegistry {
     generation: u64,
@@ -212,6 +258,8 @@ pub struct PackageRegistry {
     package_count: u32,
     schema_records: [Option<PackageRegistrySchemaRecord>; MAX_REGISTRY_SCHEMAS],
     schema_count: u32,
+    content_records: [Option<PackageRegistryContentRecord>; MAX_REGISTRY_CONTENT],
+    content_count: u32,
 }
 
 impl PackageRegistry {
@@ -225,6 +273,8 @@ impl PackageRegistry {
             package_count: 0,
             schema_records: [None; MAX_REGISTRY_SCHEMAS],
             schema_count: 0,
+            content_records: [None; MAX_REGISTRY_CONTENT],
+            content_count: 0,
         }
     }
 
@@ -268,6 +318,26 @@ impl PackageRegistry {
         Ok(())
     }
 
+    pub fn add_content_record(
+        &mut self,
+        record: PackageRegistryContentRecord,
+    ) -> Result<(), PackageStatus> {
+        validate_content_record(record)?;
+        if self.content_count as usize >= MAX_REGISTRY_CONTENT {
+            return Err(PackageStatus::QuotaDenied);
+        }
+        if self.content_records.iter().flatten().any(|existing| {
+            existing.package_object_id == record.package_object_id
+                && existing.release_digest == record.release_digest
+                && existing.content_index == record.content_index
+        }) {
+            return Err(PackageStatus::DuplicateStableName);
+        }
+        self.content_records[self.content_count as usize] = Some(record);
+        self.content_count += 1;
+        Ok(())
+    }
+
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageStatus> {
         if bytes.len() < PACKAGE_REGISTRY_HEADER_LEN + PACKAGE_REGISTRY_CRC_LEN {
             return Err(PackageStatus::BoundsExceeded);
@@ -293,8 +363,7 @@ impl PackageRegistry {
         let requirement_count = read_u32(bytes, 76);
         let locator_binding_count = read_u32(bytes, 80);
         let tombstone_count = read_u32(bytes, 84);
-        if content_count != 0
-            || export_count != 0
+        if export_count != 0
             || requirement_count != 0
             || locator_binding_count != 0
             || tombstone_count != 0
@@ -303,11 +372,12 @@ impl PackageRegistry {
         }
         if package_count as usize > MAX_REGISTRY_PACKAGES
             || schema_count as usize > MAX_REGISTRY_SCHEMAS
+            || content_count as usize > MAX_REGISTRY_CONTENT
         {
             return Err(PackageStatus::BoundsExceeded);
         }
 
-        let expected_len = encoded_len_for(package_count, schema_count)?;
+        let expected_len = encoded_len_for(package_count, schema_count, content_count)?;
         if expected_len != bytes.len() {
             return Err(PackageStatus::BoundsExceeded);
         }
@@ -321,6 +391,8 @@ impl PackageRegistry {
             package_count: 0,
             schema_records: [None; MAX_REGISTRY_SCHEMAS],
             schema_count: 0,
+            content_records: [None; MAX_REGISTRY_CONTENT],
+            content_count: 0,
         };
 
         let mut offset = PACKAGE_REGISTRY_HEADER_LEN;
@@ -343,6 +415,11 @@ impl PackageRegistry {
             }
             registry.add_schema_record(record)?;
             offset += PACKAGE_REGISTRY_SCHEMA_RECORD_LEN;
+        }
+        for _ in 0..content_count {
+            let record = decode_content_record(bytes, offset)?;
+            registry.add_content_record(record)?;
+            offset += PACKAGE_REGISTRY_CONTENT_RECORD_LEN;
         }
 
         Ok(registry)
@@ -383,6 +460,7 @@ impl PackageRegistry {
         out[28..60].copy_from_slice(&self.committed_root_digest);
         write_u32(out, 60, self.package_count);
         write_u32(out, 64, self.schema_count);
+        write_u32(out, 68, self.content_count);
 
         let mut offset = PACKAGE_REGISTRY_HEADER_LEN;
         let mut encoded_packages = 0usize;
@@ -409,6 +487,22 @@ impl PackageRegistry {
             encoded_schemas += 1;
         }
 
+        let mut encoded_content = 0usize;
+        let mut previous_content = None;
+        while encoded_content < self.content_count as usize {
+            let record = self
+                .next_content_record(previous_content)
+                .ok_or(PackageStatus::RegistryRecoveryDenied)?;
+            encode_content_record(record, out, offset);
+            offset += PACKAGE_REGISTRY_CONTENT_RECORD_LEN;
+            previous_content = Some((
+                record.package_object_id,
+                record.release_digest,
+                record.content_index,
+            ));
+            encoded_content += 1;
+        }
+
         let crc = crc32c_castagnoli(&out[..encoded_len]);
         write_u32(out, encoded_len - PACKAGE_REGISTRY_CRC_LEN, crc);
         Ok(PackageRegistryGeneration {
@@ -421,6 +515,7 @@ impl PackageRegistry {
         PACKAGE_REGISTRY_HEADER_LEN
             + self.package_count as usize * PACKAGE_REGISTRY_PACKAGE_RECORD_LEN
             + self.schema_count as usize * PACKAGE_REGISTRY_SCHEMA_RECORD_LEN
+            + self.content_count as usize * PACKAGE_REGISTRY_CONTENT_RECORD_LEN
             + PACKAGE_REGISTRY_CRC_LEN
     }
 
@@ -439,6 +534,18 @@ impl PackageRegistry {
         self.active_transaction_id = 0;
     }
 
+    pub fn begin_candidate_generation(&mut self, transaction_id: u64) -> Result<(), PackageStatus> {
+        if transaction_id == 0 {
+            return Err(PackageStatus::BadRequest);
+        }
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or(PackageStatus::LengthOverflow)?;
+        self.active_transaction_id = transaction_id;
+        Ok(())
+    }
+
     pub fn copy_from_committed(&mut self, source: &Self) {
         self.generation = source.generation;
         self.active_transaction_id = source.active_transaction_id;
@@ -448,6 +555,8 @@ impl PackageRegistry {
         self.package_count = source.package_count;
         self.schema_records = source.schema_records;
         self.schema_count = source.schema_count;
+        self.content_records = source.content_records;
+        self.content_count = source.content_count;
     }
 
     pub const fn package_count(&self) -> usize {
@@ -456,6 +565,10 @@ impl PackageRegistry {
 
     pub const fn schema_count(&self) -> usize {
         self.schema_count as usize
+    }
+
+    pub const fn content_count(&self) -> usize {
+        self.content_count as usize
     }
 
     pub fn package_record(&self, index: usize) -> Option<PackageRegistryPackageRecord> {
@@ -470,6 +583,30 @@ impl PackageRegistry {
             return None;
         }
         self.schema_records[index]
+    }
+
+    pub fn content_record(&self, index: usize) -> Option<PackageRegistryContentRecord> {
+        if index >= self.content_count as usize {
+            return None;
+        }
+        self.content_records[index]
+    }
+
+    pub fn encoded_len_from_snapshot_header(bytes: &[u8]) -> Result<usize, PackageStatus> {
+        if bytes.len() < PACKAGE_REGISTRY_HEADER_LEN {
+            return Err(PackageStatus::BoundsExceeded);
+        }
+        if &bytes[0..8] != PACKAGE_REGISTRY_MAGIC {
+            return Err(PackageStatus::InvalidMagic);
+        }
+        if read_u16(bytes, 8) != PACKAGE_REGISTRY_MAJOR {
+            return Err(PackageStatus::UnsupportedMajor);
+        }
+        encoded_len_for(
+            read_u32(bytes, 60),
+            read_u32(bytes, 64),
+            read_u32(bytes, 68),
+        )
     }
 
     fn next_package_record(
@@ -517,18 +654,57 @@ impl PackageRegistry {
         }
         selected
     }
+
+    fn next_content_record(
+        &self,
+        previous_content: Option<(u64, [u8; 32], u16)>,
+    ) -> Option<PackageRegistryContentRecord> {
+        let mut selected = None;
+        let mut index = 0usize;
+        while index < self.content_count as usize {
+            if let Some(record) = self.content_records[index] {
+                let key = (
+                    record.package_object_id,
+                    record.release_digest,
+                    record.content_index,
+                );
+                let after_previous = previous_content.is_none_or(|previous| key > previous);
+                let before_selected =
+                    selected.is_none_or(|current: PackageRegistryContentRecord| {
+                        key < (
+                            current.package_object_id,
+                            current.release_digest,
+                            current.content_index,
+                        )
+                    });
+                if after_previous && before_selected {
+                    selected = Some(record);
+                }
+            }
+            index += 1;
+        }
+        selected
+    }
 }
 
-fn encoded_len_for(package_count: u32, schema_count: u32) -> Result<usize, PackageStatus> {
+fn encoded_len_for(
+    package_count: u32,
+    schema_count: u32,
+    content_count: u32,
+) -> Result<usize, PackageStatus> {
     let package_bytes = (package_count as usize)
         .checked_mul(PACKAGE_REGISTRY_PACKAGE_RECORD_LEN)
         .ok_or(PackageStatus::LengthOverflow)?;
     let schema_bytes = (schema_count as usize)
         .checked_mul(PACKAGE_REGISTRY_SCHEMA_RECORD_LEN)
         .ok_or(PackageStatus::LengthOverflow)?;
+    let content_bytes = (content_count as usize)
+        .checked_mul(PACKAGE_REGISTRY_CONTENT_RECORD_LEN)
+        .ok_or(PackageStatus::LengthOverflow)?;
     PACKAGE_REGISTRY_HEADER_LEN
         .checked_add(package_bytes)
         .and_then(|value| value.checked_add(schema_bytes))
+        .and_then(|value| value.checked_add(content_bytes))
         .and_then(|value| value.checked_add(PACKAGE_REGISTRY_CRC_LEN))
         .ok_or(PackageStatus::LengthOverflow)
 }
@@ -573,6 +749,100 @@ fn decode_schema_record(bytes: &[u8], offset: usize) -> PackageRegistrySchemaRec
         object_kind: read_u16(bytes, offset + 28),
         descriptor_digest: read_sha256(bytes, offset + 32),
     }
+}
+
+fn encode_content_record(record: PackageRegistryContentRecord, out: &mut [u8], offset: usize) {
+    out[offset..offset + PACKAGE_REGISTRY_CONTENT_RECORD_LEN].fill(0);
+    write_u16(out, offset, record.content_index);
+    write_u16(out, offset + 2, record.role);
+    write_u16(out, offset + 4, record.format);
+    write_u16(out, offset + 6, record.extent_count);
+    write_u64(out, offset + 8, record.package_object_id);
+    write_u64(out, offset + 16, record.byte_len);
+    out[offset + 24..offset + 56].copy_from_slice(&record.release_digest);
+    out[offset + 56..offset + 88].copy_from_slice(&record.digest);
+    write_u16(out, offset + 88, record.retention_count);
+    write_u16(out, offset + 90, record.flags);
+    let mut extent_index = 0usize;
+    while extent_index < MAX_CONTENT_EXTENTS_PER_RECORD {
+        let extent = record.extents[extent_index];
+        let extent_offset = offset + 96 + extent_index * 4;
+        write_u16(out, extent_offset, extent.start_block);
+        write_u16(out, extent_offset + 2, extent.block_count);
+        extent_index += 1;
+    }
+}
+
+fn decode_content_record(
+    bytes: &[u8],
+    offset: usize,
+) -> Result<PackageRegistryContentRecord, PackageStatus> {
+    if bytes[offset + 92..offset + 96]
+        .iter()
+        .any(|byte| *byte != 0)
+        || bytes[offset + 224..offset + 256]
+            .iter()
+            .any(|byte| *byte != 0)
+    {
+        return Err(PackageStatus::RegistryRecoveryDenied);
+    }
+    let mut extents = [PackageExtent::EMPTY; MAX_CONTENT_EXTENTS_PER_RECORD];
+    let mut extent_index = 0usize;
+    while extent_index < MAX_CONTENT_EXTENTS_PER_RECORD {
+        let extent_offset = offset + 96 + extent_index * 4;
+        extents[extent_index] = PackageExtent::new(
+            read_u16(bytes, extent_offset),
+            read_u16(bytes, extent_offset + 2),
+        );
+        extent_index += 1;
+    }
+    Ok(PackageRegistryContentRecord {
+        package_object_id: read_u64(bytes, offset + 8),
+        release_digest: read_sha256(bytes, offset + 24),
+        content_index: read_u16(bytes, offset),
+        role: read_u16(bytes, offset + 2),
+        format: read_u16(bytes, offset + 4),
+        digest: read_sha256(bytes, offset + 56),
+        byte_len: read_u64(bytes, offset + 16),
+        extents,
+        extent_count: read_u16(bytes, offset + 6),
+        retention_count: read_u16(bytes, offset + 88),
+        flags: read_u16(bytes, offset + 90),
+    })
+}
+
+fn validate_content_record(record: PackageRegistryContentRecord) -> Result<(), PackageStatus> {
+    if record.byte_len > MAX_CONTENT_BYTES as u64
+        || record.extent_count as usize > MAX_CONTENT_EXTENTS_PER_RECORD
+    {
+        return Err(PackageStatus::BoundsExceeded);
+    }
+    let expected_blocks = record
+        .byte_len
+        .checked_add(511)
+        .ok_or(PackageStatus::LengthOverflow)?
+        / 512;
+    let mut blocks = 0u64;
+    let mut index = 0usize;
+    while index < MAX_CONTENT_EXTENTS_PER_RECORD {
+        let extent = record.extents[index];
+        if index < record.extent_count as usize {
+            if extent.block_count == 0
+                || u32::from(extent.start_block) + u32::from(extent.block_count)
+                    > pythos_shared::package_abi::PACKAGE_CONTENT_MAX_BLOCKS as u32
+            {
+                return Err(PackageStatus::BoundsExceeded);
+            }
+            blocks += u64::from(extent.block_count);
+        } else if extent != PackageExtent::EMPTY {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+        index += 1;
+    }
+    if blocks != expected_blocks {
+        return Err(PackageStatus::BoundsExceeded);
+    }
+    Ok(())
 }
 
 fn snapshot_crc32c(bytes: &[u8]) -> u32 {
@@ -660,10 +930,19 @@ mod tests {
     use super::{
         PACKAGE_RECORD_FLAGS_OFFSET, PACKAGE_REGISTRY_HEADER_LEN,
         PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET, PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry,
-        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistrySchemaRecord,
-        PackageTransactionCommitV0, REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT, crc32c_castagnoli,
+        PackageRegistryContentRecord, PackageRegistryGeneration, PackageRegistryPackageRecord,
+        PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+        REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT, crc32c_castagnoli,
     };
-    use crate::object_service_checkpoint::ObjectCheckpointIdentity;
+    use crate::{
+        block_device::BlockDeviceInfo,
+        object_service_checkpoint::ObjectCheckpointIdentity,
+        package_candidate_store::{
+            PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, read_candidate_registry_generation,
+            reset_package_candidate_storage_for_test, write_candidate_registry_generation,
+        },
+        package_content_store::PackageExtent,
+    };
     use pythos_shared::package_abi::PackageStatus;
 
     #[test]
@@ -893,6 +1172,44 @@ mod tests {
             .add_schema_record(PackageRegistrySchemaRecord::new(77, 3, 42, 0, digest(7)))
             .unwrap();
         registry
+    }
+
+    #[test]
+    fn package_candidate_registry_persists_content_records_by_root() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_candidate_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut registry = registry_with_one_package_and_schema();
+        let mut extents = [PackageExtent::EMPTY; 32];
+        extents[0] = PackageExtent::new(7, 1);
+        let record = PackageRegistryContentRecord {
+            package_object_id: 42,
+            release_digest: digest(4),
+            content_index: 0,
+            role: 1,
+            format: 1,
+            digest: digest(5),
+            byte_len: 3,
+            extents,
+            extent_count: 1,
+            retention_count: 0,
+            flags: 0,
+        };
+        registry.add_content_record(record).unwrap();
+
+        let generation = write_candidate_registry_generation(device, &registry).unwrap();
+        let restored = read_candidate_registry_generation(device, generation).unwrap();
+
+        assert_eq!(restored.package_count(), 1);
+        assert_eq!(restored.schema_count(), 1);
+        assert_eq!(restored.content_count(), 1);
+        assert_eq!(restored.content_record(0), Some(record));
+        let mut wrong_generation = generation;
+        wrong_generation.root_digest[0] ^= 0xFF;
+        assert!(matches!(
+            read_candidate_registry_generation(device, wrong_generation),
+            Err(PackageStatus::TransactionAnchorMismatch | PackageStatus::RegistryRecoveryDenied)
+        ));
     }
 
     fn round_trip(registry: &PackageRegistry) -> PackageRegistry {

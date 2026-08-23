@@ -67,6 +67,8 @@ mod object_service_checkpoint;
 #[cfg(any(test, feature = "phase13-package-test"))]
 mod package_acceptance;
 #[cfg(any(test, feature = "phase13-package-test"))]
+mod package_candidate_store;
+#[cfg(any(test, feature = "phase13-package-test"))]
 mod package_content_store;
 #[cfg(any(test, feature = "phase13-package-test"))]
 mod package_registry;

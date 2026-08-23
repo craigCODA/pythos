@@ -1,6 +1,12 @@
+use crate::{
+    block_device::{BlockDeviceInfo, SECTOR_SIZE},
+    package_candidate_store::{read_package_candidate_sector, write_package_candidate_sector},
+    package_registry::{PackageRegistry, PackageRegistryContentRecord},
+};
 use pythos_shared::package_abi::{
-    MAX_CONTENT_BYTES, MAX_CONTENT_EXTENTS_PER_RECORD, PACKAGE_CONTENT_BITMAP_WORDS,
-    PACKAGE_CONTENT_MAX_BLOCKS, PACKAGE_CONTENT_MAX_STAGED_RECORDS, PackageStatus,
+    MAX_CONTENT_BYTES, MAX_CONTENT_EXTENTS_PER_RECORD, PACKAGE_CONTENT_BASE_SECTOR,
+    PACKAGE_CONTENT_BITMAP_WORDS, PACKAGE_CONTENT_MAX_BLOCKS, PACKAGE_CONTENT_MAX_STAGED_RECORDS,
+    PackageStatus,
 };
 use pythos_shared::sha256::sha256;
 
@@ -257,6 +263,97 @@ impl<'a> PackageContentStore<'a> {
     pub const fn staged_bitmap(&self) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS] {
         self.allocator.staged_bitmap()
     }
+
+    pub fn add_staged_records_to_registry(
+        &self,
+        transaction: &PackageContentTransaction<'a>,
+        registry: &mut PackageRegistry,
+    ) -> Result<(), PackageStatus> {
+        for slot in transaction.staged.iter().flatten() {
+            registry.add_content_record(PackageRegistryContentRecord {
+                package_object_id: slot.record.content_id.package_object_id,
+                release_digest: slot.record.content_id.release_digest,
+                content_index: slot.record.content_id.content_index,
+                role: slot.record.role,
+                format: slot.record.format,
+                digest: slot.record.digest,
+                byte_len: slot.record.byte_len,
+                extents: slot.record.extents,
+                extent_count: slot.record.extent_count,
+                retention_count: slot.record.retention_count,
+                flags: 0,
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn write_candidate_content(
+        &self,
+        device: BlockDeviceInfo,
+        transaction: &PackageContentTransaction<'a>,
+    ) -> Result<PackageContentCommit, PackageStatus> {
+        let mut bitmap = self.allocator.committed_bitmap();
+        let mut record_count = 0u16;
+        for slot in transaction.staged.iter().flatten() {
+            write_record_bytes(device, slot.record, slot.bytes)?;
+            mark_record_extents(&mut bitmap, slot.record.extents, slot.record.extent_count)?;
+            record_count = record_count
+                .checked_add(1)
+                .ok_or(PackageStatus::LengthOverflow)?;
+        }
+        Ok(PackageContentCommit {
+            record_count,
+            committed_bitmap: bitmap,
+        })
+    }
+
+    pub fn read_validate_candidate_content(
+        device: BlockDeviceInfo,
+        registry: &PackageRegistry,
+    ) -> Result<PackageContentCommit, PackageStatus> {
+        let mut bitmap = [0u64; PACKAGE_CONTENT_BITMAP_WORDS];
+        let mut record_count = 0u16;
+        let mut index = 0usize;
+        while let Some(record) = registry.content_record(index) {
+            validate_record_bytes(device, record)?;
+            mark_record_extents(&mut bitmap, record.extents, record.extent_count)?;
+            record_count = record_count
+                .checked_add(1)
+                .ok_or(PackageStatus::LengthOverflow)?;
+            index += 1;
+        }
+        Ok(PackageContentCommit {
+            record_count,
+            committed_bitmap: bitmap,
+        })
+    }
+
+    pub fn live_bitmap_from_registry(
+        registry: &PackageRegistry,
+    ) -> Result<[u64; PACKAGE_CONTENT_BITMAP_WORDS], PackageStatus> {
+        let mut bitmap = [0u64; PACKAGE_CONTENT_BITMAP_WORDS];
+        let mut index = 0usize;
+        while let Some(record) = registry.content_record(index) {
+            mark_record_extents(&mut bitmap, record.extents, record.extent_count)?;
+            index += 1;
+        }
+        Ok(bitmap)
+    }
+
+    pub fn extent_live_in_registry(
+        registry: &PackageRegistry,
+        extent: PackageExtent,
+    ) -> Result<bool, PackageStatus> {
+        validate_extent(extent)?;
+        let bitmap = Self::live_bitmap_from_registry(registry)?;
+        let end_block = extent.start_block + extent.block_count;
+        for block in extent.start_block..end_block {
+            if !bit_is_set(&bitmap, block) {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -404,11 +501,132 @@ fn blocks_for_len(byte_len: usize) -> Result<u16, PackageStatus> {
     Ok(blocks as u16)
 }
 
+fn write_record_bytes(
+    device: BlockDeviceInfo,
+    record: PackageContentRecord,
+    bytes: &[u8],
+) -> Result<(), PackageStatus> {
+    if record.byte_len != bytes.len() as u64 || sha256(bytes) != record.digest {
+        return Err(PackageStatus::ContentCorrupt);
+    }
+    let mut byte_offset = 0usize;
+    let mut extent_index = 0usize;
+    while extent_index < record.extent_count as usize {
+        let extent = record.extents[extent_index];
+        validate_extent(extent)?;
+        for block_offset in 0..extent.block_count {
+            let mut sector = [0u8; SECTOR_SIZE];
+            let remaining = bytes.len().saturating_sub(byte_offset);
+            let copy_len = core::cmp::min(remaining, SECTOR_SIZE);
+            if copy_len != 0 {
+                sector[..copy_len].copy_from_slice(&bytes[byte_offset..byte_offset + copy_len]);
+                byte_offset += copy_len;
+            }
+            let sector_number = PACKAGE_CONTENT_BASE_SECTOR
+                .checked_add(u64::from(extent.start_block) + u64::from(block_offset))
+                .ok_or(PackageStatus::LengthOverflow)?;
+            write_package_candidate_sector(device, sector_number, &sector)
+                .map_err(|_| PackageStatus::RegistryWriteDenied)?;
+        }
+        extent_index += 1;
+    }
+    if byte_offset != bytes.len() {
+        return Err(PackageStatus::BoundsExceeded);
+    }
+    validate_stored_bytes(
+        device,
+        record.digest,
+        record.byte_len,
+        record.extents,
+        record.extent_count,
+    )
+}
+
+fn validate_record_bytes(
+    device: BlockDeviceInfo,
+    record: PackageRegistryContentRecord,
+) -> Result<(), PackageStatus> {
+    validate_stored_bytes(
+        device,
+        record.digest,
+        record.byte_len,
+        record.extents,
+        record.extent_count,
+    )
+}
+
+fn validate_stored_bytes(
+    device: BlockDeviceInfo,
+    expected_digest: [u8; 32],
+    byte_len: u64,
+    extents: [PackageExtent; MAX_CONTENT_EXTENTS_PER_RECORD],
+    extent_count: u16,
+) -> Result<(), PackageStatus> {
+    if byte_len > MAX_CONTENT_BYTES as u64 || extent_count as usize > MAX_CONTENT_EXTENTS_PER_RECORD
+    {
+        return Err(PackageStatus::BoundsExceeded);
+    }
+    let expected_blocks = byte_len
+        .checked_add((SECTOR_SIZE - 1) as u64)
+        .ok_or(PackageStatus::LengthOverflow)?
+        / SECTOR_SIZE as u64;
+    let mut blocks = 0u64;
+    let mut hasher = pythos_shared::sha256::Sha256::new();
+    let mut remaining = byte_len as usize;
+    let mut extent_index = 0usize;
+    while extent_index < extent_count as usize {
+        let extent = extents[extent_index];
+        validate_extent(extent)?;
+        blocks += u64::from(extent.block_count);
+        for block_offset in 0..extent.block_count {
+            let sector_number = PACKAGE_CONTENT_BASE_SECTOR
+                .checked_add(u64::from(extent.start_block) + u64::from(block_offset))
+                .ok_or(PackageStatus::LengthOverflow)?;
+            let sector = read_package_candidate_sector(device, sector_number)
+                .map_err(|_| PackageStatus::ContentCorrupt)?;
+            let take = core::cmp::min(remaining, SECTOR_SIZE);
+            hasher.update(&sector[..take]);
+            remaining -= take;
+        }
+        extent_index += 1;
+    }
+    if blocks != expected_blocks || remaining != 0 || hasher.finalize() != expected_digest {
+        return Err(PackageStatus::ContentCorrupt);
+    }
+    Ok(())
+}
+
+fn mark_record_extents(
+    bitmap: &mut [u64; PACKAGE_CONTENT_BITMAP_WORDS],
+    extents: [PackageExtent; MAX_CONTENT_EXTENTS_PER_RECORD],
+    extent_count: u16,
+) -> Result<(), PackageStatus> {
+    if extent_count as usize > MAX_CONTENT_EXTENTS_PER_RECORD {
+        return Err(PackageStatus::BoundsExceeded);
+    }
+    let mut index = 0usize;
+    while index < extent_count as usize {
+        let extent = extents[index];
+        validate_extent(extent)?;
+        mark_range(bitmap, extent.start_block, extent.block_count, true);
+        index += 1;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         ContentId, PackageContentStore, PackageContentTransaction, PackageExtent,
         PackageExtentAllocator,
+    };
+    use crate::{
+        block_device::BlockDeviceInfo,
+        package_candidate_store::{
+            PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, read_candidate_registry_generation,
+            reset_package_candidate_storage_for_test, write_candidate_registry_generation,
+        },
+        package_registry::PackageRegistry,
     };
     use pythos_shared::package_abi::{
         PACKAGE_CONTENT_BITMAP_WORDS, PACKAGE_CONTENT_MAX_BLOCKS, PackageStatus,
@@ -592,6 +810,47 @@ mod tests {
         assert_eq!(id_a_new_release, ContentId::new(21, release_b, 0));
         assert_ne!(id_a, id_b);
         assert_ne!(id_a, id_a_new_release);
+    }
+
+    #[test]
+    fn package_candidate_content_bytes_survive_reconstruction_without_liveness() {
+        static CONTENT: &[u8] = b"candidate-content";
+
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_candidate_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut store = PackageContentStore::empty();
+        let mut transaction = PackageContentTransaction::new(42, sha256(b"release"));
+        store
+            .stage_content(&mut transaction, 1, 1, CONTENT, sha256(CONTENT))
+            .unwrap();
+        let mut registry = PackageRegistry::empty();
+        store
+            .add_staged_records_to_registry(&transaction, &mut registry)
+            .unwrap();
+        let generation = write_candidate_registry_generation(device, &registry).unwrap();
+        let restored = read_candidate_registry_generation(device, generation).unwrap();
+        let expected_extent = restored.content_record(0).unwrap().extents[0];
+
+        let written = store.write_candidate_content(device, &transaction).unwrap();
+        drop(transaction);
+        drop(store);
+        let validated =
+            PackageContentStore::read_validate_candidate_content(device, &restored).unwrap();
+
+        assert_eq!(validated, written);
+        assert_eq!(validated.record_count(), 1);
+        assert_eq!(
+            PackageContentStore::live_bitmap_from_registry(&PackageRegistry::empty()).unwrap(),
+            [0; PACKAGE_CONTENT_BITMAP_WORDS]
+        );
+        assert!(
+            !PackageContentStore::extent_live_in_registry(
+                &PackageRegistry::empty(),
+                expected_extent,
+            )
+            .unwrap()
+        );
     }
 
     fn release_digest(seed: u8) -> [u8; 32] {

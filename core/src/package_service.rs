@@ -11,6 +11,10 @@ use crate::{
         ObjectCheckpointIdentity, object_candidate_checkpoint_identity,
         read_object_service_candidate_checkpoint, write_object_service_candidate_checkpoint,
     },
+    package_candidate_store::{
+        PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES, read_candidate_registry_generation,
+        write_candidate_registry_generation, write_publication_anchor,
+    },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
@@ -68,7 +72,7 @@ pub struct PackageInstallCandidate {
     pub content_commit: PackageContentCommit,
     pub registry_generation: PackageRegistryGeneration,
     pub object_checkpoint_identity: ObjectCheckpointIdentity,
-    pub staged_registry_snapshot: [u8; 4096],
+    pub staged_registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
 }
 
 impl PackageInstallResult {
@@ -121,18 +125,19 @@ pub struct PackageService<'a> {
     content_store: PackageContentStore<'a>,
     staged_content: PackageContentTransaction<'a>,
     staged_registry: PackageRegistry,
-    registry_snapshot: [u8; 4096],
+    registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
     object_checkpoint_identity: ObjectCheckpointIdentity,
     anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
     anchored_generation_available: bool,
     previous_registry: PackageRegistry,
-    previous_registry_snapshot: [u8; 4096],
+    previous_registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
     previous_object_checkpoint_identity: ObjectCheckpointIdentity,
     previous_anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
     previous_anchored_generation_available: bool,
     unpublished_candidate_checkpoint: Option<ObjectCheckpointIdentity>,
     prepared_candidate: Option<PackageInstallCandidate>,
     prepared_object_service: Option<ObjectService>,
+    prepared_candidate_device: Option<BlockDeviceInfo>,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -146,7 +151,7 @@ impl<'a> PackageService<'a> {
             content_store: PackageContentStore::empty(),
             staged_content: PackageContentTransaction::new(0, [0; 32]),
             staged_registry: PackageRegistry::empty(),
-            registry_snapshot: [0; 4096],
+            registry_snapshot: [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
             object_checkpoint_identity: ObjectCheckpointIdentity {
                 generation: 0,
                 root_digest: [0; 32],
@@ -154,7 +159,7 @@ impl<'a> PackageService<'a> {
             anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
             anchored_generation_available: false,
             previous_registry: PackageRegistry::empty(),
-            previous_registry_snapshot: [0; 4096],
+            previous_registry_snapshot: [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
             previous_object_checkpoint_identity: ObjectCheckpointIdentity {
                 generation: 0,
                 root_digest: [0; 32],
@@ -164,6 +169,7 @@ impl<'a> PackageService<'a> {
             unpublished_candidate_checkpoint: None,
             prepared_candidate: None,
             prepared_object_service: None,
+            prepared_candidate_device: None,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -352,6 +358,8 @@ impl<'a> PackageService<'a> {
 
             self.staged_registry.copy_from_committed(&self.registry);
             self.staged_registry
+                .begin_candidate_generation(self.next_transaction_id)?;
+            self.staged_registry
                 .add_package_record(PackageRegistryPackageRecord::new(
                     package.object_id.raw(),
                     package.revision,
@@ -366,14 +374,15 @@ impl<'a> PackageService<'a> {
                     descriptor_entry.content_index,
                     descriptor_entry.sha256,
                 ))?;
+            self.content_store
+                .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
 
-            let mut staged_registry_snapshot = [0; 4096];
-            let registry_generation = self
-                .staged_registry
-                .encode_snapshot(&mut staged_registry_snapshot)?;
-            let decoded_registry = PackageRegistry::decode_snapshot(
-                &staged_registry_snapshot[..self.staged_registry.encoded_len()],
-            )?;
+            let content_commit = self
+                .content_store
+                .write_candidate_content(device, &self.staged_content)?;
+            let registry_generation =
+                write_candidate_registry_generation(device, &self.staged_registry)?;
+            let decoded_registry = read_candidate_registry_generation(device, registry_generation)?;
             let decoded_registry_generation = PackageRegistryGeneration {
                 generation: decoded_registry.generation(),
                 root_digest: decoded_registry.root_digest(),
@@ -386,7 +395,13 @@ impl<'a> PackageService<'a> {
                 .map_err(map_object_error)?;
             let object_identity = self.persist_candidate_snapshot(device, &candidate_snapshot)?;
             let transaction_id = self.next_transaction_id;
-            let content_commit = self.content_store.commit(&mut self.staged_content)?;
+            let in_memory_content_commit = self.content_store.commit(&mut self.staged_content)?;
+            if in_memory_content_commit != content_commit {
+                return Err(PackageStatus::RegistryRecoveryDenied);
+            }
+            let mut staged_registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+            self.staged_registry
+                .encode_snapshot(&mut staged_registry_snapshot)?;
 
             let candidate = PackageInstallCandidate {
                 transaction_id,
@@ -402,6 +417,7 @@ impl<'a> PackageService<'a> {
                 staged_registry_snapshot,
             };
             self.prepared_object_service = Some(candidate_object_service);
+            self.prepared_candidate_device = Some(device);
             self.prepared_candidate = Some(candidate.clone());
             Ok(candidate)
         })();
@@ -410,6 +426,7 @@ impl<'a> PackageService<'a> {
             Ok(candidate) => Ok(candidate),
             Err(error) => {
                 self.content_store.rollback(&mut self.staged_content);
+                self.prepared_candidate_device = None;
                 Err(error)
             }
         }
@@ -426,7 +443,7 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::BadRequest);
         }
 
-        let mut validated_registry_snapshot = [0u8; 4096];
+        let mut validated_registry_snapshot = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
         let validated_registry_generation = self
             .staged_registry
             .encode_snapshot(&mut validated_registry_snapshot)?;
@@ -458,6 +475,10 @@ impl<'a> PackageService<'a> {
         );
         let mut anchor_bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         anchor.encode(&mut anchor_bytes)?;
+        let device = self
+            .prepared_candidate_device
+            .ok_or(PackageStatus::RegistryWriteDenied)?;
+        write_publication_anchor(device, anchor)?;
 
         let previous_registry = self.registry.clone();
         let previous_registry_snapshot = self.registry_snapshot;
@@ -480,6 +501,7 @@ impl<'a> PackageService<'a> {
         self.unpublished_candidate_checkpoint = None;
         self.prepared_candidate = None;
         self.prepared_object_service = None;
+        self.prepared_candidate_device = None;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
@@ -754,7 +776,7 @@ impl<'a> PackageService<'a> {
         self.anchor_bytes = self.previous_anchor_bytes;
         self.anchored_generation_available = self.previous_anchored_generation_available;
         self.previous_registry = PackageRegistry::empty();
-        self.previous_registry_snapshot = [0; 4096];
+        self.previous_registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
         self.previous_object_checkpoint_identity = ObjectCheckpointIdentity {
             generation: 0,
             root_digest: [0; 32],
@@ -899,7 +921,13 @@ mod tests {
             read_object_service_candidate_checkpoint, read_object_service_checkpoint,
             reset_checkpoint_storage_for_test,
         },
-        package_content_store::{ContentId, PackageContentTransaction},
+        package_candidate_store::{
+            PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, PackagePublicationAnchorSlot,
+            read_candidate_registry_generation, read_publication_anchor_slot,
+            reset_package_candidate_storage_for_test, write_candidate_registry_generation,
+            write_publication_anchor,
+        },
+        package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
         package_registry::{
             PackageRegistry, PackageRegistryPackageRecord, PackageTransactionCommitV0,
         },
@@ -943,6 +971,49 @@ mod tests {
                 })
             );
         });
+    }
+
+    #[test]
+    fn package_publication_anchor_persists_without_selecting_candidate() {
+        static CONTENT: &[u8] = b"anchor-candidate-content";
+
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_candidate_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut store = PackageContentStore::empty();
+        let mut transaction = PackageContentTransaction::new(42, sha256(b"anchor-release"));
+        store
+            .stage_content(&mut transaction, 1, 1, CONTENT, sha256(CONTENT))
+            .unwrap();
+        let mut registry = PackageRegistry::empty();
+        store
+            .add_staged_records_to_registry(&transaction, &mut registry)
+            .unwrap();
+        store.write_candidate_content(device, &transaction).unwrap();
+        let registry_generation = write_candidate_registry_generation(device, &registry).unwrap();
+        let restored = read_candidate_registry_generation(device, registry_generation).unwrap();
+        let object_identity = crate::object_service_checkpoint::ObjectCheckpointIdentity {
+            generation: 9,
+            root_digest: [9; 32],
+        };
+        let anchor =
+            PackageTransactionCommitV0::new(7, 1, registry_generation, object_identity, 42, 1);
+
+        write_publication_anchor(device, anchor).unwrap();
+        let decoded = read_publication_anchor_slot(device, PackagePublicationAnchorSlot::B)
+            .unwrap()
+            .unwrap();
+        let fresh = PackageService::new_empty_for_test();
+
+        assert_eq!(decoded, anchor);
+        assert_eq!(restored.package_count(), 0);
+        assert_eq!(restored.content_count(), 1);
+        assert_eq!(
+            read_publication_anchor_slot(device, PackagePublicationAnchorSlot::A),
+            Ok(None)
+        );
+        assert_eq!(fresh.registry().package_count(), 0);
+        assert!(!fresh.locator_mirror_visible);
     }
 
     #[test]
