@@ -2,8 +2,6 @@
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
 use crate::block_device::SECTOR_SIZE;
-#[cfg(any(test, feature = "phase13-package-test"))]
-use crate::package_service::PackageLaunchGrant;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service;
 #[cfg(all(
@@ -130,6 +128,12 @@ pub struct PythGraphImportCapabilities {
     pub system_log: PackedCapability,
     pub object_workspace: PackedCapability,
     pub task_steward: PackedCapability,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageLaunchGraphImportGrant {
+    pub import_slot: u16,
+    pub capability: PackedCapability,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -300,13 +304,12 @@ pub fn build_pyth_graph_bootstrap(
     )
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 pub fn prepare_package_launch_runtime_bootstrap(
     verified: &VerifiedGraph<'_>,
     package_len: u64,
-    supplied_grants: &[PackageLaunchGrant],
+    graph_import_grants: &[PackageLaunchGraphImportGrant],
 ) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
-    let import_capabilities = package_launch_import_capabilities(verified, supplied_grants)?;
+    let import_capabilities = package_launch_import_capabilities(verified, graph_import_grants)?;
     build_pyth_graph_bootstrap(
         verified,
         PYTH_GRAPH_PACKAGE_USER_PTR,
@@ -316,10 +319,9 @@ pub fn prepare_package_launch_runtime_bootstrap(
     )
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 fn package_launch_import_capabilities(
     verified: &VerifiedGraph<'_>,
-    supplied_grants: &[PackageLaunchGrant],
+    graph_import_grants: &[PackageLaunchGraphImportGrant],
 ) -> Result<PythGraphImportCapabilities, PythRuntimeLaunchError> {
     let mut capabilities = PythGraphImportCapabilities {
         system_log: PackedCapability::from_raw(0),
@@ -332,7 +334,7 @@ fn package_launch_import_capabilities(
         let import = imports
             .get(index)
             .ok_or(PythRuntimeLaunchError::MissingImport)?;
-        let capability = package_launch_grant_for_import(import.import_slot, supplied_grants)?;
+        let capability = package_launch_grant_for_import(import.import_slot, graph_import_grants)?;
         match (import.resource_kind, import.rights) {
             (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.system_log = capability,
             (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
@@ -348,20 +350,18 @@ fn package_launch_import_capabilities(
     Ok(capabilities)
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 fn package_launch_grant_for_import(
     import_slot: u16,
-    supplied_grants: &[PackageLaunchGrant],
+    graph_import_grants: &[PackageLaunchGraphImportGrant],
 ) -> Result<PackedCapability, PythRuntimeLaunchError> {
     let mut index = 0usize;
-    while index < supplied_grants.len() {
-        let grant = supplied_grants[index];
-        if grant.requirement_id == import_slot {
-            let capability = grant.packed_capability();
-            if capability.raw() == 0 {
+    while index < graph_import_grants.len() {
+        let grant = graph_import_grants[index];
+        if grant.import_slot == import_slot {
+            if grant.capability.raw() == 0 {
                 return Err(PythRuntimeLaunchError::MissingImport);
             }
-            return Ok(capability);
+            return Ok(grant.capability);
         }
         index += 1;
     }
@@ -1312,10 +1312,7 @@ pub fn rejection_code_for_load_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        capabilities::CapabilityHandle, package_service::PackageLaunchGrant, process_context,
-        task_service, user_copy::UserCopyAccess, user_stacks,
-    };
+    use crate::{process_context, task_service, user_copy::UserCopyAccess, user_stacks};
     use core::mem::size_of;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
@@ -1344,15 +1341,15 @@ mod tests {
             let package = test_support::object_note_flow_package();
             let verified = verify_bytes(&package).unwrap();
             let expected_import_capability = PackedCapability::from_parts(12, 3);
-            let supplied_grants = [PackageLaunchGrant {
-                requirement_id: 0,
-                capability: CapabilityHandle::from_parts(12, 3),
+            let graph_import_grants = [PackageLaunchGraphImportGrant {
+                import_slot: 0,
+                capability: expected_import_capability,
             }];
 
             let bootstrap = prepare_package_launch_runtime_bootstrap(
                 &verified,
                 package.len() as u64,
-                &supplied_grants,
+                &graph_import_grants,
             )
             .unwrap();
 

@@ -28,6 +28,7 @@ use crate::{
     },
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
+    pyth_runtime_launch::PackageLaunchGraphImportGrant,
     shell_objects::{ObjectId, ObjectKind},
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
@@ -110,6 +111,7 @@ pub struct PackageInstallCandidate {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageLaunchRequirement {
     pub requirement_id: u16,
+    pub graph_import_slot: u16,
     pub resource: ResourceId,
     pub rights: RightsMask,
 }
@@ -141,9 +143,15 @@ struct PackageLaunchRequirementRecord {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PackageLaunchResolvedGrant {
+    supplied: PackageLaunchGrant,
+    graph_import_slot: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageLaunchResult {
     pub export: PackageRegistryExportRecord,
-    grants: [Option<PackageLaunchGrant>; MAX_REQUIREMENT_RECORDS],
+    grants: [Option<PackageLaunchResolvedGrant>; MAX_REQUIREMENT_RECORDS],
     pub grant_count: usize,
 }
 
@@ -160,7 +168,23 @@ impl PackageLaunchResult {
         if index >= self.grant_count {
             return None;
         }
-        self.grants[index]
+        match self.grants[index] {
+            Some(grant) => Some(grant.supplied),
+            None => None,
+        }
+    }
+
+    pub const fn graph_import_grant(&self, index: usize) -> Option<PackageLaunchGraphImportGrant> {
+        if index >= self.grant_count {
+            return None;
+        }
+        match self.grants[index] {
+            Some(grant) => Some(PackageLaunchGraphImportGrant {
+                import_slot: grant.graph_import_slot,
+                capability: grant.supplied.packed_capability(),
+            }),
+            None => None,
+        }
     }
 }
 
@@ -1521,7 +1545,10 @@ fn validate_launch_authority(
                     requirement.rights,
                 )
                 .map_err(|_| PackageStatus::FinalCapabilityDenied)?;
-            launch.grants[launch.grant_count] = Some(supplied);
+            launch.grants[launch.grant_count] = Some(PackageLaunchResolvedGrant {
+                supplied,
+                graph_import_slot: requirement.graph_import_slot,
+            });
             launch.grant_count += 1;
         }
         index += 1;
@@ -1855,6 +1882,7 @@ mod tests {
         },
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
+        pyth_runtime_launch::prepare_package_launch_runtime_bootstrap,
         service_identity::ServiceId,
         shell_objects::{ObjectId, ObjectKind},
     };
@@ -1866,6 +1894,7 @@ mod tests {
             PACKAGE_SOURCE_READ_RIGHT, PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
         },
         package_format::{CONTENT_ENTRY_V0_LEN, PACKAGE_ARTIFACT_HEADER_LEN},
+        pyth_tig::{test_support, verify::verify_bytes},
         sha256::{Sha256, sha256},
     };
     use std::vec::Vec;
@@ -3835,6 +3864,7 @@ mod tests {
             .unwrap();
         let requirements = [PackageLaunchRequirement {
             requirement_id: 7,
+            graph_import_slot: 0,
             resource: ResourceId::new(0x5059_4F42_4A43_0001),
             rights: RightsMask::new(RightsMask::WRITE),
         }];
@@ -3867,6 +3897,7 @@ mod tests {
         let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4304, 0x13);
         let requirement = PackageLaunchRequirement {
             requirement_id: 7,
+            graph_import_slot: 0,
             resource: ResourceId::new(0x5059_4F42_4A43_0001),
             rights: RightsMask::new(RightsMask::WRITE),
         };
@@ -3908,6 +3939,7 @@ mod tests {
             .unwrap();
         let requirements = [PackageLaunchRequirement {
             requirement_id: 7,
+            graph_import_slot: 0,
             resource: ResourceId::new(0x5059_4F42_4A43_0001),
             rights: RightsMask::new(RightsMask::WRITE),
         }];
@@ -3958,6 +3990,7 @@ mod tests {
             .unwrap();
         let requirements = [PackageLaunchRequirement {
             requirement_id: 7,
+            graph_import_slot: 0,
             resource: ResourceId::new(0x5059_4F42_4A43_0001),
             rights: RightsMask::new(RightsMask::WRITE),
         }];
@@ -3989,6 +4022,66 @@ mod tests {
         assert_eq!(launch.grant_count, 1);
         assert_eq!(launch.grant(0), Some(supplied_grants[0]));
         assert_eq!(launch.grant(1), None);
+    }
+
+    #[test]
+    fn package_launch_runtime_maps_requirement_id_to_explicit_graph_import_slot() {
+        let mut package_service = service_with_launch_export();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4305, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let supplied_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(0x5059_4F42_4A43_0001),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        package_service
+            .record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/launch",
+                requirement,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant {
+            requirement_id: 7,
+            capability: supplied_capability,
+        }];
+
+        let launch = package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+        let graph_import_grants = [launch.graph_import_grant(0).unwrap()];
+        let package = test_support::object_note_flow_package();
+        let verified = verify_bytes(&package).unwrap();
+
+        let bootstrap = prepare_package_launch_runtime_bootstrap(
+            &verified,
+            package.len() as u64,
+            &graph_import_grants,
+        )
+        .unwrap();
+
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+        assert_eq!(bootstrap.imports[0].import_slot, 0);
+        assert_eq!(
+            bootstrap.imports[0].capability,
+            supplied_grants[0].packed_capability()
+        );
     }
 
     fn service_with_launch_export() -> PackageService<'static> {
