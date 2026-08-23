@@ -2,6 +2,8 @@
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
 use crate::block_device::SECTOR_SIZE;
+#[cfg(any(test, feature = "phase13-package-test"))]
+use crate::package_service::PackageLaunchGrant;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service;
 #[cfg(all(
@@ -296,6 +298,74 @@ pub fn build_pyth_graph_bootstrap(
         result_user_ptr,
         PythGraphBootstrapBinding::Complete(import_capabilities),
     )
+}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+pub fn prepare_package_launch_runtime_bootstrap(
+    verified: &VerifiedGraph<'_>,
+    package_len: u64,
+    supplied_grants: &[PackageLaunchGrant],
+) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
+    let import_capabilities = package_launch_import_capabilities(verified, supplied_grants)?;
+    build_pyth_graph_bootstrap(
+        verified,
+        PYTH_GRAPH_PACKAGE_USER_PTR,
+        package_len,
+        PYTH_GRAPH_RESULT_USER_PTR,
+        import_capabilities,
+    )
+}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+fn package_launch_import_capabilities(
+    verified: &VerifiedGraph<'_>,
+    supplied_grants: &[PackageLaunchGrant],
+) -> Result<PythGraphImportCapabilities, PythRuntimeLaunchError> {
+    let mut capabilities = PythGraphImportCapabilities {
+        system_log: PackedCapability::from_raw(0),
+        object_workspace: PackedCapability::from_raw(0),
+        task_steward: PackedCapability::from_raw(0),
+    };
+    let imports = verified.package().imports();
+    let mut index = 0usize;
+    while index < imports.len() {
+        let import = imports
+            .get(index)
+            .ok_or(PythRuntimeLaunchError::MissingImport)?;
+        let capability = package_launch_grant_for_import(import.import_slot, supplied_grants)?;
+        match (import.resource_kind, import.rights) {
+            (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.system_log = capability,
+            (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
+                capabilities.object_workspace = capability;
+            }
+            (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
+                capabilities.task_steward = capability;
+            }
+            _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
+        }
+        index += 1;
+    }
+    Ok(capabilities)
+}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+fn package_launch_grant_for_import(
+    import_slot: u16,
+    supplied_grants: &[PackageLaunchGrant],
+) -> Result<PackedCapability, PythRuntimeLaunchError> {
+    let mut index = 0usize;
+    while index < supplied_grants.len() {
+        let grant = supplied_grants[index];
+        if grant.requirement_id == import_slot {
+            let capability = grant.packed_capability();
+            if capability.raw() == 0 {
+                return Err(PythRuntimeLaunchError::MissingImport);
+            }
+            return Ok(capability);
+        }
+        index += 1;
+    }
+    Err(PythRuntimeLaunchError::MissingImport)
 }
 
 fn build_pyth_graph_bootstrap_with_binding(
@@ -1242,7 +1312,10 @@ pub fn rejection_code_for_load_error(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{process_context, task_service, user_copy::UserCopyAccess, user_stacks};
+    use crate::{
+        capabilities::CapabilityHandle, package_service::PackageLaunchGrant, process_context,
+        task_service, user_copy::UserCopyAccess, user_stacks,
+    };
     use core::mem::size_of;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
@@ -1260,6 +1333,47 @@ mod tests {
             verify::verify_bytes,
         },
     };
+
+    mod package_launch_runtime {
+        use super::*;
+
+        #[test]
+        fn package_launch_uses_existing_graph_runtime_bootstrap_without_resizing_bootstrap() {
+            assert_eq!(size_of::<PythGraphBootstrapBlock>(), 816);
+
+            let package = test_support::object_note_flow_package();
+            let verified = verify_bytes(&package).unwrap();
+            let expected_import_capability = PackedCapability::from_parts(12, 3);
+            let supplied_grants = [PackageLaunchGrant {
+                requirement_id: 0,
+                capability: CapabilityHandle::from_parts(12, 3),
+            }];
+
+            let bootstrap = prepare_package_launch_runtime_bootstrap(
+                &verified,
+                package.len() as u64,
+                &supplied_grants,
+            )
+            .unwrap();
+
+            assert_eq!(bootstrap.magic, PYTH_GRAPH_BOOTSTRAP_MAGIC);
+            assert_eq!(bootstrap.abi_major, PYTH_GRAPH_RUNTIME_ABI_MAJOR);
+            assert_eq!(bootstrap.abi_minor, PYTH_GRAPH_RUNTIME_ABI_MINOR);
+            assert_eq!(bootstrap.package_ptr, PYTH_GRAPH_PACKAGE_USER_PTR);
+            assert_eq!(bootstrap.package_len, package.len() as u64);
+            assert_eq!(bootstrap.instruction_budget, PYTH_GRAPH_DEFAULT_BUDGET);
+            assert_eq!(bootstrap.result_ptr, PYTH_GRAPH_RESULT_USER_PTR);
+            assert_eq!(bootstrap.import_count, 1);
+            assert_eq!(bootstrap.imports[0].import_slot, 0);
+            assert_eq!(
+                bootstrap.imports[0].resource_kind,
+                RESOURCE_OBJECT_WORKSPACE
+            );
+            assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE | RIGHTS_QUERY);
+            assert_eq!(bootstrap.imports[0].capability, expected_import_capability);
+            assert_eq!(bootstrap.imports[1].capability.raw(), 0);
+        }
+    }
 
     #[test]
     fn bootstrap_binds_readonly_package_result_slot_budget_and_system_log_import() {

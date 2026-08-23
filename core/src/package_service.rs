@@ -34,6 +34,7 @@ use crate::{
 #[cfg(not(test))]
 use core::cell::UnsafeCell;
 use pythos_shared::{
+    object_shell_abi::PackedCapability,
     package_abi::{
         MAX_REQUIREMENT_RECORDS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION,
         PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageStatus,
@@ -117,6 +118,12 @@ pub struct PackageLaunchRequirement {
 pub struct PackageLaunchGrant {
     pub requirement_id: u16,
     pub capability: CapabilityHandle,
+}
+
+impl PackageLaunchGrant {
+    pub const fn packed_capability(self) -> PackedCapability {
+        PackedCapability::from_parts(self.capability.slot(), self.capability.generation())
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
