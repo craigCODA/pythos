@@ -16,7 +16,7 @@ use crate::{
         PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES, PackagePublicationAnchorSlot,
         read_candidate_registry_generation, read_candidate_registry_generation_into,
         read_publication_anchor_slot, write_candidate_registry_generation,
-        write_publication_anchor,
+        write_candidate_registry_generation_into, write_publication_anchor,
     },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
@@ -430,6 +430,7 @@ pub struct PackageService<'a> {
     previous_object_checkpoint_identity: ObjectCheckpointIdentity,
     previous_anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
     previous_anchored_generation_available: bool,
+    publication_device: Option<BlockDeviceInfo>,
     unpublished_candidate_checkpoint: Option<ObjectCheckpointIdentity>,
     prepared_candidate: Option<PackageInstallCandidate>,
     prepared_object_service: Option<ObjectService>,
@@ -558,6 +559,7 @@ impl<'a> PackageService<'a> {
             },
             previous_anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
             previous_anchored_generation_available: false,
+            publication_device: None,
             unpublished_candidate_checkpoint: None,
             prepared_candidate: None,
             prepared_object_service: None,
@@ -785,6 +787,7 @@ impl<'a> PackageService<'a> {
             self.object_checkpoint_identity = object_checkpoint_identity;
             self.anchor_bytes = anchor_bytes;
             self.anchored_generation_available = true;
+            self.publication_device = None;
             self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
             self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
             self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
@@ -1114,6 +1117,7 @@ impl<'a> PackageService<'a> {
         self.object_checkpoint_identity = candidate.object_checkpoint_identity;
         self.anchor_bytes = anchor_bytes;
         self.anchored_generation_available = true;
+        self.publication_device = Some(device);
         self.unpublished_candidate_checkpoint = None;
         self.prepared_candidate = None;
         self.prepared_object_service = None;
@@ -1145,6 +1149,80 @@ impl<'a> PackageService<'a> {
 
     pub const fn registry(&self) -> &PackageRegistry {
         &self.registry
+    }
+
+    pub fn disable(&mut self, package_object_id: ObjectId) -> Result<(), PackageStatus> {
+        if self.prepared_candidate.is_some() {
+            return Err(PackageStatus::BadRequest);
+        }
+        self.staged_registry.copy_from_committed(&self.registry);
+        if let Err(status) = self
+            .staged_registry
+            .begin_candidate_generation(self.next_transaction_id)
+        {
+            self.staged_registry.copy_from_committed(&self.registry);
+            return Err(status);
+        }
+        let disabled = match self.staged_registry.disable(package_object_id) {
+            Ok(record) => record,
+            Err(status) => {
+                self.staged_registry.copy_from_committed(&self.registry);
+                return Err(status);
+            }
+        };
+
+        let committed = with_package_restore_scratch(|scratch| {
+            let durable_device = if self.anchored_generation_available {
+                self.publication_device
+            } else {
+                None
+            };
+            let registry_generation = match durable_device {
+                Some(device) => write_candidate_registry_generation_into(
+                    device,
+                    &self.staged_registry,
+                    &mut scratch.registry_snapshot,
+                    &mut scratch.candidate.registry,
+                )?,
+                None => self
+                    .staged_registry
+                    .encode_snapshot(&mut scratch.registry_snapshot)?,
+            };
+            let anchor = PackageTransactionCommitV0::new(
+                self.next_transaction_id,
+                INSTALL_OPERATION,
+                registry_generation,
+                self.object_checkpoint_identity,
+                disabled.package_object_id,
+                disabled.installed_revision,
+            );
+            anchor.encode(&mut scratch.anchor_bytes)?;
+            if let Some(device) = durable_device {
+                write_publication_anchor(device, anchor)?;
+            }
+
+            self.staged_registry
+                .record_committed_generation(registry_generation);
+            self.previous_registry.copy_from_committed(&self.registry);
+            self.previous_registry_snapshot
+                .copy_from_slice(&self.registry_snapshot);
+            self.previous_object_checkpoint_identity = self.object_checkpoint_identity;
+            self.previous_anchor_bytes
+                .copy_from_slice(&self.anchor_bytes);
+            self.previous_anchored_generation_available = self.anchored_generation_available;
+            self.registry.copy_from_committed(&self.staged_registry);
+            self.registry_snapshot
+                .copy_from_slice(&scratch.registry_snapshot);
+            self.anchor_bytes.copy_from_slice(&scratch.anchor_bytes);
+            self.anchored_generation_available = self.previous_anchored_generation_available;
+            self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
+            self.locator_mirror_visible = false;
+            Ok(())
+        });
+        if committed.is_err() {
+            self.staged_registry.copy_from_committed(&self.registry);
+        }
+        committed
     }
 
     #[cfg(test)]
@@ -1485,6 +1563,7 @@ impl<'a> PackageService<'a> {
         anchor.encode(&mut scratch.anchor_bytes)?;
 
         self.commit_restored_publication(
+            device,
             anchor,
             registry_generation,
             object_checkpoint_identity,
@@ -1495,6 +1574,7 @@ impl<'a> PackageService<'a> {
 
     fn commit_restored_publication(
         &mut self,
+        device: BlockDeviceInfo,
         anchor: PackageTransactionCommitV0,
         registry_generation: PackageRegistryGeneration,
         object_checkpoint_identity: ObjectCheckpointIdentity,
@@ -1520,6 +1600,7 @@ impl<'a> PackageService<'a> {
         self.object_checkpoint_identity = object_checkpoint_identity;
         self.anchor_bytes.copy_from_slice(&scratch.anchor_bytes);
         self.anchored_generation_available = true;
+        self.publication_device = Some(device);
         self.unpublished_candidate_checkpoint = None;
         clear_restore_option(&mut self.prepared_candidate);
         clear_restore_option(&mut self.prepared_object_service);
@@ -2686,6 +2767,209 @@ mod tests {
         assert_eq!(launch.export, resolved);
         assert_eq!(launch.grant_count, 1);
         assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+    }
+
+    #[test]
+    fn package_disable_blocks_new_launch_without_tearing_down_running_context_or_grants() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut package_service = PackageService::new_empty_for_test();
+        let report = package_service.restore_from_storage(device).unwrap();
+        assert!(report.published_world_selected);
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let resolved = package_service.resolve_export(root, "seed/launch").unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4449_5341_0001, 0x13);
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        package_service
+            .record_launch_requirement(root, "seed/launch", requirement)
+            .unwrap();
+        let mut capabilities = CapabilityTable::new();
+        let supplied_capability = capabilities
+            .grant(
+                caller.service_id(),
+                requirement.resource,
+                requirement.rights,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant {
+            requirement_id: requirement.requirement_id,
+            capability: supplied_capability,
+        }];
+        let launch = package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+        let binding_before_disable = package_service.runtime_schema_binding(caller, 0).unwrap();
+
+        assert_eq!(launch.export, resolved);
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            capabilities.validate(
+                caller.service_id(),
+                supplied_capability,
+                requirement.resource,
+                requirement.rights,
+            ),
+            Ok(())
+        );
+
+        package_service
+            .disable(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        let disabled_record = package_service.registry().package_record(0).unwrap();
+        assert_eq!(
+            disabled_record.package_object_id,
+            installed.package_object_id
+        );
+        assert_eq!(
+            disabled_record.installed_revision,
+            installed.package_revision
+        );
+        assert_eq!(disabled_record.release_digest, installed.release_digest);
+        assert_eq!(
+            disabled_record.status,
+            PackageStatus::PackageDisabled as u16
+        );
+        assert_eq!(
+            package_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::PackageDisabled)
+        );
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(package_service.registry().schema_count(), 1);
+        assert_eq!(package_service.registry().content_count(), 2);
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            package_service.runtime_schema_binding(caller, 0),
+            Ok(binding_before_disable)
+        );
+        assert_eq!(
+            capabilities.validate(
+                caller.service_id(),
+                supplied_capability,
+                requirement.resource,
+                requirement.rights,
+            ),
+            Ok(())
+        );
+
+        let second_caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4449_5341_0002, 0x13);
+        let second_capability = capabilities
+            .grant(
+                second_caller.service_id(),
+                requirement.resource,
+                requirement.rights,
+            )
+            .unwrap();
+        let second_grants = [PackageLaunchGrant {
+            requirement_id: requirement.requirement_id,
+            capability: second_capability,
+        }];
+
+        assert_eq!(
+            package_service.launch(
+                PackageLaunchRequest {
+                    caller: second_caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &second_grants,
+                },
+                &capabilities,
+            ),
+            Err(PackageStatus::PackageDisabled)
+        );
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            package_service.runtime_schema_binding(caller, 0),
+            Ok(binding_before_disable)
+        );
+
+        let recovery = package_service.recover().unwrap();
+        assert!(recovery.published_world_selected);
+        assert_eq!(
+            package_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::PackageDisabled)
+        );
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            package_service.runtime_schema_binding(caller, 0),
+            Ok(binding_before_disable)
+        );
+
+        let mut boot_three_service = PackageService::new_empty_for_test();
+        let fresh_report = boot_three_service.restore_from_storage(device).unwrap();
+        assert!(fresh_report.published_world_selected);
+        assert_eq!(
+            boot_three_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::PackageDisabled)
+        );
+        assert_eq!(boot_three_service.registry().package_count(), 1);
+        assert_eq!(boot_three_service.registry().schema_count(), 1);
+        assert_eq!(boot_three_service.registry().content_count(), 2);
+    }
+
+    #[test]
+    fn package_disable_rejects_pending_install_candidate_without_changing_launch_state() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+
+        assert_eq!(
+            package_service.disable(ObjectId::new(installed.package_object_id)),
+            Err(PackageStatus::BadRequest)
+        );
+
+        let active_record = package_service.registry().package_record(0).unwrap();
+        assert_eq!(active_record.package_object_id, installed.package_object_id);
+        assert_eq!(active_record.status, PackageStatus::Ok as u16);
+        assert_eq!(
+            package_service
+                .resolve_export(root, "seed/launch")
+                .unwrap()
+                .package_object_id,
+            installed.package_object_id
+        );
+
+        package_service
+            .publish_install_candidate(candidate, &mut object_service)
+            .unwrap();
     }
 
     #[test]

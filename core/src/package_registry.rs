@@ -406,10 +406,25 @@ impl PackageRegistry {
         &mut self,
         record: PackageRegistryExportRecord,
     ) -> Result<(), PackageStatus> {
+        self.active_package_for_export(record)?;
+        self.insert_export_record(record)
+    }
+
+    fn add_export_record_from_snapshot(
+        &mut self,
+        record: PackageRegistryExportRecord,
+    ) -> Result<(), PackageStatus> {
+        self.retainable_package_record_for_export(record)?;
+        self.insert_export_record(record)
+    }
+
+    fn insert_export_record(
+        &mut self,
+        record: PackageRegistryExportRecord,
+    ) -> Result<(), PackageStatus> {
         if self.export_count as usize >= MAX_REGISTRY_EXPORTS {
             return Err(PackageStatus::QuotaDenied);
         }
-        self.active_package_for_export(record)?;
         if self.export_records.iter().flatten().any(|existing| {
             existing.namespace_root_object_id == record.namespace_root_object_id
                 && locator_segment_eq(
@@ -430,6 +445,35 @@ impl PackageRegistry {
         self.export_records[self.export_count as usize] = Some(record);
         self.export_count += 1;
         Ok(())
+    }
+
+    pub fn disable(
+        &mut self,
+        package_object_id: ObjectId,
+    ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
+        let mut index = 0usize;
+        while index < self.package_count as usize {
+            if let Some(mut record) = self.package_records[index]
+                && record.package_object_id == package_object_id.raw()
+            {
+                return match record.status {
+                    status
+                        if status == PackageStatus::Ok as u16
+                            || status == PackageStatus::PackageDisabled as u16 =>
+                    {
+                        record.status = PackageStatus::PackageDisabled as u16;
+                        self.package_records[index] = Some(record);
+                        Ok(record)
+                    }
+                    status if status == PackageStatus::PackageTombstoned as u16 => {
+                        Err(PackageStatus::PackageTombstoned)
+                    }
+                    _ => Err(PackageStatus::Denied),
+                };
+            }
+            index += 1;
+        }
+        Err(PackageStatus::NotFound)
     }
 
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageStatus> {
@@ -527,7 +571,7 @@ impl PackageRegistry {
             if !registry.published_content_for_export(record) {
                 return Err(PackageStatus::RegistryRecoveryDenied);
             }
-            registry.add_export_record(record)?;
+            registry.add_export_record_from_snapshot(record)?;
             offset += PACKAGE_REGISTRY_EXPORT_RECORD_LEN;
         }
 
@@ -802,6 +846,23 @@ impl PackageRegistry {
         &self,
         export: PackageRegistryExportRecord,
     ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
+        let record = self.package_record_for_export(export)?;
+        match record.status {
+            status if status == PackageStatus::Ok as u16 => Ok(record),
+            status if status == PackageStatus::PackageDisabled as u16 => {
+                Err(PackageStatus::PackageDisabled)
+            }
+            status if status == PackageStatus::PackageTombstoned as u16 => {
+                Err(PackageStatus::PackageTombstoned)
+            }
+            _ => Err(PackageStatus::ExportMissing),
+        }
+    }
+
+    fn package_record_for_export(
+        &self,
+        export: PackageRegistryExportRecord,
+    ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
         let mut index = 0usize;
         while index < self.package_count as usize {
             if let Some(record) = self.package_records[index]
@@ -809,20 +870,30 @@ impl PackageRegistry {
                 && record.installed_revision == export.package_revision
                 && record.release_digest == export.release_digest
             {
-                return match record.status {
-                    status if status == PackageStatus::Ok as u16 => Ok(record),
-                    status if status == PackageStatus::PackageDisabled as u16 => {
-                        Err(PackageStatus::PackageDisabled)
-                    }
-                    status if status == PackageStatus::PackageTombstoned as u16 => {
-                        Err(PackageStatus::PackageTombstoned)
-                    }
-                    _ => Err(PackageStatus::ExportMissing),
-                };
+                return Ok(record);
             }
             index += 1;
         }
         Err(PackageStatus::ExportMissing)
+    }
+
+    fn retainable_package_record_for_export(
+        &self,
+        export: PackageRegistryExportRecord,
+    ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
+        let record = self.package_record_for_export(export)?;
+        match record.status {
+            status
+                if status == PackageStatus::Ok as u16
+                    || status == PackageStatus::PackageDisabled as u16 =>
+            {
+                Ok(record)
+            }
+            status if status == PackageStatus::PackageTombstoned as u16 => {
+                Err(PackageStatus::PackageTombstoned)
+            }
+            _ => Err(PackageStatus::ExportMissing),
+        }
     }
 
     fn published_content_for_export(&self, export: PackageRegistryExportRecord) -> bool {
@@ -1555,6 +1626,163 @@ mod tests {
                 .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
                 .unwrap(),
             export
+        );
+    }
+
+    #[test]
+    fn package_disable_retains_registry_records_and_persists_denial_state() {
+        let mut registry = PackageRegistry::empty();
+        let package = PackageRegistryPackageRecord::new(42, 7, digest(4), PackageStatus::Ok as u16);
+        let schema = PackageRegistrySchemaRecord::new(77, 3, 42, 1, digest(7));
+        let mut extents = [PackageExtent::EMPTY; 32];
+        extents[0] = PackageExtent::new(7, 1);
+        let content = PackageRegistryContentRecord {
+            package_object_id: 42,
+            release_digest: digest(4),
+            content_index: 1,
+            role: 2,
+            format: 1,
+            digest: digest(5),
+            byte_len: 3,
+            extents,
+            extent_count: 1,
+            retention_count: 0,
+            flags: 0,
+        };
+        let export = PackageRegistryExportRecord::new(
+            PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+            b"seed",
+            b"launch",
+            42,
+            7,
+            digest(4),
+            1,
+            1,
+            0,
+            77,
+            3,
+            digest(7),
+        )
+        .unwrap();
+        registry.add_package_record(package).unwrap();
+        registry.add_schema_record(schema).unwrap();
+        registry.add_content_record(content).unwrap();
+        registry.add_export_record(export).unwrap();
+        assert_eq!(
+            registry
+                .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+                .unwrap(),
+            export
+        );
+
+        let disabled = registry.disable(ObjectId::new(42)).unwrap();
+
+        assert_eq!(disabled.package_object_id, package.package_object_id);
+        assert_eq!(disabled.installed_revision, package.installed_revision);
+        assert_eq!(disabled.release_digest, package.release_digest);
+        assert_eq!(disabled.status, PackageStatus::PackageDisabled as u16);
+        assert_eq!(registry.package_count(), 1);
+        assert_eq!(registry.schema_count(), 1);
+        assert_eq!(registry.content_count(), 1);
+        assert_eq!(registry.export_count, 1);
+        assert_eq!(registry.schema_record(0), Some(schema));
+        assert_eq!(registry.content_record(0), Some(content));
+        assert_eq!(registry.export_records[0], Some(export));
+        assert_eq!(
+            registry
+                .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch"),
+            Err(PackageStatus::PackageDisabled)
+        );
+
+        let mut encoded = [0u8; 1024];
+        registry.encode_snapshot(&mut encoded).unwrap();
+        let restored =
+            PackageRegistry::decode_snapshot(&encoded[..registry.encoded_len()]).unwrap();
+
+        assert_eq!(restored.package_count(), 1);
+        assert_eq!(restored.schema_count(), 1);
+        assert_eq!(restored.content_count(), 1);
+        assert_eq!(restored.export_count, 1);
+        assert_eq!(
+            restored.package_record(0).unwrap().package_object_id,
+            package.package_object_id
+        );
+        assert_eq!(
+            restored.package_record(0).unwrap().installed_revision,
+            package.installed_revision
+        );
+        assert_eq!(
+            restored.package_record(0).unwrap().status,
+            PackageStatus::PackageDisabled as u16
+        );
+        assert_eq!(restored.schema_record(0), Some(schema));
+        assert_eq!(restored.content_record(0), Some(content));
+        assert_eq!(restored.export_records[0], Some(export));
+        assert_eq!(
+            restored
+                .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch"),
+            Err(PackageStatus::PackageDisabled)
+        );
+    }
+
+    #[test]
+    fn package_disable_snapshot_decode_does_not_accept_tombstoned_exports() {
+        let mut registry = PackageRegistry::empty();
+        registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                42,
+                7,
+                digest(4),
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(77, 3, 42, 1, digest(7)))
+            .unwrap();
+        let mut extents = [PackageExtent::EMPTY; 32];
+        extents[0] = PackageExtent::new(7, 1);
+        registry
+            .add_content_record(PackageRegistryContentRecord {
+                package_object_id: 42,
+                release_digest: digest(4),
+                content_index: 1,
+                role: 2,
+                format: 1,
+                digest: digest(5),
+                byte_len: 3,
+                extents,
+                extent_count: 1,
+                retention_count: 0,
+                flags: 0,
+            })
+            .unwrap();
+        registry
+            .add_export_record(
+                PackageRegistryExportRecord::new(
+                    PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                    b"seed",
+                    b"launch",
+                    42,
+                    7,
+                    digest(4),
+                    1,
+                    1,
+                    0,
+                    77,
+                    3,
+                    digest(7),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        registry.package_records[0].as_mut().unwrap().status =
+            PackageStatus::PackageTombstoned as u16;
+        let mut encoded = [0u8; 1024];
+        registry.encode_snapshot(&mut encoded).unwrap();
+
+        assert_eq!(
+            PackageRegistry::decode_snapshot(&encoded[..registry.encoded_len()]),
+            Err(PackageStatus::PackageTombstoned)
         );
     }
 
