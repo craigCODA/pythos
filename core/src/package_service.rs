@@ -22,8 +22,9 @@ use crate::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
     package_registry::{
-        PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry, PackageRegistryGeneration,
-        PackageRegistryPackageRecord, PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+        PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry, PackageRegistryExportRecord,
+        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistrySchemaRecord,
+        PackageTransactionCommitV0,
     },
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
@@ -863,6 +864,14 @@ impl<'a> PackageService<'a> {
         &self.registry
     }
 
+    pub fn resolve_export(
+        &self,
+        namespace_root: ObjectId,
+        locator: &str,
+    ) -> Result<PackageRegistryExportRecord, PackageStatus> {
+        self.registry.export_for_locator(namespace_root, locator)
+    }
+
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
         &self.content_store
     }
@@ -1677,7 +1686,8 @@ mod tests {
         },
         package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
         package_registry::{
-            PackageRegistry, PackageRegistryPackageRecord, PackageTransactionCommitV0,
+            PackageRegistry, PackageRegistryExportRecord, PackageRegistryPackageRecord,
+            PackageTransactionCommitV0,
         },
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
@@ -3510,6 +3520,141 @@ mod tests {
         let empty_mirrors = empty_service.rebuild_locator_mirrors().unwrap();
         assert_eq!(empty_mirrors.relationship_count(), 0);
         assert!(!empty_service.locator_mirror_visible_for_test());
+    }
+
+    #[test]
+    fn package_export_resolution_resolves_export_from_explicit_namespace_root() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let release_digest = sha256(b"seed-release");
+        let schema_digest = sha256(b"schema:seed.v0");
+        package_service
+            .registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                0x5059_504B_474F_0001,
+                7,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        package_service
+            .registry
+            .add_export_record(
+                PackageRegistryExportRecord::new(
+                    PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                    b"seed",
+                    b"launch",
+                    0x5059_504B_474F_0001,
+                    7,
+                    release_digest,
+                    1,
+                    0,
+                    0,
+                    0x5059_5343_484F_0001,
+                    1,
+                    schema_digest,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        let resolved = package_service
+            .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+            .unwrap();
+
+        assert_eq!(resolved.package_object_id, 0x5059_504B_474F_0001);
+        assert_eq!(resolved.package_revision, 7);
+        assert_eq!(resolved.release_digest, release_digest);
+        assert_eq!(resolved.schema_object_id, 0x5059_5343_484F_0001);
+        assert_eq!(
+            package_service.resolve_export(ObjectId::new(0xDEAD_BEEF), "seed/launch"),
+            Err(PackageStatus::ExportMissing)
+        );
+    }
+
+    #[test]
+    fn package_export_resolution_missing_export_returns_export_missing() {
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                0x5059_504B_474F_0001,
+                1,
+                sha256(b"seed-release"),
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+
+        assert_eq!(
+            package_service.resolve_export(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/missing",
+            ),
+            Err(PackageStatus::ExportMissing)
+        );
+    }
+
+    #[test]
+    fn package_export_resolution_invalid_locator_syntax_is_denied_before_registry_lookup() {
+        let package_service = PackageService::new_empty_for_test();
+
+        assert_eq!(
+            package_service.resolve_export(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/../launch",
+            ),
+            Err(PackageStatus::InvalidLocator)
+        );
+    }
+
+    #[test]
+    fn package_export_resolution_locator_text_is_not_package_object_id() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let release_digest = sha256(b"seed-release");
+        let schema_digest = sha256(b"schema:seed.v0");
+        package_service
+            .registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                0x5059_504B_474F_0001,
+                3,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        package_service
+            .registry
+            .add_export_record(
+                PackageRegistryExportRecord::new(
+                    PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                    b"seed",
+                    b"launch",
+                    0x5059_504B_474F_0001,
+                    3,
+                    release_digest,
+                    1,
+                    0,
+                    0,
+                    0x5059_5343_484F_0001,
+                    1,
+                    schema_digest,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+
+        assert_eq!(
+            package_service.resolve_export(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "5059504b474f0001/launch",
+            ),
+            Err(PackageStatus::ExportMissing)
+        );
+        assert_eq!(
+            package_service
+                .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch",)
+                .unwrap()
+                .package_object_id,
+            0x5059_504B_474F_0001
+        );
     }
 
     fn build_schema_package_artifact() -> Vec<u8> {

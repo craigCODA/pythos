@@ -1,9 +1,11 @@
 use crate::{
-    object_service_checkpoint::ObjectCheckpointIdentity, package_content_store::PackageExtent,
+    object_locator::validate_locator, object_service_checkpoint::ObjectCheckpointIdentity,
+    package_content_store::PackageExtent, shell_objects::ObjectId,
 };
 use pythos_shared::package_abi::{
-    MAX_CONTENT_BYTES, MAX_CONTENT_ENTRIES, MAX_CONTENT_EXTENTS_PER_RECORD,
-    MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION, PackageStatus,
+    MAX_CONTENT_BYTES, MAX_CONTENT_ENTRIES, MAX_CONTENT_EXTENTS_PER_RECORD, MAX_EXPORT_RECORDS,
+    MAX_LOCATOR_SEGMENT_BYTES, MAX_SCHEMA_DECLARATIONS, OBJECT_KIND_PACKAGE,
+    OBJECT_KIND_SCHEMA_DEFINITION, PackageStatus,
 };
 use pythos_shared::sha256::sha256;
 
@@ -23,6 +25,7 @@ pub const PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET: usize = 112;
 const MAX_REGISTRY_PACKAGES: usize = MAX_SCHEMA_DECLARATIONS;
 const MAX_REGISTRY_SCHEMAS: usize = MAX_SCHEMA_DECLARATIONS;
 const MAX_REGISTRY_CONTENT: usize = MAX_CONTENT_ENTRIES;
+const MAX_REGISTRY_EXPORTS: usize = MAX_EXPORT_RECORDS;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageRegistryGeneration {
@@ -248,6 +251,61 @@ pub struct PackageRegistryContentRecord {
     pub flags: u16,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRegistryExportRecord {
+    pub namespace_root_object_id: u64,
+    package_locator: [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    package_locator_len: u8,
+    export_name: [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    export_name_len: u8,
+    pub package_object_id: u64,
+    pub package_revision: u64,
+    pub release_digest: [u8; 32],
+    pub export_kind: u16,
+    pub content_index: u16,
+    pub entrypoint: u16,
+    pub schema_object_id: u64,
+    pub schema_revision: u64,
+    pub schema_descriptor_digest: [u8; 32],
+}
+
+impl PackageRegistryExportRecord {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        namespace_root_object_id: u64,
+        package_locator: &[u8],
+        export_name: &[u8],
+        package_object_id: u64,
+        package_revision: u64,
+        release_digest: [u8; 32],
+        export_kind: u16,
+        content_index: u16,
+        entrypoint: u16,
+        schema_object_id: u64,
+        schema_revision: u64,
+        schema_descriptor_digest: [u8; 32],
+    ) -> Result<Self, PackageStatus> {
+        let (package_locator, package_locator_len) = copy_locator_segment(package_locator)?;
+        let (export_name, export_name_len) = copy_locator_segment(export_name)?;
+        Ok(Self {
+            namespace_root_object_id,
+            package_locator,
+            package_locator_len,
+            export_name,
+            export_name_len,
+            package_object_id,
+            package_revision,
+            release_digest,
+            export_kind,
+            content_index,
+            entrypoint,
+            schema_object_id,
+            schema_revision,
+            schema_descriptor_digest,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PackageRegistry {
     generation: u64,
@@ -260,6 +318,8 @@ pub struct PackageRegistry {
     schema_count: u32,
     content_records: [Option<PackageRegistryContentRecord>; MAX_REGISTRY_CONTENT],
     content_count: u32,
+    export_records: [Option<PackageRegistryExportRecord>; MAX_REGISTRY_EXPORTS],
+    export_count: u32,
 }
 
 impl PackageRegistry {
@@ -275,6 +335,8 @@ impl PackageRegistry {
             schema_count: 0,
             content_records: [None; MAX_REGISTRY_CONTENT],
             content_count: 0,
+            export_records: [None; MAX_REGISTRY_EXPORTS],
+            export_count: 0,
         }
     }
 
@@ -335,6 +397,36 @@ impl PackageRegistry {
         }
         self.content_records[self.content_count as usize] = Some(record);
         self.content_count += 1;
+        Ok(())
+    }
+
+    pub fn add_export_record(
+        &mut self,
+        record: PackageRegistryExportRecord,
+    ) -> Result<(), PackageStatus> {
+        if self.export_count as usize >= MAX_REGISTRY_EXPORTS {
+            return Err(PackageStatus::QuotaDenied);
+        }
+        self.active_package_for_export(record)?;
+        if self.export_records.iter().flatten().any(|existing| {
+            existing.namespace_root_object_id == record.namespace_root_object_id
+                && locator_segment_eq(
+                    existing.package_locator,
+                    existing.package_locator_len,
+                    record.package_locator,
+                    record.package_locator_len,
+                )
+                && locator_segment_eq(
+                    existing.export_name,
+                    existing.export_name_len,
+                    record.export_name,
+                    record.export_name_len,
+                )
+        }) {
+            return Err(PackageStatus::DuplicateStableName);
+        }
+        self.export_records[self.export_count as usize] = Some(record);
+        self.export_count += 1;
         Ok(())
     }
 
@@ -539,9 +631,11 @@ impl PackageRegistry {
         self.package_count = 0;
         self.schema_count = 0;
         self.content_count = 0;
+        self.export_count = 0;
         self.package_records.fill(None);
         self.schema_records.fill(None);
         self.content_records.fill(None);
+        self.export_records.fill(None);
     }
 
     pub fn record_committed_generation(&mut self, generation: PackageRegistryGeneration) {
@@ -571,11 +665,13 @@ impl PackageRegistry {
         self.package_count = source.package_count;
         self.schema_count = source.schema_count;
         self.content_count = source.content_count;
+        self.export_count = source.export_count;
         self.package_records
             .copy_from_slice(&source.package_records);
         self.schema_records.copy_from_slice(&source.schema_records);
         self.content_records
             .copy_from_slice(&source.content_records);
+        self.export_records.copy_from_slice(&source.export_records);
     }
 
     pub const fn package_count(&self) -> usize {
@@ -609,6 +705,29 @@ impl PackageRegistry {
             return None;
         }
         self.content_records[index]
+    }
+
+    pub fn export_for_locator(
+        &self,
+        namespace_root: ObjectId,
+        locator: &str,
+    ) -> Result<PackageRegistryExportRecord, PackageStatus> {
+        let parsed = parse_export_locator(locator)?;
+        let mut index = 0usize;
+        while index < self.export_count as usize {
+            if let Some(record) = self.export_records[index]
+                && record.namespace_root_object_id == namespace_root.raw()
+                && record.package_locator_len as usize == parsed.package_locator.len()
+                && record.export_name_len as usize == parsed.export_name.len()
+                && &record.package_locator[..parsed.package_locator.len()] == parsed.package_locator
+                && &record.export_name[..parsed.export_name.len()] == parsed.export_name
+            {
+                self.active_package_for_export(record)?;
+                return Ok(record);
+            }
+            index += 1;
+        }
+        Err(PackageStatus::ExportMissing)
     }
 
     pub fn encoded_len_from_snapshot_header(bytes: &[u8]) -> Result<usize, PackageStatus> {
@@ -649,6 +768,33 @@ impl PackageRegistry {
             index += 1;
         }
         selected
+    }
+
+    fn active_package_for_export(
+        &self,
+        export: PackageRegistryExportRecord,
+    ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
+        let mut index = 0usize;
+        while index < self.package_count as usize {
+            if let Some(record) = self.package_records[index]
+                && record.package_object_id == export.package_object_id
+                && record.installed_revision == export.package_revision
+                && record.release_digest == export.release_digest
+            {
+                return match record.status {
+                    status if status == PackageStatus::Ok as u16 => Ok(record),
+                    status if status == PackageStatus::PackageDisabled as u16 => {
+                        Err(PackageStatus::PackageDisabled)
+                    }
+                    status if status == PackageStatus::PackageTombstoned as u16 => {
+                        Err(PackageStatus::PackageTombstoned)
+                    }
+                    _ => Err(PackageStatus::ExportMissing),
+                };
+            }
+            index += 1;
+        }
+        Err(PackageStatus::ExportMissing)
     }
 
     fn next_schema_record(
@@ -704,6 +850,48 @@ impl PackageRegistry {
         }
         selected
     }
+}
+
+struct ExportLocatorParts<'a> {
+    package_locator: &'a [u8],
+    export_name: &'a [u8],
+}
+
+fn parse_export_locator(locator: &str) -> Result<ExportLocatorParts<'_>, PackageStatus> {
+    validate_locator(locator).map_err(|_| PackageStatus::InvalidLocator)?;
+    let bytes = locator.as_bytes();
+    let Some(separator) = bytes.iter().position(|byte| *byte == b'/') else {
+        return Err(PackageStatus::ExportMissing);
+    };
+    if bytes[separator + 1..].contains(&b'/') {
+        return Err(PackageStatus::ExportMissing);
+    }
+    Ok(ExportLocatorParts {
+        package_locator: &bytes[..separator],
+        export_name: &bytes[separator + 1..],
+    })
+}
+
+fn copy_locator_segment(
+    bytes: &[u8],
+) -> Result<([u8; MAX_LOCATOR_SEGMENT_BYTES], u8), PackageStatus> {
+    let segment = core::str::from_utf8(bytes).map_err(|_| PackageStatus::InvalidLocator)?;
+    validate_locator(segment).map_err(|_| PackageStatus::InvalidLocator)?;
+    if bytes.len() > MAX_LOCATOR_SEGMENT_BYTES {
+        return Err(PackageStatus::InvalidLocator);
+    }
+    let mut stored = [0u8; MAX_LOCATOR_SEGMENT_BYTES];
+    stored[..bytes.len()].copy_from_slice(bytes);
+    Ok((stored, bytes.len() as u8))
+}
+
+fn locator_segment_eq(
+    left: [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    left_len: u8,
+    right: [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    right_len: u8,
+) -> bool {
+    left_len == right_len && left[..left_len as usize] == right[..right_len as usize]
 }
 
 fn encoded_len_for(
