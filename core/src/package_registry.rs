@@ -506,6 +506,54 @@ impl PackageRegistry {
         Err(PackageStatus::NotFound)
     }
 
+    pub fn retain_schema_reference(
+        &mut self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> Result<(), PackageStatus> {
+        self.adjust_schema_descriptor_retention(schema_object_id, schema_revision, 1)
+    }
+
+    pub fn release_schema_reference(
+        &mut self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> Result<(), PackageStatus> {
+        self.adjust_schema_descriptor_retention(schema_object_id, schema_revision, -1)
+    }
+
+    pub fn reclaim_tombstoned_package_content(
+        &mut self,
+        package_object_id: ObjectId,
+    ) -> Result<(), PackageStatus> {
+        let package = self
+            .package_record_by_object_id(package_object_id.raw())
+            .ok_or(PackageStatus::NotFound)?;
+        if package.status != PackageStatus::PackageTombstoned as u16 {
+            return Err(PackageStatus::BadRequest);
+        }
+
+        let mut read_index = 0usize;
+        let mut write_index = 0usize;
+        while read_index < self.content_count as usize {
+            if let Some(record) = self.content_records[read_index]
+                && (record.package_object_id != package_object_id.raw()
+                    || self.retained_schema_descriptor_content(record))
+            {
+                self.content_records[write_index] = Some(record);
+                write_index += 1;
+            }
+            read_index += 1;
+        }
+        let retained_count = write_index as u32;
+        while write_index < self.content_count as usize {
+            self.content_records[write_index] = None;
+            write_index += 1;
+        }
+        self.content_count = retained_count;
+        Ok(())
+    }
+
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageStatus> {
         let mut registry = Self::empty();
         Self::decode_snapshot_into(bytes, &mut registry)?;
@@ -944,6 +992,105 @@ impl PackageRegistry {
             write_index += 1;
         }
         self.export_count = retained_count;
+    }
+
+    fn adjust_schema_descriptor_retention(
+        &mut self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+        delta: i16,
+    ) -> Result<(), PackageStatus> {
+        let schema = self
+            .schema_record_by_identity(schema_object_id.raw(), schema_revision)
+            .ok_or(PackageStatus::NotFound)?;
+        let index = self
+            .content_index_for_schema_descriptor(schema)
+            .ok_or(PackageStatus::NotFound)?;
+        let mut record = self.content_records[index].ok_or(PackageStatus::NotFound)?;
+        if delta > 0 {
+            record.retention_count = record
+                .retention_count
+                .checked_add(delta as u16)
+                .ok_or(PackageStatus::QuotaDenied)?;
+        } else {
+            let decrement = (-delta) as u16;
+            record.retention_count = record
+                .retention_count
+                .checked_sub(decrement)
+                .ok_or(PackageStatus::NotFound)?;
+        }
+        self.content_records[index] = Some(record);
+        Ok(())
+    }
+
+    fn package_record_by_object_id(
+        &self,
+        package_object_id: u64,
+    ) -> Option<PackageRegistryPackageRecord> {
+        let mut index = 0usize;
+        while index < self.package_count as usize {
+            if let Some(record) = self.package_records[index]
+                && record.package_object_id == package_object_id
+            {
+                return Some(record);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn schema_record_by_identity(
+        &self,
+        schema_object_id: u64,
+        schema_revision: u64,
+    ) -> Option<PackageRegistrySchemaRecord> {
+        let mut index = 0usize;
+        while index < self.schema_count as usize {
+            if let Some(record) = self.schema_records[index]
+                && record.schema_object_id == schema_object_id
+                && record.schema_revision == schema_revision
+            {
+                return Some(record);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn content_index_for_schema_descriptor(
+        &self,
+        schema: PackageRegistrySchemaRecord,
+    ) -> Option<usize> {
+        let mut index = 0usize;
+        while index < self.content_count as usize {
+            if let Some(record) = self.content_records[index]
+                && record.package_object_id == schema.package_object_id
+                && record.content_index == schema.descriptor_content_index
+                && record.digest == schema.descriptor_digest
+            {
+                return Some(index);
+            }
+            index += 1;
+        }
+        None
+    }
+
+    fn retained_schema_descriptor_content(&self, content: PackageRegistryContentRecord) -> bool {
+        if content.retention_count == 0 {
+            return false;
+        }
+        let mut index = 0usize;
+        while index < self.schema_count as usize {
+            if let Some(schema) = self.schema_records[index]
+                && content.package_object_id == schema.package_object_id
+                && content.content_index == schema.descriptor_content_index
+                && content.digest == schema.descriptor_digest
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 
     fn published_content_for_export(&self, export: PackageRegistryExportRecord) -> bool {

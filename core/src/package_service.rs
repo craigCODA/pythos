@@ -1248,6 +1248,20 @@ impl<'a> PackageService<'a> {
                 return Err(status);
             }
         };
+        if let Err(status) = self
+            .staged_registry
+            .reclaim_tombstoned_package_content(package_object_id)
+        {
+            self.staged_registry.copy_from_committed(&self.registry);
+            return Err(status);
+        }
+        let mut retained_content_store = self.content_store.clone();
+        if let Err(status) =
+            retained_content_store.retain_only_registry_content(&self.staged_registry)
+        {
+            self.staged_registry.copy_from_committed(&self.registry);
+            return Err(status);
+        }
 
         let committed = with_package_restore_scratch(|scratch| {
             let durable_device = if self.anchored_generation_available {
@@ -1289,6 +1303,7 @@ impl<'a> PackageService<'a> {
                 .copy_from_slice(&self.anchor_bytes);
             self.previous_anchored_generation_available = self.anchored_generation_available;
             self.registry.copy_from_committed(&self.staged_registry);
+            self.content_store = retained_content_store;
             self.registry_snapshot
                 .copy_from_slice(&scratch.registry_snapshot);
             self.anchor_bytes.copy_from_slice(&scratch.anchor_bytes);
@@ -1301,6 +1316,24 @@ impl<'a> PackageService<'a> {
             self.staged_registry.copy_from_committed(&self.registry);
         }
         committed
+    }
+
+    fn retain_schema_reference(
+        &mut self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> Result<(), PackageStatus> {
+        self.registry
+            .retain_schema_reference(schema_object_id, schema_revision)
+    }
+
+    fn release_schema_reference(
+        &mut self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> Result<(), PackageStatus> {
+        self.registry
+            .release_schema_reference(schema_object_id, schema_revision)
     }
 
     #[cfg(test)]
@@ -3173,7 +3206,7 @@ mod tests {
         );
         assert_eq!(package_service.registry().package_count(), 1);
         assert_eq!(package_service.registry().schema_count(), 1);
-        assert_eq!(package_service.registry().content_count(), 2);
+        assert_eq!(package_service.registry().content_count(), 0);
 
         let mut restored_service = PackageService::new_empty_for_test();
         restored_service.restore_from_storage(device).unwrap();
@@ -3191,7 +3224,7 @@ mod tests {
             Err(PackageStatus::ExportMissing)
         );
         assert_eq!(restored_service.registry().schema_count(), 1);
-        assert_eq!(restored_service.registry().content_count(), 2);
+        assert_eq!(restored_service.registry().content_count(), 0);
 
         let second = install_launch_export_package_with_candidate_checkpoint_into(
             &mut package_service,
@@ -3301,6 +3334,200 @@ mod tests {
         assert_eq!(
             package_service.uninstall(ObjectId::new(second.package_object_id)),
             Err(PackageStatus::LiveProcessExists)
+        );
+    }
+
+    #[test]
+    fn package_uninstall_retention_reclaims_unreferenced_content_and_extents() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let tool_content_id =
+            ContentId::new(installed.package_object_id, installed.release_digest, 1);
+        let descriptor_record =
+            content_record_by_id(package_service.registry(), descriptor_content_id);
+        let tool_record = content_record_by_id(package_service.registry(), tool_content_id);
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+        let mut tool_bytes = [0u8; ADDITIONAL_CONTENT.len()];
+
+        assert_eq!(package_service.registry().content_count(), 2);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Ok(ADDITIONAL_CONTENT.len())
+        );
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        assert_eq!(package_service.registry().content_count(), 0);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Err(PackageStatus::NotFound)
+        );
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Err(PackageStatus::NotFound)
+        );
+        assert!(
+            !PackageContentStore::extent_live_in_registry(
+                package_service.registry(),
+                descriptor_record.extents[0],
+            )
+            .unwrap()
+        );
+        assert!(
+            !PackageContentStore::extent_live_in_registry(
+                package_service.registry(),
+                tool_record.extents[0],
+            )
+            .unwrap()
+        );
+
+        let second = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let second_descriptor = content_record_by_id(
+            package_service.registry(),
+            second.schema_descriptor_content_id,
+        );
+
+        assert_ne!(second.package_object_id, installed.package_object_id);
+        assert_eq!(second_descriptor.extents[0], descriptor_record.extents[0]);
+    }
+
+    #[test]
+    fn package_uninstall_retention_keeps_referenced_schema_descriptor_only() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let tool_content_id =
+            ContentId::new(installed.package_object_id, installed.release_digest, 1);
+
+        package_service
+            .retain_schema_reference(
+                ObjectId::new(installed.schema_object_id),
+                installed.schema_revision,
+            )
+            .unwrap();
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            1
+        );
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        assert_eq!(package_service.registry().content_count(), 1);
+        let retained = package_service.registry().content_record(0).unwrap();
+        assert_eq!(retained.content_index, descriptor_content_id.content_index);
+        assert_eq!(retained.digest, sha256(SCHEMA_DESCRIPTOR));
+        assert_eq!(retained.retention_count, 1);
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+        let mut tool_bytes = [0u8; ADDITIONAL_CONTENT.len()];
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Err(PackageStatus::NotFound)
+        );
+
+        let mut restored_service = PackageService::new_empty_for_test();
+        restored_service.restore_from_storage(device).unwrap();
+        assert_eq!(restored_service.registry().content_count(), 1);
+        assert_eq!(
+            restored_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+    }
+
+    #[test]
+    fn package_uninstall_retention_reclaims_descriptor_after_schema_reference_release() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+
+        package_service
+            .retain_schema_reference(
+                ObjectId::new(installed.schema_object_id),
+                installed.schema_revision,
+            )
+            .unwrap();
+        package_service
+            .release_schema_reference(
+                ObjectId::new(installed.schema_object_id),
+                installed.schema_revision,
+            )
+            .unwrap();
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            0
+        );
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        assert_eq!(package_service.registry().content_count(), 0);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Err(PackageStatus::NotFound)
         );
     }
 
@@ -4807,6 +5034,23 @@ mod tests {
             object_service,
             artifact_buffer,
         )
+    }
+
+    fn content_record_by_id(
+        registry: &PackageRegistry,
+        content_id: ContentId,
+    ) -> crate::package_registry::PackageRegistryContentRecord {
+        let mut index = 0usize;
+        while let Some(record) = registry.content_record(index) {
+            if record.package_object_id == content_id.package_object_id
+                && record.release_digest == content_id.release_digest
+                && record.content_index == content_id.content_index
+            {
+                return record;
+            }
+            index += 1;
+        }
+        panic!("missing content record");
     }
 
     #[test]

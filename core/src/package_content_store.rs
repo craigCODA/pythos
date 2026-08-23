@@ -524,6 +524,51 @@ impl<'a> PackageContentStore<'a> {
         }
         Ok(true)
     }
+
+    pub fn retain_only_registry_content(
+        &mut self,
+        registry: &PackageRegistry,
+    ) -> Result<PackageContentCommit, PackageStatus> {
+        let bitmap = Self::live_bitmap_from_registry(registry)?;
+        let mut committed = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        let mut write_index = 0usize;
+        for slot in self.committed.iter().flatten() {
+            if let Some(registry_record) =
+                registry_content_record_for_id(registry, slot.record.content_id)
+            {
+                let mut record = slot.record;
+                record.role = registry_record.role;
+                record.format = registry_record.format;
+                record.digest = registry_record.digest;
+                record.byte_len = registry_record.byte_len;
+                record.extents = registry_record.extents;
+                record.extent_count = registry_record.extent_count;
+                record.retention_count = registry_record.retention_count;
+                record.committed = true;
+                committed[write_index] = Some(PackageContentSlot {
+                    record,
+                    bytes: slot.bytes,
+                });
+                write_index += 1;
+            }
+        }
+
+        let mut persisted_records = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        let mut index = 0usize;
+        while let Some(record) = registry.content_record(index) {
+            persisted_records[index] = Some(record);
+            index += 1;
+        }
+
+        self.allocator.restore_from_bitmap(&bitmap);
+        self.committed = committed;
+        self.persisted_records = persisted_records;
+        self.committed_count = registry.content_count() as u16;
+        Ok(PackageContentCommit {
+            record_count: self.committed_count,
+            committed_bitmap: bitmap,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -820,6 +865,23 @@ fn mark_record_extents(
         index += 1;
     }
     Ok(())
+}
+
+fn registry_content_record_for_id(
+    registry: &PackageRegistry,
+    content_id: ContentId,
+) -> Option<PackageRegistryContentRecord> {
+    let mut index = 0usize;
+    while let Some(record) = registry.content_record(index) {
+        if record.package_object_id == content_id.package_object_id
+            && record.release_digest == content_id.release_digest
+            && record.content_index == content_id.content_index
+        {
+            return Some(record);
+        }
+        index += 1;
+    }
+    None
 }
 
 #[cfg(test)]
