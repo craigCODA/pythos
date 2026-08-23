@@ -274,6 +274,7 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::InvalidSchema);
         }
         let Some(device) = candidate_device else {
+            self.content_store.rollback(&mut self.staged_content);
             return Err(PackageStatus::RegistryWriteDenied);
         };
 
@@ -771,7 +772,8 @@ mod tests {
     use pythos_shared::{
         init_bundle::{self, INIT_BUNDLE_HEADER_LEN, RECORD_ENTRY_LEN, TYPE_PACKAGE_SOURCE},
         package_abi::{
-            MAX_PACKAGE_ARTIFACT_BYTES, PACKAGE_CONTENT_MAX_STAGED_RECORDS,
+            MAX_PACKAGE_ARTIFACT_BYTES, PACKAGE_CONTENT_BITMAP_WORDS,
+            PACKAGE_CONTENT_MAX_STAGED_RECORDS,
             PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PACKAGE_SOURCE_READ_RIGHT,
             PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
         },
@@ -1150,10 +1152,22 @@ mod tests {
         let mut object_service = ObjectService::new_for_test();
         let before = object_service.checkpoint_identity().unwrap();
 
-        assert_eq!(
-            install_recovery_package_into(&mut package_service, &mut object_service),
-            Err(PackageStatus::RegistryWriteDenied)
-        );
+        for _ in 0..2 {
+            assert_eq!(
+                install_recovery_package_into(&mut package_service, &mut object_service),
+                Err(PackageStatus::RegistryWriteDenied)
+            );
+
+            assert_eq!(package_service.staged_content.staged_count(), 0);
+            assert_eq!(
+                package_service.content_store.staged_bitmap(),
+                [0; PACKAGE_CONTENT_BITMAP_WORDS]
+            );
+            assert_eq!(
+                package_service.content_store.committed_bitmap(),
+                [0; PACKAGE_CONTENT_BITMAP_WORDS]
+            );
+        }
 
         assert_eq!(package_service.registry().package_count(), 0);
         assert_eq!(object_service.checkpoint_identity().unwrap(), before);
