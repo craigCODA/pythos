@@ -1,7 +1,9 @@
 //! Deterministic context scoring for the proposal-only Task Steward.
 
 use crate::shell_objects::ObjectKind;
-use pythos_shared::package_abi::{OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION};
+use pythos_shared::package_abi::{
+    OBJECT_KIND_PACKAGE, OBJECT_KIND_PACKAGE_DEFINED_OBJECT, OBJECT_KIND_SCHEMA_DEFINITION,
+};
 use pythos_shared::task_abi::{
     OBJECT_KIND_CAPABILITY_REQUEST, OBJECT_KIND_RELEVANCE_ASSERTION, OBJECT_KIND_TASK,
     OBJECT_KIND_TASK_EVENT, OBJECT_KIND_TASK_PROPOSAL, OBJECT_KIND_TASK_RELATION,
@@ -85,6 +87,7 @@ pub const fn object_kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::CapabilityRequest => OBJECT_KIND_CAPABILITY_REQUEST,
         ObjectKind::Package => OBJECT_KIND_PACKAGE,
         ObjectKind::SchemaDefinition => OBJECT_KIND_SCHEMA_DEFINITION,
+        ObjectKind::PackageDefinedObject => OBJECT_KIND_PACKAGE_DEFINED_OBJECT,
     }
 }
 

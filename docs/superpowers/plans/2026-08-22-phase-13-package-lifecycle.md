@@ -3105,7 +3105,7 @@ Add tests that `object_kind_from_graph(b"package-defined")` returns `OBJECT_KIND
 - [ ] **Step 2: Run test to verify it fails**
 
 ```powershell
-cargo test -p pyth-runtime package_defined_object_create_buffer
+cargo test -p pythos-user-pyth-runtime package_defined_object_create_buffer
 ```
 
 Expected: FAIL because runtime only admits `b"note"`.
@@ -3117,7 +3117,7 @@ When kind token is `package-defined`, call `SYSCALL_PACKAGE_CONTEXT` for schema 
 - [ ] **Step 4: Run test to verify it passes**
 
 ```powershell
-cargo test -p pyth-runtime package_defined_object_create_buffer
+cargo test -p pythos-user-pyth-runtime package_defined_object_create_buffer
 ```
 
 Expected: PASS.
@@ -3127,6 +3127,54 @@ Expected: PASS.
 ```powershell
 git add user/pyth-runtime/src/syscalls.rs
 git commit -m "feat(runtime): create package-defined object request buffers"
+```
+
+### Task 5.2.x: PackageDefinedObject Core Kind Wiring
+
+**Files:**
+- Modify: `core/src/shell_objects.rs`
+- Modify: `core/src/typed_object_format.rs`
+- Modify: `core/src/task_context.rs`
+- Modify: `docs/superpowers/plans/2026-08-22-phase-13-package-lifecycle.md`
+- Test: `core/src/typed_object_format.rs`
+
+**Interfaces Consumed:** ADR 0073 frozen object kind value `OBJECT_KIND_PACKAGE_DEFINED_OBJECT = 32`.
+
+**Interfaces Produced:** live `ObjectKind::PackageDefinedObject` representation and exact core kind-code mapping.
+
+- [ ] **Step 1: Verify ADR 0073 frozen identity**
+
+Confirm ADR 0073 and `shared/src/package_abi.rs` already assign `PackageDefinedObject = 32`. If not assigned, stop before coding.
+
+- [ ] **Step 2: Write the failing test**
+
+Add focused typed-object kind wiring tests proving `PackageDefinedObject` encodes/decodes as kind `32`, existing package/schema values remain `30`/`31`, unknown kind rejection remains, and `TypedObjectRecord::RECORD_SIZE` remains unchanged.
+
+- [ ] **Step 3: Run test to verify it fails**
+
+```powershell
+cargo test -p pythos-core package_defined_object_kind_wiring
+```
+
+Expected: FAIL because the live `ObjectKind` model lacks `PackageDefinedObject`.
+
+- [ ] **Step 4: Minimum implementation**
+
+Add `ObjectKind::PackageDefinedObject` and map it to `OBJECT_KIND_PACKAGE_DEFINED_OBJECT` wherever the live object-kind model exposes frozen numeric identities. Do not implement package-defined object creation or syscall validation here.
+
+- [ ] **Step 5: Run test to verify it passes**
+
+```powershell
+cargo test -p pythos-core package_defined_object_kind_wiring
+```
+
+Expected: PASS.
+
+- [ ] **Step 6: Commit**
+
+```powershell
+git add core/src/shell_objects.rs core/src/typed_object_format.rs core/src/task_context.rs docs/superpowers/plans/2026-08-22-phase-13-package-lifecycle.md
+git commit -m "fix(core): wire package-defined object kind"
 ```
 
 ### Task 5.3: PythCore Validates PackageDefinedObject Create Buffer

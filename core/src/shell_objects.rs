@@ -45,6 +45,7 @@ pub enum ObjectKind {
     CapabilityRequest,
     Package,
     SchemaDefinition,
+    PackageDefinedObject,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

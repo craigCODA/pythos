@@ -4,7 +4,9 @@
 #[cfg(not(test))]
 use crate::serial;
 use crate::shell_objects::{ObjectId, ObjectKind};
-use pythos_shared::package_abi::{OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION};
+use pythos_shared::package_abi::{
+    OBJECT_KIND_PACKAGE, OBJECT_KIND_PACKAGE_DEFINED_OBJECT, OBJECT_KIND_SCHEMA_DEFINITION,
+};
 use pythos_shared::task_abi::{
     OBJECT_KIND_CAPABILITY_REQUEST, OBJECT_KIND_RELEVANCE_ASSERTION, OBJECT_KIND_TASK,
     OBJECT_KIND_TASK_EVENT, OBJECT_KIND_TASK_PROPOSAL, OBJECT_KIND_TASK_RELATION,
@@ -264,6 +266,7 @@ fn kind_code(kind: ObjectKind) -> u16 {
         ObjectKind::CapabilityRequest => OBJECT_KIND_CAPABILITY_REQUEST,
         ObjectKind::Package => OBJECT_KIND_PACKAGE,
         ObjectKind::SchemaDefinition => OBJECT_KIND_SCHEMA_DEFINITION,
+        ObjectKind::PackageDefinedObject => OBJECT_KIND_PACKAGE_DEFINED_OBJECT,
     }
 }
 
@@ -288,6 +291,7 @@ fn kind_from_code(code: u16) -> Result<ObjectKind, ObjectFormatError> {
         OBJECT_KIND_CAPABILITY_REQUEST => Ok(ObjectKind::CapabilityRequest),
         OBJECT_KIND_PACKAGE => Ok(ObjectKind::Package),
         OBJECT_KIND_SCHEMA_DEFINITION => Ok(ObjectKind::SchemaDefinition),
+        OBJECT_KIND_PACKAGE_DEFINED_OBJECT => Ok(ObjectKind::PackageDefinedObject),
         _ => Err(ObjectFormatError::InvalidKind),
     }
 }
@@ -433,6 +437,10 @@ mod tests {
                 ObjectKind::SchemaDefinition,
                 pythos_shared::package_abi::OBJECT_KIND_SCHEMA_DEFINITION,
             ),
+            (
+                ObjectKind::PackageDefinedObject,
+                pythos_shared::package_abi::OBJECT_KIND_PACKAGE_DEFINED_OBJECT,
+            ),
         ];
 
         for (kind, code) in cases {
@@ -443,6 +451,27 @@ mod tests {
             assert_eq!(read_u16(&encoded, 16), code);
             assert_eq!(decoded.object_kind(), kind);
         }
+    }
+
+    #[test]
+    fn package_defined_object_kind_wiring_preserves_serialized_layouts() {
+        let record = TypedObjectRecord::new(
+            ObjectId::new(u64::from(OBJECT_KIND_PACKAGE_DEFINED_OBJECT)),
+            ObjectKind::PackageDefinedObject,
+            1,
+        );
+        let encoded = record.encode();
+
+        assert_eq!(OBJECT_KIND_PACKAGE, 30);
+        assert_eq!(OBJECT_KIND_SCHEMA_DEFINITION, 31);
+        assert_eq!(OBJECT_KIND_PACKAGE_DEFINED_OBJECT, 32);
+        assert_eq!(RECORD_SIZE, 120);
+        assert_eq!(encoded.len(), RECORD_SIZE);
+        assert_eq!(read_u16(&encoded, 16), OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_eq!(
+            TypedObjectRecord::decode(&encoded).unwrap().object_kind(),
+            ObjectKind::PackageDefinedObject
+        );
     }
 
     #[test]
