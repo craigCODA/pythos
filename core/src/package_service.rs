@@ -29,6 +29,7 @@ use crate::{
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
     pyth_runtime_launch::PackageLaunchGraphImportGrant,
+    service_identity::ServiceId,
     shell_objects::{ObjectId, ObjectKind},
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
@@ -38,7 +39,8 @@ use pythos_shared::{
     object_shell_abi::PackedCapability,
     package_abi::{
         MAX_REQUIREMENT_RECORDS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION,
-        PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageStatus,
+        PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageRuntimeSchemaBindingV0,
+        PackageStatus,
     },
     package_format::{PackageArtifactV0, PackageFormatError},
 };
@@ -146,6 +148,14 @@ struct PackageLaunchRequirementRecord {
 struct PackageLaunchResolvedGrant {
     supplied: PackageLaunchGrant,
     graph_import_slot: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PackageRuntimeContextRecord {
+    service_id: ServiceId,
+    principal_id: u64,
+    program_digest: u64,
+    export: PackageRegistryExportRecord,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -277,6 +287,8 @@ pub struct PackageService<'a> {
     locator_mirror_visible: bool,
     launch_requirements: [Option<PackageLaunchRequirementRecord>; MAX_REQUIREMENT_RECORDS],
     launch_requirement_count: usize,
+    runtime_contexts: [Option<PackageRuntimeContextRecord>; MAX_REQUIREMENT_RECORDS],
+    runtime_context_count: usize,
 }
 
 struct PackageRestoreWorld {
@@ -403,6 +415,8 @@ impl<'a> PackageService<'a> {
             locator_mirror_visible: false,
             launch_requirements: [None; MAX_REQUIREMENT_RECORDS],
             launch_requirement_count: 0,
+            runtime_contexts: [None; MAX_REQUIREMENT_RECORDS],
+            runtime_context_count: 0,
         }
     }
 
@@ -952,6 +966,53 @@ impl<'a> PackageService<'a> {
         &self.registry
     }
 
+    #[cfg(test)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn seed_launch_export_for_test(
+        &mut self,
+        namespace_root: ObjectId,
+        package_locator: &[u8],
+        export_name: &[u8],
+        package_object_id: u64,
+        package_revision: u64,
+        release_digest: [u8; 32],
+        schema_object_id: u64,
+        schema_revision: u64,
+        schema_descriptor_digest: [u8; 32],
+    ) -> Result<PackageRegistryExportRecord, PackageStatus> {
+        self.registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                package_object_id,
+                package_revision,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))?;
+        self.registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(
+                schema_object_id,
+                schema_revision,
+                package_object_id,
+                0,
+                schema_descriptor_digest,
+            ))?;
+        let export = PackageRegistryExportRecord::new(
+            namespace_root.raw(),
+            package_locator,
+            export_name,
+            package_object_id,
+            package_revision,
+            release_digest,
+            1,
+            0,
+            0,
+            schema_object_id,
+            schema_revision,
+            schema_descriptor_digest,
+        )?;
+        self.registry.add_export_record(export)?;
+        Ok(export)
+    }
+
     pub fn resolve_export(
         &self,
         namespace_root: ObjectId,
@@ -969,13 +1030,45 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::BadRequest);
         }
         let export = self.resolve_export(request.namespace_root, request.locator)?;
-        validate_launch_authority(
+        let launch = validate_launch_authority(
             request.caller,
             request.supplied_grants,
             capabilities,
             export,
             &self.launch_requirements[..self.launch_requirement_count],
-        )
+        )?;
+        self.record_runtime_context(request.caller, launch.export)?;
+        Ok(launch)
+    }
+
+    pub fn runtime_schema_binding(
+        &self,
+        process: ActiveUserProcess,
+        schema_slot: u16,
+    ) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
+        let export = self
+            .runtime_context_for_process(process)
+            .ok_or(PackageStatus::Denied)?;
+        if schema_slot != 0 {
+            return Err(PackageStatus::NotFound);
+        }
+        Ok(PackageRuntimeSchemaBindingV0 {
+            abi_major: 0,
+            abi_minor: 1,
+            schema_slot,
+            reserved0: 0,
+            package_object_id: export.package_object_id,
+            package_revision: export.package_revision,
+            schema_object_id: export.schema_object_id,
+            schema_revision: export.schema_revision,
+            schema_descriptor_sha256: export.schema_descriptor_digest,
+            reserved1: [0; 16],
+        })
+    }
+
+    #[cfg(test)]
+    pub fn runtime_context_count_for_test(&self) -> usize {
+        self.runtime_context_count
     }
 
     pub fn record_launch_requirement(
@@ -1011,6 +1104,51 @@ impl<'a> PackageService<'a> {
             });
         self.launch_requirement_count += 1;
         Ok(())
+    }
+
+    fn record_runtime_context(
+        &mut self,
+        process: ActiveUserProcess,
+        export: PackageRegistryExportRecord,
+    ) -> Result<(), PackageStatus> {
+        let record = PackageRuntimeContextRecord {
+            service_id: process.service_id(),
+            principal_id: process.principal_id(),
+            program_digest: process.program_digest(),
+            export,
+        };
+        let mut index = 0usize;
+        while index < self.runtime_context_count {
+            if let Some(existing) = self.runtime_contexts[index]
+                && same_runtime_context_identity(existing, record)
+            {
+                self.runtime_contexts[index] = Some(record);
+                return Ok(());
+            }
+            index += 1;
+        }
+        if self.runtime_context_count >= MAX_REQUIREMENT_RECORDS {
+            return Err(PackageStatus::QuotaDenied);
+        }
+        self.runtime_contexts[self.runtime_context_count] = Some(record);
+        self.runtime_context_count += 1;
+        Ok(())
+    }
+
+    fn runtime_context_for_process(
+        &self,
+        process: ActiveUserProcess,
+    ) -> Option<PackageRegistryExportRecord> {
+        let mut index = 0usize;
+        while index < self.runtime_context_count {
+            if let Some(record) = self.runtime_contexts[index]
+                && runtime_context_matches_process(record, process)
+            {
+                return Some(record.export);
+            }
+            index += 1;
+        }
+        None
     }
 
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
@@ -1556,6 +1694,24 @@ fn validate_launch_authority(
     }
 
     Ok(launch)
+}
+
+fn same_runtime_context_identity(
+    left: PackageRuntimeContextRecord,
+    right: PackageRuntimeContextRecord,
+) -> bool {
+    left.service_id == right.service_id
+        && left.principal_id == right.principal_id
+        && left.program_digest == right.program_digest
+}
+
+fn runtime_context_matches_process(
+    context: PackageRuntimeContextRecord,
+    process: ActiveUserProcess,
+) -> bool {
+    context.service_id == process.service_id()
+        && context.principal_id == process.principal_id()
+        && context.program_digest == process.program_digest()
 }
 
 fn find_supplied_launch_grant(

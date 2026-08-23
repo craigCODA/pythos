@@ -12,6 +12,8 @@ use crate::capabilities::{
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::object_service::{ObjectService, ObjectServiceError};
+#[cfg(test)]
+use crate::package_service::PackageService;
 use crate::permission_validation::{self, PermissionError};
 use crate::process_context::{self, ActiveUserProcess, ProcessContextError};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -51,6 +53,9 @@ use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use pythos_shared::package_abi::{OP_PACKAGE_CONTEXT_SCHEMA, PackageRuntimeSchemaBindingV0};
+use pythos_shared::package_abi::{PackageStatus, SYSCALL_PACKAGE_CONTEXT};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::pyth_runtime_abi::{
     GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR, GRAPH_MAX_LOG_BYTES,
@@ -150,6 +155,42 @@ unsafe impl Sync for SyscallCapabilityStorage {}
 static SYSCALL_CAPABILITIES: SyscallCapabilityStorage =
     SyscallCapabilityStorage(UnsafeCell::new(CapabilityTable::new()));
 
+#[cfg(test)]
+static PACKAGE_CONTEXT_SERVICE_FOR_TEST: std::sync::Mutex<Option<PackageService<'static>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+struct PackageContextServiceTestGuard;
+
+#[cfg(test)]
+impl Drop for PackageContextServiceTestGuard {
+    fn drop(&mut self) {
+        *PACKAGE_CONTEXT_SERVICE_FOR_TEST
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = None;
+    }
+}
+
+#[cfg(test)]
+fn install_package_context_service_for_test(
+    service: PackageService<'static>,
+) -> PackageContextServiceTestGuard {
+    *PACKAGE_CONTEXT_SERVICE_FOR_TEST
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(service);
+    PackageContextServiceTestGuard
+}
+
+#[cfg(test)]
+fn with_package_context_service_for_test<R>(
+    f: impl FnOnce(&mut PackageService<'static>) -> R,
+) -> Option<R> {
+    let mut service = PACKAGE_CONTEXT_SERVICE_FOR_TEST
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    service.as_mut().map(f)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyscallError {
     UnsupportedNumber,
@@ -195,6 +236,7 @@ enum SyscallDispatchKind {
     TaskRequest,
     PythGraphLog,
     PythGraphExit,
+    PackageContext,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -287,6 +329,14 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         introduced_minor: 0,
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::PythGraphExit,
+    },
+    SyscallEntry {
+        number: SYSCALL_PACKAGE_CONTEXT,
+        name: "SYSCALL_PACKAGE_CONTEXT",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::PackageContext,
     },
 ];
 
@@ -521,6 +571,7 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::TaskRequest => dispatch_task_request(args),
         SyscallDispatchKind::PythGraphLog => dispatch_pyth_graph_log(args),
         SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
+        SyscallDispatchKind::PackageContext => dispatch_package_context(args),
     }
 }
 
@@ -1460,6 +1511,75 @@ fn dispatch_pyth_graph_exit(_args: SyscallArgs) -> Result<u64, SyscallError> {
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn dispatch_package_context(args: SyscallArgs) -> Result<u64, SyscallError> {
+    if args.arg0 != u64::from(OP_PACKAGE_CONTEXT_SCHEMA) || args.arg4 != 0 {
+        return Ok(u64::from(PackageStatus::BadRequest as u16));
+    }
+    if args.arg1 > u64::from(u16::MAX) {
+        return Ok(u64::from(PackageStatus::BadRequest as u16));
+    }
+    if args.arg3 != size_of::<PackageRuntimeSchemaBindingV0>() as u64 {
+        return Ok(u64::from(PackageStatus::BufferTooSmall as u16));
+    }
+
+    let caller = process_context::current_caller()?;
+    let copy_map = caller.copy_map();
+    validate_user_buffer(
+        &copy_map,
+        args.arg2,
+        args.arg3,
+        align_of::<PackageRuntimeSchemaBindingV0>(),
+        UserCopyAccess::Write,
+    )?;
+    let binding = match package_runtime_schema_binding(caller, args.arg1 as u16) {
+        Ok(binding) => binding,
+        Err(status) => return Ok(u64::from(status as u16)),
+    };
+    let output_ptr = args.arg2 as *mut PackageRuntimeSchemaBindingV0;
+    // SAFETY:
+    // 1. Invariant: `output_ptr` names one writable
+    //    PackageRuntimeSchemaBindingV0 in the active caller's user copy map.
+    // 2. Established by: exact output length, natural alignment, and
+    //    UserCopyMap writable-range validation above.
+    // 3. Lifetime: the pointer is consumed only for this syscall copy-out.
+    // 4. Pointer ownership: user space owns the output buffer; PythCore writes
+    //    exactly one ABI record and retains no reference.
+    // 5. Alignment: checked against PackageRuntimeSchemaBindingV0 alignment.
+    // 6. Mapped length: UserCopyMap validated the exact ABI record size.
+    // 7. Concurrency: one package-context syscall is handled at a time in this
+    //    Phase 13 slice.
+    // 8. Violation: stale copy-map state could corrupt user memory or fault.
+    unsafe {
+        output_ptr.write(binding);
+    }
+    Ok(u64::from(PackageStatus::Ok as u16))
+}
+
+#[cfg(all(not(test), feature = "verify"))]
+fn dispatch_package_context(_args: SyscallArgs) -> Result<u64, SyscallError> {
+    Ok(u64::from(PackageStatus::Denied as u16))
+}
+
+#[cfg(test)]
+fn package_runtime_schema_binding(
+    caller: ActiveUserProcess,
+    schema_slot: u16,
+) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
+    with_package_context_service_for_test(|service| {
+        service.runtime_schema_binding(caller, schema_slot)
+    })
+    .unwrap_or(Err(PackageStatus::Denied))
+}
+
+#[cfg(all(not(test), not(feature = "verify")))]
+fn package_runtime_schema_binding(
+    _caller: ActiveUserProcess,
+    _schema_slot: u16,
+) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
+    Err(PackageStatus::Denied)
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError> {
     if exit.result_type != GRAPH_RESULT_UNIT || exit.reserved0 != 0 || exit.reserved1 != 0 {
         return Err(SyscallError::BadResult);
@@ -2102,13 +2222,20 @@ fn write_msr(msr: u32, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object_relationships::PACKAGE_LOCATOR_ROOT_OBJECT_ID;
     use crate::object_service::ObjectService;
+    use crate::package_service::PackageLaunchRequest;
+    use crate::shell_objects::ObjectId;
     use crate::shell_objects::ObjectKind;
     use crate::user_copy::{UserCopyError, UserCopyMap};
     use pythos_shared::object_shell_abi::{
         FIELD_TEXT, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR,
         OP_CREATE_OBJECT, OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
         ObjectShellResponse, STATUS_DENIED, STATUS_OK,
+    };
+    use pythos_shared::package_abi::{
+        OP_PACKAGE_CONTEXT_SCHEMA, PackageRuntimeSchemaBindingV0, PackageStatus,
+        SYSCALL_PACKAGE_CONTEXT,
     };
     use pythos_shared::task_abi::{
         MAX_TASK_PROPOSAL_RESULTS, OP_APPEND_TASK_EVENT, OP_CREATE_PROPOSAL, OP_CREATE_TASK,
@@ -2170,6 +2297,100 @@ mod tests {
             lookup_syscall(SYSCALL_PYTH_GRAPH_EXIT).unwrap().name,
             "SYSCALL_PYTH_GRAPH_EXIT"
         );
+    }
+
+    #[test]
+    fn package_context_syscall_denies_non_package_process() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let non_package_process = package_context_intruder_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard = install_package_context_service_for_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let original_output = *output;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(non_package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Denied as u16))
+        );
+        assert_eq!(*output, original_output);
+    }
+
+    #[test]
+    fn package_context_syscall_copies_schema_slot_zero_binding() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard = install_package_context_service_for_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+        assert_eq!(output.abi_major, 0);
+        assert_eq!(output.abi_minor, 1);
+        assert_eq!(output.schema_slot, 0);
+        assert_eq!(output.reserved0, 0);
+        assert_eq!(output.package_object_id, PACKAGE_CONTEXT_PACKAGE_ID);
+        assert_eq!(output.package_revision, PACKAGE_CONTEXT_PACKAGE_REVISION);
+        assert_eq!(output.schema_object_id, PACKAGE_CONTEXT_SCHEMA_ID);
+        assert_eq!(output.schema_revision, PACKAGE_CONTEXT_SCHEMA_REVISION);
+        assert_eq!(
+            output.schema_descriptor_sha256,
+            PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST
+        );
+        assert_eq!(output.reserved1, [0; 16]);
+    }
+
+    #[test]
+    fn package_context_syscall_rejects_wrong_output_length_without_writing() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard = install_package_context_service_for_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let original_output = *output;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(
+                0,
+                &mut output,
+                package_binding_len() - 1
+            )),
+            Ok(u64::from(PackageStatus::BufferTooSmall as u16))
+        );
+        assert_eq!(*output, original_output);
+    }
+
+    #[test]
+    fn package_context_syscall_does_not_mutate_package_state() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard = install_package_context_service_for_test(service);
+        let before = package_context_state_snapshot();
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+
+        let after = package_context_state_snapshot();
+        assert_eq!(after, before);
     }
 
     #[test]
@@ -2955,6 +3176,119 @@ mod tests {
         }; MAX_TASK_PROPOSAL_RESULTS]
     }
 
+    const PACKAGE_CONTEXT_PACKAGE_ID: u64 = 0x5059_504B_474F_1305;
+    const PACKAGE_CONTEXT_PACKAGE_REVISION: u64 = 9;
+    const PACKAGE_CONTEXT_SCHEMA_ID: u64 = 0x5059_5343_484F_1305;
+    const PACKAGE_CONTEXT_SCHEMA_REVISION: u64 = 4;
+    const PACKAGE_CONTEXT_RELEASE_DIGEST: [u8; 32] = [
+        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,
+        0xAF, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD,
+        0xBE, 0xBF,
+    ];
+    const PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST: [u8; 32] = [
+        0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE,
+        0xDF, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED,
+        0xEE, 0xEF,
+    ];
+
+    fn package_context_service_with_launch_context(
+        process: ActiveUserProcess,
+    ) -> PackageService<'static> {
+        let mut service = PackageService::new_empty_for_test();
+        service
+            .seed_launch_export_for_test(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                b"seed",
+                b"launch",
+                PACKAGE_CONTEXT_PACKAGE_ID,
+                PACKAGE_CONTEXT_PACKAGE_REVISION,
+                PACKAGE_CONTEXT_RELEASE_DIGEST,
+                PACKAGE_CONTEXT_SCHEMA_ID,
+                PACKAGE_CONTEXT_SCHEMA_REVISION,
+                PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST,
+            )
+            .unwrap();
+        let supplied_grants = [];
+        let capabilities = CapabilityTable::new();
+        service
+            .launch(
+                PackageLaunchRequest {
+                    caller: process,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+        service
+    }
+
+    const fn empty_package_schema_binding_output() -> PackageRuntimeSchemaBindingV0 {
+        PackageRuntimeSchemaBindingV0 {
+            abi_major: 0xFFFF,
+            abi_minor: 0xFFFF,
+            schema_slot: 0xFFFF,
+            reserved0: 0xFFFF,
+            package_object_id: u64::MAX,
+            package_revision: u64::MAX,
+            schema_object_id: u64::MAX,
+            schema_revision: u64::MAX,
+            schema_descriptor_sha256: [0xCC; 32],
+            reserved1: [0xCC; 16],
+        }
+    }
+
+    const fn package_binding_len() -> u64 {
+        size_of::<PackageRuntimeSchemaBindingV0>() as u64
+    }
+
+    fn package_context_args(
+        schema_slot: u16,
+        output: &mut PackageRuntimeSchemaBindingV0,
+        output_len: u64,
+    ) -> SyscallArgs {
+        SyscallArgs {
+            number: SYSCALL_PACKAGE_CONTEXT,
+            arg0: u64::from(OP_PACKAGE_CONTEXT_SCHEMA),
+            arg1: u64::from(schema_slot),
+            arg2: output as *mut PackageRuntimeSchemaBindingV0 as u64,
+            arg3: output_len,
+            arg4: 0,
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct PackageContextStateSnapshot {
+        package_count: usize,
+        schema_count: usize,
+        runtime_context_count: usize,
+        package_object_id: u64,
+        package_revision: u64,
+        schema_object_id: u64,
+        schema_revision: u64,
+        schema_descriptor_digest: [u8; 32],
+    }
+
+    fn package_context_state_snapshot() -> PackageContextStateSnapshot {
+        with_package_context_service_for_test(|service| {
+            let export = service
+                .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+                .unwrap();
+            PackageContextStateSnapshot {
+                package_count: service.registry().package_count(),
+                schema_count: service.registry().schema_count(),
+                runtime_context_count: service.runtime_context_count_for_test(),
+                package_object_id: export.package_object_id,
+                package_revision: export.package_revision,
+                schema_object_id: export.schema_object_id,
+                schema_revision: export.schema_revision,
+                schema_descriptor_digest: export.schema_descriptor_digest,
+            }
+        })
+        .expect("service")
+    }
+
     fn task_event_input_bytes(input: &TaskEventInput) -> &[u8] {
         let ptr = input as *const TaskEventInput as *const u8;
         // SAFETY:
@@ -3019,6 +3353,28 @@ mod tests {
             crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID,
             0x1234,
         )
+    }
+
+    fn package_context_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4354_5801),
+            0x5059_504B_5254_5801,
+            0x1305,
+        )
+    }
+
+    fn package_context_intruder_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4354_58FF),
+            0x5059_504B_5254_58FF,
+            0xFFFF,
+        )
+    }
+
+    fn package_context_syscall_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        EXPECTED_SYSCALL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     fn graph_log_args(capability: PackedCapability, ptr: u64, len: u64) -> SyscallArgs {
