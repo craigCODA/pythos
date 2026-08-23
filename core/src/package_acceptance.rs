@@ -17,11 +17,24 @@ use crate::{
     capabilities::{CapabilityHandle, CapabilityTable, ResourceId, RightsMask},
     object_relationships::PackageLocatorRelationshipStore,
     object_service::{ObjectService, ObjectServiceError},
+    object_service_checkpoint::{
+        ObjectCheckpointIdentity, ObjectServiceSnapshot, write_object_service_candidate_checkpoint,
+    },
+    package_candidate_store::{
+        PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES, write_candidate_registry_generation_into,
+        write_publication_anchor,
+    },
+    package_content_store::{PackageContentCommit, PackageContentStore, PackageContentTransaction},
+    package_registry::{
+        PackageRegistry, PackageRegistryGeneration, PackageRegistryPackageRecord,
+        PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+    },
     package_service::{PackageInstallRequest, PackageInstallResult, PackageService},
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
     serial,
     service_identity::ServiceId,
+    shell_objects::ObjectId,
 };
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -36,6 +49,10 @@ const RESTORE_STACK_SMOKE_LABEL: &[u8] = b"phase13-restore-stack-smoke.pkg";
 const PACKAGE_INSTALL_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5354);
 const PACKAGE_INSTALL_PRINCIPAL_ID: u64 = 0x5059_504B_494E_5354;
 const PACKAGE_INSTALL_PROGRAM_DIGEST: u64 = 0x5059_0013;
+const RESTORE_SMOKE_TRANSACTION_ID: u64 = 1;
+const RESTORE_SMOKE_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
+const RESTORE_SMOKE_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
+const INSTALL_OPERATION: u16 = 1;
 
 static mut PACKAGE_ACCEPTANCE_OBJECT_SERVICE: MaybeUninit<ObjectService> = MaybeUninit::uninit();
 static mut PACKAGE_ACCEPTANCE_PACKAGE_SERVICE: PackageService<'static> =
@@ -50,6 +67,8 @@ static mut PACKAGE_ACCEPTANCE_SOURCE_SERVICE: PackageSourceService<'static> =
 static mut PACKAGE_ACCEPTANCE_INSTALL_RESULT: PackageInstallResult = PackageInstallResult::empty();
 static mut PACKAGE_ACCEPTANCE_LOCATOR_MIRRORS: PackageLocatorRelationshipStore =
     PackageLocatorRelationshipStore::new();
+static mut PACKAGE_ACCEPTANCE_RESTORE_SEED: PackageRestoreSmokeSeed =
+    PackageRestoreSmokeSeed::empty();
 static RESTORE_STACK_SMOKE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -65,6 +84,40 @@ pub enum PackageAcceptanceError {
     UnexpectedScenario,
     PackageOperation,
     ObjectService,
+}
+
+struct PackageRestoreSmokeSeed {
+    content_store: PackageContentStore<'static>,
+    content: PackageContentTransaction<'static>,
+    registry: PackageRegistry,
+    registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+    decoded_registry: PackageRegistry,
+    object_snapshot: ObjectServiceSnapshot,
+    registry_generation: PackageRegistryGeneration,
+    object_checkpoint: ObjectCheckpointIdentity,
+    content_commit: PackageContentCommit,
+}
+
+impl PackageRestoreSmokeSeed {
+    const fn empty() -> Self {
+        Self {
+            content_store: PackageContentStore::empty(),
+            content: PackageContentTransaction::new(0, [0; 32]),
+            registry: PackageRegistry::empty(),
+            registry_snapshot: [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+            decoded_registry: PackageRegistry::empty(),
+            object_snapshot: ObjectServiceSnapshot::empty(),
+            registry_generation: PackageRegistryGeneration {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            object_checkpoint: ObjectCheckpointIdentity {
+                generation: 0,
+                root_digest: [0; 32],
+            },
+            content_commit: PackageContentCommit::empty(),
+        }
+    }
 }
 
 pub fn run_package_format_acceptance(
@@ -91,8 +144,7 @@ pub fn run_package_format_acceptance(
         return run_install_source_denied_acceptance(block_device, &bundle);
     }
     if source.label == RESTORE_STACK_SMOKE_LABEL {
-        RESTORE_STACK_SMOKE_REQUESTED.store(true, Ordering::Release);
-        return Ok(());
+        return seed_restore_stack_smoke_world(block_device, &bundle);
     }
 
     Err(PackageAcceptanceError::UnexpectedScenario)
@@ -101,10 +153,33 @@ pub fn run_package_format_acceptance(
 pub fn run_restore_stack_smoke(
     block_device: BlockDeviceInfo,
 ) -> Result<(), PackageAcceptanceError> {
-    let report = restore_service_for_acceptance()
+    let (expected_registry_generation, expected_object_checkpoint, expected_content_bitmap) = {
+        let seed = restore_smoke_seed_for_acceptance();
+        (
+            seed.registry_generation,
+            seed.object_checkpoint,
+            seed.content_commit.committed_bitmap(),
+        )
+    };
+    let restored_service = restore_service_for_acceptance();
+    let report = restored_service
         .restore_from_storage(block_device)
         .map_err(map_package_status)?;
-    if report.published_world_selected || report.selected_object_checkpoint().is_some() {
+    if !report.published_world_selected
+        || report.previous_published_world_selected
+        || report
+            .selected_object_checkpoint()
+            .map(|(identity, _)| identity)
+            != Some(expected_object_checkpoint)
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if restored_service.registry().generation() != expected_registry_generation.generation
+        || restored_service.registry().root_digest() != expected_registry_generation.root_digest
+        || restored_service.registry().package_count() != 1
+        || restored_service.registry().schema_count() != 1
+        || restored_service.content_store().committed_bitmap() != expected_content_bitmap
+    {
         return Err(PackageAcceptanceError::PackageOperation);
     }
     serial::write_line("PYTHOS:CORE:PACKAGE_RESTORE_STACK_SAFE");
@@ -201,6 +276,153 @@ fn run_install_success_acceptance(
         return Err(PackageAcceptanceError::PackageOperation);
     }
     serial::write_line("PYTHOS:CORE:PACKAGE_INSTALL_READY");
+    Ok(())
+}
+
+fn seed_restore_stack_smoke_world(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let source_service = package_source_service_for_acceptance(bundle)?;
+    let source_handle = source_service
+        .handle_at(0)
+        .ok_or(PackageAcceptanceError::MissingSource)?;
+    let caller = ActiveUserProcess::new(
+        PACKAGE_INSTALL_SERVICE_ID,
+        PACKAGE_INSTALL_PRINCIPAL_ID,
+        PACKAGE_INSTALL_PROGRAM_DIGEST,
+    );
+    let capabilities = capabilities_for_acceptance();
+    let source_read_capability = capabilities
+        .grant(
+            caller.service_id(),
+            ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+            RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let object_service = object_service_for_acceptance(block_device)?;
+    let artifact_buffer: &'static mut [u8] = acceptance_artifact_buffer();
+    let artifact_len = source_service
+        .read(
+            caller.service_id(),
+            capabilities,
+            source_handle,
+            source_read_capability,
+            artifact_buffer,
+        )
+        .map_err(map_package_status)?;
+    let artifact = PackageArtifactV0::parse(&artifact_buffer[..artifact_len])
+        .map_err(|_| PackageAcceptanceError::BadPackageFormat)?;
+    let descriptor_entry = artifact
+        .content_entry(0)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let descriptor_bytes = artifact
+        .content_bytes(descriptor_entry)
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    if descriptor_bytes.is_empty() {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let seed = restore_smoke_seed_for_acceptance();
+    seed.content_store.rollback(&mut seed.content);
+    seed.content
+        .reset(RESTORE_SMOKE_PACKAGE_OBJECT_ID, artifact.artifact_sha256());
+    let mut descriptor_content_id = None;
+    let mut entry_index = 0u16;
+    while let Some(entry) = artifact.content_entry(entry_index) {
+        let content_id = seed
+            .content_store
+            .stage_content(
+                &mut seed.content,
+                entry.role,
+                entry.format,
+                artifact
+                    .content_bytes(entry)
+                    .map_err(|_| PackageAcceptanceError::PackageOperation)?,
+                entry.sha256,
+            )
+            .map_err(map_package_status)?;
+        if entry_index == descriptor_entry.content_index {
+            descriptor_content_id = Some(content_id);
+        }
+        entry_index = entry_index.wrapping_add(1);
+    }
+    let schema_descriptor_content_id =
+        descriptor_content_id.ok_or(PackageAcceptanceError::PackageOperation)?;
+    let package = object_service
+        .create_package_object(
+            caller,
+            ObjectId::new(RESTORE_SMOKE_PACKAGE_OBJECT_ID),
+            artifact.artifact_sha256(),
+        )
+        .map_err(map_object_error)?;
+    let schema = object_service
+        .create_schema_definition_object(
+            caller,
+            ObjectId::new(RESTORE_SMOKE_SCHEMA_OBJECT_ID),
+            package.object_id,
+            descriptor_entry.sha256,
+        )
+        .map_err(map_object_error)?;
+    seed.registry.clear_to_empty();
+    seed.registry
+        .begin_candidate_generation(RESTORE_SMOKE_TRANSACTION_ID)
+        .map_err(map_package_status)?;
+    seed.registry
+        .add_package_record(PackageRegistryPackageRecord::new(
+            package.object_id.raw(),
+            package.revision,
+            artifact.artifact_sha256(),
+            PackageStatus::Ok as u16,
+        ))
+        .map_err(map_package_status)?;
+    seed.registry
+        .add_schema_record(PackageRegistrySchemaRecord::new(
+            schema.object_id.raw(),
+            schema.revision,
+            package.object_id.raw(),
+            schema_descriptor_content_id.content_index,
+            descriptor_entry.sha256,
+        ))
+        .map_err(map_package_status)?;
+    seed.content_store
+        .add_staged_records_to_registry(&seed.content, &mut seed.registry)
+        .map_err(map_package_status)?;
+    seed.content_commit = seed
+        .content_store
+        .write_candidate_content(block_device, &seed.content)
+        .map_err(map_package_status)?;
+    seed.registry_generation = write_candidate_registry_generation_into(
+        block_device,
+        &seed.registry,
+        &mut seed.registry_snapshot,
+        &mut seed.decoded_registry,
+    )
+    .map_err(map_package_status)?;
+    object_service
+        .encode_snapshot_into(&mut seed.object_snapshot)
+        .map_err(map_object_error)?;
+    seed.object_snapshot.generation = seed.object_snapshot.generation.wrapping_add(1);
+    seed.object_checkpoint =
+        write_object_service_candidate_checkpoint(block_device, &seed.object_snapshot)
+            .map_err(|_| PackageAcceptanceError::PackageOperation)?
+            .identity;
+    let anchor = PackageTransactionCommitV0::new(
+        RESTORE_SMOKE_TRANSACTION_ID,
+        INSTALL_OPERATION,
+        seed.registry_generation,
+        seed.object_checkpoint,
+        package.object_id.raw(),
+        package.revision,
+    );
+    write_publication_anchor(block_device, anchor).map_err(map_package_status)?;
+    if seed.content_commit.record_count() == 0
+        || seed.registry_generation.generation == 0
+        || seed.object_checkpoint.generation == 0
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    RESTORE_STACK_SMOKE_REQUESTED.store(true, Ordering::Release);
+    serial::write_line("PYTHOS:CORE:PACKAGE_RESTORE_STACK_SEEDED");
     Ok(())
 }
 
@@ -410,6 +632,19 @@ fn restore_service_for_acceptance() -> &'static mut PackageService<'static> {
     // 7. Concurrency: the verify path is single-core and non-reentrant.
     // 8. Violation: reentry would alias mutable service state.
     unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_RESTORE_SERVICE) }
+}
+
+fn restore_smoke_seed_for_acceptance() -> &'static mut PackageRestoreSmokeSeed {
+    // SAFETY:
+    // 1. Invariant: the restore-stack smoke seeds exactly one publication world.
+    // 2. Established by: its dedicated source label runs once before restore.
+    // 3. Lifetime: the retained seed state lives until QEMU exits.
+    // 4. Pointer ownership: this helper creates the only mutable seed reference.
+    // 5. Alignment: the static item has `PackageRestoreSmokeSeed` alignment.
+    // 6. Mapped length: exactly one complete seed workspace is referenced.
+    // 7. Concurrency: the verify path is single-core and non-reentrant.
+    // 8. Violation: reentry could combine facts from different seed worlds.
+    unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_RESTORE_SEED) }
 }
 
 fn capabilities_for_acceptance() -> &'static mut CapabilityTable {

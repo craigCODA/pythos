@@ -17,6 +17,7 @@ SERIAL_LOG = TARGET / "serial.log"
 STORAGE_IMAGE = TARGET / "storage.img"
 LABEL = b"phase13-restore-stack-smoke.pkg"
 MARKER = "PYTHOS:CORE:PACKAGE_RESTORE_STACK_SAFE"
+SEED_MARKER = "PYTHOS:CORE:PACKAGE_RESTORE_STACK_SEEDED"
 
 PACKAGE_ARTIFACT_MAGIC = b"PYTHPKG0"
 PACKAGE_ARTIFACT_HEADER_LEN = 160
@@ -136,6 +137,8 @@ def main() -> int:
         ]
     )
     serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
+    if SEED_MARKER not in serial:
+        raise AssertionError(f"missing {SEED_MARKER}")
     if MARKER not in serial:
         raise AssertionError(f"missing {MARKER}")
     for forbidden in ("vector=0x000000000000000E", "PYTHOS:PANIC"):

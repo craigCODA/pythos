@@ -30,7 +30,17 @@ pub fn write_candidate_registry_generation(
     registry: &PackageRegistry,
 ) -> Result<PackageRegistryGeneration, PackageStatus> {
     let mut bytes = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
-    let generation = registry.encode_snapshot(&mut bytes)?;
+    let mut loaded = PackageRegistry::empty();
+    write_candidate_registry_generation_into(device, registry, &mut bytes, &mut loaded)
+}
+
+pub fn write_candidate_registry_generation_into(
+    device: BlockDeviceInfo,
+    registry: &PackageRegistry,
+    bytes: &mut [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+    loaded: &mut PackageRegistry,
+) -> Result<PackageRegistryGeneration, PackageStatus> {
+    let generation = registry.encode_snapshot(bytes)?;
     let first_sector = registry_slot_sector(generation.generation);
     ensure_sector_range(
         device,
@@ -48,7 +58,7 @@ pub fn write_candidate_registry_generation(
         sector_index += 1;
     }
 
-    let loaded = read_candidate_registry_generation(device, generation)?;
+    read_candidate_registry_generation_into_bytes(device, generation, loaded, bytes)?;
     if loaded.generation() != generation.generation
         || loaded.root_digest() != generation.root_digest
     {
