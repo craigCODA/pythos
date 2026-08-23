@@ -390,6 +390,7 @@ impl<'a> PackageService<'a> {
             if decoded_registry_generation != registry_generation {
                 return Err(PackageStatus::RegistryRecoveryDenied);
             }
+            PackageContentStore::read_validate_candidate_content(device, &decoded_registry)?;
             let candidate_snapshot = candidate_object_service
                 .encode_candidate_snapshot()
                 .map_err(map_object_error)?;
@@ -451,14 +452,35 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
 
+        let device = self
+            .prepared_candidate_device
+            .ok_or(PackageStatus::RegistryWriteDenied)?;
+        let mut persisted_registry_snapshot = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+        let persisted_registry =
+            read_candidate_registry_generation(device, candidate.registry_generation)
+                .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
+        let persisted_registry_generation =
+            persisted_registry.encode_snapshot(&mut persisted_registry_snapshot)?;
+        if persisted_registry_generation != candidate.registry_generation
+            || persisted_registry_snapshot != candidate.staged_registry_snapshot
+        {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+        PackageContentStore::read_validate_candidate_content(device, &persisted_registry)
+            .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
+
         let mut candidate_object_service = self
             .prepared_object_service
             .ok_or(PackageStatus::BadRequest)?;
         let candidate_snapshot = candidate_object_service
             .encode_candidate_snapshot()
             .map_err(map_object_error)?;
+        let persisted_candidate_snapshot =
+            read_object_service_candidate_checkpoint(device, candidate.object_checkpoint_identity)
+                .map_err(map_storage_error)?;
         if object_candidate_checkpoint_identity(&candidate_snapshot)
             != candidate.object_checkpoint_identity
+            || persisted_candidate_snapshot != candidate_snapshot
         {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
@@ -473,9 +495,6 @@ impl<'a> PackageService<'a> {
         );
         let mut anchor_bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         anchor.encode(&mut anchor_bytes)?;
-        let device = self
-            .prepared_candidate_device
-            .ok_or(PackageStatus::RegistryWriteDenied)?;
         write_publication_anchor(device, anchor)?;
         let in_memory_content_commit = self.content_store.commit(&mut self.staged_content)?;
         if in_memory_content_commit != candidate.content_commit {
@@ -488,9 +507,10 @@ impl<'a> PackageService<'a> {
         let previous_anchor_bytes = self.anchor_bytes;
         let previous_anchored_generation_available = self.anchored_generation_available;
 
-        self.staged_registry
-            .record_committed_generation(candidate.registry_generation);
-        self.registry.copy_from_committed(&self.staged_registry);
+        let mut published_registry = persisted_registry;
+        published_registry.record_committed_generation(candidate.registry_generation);
+        self.registry = published_registry;
+        self.staged_registry.copy_from_committed(&self.registry);
         self.registry_snapshot = candidate.staged_registry_snapshot;
         self.previous_registry = previous_registry;
         self.previous_registry_snapshot = previous_registry_snapshot;
@@ -1321,6 +1341,23 @@ mod tests {
             candidate_registry.root_digest(),
             candidate.registry_generation.root_digest
         );
+        let persisted_registry =
+            read_candidate_registry_generation(device, candidate.registry_generation).unwrap();
+        let persisted_content =
+            PackageContentStore::read_validate_candidate_content(device, &persisted_registry)
+                .unwrap();
+        assert!(persisted_content.record_count() >= candidate.content_commit.record_count());
+        assert_eq!(
+            read_publication_anchor_slot(
+                device,
+                if candidate.registry_generation.generation & 1 == 0 {
+                    PackagePublicationAnchorSlot::A
+                } else {
+                    PackagePublicationAnchorSlot::B
+                },
+            ),
+            Ok(None)
+        );
         let persisted =
             read_object_service_candidate_checkpoint(device, candidate.object_checkpoint_identity)
                 .unwrap();
@@ -1364,6 +1401,61 @@ mod tests {
         assert_eq!(
             object_service.checkpoint_identity().unwrap(),
             live_object_identity
+        );
+        assert!(!package_service.locator_mirror_visible_for_test());
+    }
+
+    #[test]
+    fn package_publish_install_candidate_denies_persisted_registry_mismatch() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let world_a = install_recovery_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        let mut mismatched_registry = package_service.registry().clone();
+        mismatched_registry
+            .begin_candidate_generation(candidate.transaction_id)
+            .unwrap();
+        mismatched_registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                candidate.package_object_id,
+                candidate.package_revision,
+                candidate.release_digest,
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        assert_eq!(
+            write_candidate_registry_generation(device, &mismatched_registry)
+                .unwrap()
+                .generation,
+            candidate.registry_generation.generation
+        );
+
+        assert_eq!(
+            package_service.publish_install_candidate(candidate, &mut object_service),
+            Err(PackageStatus::RegistryRecoveryDenied)
+        );
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            world_a.package_object_id
         );
         assert!(!package_service.locator_mirror_visible_for_test());
     }
