@@ -24,6 +24,7 @@ use crate::{
     service_identity::ServiceId,
 };
 use core::mem::MaybeUninit;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 const PACKAGE_SOURCE_MAGIC: &[u8; 8] = b"PYPKGS01";
 const PACKAGE_SOURCE_HEADER_LEN: usize = 64;
@@ -31,12 +32,15 @@ const PACKAGE_ACCEPTANCE_ARTIFACT_BUFFER_BYTES: usize = 4096;
 const FORMAT_FIXTURE_LABEL: &[u8] = b"phase13-format-fixture.pkg";
 const INSTALL_SUCCESS_LABEL: &[u8] = b"phase13-install-success.pkg";
 const INSTALL_SOURCE_DENIED_LABEL: &[u8] = b"phase13-install-source-denied.pkg";
+const RESTORE_STACK_SMOKE_LABEL: &[u8] = b"phase13-restore-stack-smoke.pkg";
 const PACKAGE_INSTALL_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5354);
 const PACKAGE_INSTALL_PRINCIPAL_ID: u64 = 0x5059_504B_494E_5354;
 const PACKAGE_INSTALL_PROGRAM_DIGEST: u64 = 0x5059_0013;
 
 static mut PACKAGE_ACCEPTANCE_OBJECT_SERVICE: MaybeUninit<ObjectService> = MaybeUninit::uninit();
 static mut PACKAGE_ACCEPTANCE_PACKAGE_SERVICE: PackageService<'static> =
+    PackageService::new_empty_for_test();
+static mut PACKAGE_ACCEPTANCE_RESTORE_SERVICE: PackageService<'static> =
     PackageService::new_empty_for_test();
 static mut PACKAGE_ACCEPTANCE_ARTIFACT_BUFFER: [u8; PACKAGE_ACCEPTANCE_ARTIFACT_BUFFER_BYTES] =
     [0; PACKAGE_ACCEPTANCE_ARTIFACT_BUFFER_BYTES];
@@ -46,6 +50,7 @@ static mut PACKAGE_ACCEPTANCE_SOURCE_SERVICE: PackageSourceService<'static> =
 static mut PACKAGE_ACCEPTANCE_INSTALL_RESULT: PackageInstallResult = PackageInstallResult::empty();
 static mut PACKAGE_ACCEPTANCE_LOCATOR_MIRRORS: PackageLocatorRelationshipStore =
     PackageLocatorRelationshipStore::new();
+static RESTORE_STACK_SMOKE_REQUESTED: AtomicBool = AtomicBool::new(false);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PackageAcceptanceError {
@@ -85,8 +90,29 @@ pub fn run_package_format_acceptance(
     if source.label == INSTALL_SOURCE_DENIED_LABEL {
         return run_install_source_denied_acceptance(block_device, &bundle);
     }
+    if source.label == RESTORE_STACK_SMOKE_LABEL {
+        RESTORE_STACK_SMOKE_REQUESTED.store(true, Ordering::Release);
+        return Ok(());
+    }
 
     Err(PackageAcceptanceError::UnexpectedScenario)
+}
+
+pub fn run_restore_stack_smoke(
+    block_device: BlockDeviceInfo,
+) -> Result<(), PackageAcceptanceError> {
+    let report = restore_service_for_acceptance()
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if report.published_world_selected || report.selected_object_checkpoint().is_some() {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_RESTORE_STACK_SAFE");
+    Ok(())
+}
+
+pub fn restore_stack_smoke_requested() -> bool {
+    RESTORE_STACK_SMOKE_REQUESTED.load(Ordering::Acquire)
 }
 
 fn run_format_acceptance() -> Result<(), PackageAcceptanceError> {
@@ -370,6 +396,20 @@ fn package_service_for_acceptance() -> &'static mut PackageService<'static> {
     // 7. Concurrency: single-core verify path, no reentrant package acceptance.
     // 8. Violation: reentry would alias mutable state and must not occur.
     unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_PACKAGE_SERVICE) }
+}
+
+fn restore_service_for_acceptance() -> &'static mut PackageService<'static> {
+    // SAFETY:
+    // 1. Invariant: the restore smoke is a one-shot verify scenario and owns
+    //    this separate empty service until QEMU exits.
+    // 2. Established by: the dedicated package-source label dispatches once.
+    // 3. Lifetime: the static service lives for the remainder of the boot.
+    // 4. Pointer ownership: no other reference to this service is created.
+    // 5. Alignment: the static item has `PackageService` alignment.
+    // 6. Mapped length: exactly one `PackageService` value is referenced.
+    // 7. Concurrency: the verify path is single-core and non-reentrant.
+    // 8. Violation: reentry would alias mutable service state.
+    unsafe { &mut *core::ptr::addr_of_mut!(PACKAGE_ACCEPTANCE_RESTORE_SERVICE) }
 }
 
 fn capabilities_for_acceptance() -> &'static mut CapabilityTable {

@@ -1628,6 +1628,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
+            if package_acceptance::restore_stack_smoke_requested()
+                && package_acceptance::run_restore_stack_smoke(_block_device).is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
             qemu_exit::success();
         }
 

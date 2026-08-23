@@ -405,6 +405,16 @@ pub fn read_object_service_candidate_checkpoint(
     device: BlockDeviceInfo,
     expected: ObjectCheckpointIdentity,
 ) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError> {
+    let mut snapshot = ObjectServiceSnapshot::empty();
+    read_object_service_candidate_checkpoint_into(device, expected, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+pub fn read_object_service_candidate_checkpoint_into(
+    device: BlockDeviceInfo,
+    expected: ObjectCheckpointIdentity,
+    snapshot: &mut ObjectServiceSnapshot,
+) -> Result<(), GeneralStoragePersistenceError> {
     #[cfg(not(test))]
     {
         return with_slot_scratch(|image| {
@@ -413,24 +423,42 @@ pub fn read_object_service_candidate_checkpoint(
                 candidate_slot_for_generation(expected.generation),
                 image,
             )?;
-            let identity = object_candidate_checkpoint_identity_from_image(image)?;
+            if !is_candidate_slot(slot_from_code(read_u16(
+                &image.sectors[HEADER_IMAGE_INDEX],
+                10,
+            ))?) {
+                return Err(GeneralStoragePersistenceError::BadSnapshot);
+            }
+            decode_slot_into(image, snapshot)?;
+            let identity = ObjectCheckpointIdentity {
+                generation: snapshot.generation,
+                root_digest: slot_image_digest(image),
+            };
             if identity != expected {
                 return Err(GeneralStoragePersistenceError::BadSnapshot);
             }
-            let snapshot = decode_slot(image)?;
-            Ok(snapshot)
+            Ok(())
         });
     }
 
     #[cfg(test)]
     {
         let image = read_slot_image(device, candidate_slot_for_generation(expected.generation))?;
-        let identity = object_candidate_checkpoint_identity_from_image(&image)?;
+        if !is_candidate_slot(slot_from_code(read_u16(
+            &image.sectors[HEADER_IMAGE_INDEX],
+            10,
+        ))?) {
+            return Err(GeneralStoragePersistenceError::BadSnapshot);
+        }
+        decode_slot_into(&image, snapshot)?;
+        let identity = ObjectCheckpointIdentity {
+            generation: snapshot.generation,
+            root_digest: slot_image_digest(&image),
+        };
         if identity != expected {
             return Err(GeneralStoragePersistenceError::BadSnapshot);
         }
-        let snapshot = decode_slot(&image)?;
-        Ok(snapshot)
+        Ok(())
     }
 }
 
@@ -721,6 +749,15 @@ fn with_checkpoint_scratch<R>(
 fn decode_slot(
     image: &ObjectServiceSlotImage,
 ) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError> {
+    let mut snapshot = ObjectServiceSnapshot::empty();
+    decode_slot_into(image, &mut snapshot)?;
+    Ok(snapshot)
+}
+
+fn decode_slot_into(
+    image: &ObjectServiceSlotImage,
+    snapshot: &mut ObjectServiceSnapshot,
+) -> Result<(), GeneralStoragePersistenceError> {
     if image.sectors[COMMIT_IMAGE_INDEX][0..8] != COMMIT_MAGIC {
         return Err(GeneralStoragePersistenceError::TornWrite);
     }
@@ -736,22 +773,20 @@ fn decode_slot(
     {
         return Err(GeneralStoragePersistenceError::BadSnapshot);
     }
-    let snapshot = ObjectServiceSnapshot {
-        generation: header.generation,
-        allocated_bitmap: read_u64(&image.sectors[HEADER_IMAGE_INDEX], 72),
-        objects: decode_objects(image)?,
-        workspace_relationships: decode_relationships(image)?,
-        current_revisions: decode_current_revisions(image)?,
-        prior_revisions: decode_prior_revisions(image)?,
-    };
-    if header.object_count as usize != count_options(snapshot.objects)
-        || header.relationship_count as usize != count_options(snapshot.workspace_relationships)
+    snapshot.generation = header.generation;
+    snapshot.allocated_bitmap = read_u64(&image.sectors[HEADER_IMAGE_INDEX], 72);
+    decode_objects_into(image, &mut snapshot.objects)?;
+    decode_relationships_into(image, &mut snapshot.workspace_relationships)?;
+    decode_current_revisions_into(image, &mut snapshot.current_revisions)?;
+    decode_prior_revisions_into(image, &mut snapshot.prior_revisions)?;
+    if header.object_count as usize != count_options(&snapshot.objects)
+        || header.relationship_count as usize != count_options(&snapshot.workspace_relationships)
         || header.revision_count as usize
-            != count_options(snapshot.current_revisions) + count_options(snapshot.prior_revisions)
+            != count_options(&snapshot.current_revisions) + count_options(&snapshot.prior_revisions)
     {
         return Err(GeneralStoragePersistenceError::BadSnapshot);
     }
-    Ok(snapshot)
+    Ok(())
 }
 
 fn decode_ordinary_slot(
@@ -778,16 +813,16 @@ fn encode_header(
     sector[0..8].copy_from_slice(&CHECKPOINT_MAGIC);
     write_u16(sector, 8, CHECKPOINT_VERSION);
     write_u16(sector, 10, slot_code(slot));
-    write_u16(sector, 12, count_options(snapshot.objects) as u16);
+    write_u16(sector, 12, count_options(&snapshot.objects) as u16);
     write_u16(
         sector,
         14,
-        count_options(snapshot.workspace_relationships) as u16,
+        count_options(&snapshot.workspace_relationships) as u16,
     );
     write_u16(
         sector,
         16,
-        (count_options(snapshot.current_revisions) + count_options(snapshot.prior_revisions))
+        (count_options(&snapshot.current_revisions) + count_options(&snapshot.prior_revisions))
             as u16,
     );
     write_u16(sector, 18, 0);
@@ -864,15 +899,13 @@ fn encode_objects(image: &mut ObjectServiceSlotImage, snapshot: &ObjectServiceSn
     }
 }
 
-fn decode_objects(
+fn decode_objects_into(
     image: &ObjectServiceSlotImage,
-) -> Result<
-    [Option<ObjectExtentRecord>; OBJECT_SERVICE_OBJECT_CAPACITY],
-    GeneralStoragePersistenceError,
-> {
-    let mut records = [None; OBJECT_SERVICE_OBJECT_CAPACITY];
+    records: &mut [Option<ObjectExtentRecord>; OBJECT_SERVICE_OBJECT_CAPACITY],
+) -> Result<(), GeneralStoragePersistenceError> {
     let mut index = 0;
     while index < OBJECT_SERVICE_OBJECT_CAPACITY {
+        records[index] = None;
         let offset = index * OBJECT_RECORD_SIZE;
         let active = table_read_u16(image, OBJECT_IMAGE_INDEX, offset);
         if active == ACTIVE_RECORD {
@@ -888,7 +921,7 @@ fn decode_objects(
         }
         index += 1;
     }
-    Ok(records)
+    Ok(())
 }
 
 fn encode_relationships(image: &mut ObjectServiceSlotImage, snapshot: &ObjectServiceSnapshot) {
@@ -922,15 +955,14 @@ fn encode_relationships(image: &mut ObjectServiceSlotImage, snapshot: &ObjectSer
     }
 }
 
-fn decode_relationships(
+fn decode_relationships_into(
     image: &ObjectServiceSlotImage,
-) -> Result<
-    [Option<WorkspaceRelationshipRecord>; OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY],
-    GeneralStoragePersistenceError,
-> {
-    let mut records = [None; OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY];
+    records: &mut [Option<WorkspaceRelationshipRecord>;
+             OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY],
+) -> Result<(), GeneralStoragePersistenceError> {
     let mut index = 0;
     while index < OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY {
+        records[index] = None;
         let offset = index * RELATIONSHIP_RECORD_SIZE;
         let active = table_read_u16(image, RELATIONSHIP_IMAGE_INDEX, offset);
         if active == ACTIVE_RECORD {
@@ -951,7 +983,7 @@ fn decode_relationships(
         }
         index += 1;
     }
-    Ok(records)
+    Ok(())
 }
 
 fn encode_revisions(image: &mut ObjectServiceSlotImage, snapshot: &ObjectServiceSnapshot) {
@@ -1021,34 +1053,30 @@ fn encode_revision(image: &mut ObjectServiceSlotImage, index: usize, record: Rev
     );
 }
 
-fn decode_current_revisions(
+fn decode_current_revisions_into(
     image: &ObjectServiceSlotImage,
-) -> Result<
-    [Option<RevisionRecord>; OBJECT_SERVICE_CURRENT_REVISION_CAPACITY],
-    GeneralStoragePersistenceError,
-> {
-    let mut records = [None; OBJECT_SERVICE_CURRENT_REVISION_CAPACITY];
+    records: &mut [Option<RevisionRecord>; OBJECT_SERVICE_CURRENT_REVISION_CAPACITY],
+) -> Result<(), GeneralStoragePersistenceError> {
     let mut index = 0;
     while index < OBJECT_SERVICE_CURRENT_REVISION_CAPACITY {
+        records[index] = None;
         records[index] = decode_revision(image, index)?;
         index += 1;
     }
-    Ok(records)
+    Ok(())
 }
 
-fn decode_prior_revisions(
+fn decode_prior_revisions_into(
     image: &ObjectServiceSlotImage,
-) -> Result<
-    [Option<RevisionRecord>; OBJECT_SERVICE_PRIOR_REVISION_CAPACITY],
-    GeneralStoragePersistenceError,
-> {
-    let mut records = [None; OBJECT_SERVICE_PRIOR_REVISION_CAPACITY];
+    records: &mut [Option<RevisionRecord>; OBJECT_SERVICE_PRIOR_REVISION_CAPACITY],
+) -> Result<(), GeneralStoragePersistenceError> {
     let mut index = 0;
     while index < OBJECT_SERVICE_PRIOR_REVISION_CAPACITY {
+        records[index] = None;
         records[index] = decode_revision(image, OBJECT_SERVICE_CURRENT_REVISION_CAPACITY + index)?;
         index += 1;
     }
-    Ok(records)
+    Ok(())
 }
 
 fn decode_revision(
@@ -1168,7 +1196,7 @@ fn checksum_image(image: &ObjectServiceSlotImage) -> u64 {
     checksum
 }
 
-fn count_options<T: Copy, const N: usize>(records: [Option<T>; N]) -> usize {
+fn count_options<T, const N: usize>(records: &[Option<T>; N]) -> usize {
     let mut count = 0;
     let mut index = 0;
     while index < N {

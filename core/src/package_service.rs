@@ -9,12 +9,14 @@ use crate::{
     object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
     object_service_checkpoint::{
         ObjectCheckpointIdentity, ObjectServiceSnapshot, object_candidate_checkpoint_identity,
-        read_object_service_candidate_checkpoint, write_object_service_candidate_checkpoint,
+        read_object_service_candidate_checkpoint, read_object_service_candidate_checkpoint_into,
+        write_object_service_candidate_checkpoint,
     },
     package_candidate_store::{
         PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES, PackagePublicationAnchorSlot,
-        read_candidate_registry_generation, read_publication_anchor_slot,
-        write_candidate_registry_generation, write_publication_anchor,
+        read_candidate_registry_generation, read_candidate_registry_generation_into,
+        read_publication_anchor_slot, write_candidate_registry_generation,
+        write_publication_anchor,
     },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
@@ -28,6 +30,8 @@ use crate::{
     shell_objects::{ObjectId, ObjectKind},
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
+#[cfg(not(test))]
+use core::cell::UnsafeCell;
 use pythos_shared::{
     package_abi::{
         OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION, PACKAGE_INSTALL_RESOURCE_ID,
@@ -135,20 +139,20 @@ impl PackageInstallResult {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PackageRecoveryReport {
+pub struct PackageRecoveryReport<'snapshot> {
     pub published_world_selected: bool,
     pub previous_published_world_selected: bool,
     pub unpublished_candidate_ignored: bool,
     pub candidate_content_reclaimable: bool,
     pub locator_mirrors_require_rebuild: bool,
     selected_object_checkpoint_identity: Option<ObjectCheckpointIdentity>,
-    selected_object_snapshot: Option<ObjectServiceSnapshot>,
+    selected_object_snapshot: Option<&'snapshot ObjectServiceSnapshot>,
 }
 
-impl PackageRecoveryReport {
+impl PackageRecoveryReport<'_> {
     pub const fn selected_object_checkpoint(
         &self,
-    ) -> Option<(ObjectCheckpointIdentity, ObjectServiceSnapshot)> {
+    ) -> Option<(ObjectCheckpointIdentity, &ObjectServiceSnapshot)> {
         match (
             self.selected_object_checkpoint_identity,
             self.selected_object_snapshot,
@@ -181,10 +185,99 @@ pub struct PackageService<'a> {
     prepared_live_object_checkpoint_identity: Option<ObjectCheckpointIdentity>,
     prepared_content_store: Option<PackageContentStore<'a>>,
     prepared_content: Option<PackageContentTransaction<'a>>,
+    restored_object_snapshot: Option<ObjectServiceSnapshot>,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
     locator_mirror_visible: bool,
+}
+
+struct PackageRestoreWorld {
+    registry: PackageRegistry,
+    content_store: PackageContentStore<'static>,
+    object_snapshot: ObjectServiceSnapshot,
+}
+
+impl PackageRestoreWorld {
+    const fn empty() -> Self {
+        Self {
+            registry: PackageRegistry::empty(),
+            content_store: PackageContentStore::empty(),
+            object_snapshot: ObjectServiceSnapshot::empty(),
+        }
+    }
+
+    fn copy_from(&mut self, source: &Self) {
+        self.registry.copy_from_committed(&source.registry);
+        self.content_store
+            .copy_restored_state_from(&source.content_store);
+        copy_object_snapshot(&mut self.object_snapshot, &source.object_snapshot);
+    }
+}
+
+struct PackageRestoreScratch {
+    selected_anchor: Option<PackageTransactionCommitV0>,
+    selected: PackageRestoreWorld,
+    candidate: PackageRestoreWorld,
+    registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+    anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+}
+
+impl PackageRestoreScratch {
+    const fn empty() -> Self {
+        Self {
+            selected_anchor: None,
+            selected: PackageRestoreWorld::empty(),
+            candidate: PackageRestoreWorld::empty(),
+            registry_snapshot: [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+            anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
+        }
+    }
+}
+
+#[cfg(not(test))]
+struct PackageRestoreScratchStorage(UnsafeCell<PackageRestoreScratch>);
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: publication hydration borrows this workspace synchronously.
+// 2. Established by: Phase 13 restore runs on one boot CPU and is non-reentrant.
+// 3. Lifetime: the workspace is retained and mapped for the full boot.
+// 4. Pointer ownership: this module creates the only mutable workspace borrow.
+// 5. Alignment: `UnsafeCell<PackageRestoreScratch>` preserves alignment.
+// 6. Mapped length: exactly one complete hydration workspace is accessed.
+// 7. Concurrency: no SMP or concurrent package restore exists in this phase.
+// 8. Violation: reentry could combine state from different publication worlds.
+unsafe impl Sync for PackageRestoreScratchStorage {}
+
+#[cfg(not(test))]
+static PACKAGE_RESTORE_SCRATCH: PackageRestoreScratchStorage =
+    PackageRestoreScratchStorage(UnsafeCell::new(PackageRestoreScratch::empty()));
+
+#[cfg(not(test))]
+fn with_package_restore_scratch<R>(f: impl FnOnce(&mut PackageRestoreScratch) -> R) -> R {
+    // SAFETY:
+    // 1. Invariant: the closure does not retain the mutable workspace reference.
+    // 2. Established by: this helper accepts one synchronous `FnOnce`.
+    // 3. Lifetime: the static workspace remains initialized for the whole boot.
+    // 4. Pointer ownership: this module creates the only mutable reference.
+    // 5. Alignment: `UnsafeCell` preserves the workspace alignment.
+    // 6. Mapped length: exactly one complete workspace is borrowed.
+    // 7. Concurrency: package restore is single-core and non-reentrant.
+    // 8. Violation: overlapping borrows could select a mixed publication world.
+    unsafe { f(&mut *PACKAGE_RESTORE_SCRATCH.0.get()) }
+}
+
+#[cfg(test)]
+static PACKAGE_RESTORE_TEST_SCRATCH: std::sync::Mutex<PackageRestoreScratch> =
+    std::sync::Mutex::new(PackageRestoreScratch::empty());
+
+#[cfg(test)]
+fn with_package_restore_scratch<R>(f: impl FnOnce(&mut PackageRestoreScratch) -> R) -> R {
+    let mut scratch = PACKAGE_RESTORE_TEST_SCRATCH
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    f(&mut scratch)
 }
 
 impl<'a> PackageService<'a> {
@@ -216,6 +309,7 @@ impl<'a> PackageService<'a> {
             prepared_live_object_checkpoint_identity: None,
             prepared_content_store: None,
             prepared_content: None,
+            restored_object_snapshot: None,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -784,28 +878,33 @@ impl<'a> PackageService<'a> {
         self.persist_candidate_snapshot(device, &snapshot)
     }
 
-    pub fn recover(&mut self) -> Result<PackageRecoveryReport, PackageStatus> {
+    pub fn recover(&mut self) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
         self.recover_inner(None)
     }
 
     pub fn recover_with_candidate_checkpoint(
         &mut self,
         device: BlockDeviceInfo,
-    ) -> Result<PackageRecoveryReport, PackageStatus> {
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
         self.recover_inner(Some(device))
     }
 
     pub fn restore_from_storage(
         &mut self,
         device: BlockDeviceInfo,
-    ) -> Result<PackageRecoveryReport, PackageStatus> {
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
+        with_package_restore_scratch(|scratch| {
+            self.restore_from_storage_with_scratch(device, scratch)
+        })
+    }
+
+    fn restore_from_storage_with_scratch(
+        &mut self,
+        device: BlockDeviceInfo,
+        scratch: &mut PackageRestoreScratch,
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
         let mut newest_discovered_generation = None;
-        let mut selected: Option<(
-            PackageTransactionCommitV0,
-            PackageRegistry,
-            PackageContentStore<'a>,
-            ObjectServiceSnapshot,
-        )> = None;
+        scratch.selected_anchor = None;
 
         for slot in [
             PackagePublicationAnchorSlot::A,
@@ -829,38 +928,56 @@ impl<'a> PackageService<'a> {
                 generation: anchor.object_checkpoint_generation,
                 root_digest: anchor.object_checkpoint_root_digest,
             };
-            let Ok(registry) = read_candidate_registry_generation(device, registry_generation)
-            else {
-                continue;
-            };
-            let Ok(snapshot) =
-                read_object_service_candidate_checkpoint(device, object_checkpoint_identity)
-            else {
-                continue;
-            };
-            if object_candidate_checkpoint_identity(&snapshot) != object_checkpoint_identity
-                || !anchor.matches_pair(registry_generation, object_checkpoint_identity)
-                || !registry_contains_anchor_package(&registry, anchor)
-                || !registry_matches_object_snapshot(&registry, anchor, &snapshot)
+            if read_candidate_registry_generation_into(
+                device,
+                registry_generation,
+                &mut scratch.candidate.registry,
+            )
+            .is_err()
             {
                 continue;
             }
-            let Ok(validated_content) =
-                PackageContentStore::read_validate_candidate_content(device, &registry)
-            else {
-                continue;
-            };
-            let Ok(content_store) = PackageContentStore::restore_from_validated_registry(
+            if read_object_service_candidate_checkpoint_into(
                 device,
-                &registry,
-                validated_content,
+                object_checkpoint_identity,
+                &mut scratch.candidate.object_snapshot,
+            )
+            .is_err()
+            {
+                continue;
+            }
+            if object_candidate_checkpoint_identity(&scratch.candidate.object_snapshot)
+                != object_checkpoint_identity
+                || !anchor.matches_pair(registry_generation, object_checkpoint_identity)
+                || !registry_contains_anchor_package(&scratch.candidate.registry, anchor)
+                || !registry_matches_object_snapshot(
+                    &scratch.candidate.registry,
+                    anchor,
+                    &scratch.candidate.object_snapshot,
+                )
+            {
+                continue;
+            }
+            let Ok(validated_content) = PackageContentStore::read_validate_candidate_content(
+                device,
+                &scratch.candidate.registry,
             ) else {
                 continue;
             };
+            if PackageContentStore::restore_from_validated_registry_into(
+                device,
+                &scratch.candidate.registry,
+                validated_content,
+                &mut scratch.candidate.content_store,
+            )
+            .is_err()
+            {
+                continue;
+            }
 
             let candidate_order = (anchor.package_registry_generation, anchor.transaction_id);
-            let replace_selected = match selected.as_ref() {
-                Some((selected_anchor, _, _, _)) => {
+            let replace_selected = match scratch.selected_anchor {
+                Some(selected_anchor) => {
                     candidate_order
                         > (
                             selected_anchor.package_registry_generation,
@@ -870,11 +987,12 @@ impl<'a> PackageService<'a> {
                 None => true,
             };
             if replace_selected {
-                selected = Some((anchor, registry, content_store, snapshot));
+                scratch.selected_anchor = Some(anchor);
+                scratch.selected.copy_from(&scratch.candidate);
             }
         }
 
-        let Some((anchor, registry, content_store, object_snapshot)) = selected else {
+        let Some(anchor) = scratch.selected_anchor else {
             return Ok(PackageRecoveryReport {
                 published_world_selected: false,
                 previous_published_world_selected: false,
@@ -886,43 +1004,68 @@ impl<'a> PackageService<'a> {
             });
         };
 
-        let mut registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
-        let registry_generation = registry.encode_snapshot(&mut registry_snapshot)?;
+        let registry_generation = scratch
+            .selected
+            .registry
+            .encode_snapshot(&mut scratch.registry_snapshot)?;
         let object_checkpoint_identity = ObjectCheckpointIdentity {
             generation: anchor.object_checkpoint_generation,
             root_digest: anchor.object_checkpoint_root_digest,
         };
-        let mut anchor_bytes = [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
-        anchor.encode(&mut anchor_bytes)?;
+        anchor.encode(&mut scratch.anchor_bytes)?;
 
-        self.registry = registry;
-        self.content_store = content_store;
-        self.staged_content = PackageContentTransaction::new(0, [0; 32]);
+        self.commit_restored_publication(
+            anchor,
+            registry_generation,
+            object_checkpoint_identity,
+            newest_discovered_generation,
+            scratch,
+        )
+    }
+
+    fn commit_restored_publication(
+        &mut self,
+        anchor: PackageTransactionCommitV0,
+        registry_generation: PackageRegistryGeneration,
+        object_checkpoint_identity: ObjectCheckpointIdentity,
+        newest_discovered_generation: Option<u64>,
+        scratch: &PackageRestoreScratch,
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
+        self.registry
+            .copy_from_committed(&scratch.selected.registry);
+        self.content_store
+            .copy_restored_state_from(&scratch.selected.content_store);
+        self.staged_content.reset_empty();
         self.staged_registry.copy_from_committed(&self.registry);
-        self.registry_snapshot = registry_snapshot;
-        self.previous_registry = PackageRegistry::empty();
-        self.previous_registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+        self.registry_snapshot
+            .copy_from_slice(&scratch.registry_snapshot);
+        self.previous_registry.clear_to_empty();
+        self.previous_registry_snapshot.fill(0);
         self.previous_object_checkpoint_identity = ObjectCheckpointIdentity {
             generation: 0,
             root_digest: [0; 32],
         };
-        self.previous_anchor_bytes = [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+        self.previous_anchor_bytes.fill(0);
         self.previous_anchored_generation_available = false;
         self.object_checkpoint_identity = object_checkpoint_identity;
-        self.anchor_bytes = anchor_bytes;
+        self.anchor_bytes.copy_from_slice(&scratch.anchor_bytes);
         self.anchored_generation_available = true;
         self.unpublished_candidate_checkpoint = None;
-        self.prepared_candidate = None;
-        self.prepared_object_service = None;
+        clear_restore_option(&mut self.prepared_candidate);
+        clear_restore_option(&mut self.prepared_object_service);
         self.prepared_candidate_device = None;
         self.prepared_live_object_checkpoint_identity = None;
-        self.prepared_content_store = None;
-        self.prepared_content = None;
+        clear_restore_option(&mut self.prepared_content_store);
+        clear_restore_option(&mut self.prepared_content);
         self.next_transaction_id = anchor.transaction_id.wrapping_add(1);
         self.next_package_object_id = next_package_object_id(&self.registry);
         self.next_schema_object_id = next_schema_object_id(&self.registry);
         self.locator_mirror_visible = false;
 
+        store_object_snapshot(
+            &mut self.restored_object_snapshot,
+            &scratch.selected.object_snapshot,
+        );
         Ok(PackageRecoveryReport {
             published_world_selected: true,
             previous_published_world_selected: newest_discovered_generation
@@ -931,14 +1074,14 @@ impl<'a> PackageService<'a> {
             candidate_content_reclaimable: false,
             locator_mirrors_require_rebuild: self.registry.package_count() != 0,
             selected_object_checkpoint_identity: Some(object_checkpoint_identity),
-            selected_object_snapshot: Some(object_snapshot),
+            selected_object_snapshot: self.restored_object_snapshot.as_ref(),
         })
     }
 
     fn recover_inner(
         &mut self,
         candidate_device: Option<BlockDeviceInfo>,
-    ) -> Result<PackageRecoveryReport, PackageStatus> {
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
         let current_valid = self.anchored_generation_available
             && PackageTransactionCommitV0::decode(
                 &self.anchor_bytes,
@@ -1021,11 +1164,18 @@ impl<'a> PackageService<'a> {
             self.prepared_content = None;
         }
 
-        let selected_object_snapshot = match (candidate_device, selected_object_identity) {
-            (Some(device), Some(identity)) => {
-                read_object_service_candidate_checkpoint(device, identity).ok()
+        let selected_object_snapshot_available = match (candidate_device, selected_object_identity)
+        {
+            (Some(device), Some(identity)) => read_object_service_candidate_checkpoint_into(
+                device,
+                identity,
+                object_snapshot_slot(&mut self.restored_object_snapshot),
+            )
+            .is_ok(),
+            _ => {
+                clear_restore_option(&mut self.restored_object_snapshot);
+                false
             }
-            _ => None,
         };
         Ok(PackageRecoveryReport {
             published_world_selected: true,
@@ -1035,8 +1185,12 @@ impl<'a> PackageService<'a> {
             locator_mirrors_require_rebuild: self.registry.package_count() != 0
                 && !self.locator_mirror_visible,
             selected_object_checkpoint_identity: selected_object_identity
-                .filter(|_| selected_object_snapshot.is_some()),
-            selected_object_snapshot,
+                .filter(|_| selected_object_snapshot_available),
+            selected_object_snapshot: if selected_object_snapshot_available {
+                self.restored_object_snapshot.as_ref()
+            } else {
+                None
+            },
         })
     }
 
@@ -1186,6 +1340,36 @@ impl<'a> PackageService<'a> {
         self.previous_anchored_generation_available = false;
         self.locator_mirror_visible = false;
     }
+}
+
+fn copy_object_snapshot(target: &mut ObjectServiceSnapshot, source: &ObjectServiceSnapshot) {
+    target.generation = source.generation;
+    target.allocated_bitmap = source.allocated_bitmap;
+    target.objects.copy_from_slice(&source.objects);
+    target
+        .workspace_relationships
+        .copy_from_slice(&source.workspace_relationships);
+    target
+        .current_revisions
+        .copy_from_slice(&source.current_revisions);
+    target
+        .prior_revisions
+        .copy_from_slice(&source.prior_revisions);
+}
+
+fn object_snapshot_slot(slot: &mut Option<ObjectServiceSnapshot>) -> &mut ObjectServiceSnapshot {
+    if slot.is_none() {
+        *slot = Some(ObjectServiceSnapshot::empty());
+    }
+    slot.as_mut().expect("object snapshot slot initialized")
+}
+
+fn store_object_snapshot(slot: &mut Option<ObjectServiceSnapshot>, source: &ObjectServiceSnapshot) {
+    copy_object_snapshot(object_snapshot_slot(slot), source);
+}
+
+fn clear_restore_option<T>(slot: &mut Option<T>) {
+    *slot = None;
 }
 
 fn validate_install_authority(
@@ -1828,7 +2012,7 @@ mod tests {
 
         assert_eq!(
             report.selected_object_checkpoint(),
-            Some((installed.object_checkpoint_identity, expected_snapshot))
+            Some((installed.object_checkpoint_identity, &expected_snapshot))
         );
     }
 

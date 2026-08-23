@@ -9,6 +9,8 @@ use pythos_shared::package_abi::PackageStatus;
 
 #[cfg(not(test))]
 use crate::block_device;
+#[cfg(not(test))]
+use core::cell::UnsafeCell;
 
 pub const PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES: usize = 32 * 1024;
 pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS: usize = 64;
@@ -59,6 +61,36 @@ pub fn read_candidate_registry_generation(
     device: BlockDeviceInfo,
     expected: PackageRegistryGeneration,
 ) -> Result<PackageRegistry, PackageStatus> {
+    let mut registry = PackageRegistry::empty();
+    read_candidate_registry_generation_into(device, expected, &mut registry)?;
+    Ok(registry)
+}
+
+pub fn read_candidate_registry_generation_into(
+    device: BlockDeviceInfo,
+    expected: PackageRegistryGeneration,
+    registry: &mut PackageRegistry,
+) -> Result<(), PackageStatus> {
+    #[cfg(not(test))]
+    {
+        return with_registry_snapshot_scratch(|bytes| {
+            read_candidate_registry_generation_into_bytes(device, expected, registry, bytes)
+        });
+    }
+
+    #[cfg(test)]
+    {
+        let mut bytes = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+        read_candidate_registry_generation_into_bytes(device, expected, registry, &mut bytes)
+    }
+}
+
+fn read_candidate_registry_generation_into_bytes(
+    device: BlockDeviceInfo,
+    expected: PackageRegistryGeneration,
+    registry: &mut PackageRegistry,
+    bytes: &mut [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+) -> Result<(), PackageStatus> {
     let first_sector = registry_slot_sector(expected.generation);
     ensure_sector_range(
         device,
@@ -66,7 +98,7 @@ pub fn read_candidate_registry_generation(
         PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS,
     )
     .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
-    let mut bytes = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+    bytes.fill(0);
     let mut sector_index = 0usize;
     while sector_index < PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS {
         let sector = read_package_candidate_sector(device, first_sector + sector_index as u64)
@@ -75,17 +107,52 @@ pub fn read_candidate_registry_generation(
         bytes[start..start + SECTOR_SIZE].copy_from_slice(&sector);
         sector_index += 1;
     }
-    let encoded_len = PackageRegistry::encoded_len_from_snapshot_header(&bytes)?;
+    let encoded_len = PackageRegistry::encoded_len_from_snapshot_header(bytes)?;
     if encoded_len > bytes.len() {
         return Err(PackageStatus::BoundsExceeded);
     }
-    let registry = PackageRegistry::decode_snapshot(&bytes[..encoded_len])?;
+    PackageRegistry::decode_snapshot_into(&bytes[..encoded_len], registry)?;
     if registry.generation() != expected.generation
         || registry.root_digest() != expected.root_digest
     {
         return Err(PackageStatus::TransactionAnchorMismatch);
     }
-    Ok(registry)
+    Ok(())
+}
+
+#[cfg(not(test))]
+struct RegistrySnapshotScratch(UnsafeCell<[u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES]>);
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: candidate-registry reads borrow this buffer synchronously.
+// 2. Established by: Phase 13 package hydration is single-core and non-reentrant.
+// 3. Lifetime: this scratch storage is static for the full boot.
+// 4. Pointer ownership: this module exclusively accesses the buffer.
+// 5. Alignment: `UnsafeCell` preserves the byte-array alignment.
+// 6. Mapped length: exactly `PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES` bytes are used.
+// 7. Concurrency: no concurrent package registry operation is authorized.
+// 8. Violation: reentry could mix candidate snapshot bytes and corrupt validation.
+unsafe impl Sync for RegistrySnapshotScratch {}
+
+#[cfg(not(test))]
+static REGISTRY_SNAPSHOT_SCRATCH: RegistrySnapshotScratch =
+    RegistrySnapshotScratch(UnsafeCell::new([0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES]));
+
+#[cfg(not(test))]
+fn with_registry_snapshot_scratch<R>(
+    f: impl FnOnce(&mut [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES]) -> R,
+) -> R {
+    // SAFETY:
+    // 1. Invariant: the closure does not retain the mutable buffer reference.
+    // 2. Established by: this helper accepts a synchronous `FnOnce`.
+    // 3. Lifetime: the static buffer remains initialized for the whole boot.
+    // 4. Pointer ownership: this module creates the only mutable reference.
+    // 5. Alignment: `UnsafeCell` preserves the byte-array alignment.
+    // 6. Mapped length: exactly one complete scratch buffer is borrowed.
+    // 7. Concurrency: package hydration is single-core and non-reentrant.
+    // 8. Violation: overlapping borrows could mix registry generations.
+    unsafe { f(&mut *REGISTRY_SNAPSHOT_SCRATCH.0.get()) }
 }
 
 pub fn write_publication_anchor(

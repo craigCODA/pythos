@@ -110,9 +110,15 @@ impl<'a> PackageContentTransaction<'a> {
     }
 
     fn clear(&mut self) {
-        self.staged = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        self.staged.fill(None);
         self.staged_count = 0;
         self.next_content_index = 0;
+    }
+
+    pub fn reset_empty(&mut self) {
+        self.package_object_id = 0;
+        self.release_digest = [0; 32];
+        self.clear();
     }
 }
 
@@ -136,6 +142,10 @@ impl PackageContentCommit {
 
     pub const fn committed_bitmap(&self) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS] {
         self.committed_bitmap
+    }
+
+    const fn committed_bitmap_ref(&self) -> &[u64; PACKAGE_CONTENT_BITMAP_WORDS] {
+        &self.committed_bitmap
     }
 }
 
@@ -377,27 +387,54 @@ impl<'a> PackageContentStore<'a> {
         registry: &PackageRegistry,
         validated_content: PackageContentCommit,
     ) -> Result<Self, PackageStatus> {
+        let mut store = Self::empty();
+        Self::restore_from_validated_registry_into(
+            device,
+            registry,
+            validated_content,
+            &mut store,
+        )?;
+        Ok(store)
+    }
+
+    pub fn restore_from_validated_registry_into(
+        device: BlockDeviceInfo,
+        registry: &PackageRegistry,
+        validated_content: PackageContentCommit,
+        store: &mut Self,
+    ) -> Result<(), PackageStatus> {
         let bitmap = Self::live_bitmap_from_registry(registry)?;
-        if bitmap != validated_content.committed_bitmap()
+        if &bitmap != validated_content.committed_bitmap_ref()
             || registry.content_count() != validated_content.record_count()
         {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
 
-        let mut persisted_records = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        store.allocator.restore_from_bitmap(&bitmap);
+        store.committed.fill(None);
+        store.persisted_records.fill(None);
         let mut index = 0usize;
         while let Some(record) = registry.content_record(index) {
-            persisted_records[index] = Some(record);
+            store.persisted_records[index] = Some(record);
             index += 1;
         }
+        store.committed_count = validated_content.record_count;
+        store.persisted_device = Some(device);
+        Ok(())
+    }
 
-        Ok(Self {
-            allocator: PackageExtentAllocator::restore(bitmap)?,
-            committed: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
-            committed_count: validated_content.record_count,
-            persisted_device: Some(device),
-            persisted_records,
-        })
+    pub fn copy_restored_state_from(&mut self, source: &PackageContentStore<'_>) {
+        self.allocator
+            .committed
+            .copy_from_slice(&source.allocator.committed);
+        self.allocator
+            .staged
+            .copy_from_slice(&source.allocator.staged);
+        self.committed.fill(None);
+        self.persisted_records
+            .copy_from_slice(&source.persisted_records);
+        self.committed_count = source.committed_count;
+        self.persisted_device = source.persisted_device;
     }
 
     pub fn from_validated_candidate_registry(
@@ -508,6 +545,11 @@ impl PackageExtentAllocator {
             committed: bitmap,
             staged: [0; PACKAGE_CONTENT_BITMAP_WORDS],
         })
+    }
+
+    fn restore_from_bitmap(&mut self, bitmap: &[u64; PACKAGE_CONTENT_BITMAP_WORDS]) {
+        self.committed.copy_from_slice(bitmap);
+        self.staged.fill(0);
     }
 
     pub fn allocate_staged(&mut self, block_count: u16) -> Result<PackageExtent, PackageStatus> {

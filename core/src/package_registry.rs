@@ -339,6 +339,12 @@ impl PackageRegistry {
     }
 
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageStatus> {
+        let mut registry = Self::empty();
+        Self::decode_snapshot_into(bytes, &mut registry)?;
+        Ok(registry)
+    }
+
+    pub fn decode_snapshot_into(bytes: &[u8], registry: &mut Self) -> Result<(), PackageStatus> {
         if bytes.len() < PACKAGE_REGISTRY_HEADER_LEN + PACKAGE_REGISTRY_CRC_LEN {
             return Err(PackageStatus::BoundsExceeded);
         }
@@ -382,18 +388,11 @@ impl PackageRegistry {
             return Err(PackageStatus::BoundsExceeded);
         }
 
-        let mut registry = Self {
-            generation: read_u64(bytes, 12),
-            active_transaction_id: read_u64(bytes, 20),
-            committed_root_digest: read_sha256(bytes, 28),
-            root_digest: sha256(bytes),
-            package_records: [None; MAX_REGISTRY_PACKAGES],
-            package_count: 0,
-            schema_records: [None; MAX_REGISTRY_SCHEMAS],
-            schema_count: 0,
-            content_records: [None; MAX_REGISTRY_CONTENT],
-            content_count: 0,
-        };
+        registry.clear_to_empty();
+        registry.generation = read_u64(bytes, 12);
+        registry.active_transaction_id = read_u64(bytes, 20);
+        registry.committed_root_digest = read_sha256(bytes, 28);
+        registry.root_digest = sha256(bytes);
 
         let mut offset = PACKAGE_REGISTRY_HEADER_LEN;
         for _ in 0..package_count {
@@ -427,7 +426,7 @@ impl PackageRegistry {
             offset += PACKAGE_REGISTRY_CONTENT_RECORD_LEN;
         }
 
-        Ok(registry)
+        Ok(())
     }
 
     pub fn select_generation(slot_a: &[u8], slot_b: &[u8]) -> Result<Self, PackageStatus> {
@@ -532,6 +531,19 @@ impl PackageRegistry {
         self.root_digest
     }
 
+    pub fn clear_to_empty(&mut self) {
+        self.generation = 1;
+        self.active_transaction_id = 0;
+        self.committed_root_digest = [0; 32];
+        self.root_digest = [0; 32];
+        self.package_count = 0;
+        self.schema_count = 0;
+        self.content_count = 0;
+        self.package_records.fill(None);
+        self.schema_records.fill(None);
+        self.content_records.fill(None);
+    }
+
     pub fn record_committed_generation(&mut self, generation: PackageRegistryGeneration) {
         self.generation = generation.generation;
         self.root_digest = generation.root_digest;
@@ -556,12 +568,14 @@ impl PackageRegistry {
         self.active_transaction_id = source.active_transaction_id;
         self.committed_root_digest = source.committed_root_digest;
         self.root_digest = source.root_digest;
-        self.package_records = source.package_records;
         self.package_count = source.package_count;
-        self.schema_records = source.schema_records;
         self.schema_count = source.schema_count;
-        self.content_records = source.content_records;
         self.content_count = source.content_count;
+        self.package_records
+            .copy_from_slice(&source.package_records);
+        self.schema_records.copy_from_slice(&source.schema_records);
+        self.content_records
+            .copy_from_slice(&source.content_records);
     }
 
     pub const fn package_count(&self) -> usize {
