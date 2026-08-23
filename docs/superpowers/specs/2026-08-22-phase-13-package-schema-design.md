@@ -763,6 +763,32 @@ new content records even if a digest matches earlier bytes; old content records
 remain only while referenced by retained package, export, schema revision, or
 explicit immutable asset reference.
 
+The Phase 13 durable content-record encoding is part of
+`PackageRegistrySnapshotV0`, not a separate object graph. This makes content
+liveness a consequence of the selected published registry root:
+
+```text
+PackageRegistryContentRecordV0
+  content_index                  u16
+  role                           u16
+  format                         u16
+  extent_count                   u16
+  package_object_id              u64
+  byte_len                       u64
+  release_digest                 [u8; 32]
+  sha256                         [u8; 32]
+  retention_count                u16
+  flags                          u16
+  reserved0                      u32
+  extent_list[32]                repeated { start_block u16, block_count u16 }
+  reserved1                      [u8; 32] zero-filled
+```
+
+The record is exactly 256 bytes. The canonical `content_id` is the tuple
+`(package_object_id, release_digest, content_index)`. Registry snapshots are
+bounded to 32768 bytes so the current package, schema, and content record
+bounds fit inside a fixed package-owned candidate slot.
+
 ### Export Record
 
 ```text
@@ -841,6 +867,23 @@ state may reference physically written candidate bytes, but those bytes are not
 live in the authoritative world until the candidate registry is selected by a
 valid publication anchor. No selected anchored root reference means the extent
 is reclaimable/free.
+
+Phase 13 uses the following package-owned storage regions for candidate
+registry snapshots and publication anchors:
+
+```text
+package content bytes                 sectors 256..=8447
+object-service candidate checkpoints  sectors 8448..=8499
+candidate registry slot A             sectors 8500..=8563
+candidate registry slot B             sectors 8564..=8627
+publication anchor slot A             sector  8628
+publication anchor slot B             sector  8629
+```
+
+Content bytes are written to the existing package-content byte region. Content
+records and reachability are encoded into the candidate registry snapshot root.
+Publication anchors are stored separately so recovery can discover candidate
+worlds without retaining Boot 1 RAM state.
 
 `PackageContent` should not be introduced as a core object kind merely because
 content bytes exist. If future phases need content objects with independent

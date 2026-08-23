@@ -65,9 +65,12 @@ world A remains authoritative
 Recovery selects the newest valid published world. Candidate material without a valid publication anchor is non-authoritative and unreachable/reclaimable. Ordinary object-service checkpoints remain unchanged: a normal object checkpoint still becomes recovery-eligible through the existing commit-sector protocol, and ordinary recovery still selects the newest valid committed object checkpoint.
 
 Preserve completed commits through Task 2.12.y. Do not rewrite task history.
-Task 2.12.y introduced the candidate checkpoint eligibility surface. Tasks
-2.12.z and 2.12.zz add the missing prepare/publish and durable hydration
-surfaces before Task 2.13 resumes.
+Task 2.12.y introduced the candidate checkpoint eligibility surface. Task
+2.12.z was started and stopped because it exposed a missing durable backing
+surface for non-object candidate state. Preserve commits `3bd561c` and
+`5fe6ea9`; do not rewrite them. Task 2.12.za adds the missing durable
+candidate registry/content/anchor backing before Task 2.12.z is completed.
+Task 2.12.zz then adds durable hydration before Task 2.13 resumes.
 
 ## Storage Substrate Decision For ADR 0073
 
@@ -117,6 +120,34 @@ impl PackageExtentAllocator {
 ```
 
 This is not a replacement for the Phase 10 allocator. It is a package-content-specific extension recorded by ADR 0073 and covered by its own TDD task.
+
+Task 2.12.za freezes the missing durable candidate-world backing. Content
+records become part of `PackageRegistrySnapshotV0`, so selected registry
+reachability remains the source of package-content liveness. Candidate bytes
+may physically exist in the package-content extent region without becoming
+live. Publication anchors are discoverable records but do not select a world
+until recovery validates their referenced registry and object roots.
+
+```rust
+pub const PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES: usize = 32 * 1024;
+pub const PACKAGE_REGISTRY_CONTENT_RECORD_LEN: usize = 256;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS: usize = 64;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_A_SECTOR: u64 = 8500;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_B_SECTOR: u64 = 8564;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_A_SECTOR: u64 = 8628;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_B_SECTOR: u64 = 8629;
+```
+
+The fixed storage map is:
+
+```text
+package content bytes                 sectors 256..=8447
+object-service candidate checkpoints  sectors 8448..=8499
+candidate registry slot A             sectors 8500..=8563
+candidate registry slot B             sectors 8564..=8627
+publication anchor slot A             sector  8628
+publication anchor slot B             sector  8629
+```
 
 ## Phase 13 ABI To Freeze In Slice 0
 
@@ -1580,8 +1611,8 @@ inside the acceptance harness.
 **Status note:** completed at `b92cdc2` under the earlier rollback-oriented
 terminology. Preserve that commit. Task 2.12.y is the accepted architectural
 correction that revises this surface to world-selection terminology; Tasks
-2.12.z and 2.12.zz complete the production seams required before Task 2.13
-resumes.
+2.12.za, 2.12.z, and 2.12.zz complete the production seams required before
+Task 2.13 resumes.
 
 **Files:**
 - Modify: `core/src/package_service.rs`
@@ -1809,6 +1840,247 @@ git add core/src/object_service_checkpoint.rs core/src/object_service.rs core/sr
 git commit -m "feat(core): add package candidate checkpoint eligibility"
 ```
 
+### Task 2.12.za: Durable Candidate-World Persistence
+
+**Purpose:** make the non-object portions of candidate world B genuinely
+durable without making them authoritative. Candidate package-registry
+snapshots, content records, content bytes/extents, content reachability, and
+publication-anchor bytes must survive a fresh `PackageService` instance over
+the same backing storage. Candidate-only bytes remain non-authoritative until
+selected by a valid `PackageTransactionCommitV0` publication anchor.
+
+**Files:**
+- Modify: `core/src/main.rs`
+- Modify: `core/src/package_registry.rs`
+- Modify: `core/src/package_content_store.rs`
+- Modify: `core/src/package_service.rs`
+- Create only if it keeps durable-sector IO smaller than spreading helpers
+  across the existing modules: `core/src/package_candidate_store.rs`
+- Test: `core/src/package_registry.rs`
+- Test: `core/src/package_content_store.rs`
+- Test: `core/src/package_service.rs`
+
+Do not modify `scripts/test-phase13-package-install.py` or
+`core/src/package_acceptance.rs` in this task. Those remain Task 2.13.
+
+**Interfaces Consumed:** `BlockDeviceInfo`, `SECTOR_SIZE`,
+`PackageRegistry`, `PackageRegistryGeneration`,
+`PackageTransactionCommitV0`, `PackageStatus`, `PackageContentStore`,
+`PackageContentTransaction`, `PackageContentRecord`, `PackageExtent`,
+`PackageContentCommit`, and the existing package-content sector constants
+from `shared/src/package_abi.rs`.
+
+**Interfaces Produced:**
+
+```rust
+pub const PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES: usize = 32 * 1024;
+pub const PACKAGE_REGISTRY_CONTENT_RECORD_LEN: usize = 256;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS: usize = 64;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_A_SECTOR: u64 = 8500;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_B_SECTOR: u64 = 8564;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_A_SECTOR: u64 = 8628;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_B_SECTOR: u64 = 8629;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRegistryContentRecord {
+    pub package_object_id: u64,
+    pub release_digest: [u8; 32],
+    pub content_index: u16,
+    pub role: u16,
+    pub format: u16,
+    pub digest: [u8; 32],
+    pub byte_len: u64,
+    pub extents: [PackageExtent; MAX_CONTENT_EXTENTS_PER_RECORD],
+    pub extent_count: u16,
+    pub retention_count: u16,
+    pub flags: u16,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PackagePublicationAnchorSlot {
+    A,
+    B,
+}
+
+impl PackageRegistry {
+    pub fn add_content_record(
+        &mut self,
+        record: PackageRegistryContentRecord,
+    ) -> Result<(), PackageStatus>;
+
+    pub const fn content_count(&self) -> usize;
+
+    pub fn content_record(&self, index: usize)
+        -> Option<PackageRegistryContentRecord>;
+
+    pub fn encoded_len_from_snapshot_header(
+        bytes: &[u8],
+    ) -> Result<usize, PackageStatus>;
+}
+
+pub fn write_candidate_registry_generation(
+    device: BlockDeviceInfo,
+    registry: &PackageRegistry,
+) -> Result<PackageRegistryGeneration, PackageStatus>;
+
+pub fn read_candidate_registry_generation(
+    device: BlockDeviceInfo,
+    expected: PackageRegistryGeneration,
+) -> Result<PackageRegistry, PackageStatus>;
+
+pub fn write_publication_anchor(
+    device: BlockDeviceInfo,
+    anchor: PackageTransactionCommitV0,
+) -> Result<(), PackageStatus>;
+
+pub fn read_publication_anchor_slot(
+    device: BlockDeviceInfo,
+    slot: PackagePublicationAnchorSlot,
+) -> Result<Option<PackageTransactionCommitV0>, PackageStatus>;
+
+impl PackageTransactionCommitV0 {
+    pub fn decode_stored(bytes: &[u8]) -> Result<Self, PackageStatus>;
+}
+
+impl<'a> PackageContentStore<'a> {
+    pub fn add_staged_records_to_registry(
+        &self,
+        transaction: &PackageContentTransaction<'a>,
+        registry: &mut PackageRegistry,
+    ) -> Result<(), PackageStatus>;
+
+    pub fn write_candidate_content(
+        &self,
+        device: BlockDeviceInfo,
+        transaction: &PackageContentTransaction<'a>,
+    ) -> Result<PackageContentCommit, PackageStatus>;
+
+    pub fn read_validate_candidate_content(
+        device: BlockDeviceInfo,
+        registry: &PackageRegistry,
+    ) -> Result<PackageContentCommit, PackageStatus>;
+
+    pub fn live_bitmap_from_registry(
+        registry: &PackageRegistry,
+    ) -> Result<[u64; PACKAGE_CONTENT_BITMAP_WORDS], PackageStatus>;
+
+    pub fn extent_live_in_registry(
+        registry: &PackageRegistry,
+        extent: PackageExtent,
+    ) -> Result<bool, PackageStatus>;
+}
+```
+
+`decode_stored` validates anchor length, reserved bytes, and CRC. It must not
+select a world. Pair validation remains `PackageTransactionCommitV0::decode`
+with exact expected registry and object identities.
+
+`write_candidate_registry_generation` writes the canonical snapshot to the
+parity-selected candidate registry slot and rereads/decodes it. It must not
+publish an anchor or modify active locator mirrors. `read_candidate_registry_generation`
+must reject a root mismatch.
+
+`write_candidate_content` writes staged content bytes to
+`PACKAGE_CONTENT_BASE_SECTOR + extent.start_block`, rereads the same sectors,
+and verifies digest/length against the staged content records. It returns the
+candidate reachability bitmap without mutating the selected/live bitmap.
+`read_validate_candidate_content` validates bytes using content records from a
+registry snapshot; it must not use `INIT.PAK`, artifact fixture constants, or
+Boot 1 RAM.
+
+`write_publication_anchor` writes the encoded `PackageTransactionCommitV0` to
+the parity-selected anchor slot. `read_publication_anchor_slot` reads exactly
+one slot and returns `Ok(None)` for blank/absent/corrupt anchor bytes.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add focused tests:
+
+```rust
+#[test]
+fn package_candidate_registry_persists_content_records_by_root() {
+    // Arrange: registry with one Package, one SchemaDefinition, and one
+    // content record.
+    // Act: write_candidate_registry_generation, then read it through a fresh
+    // registry value using the returned PackageRegistryGeneration.
+    // Assert: package/schema/content counts and content record fields survive,
+    // and a mutated expected root returns TransactionAnchorMismatch or
+    // RegistryRecoveryDenied.
+}
+
+#[test]
+fn package_candidate_content_bytes_survive_reconstruction_without_liveness() {
+    // Arrange: stage content into PackageContentStore and add staged records to
+    // a candidate registry.
+    // Act: write_candidate_content, drop the store/transaction, then call
+    // read_validate_candidate_content with the restored registry.
+    // Assert: record count and bitmap match the content record extents.
+    // Assert: live_bitmap_from_registry(PackageRegistry::empty()) is empty and
+    // extent_live_in_registry(empty, candidate_extent) is false.
+}
+
+#[test]
+fn package_publication_anchor_persists_without_selecting_candidate() {
+    // Arrange: a valid PackageTransactionCommitV0 plus candidate registry and
+    // content written to storage.
+    // Act: write_publication_anchor, then read_publication_anchor_slot through
+    // a fresh service/module instance.
+    // Assert: the decoded stored anchor matches, but with no publish call a
+    // fresh PackageService still has an empty active registry and no visible
+    // locator mirrors.
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```powershell
+cargo test -p pythos-core package_candidate_registry_persists_content_records_by_root
+cargo test -p pythos-core package_candidate_content_bytes_survive_reconstruction_without_liveness
+cargo test -p pythos-core package_publication_anchor_persists_without_selecting_candidate
+```
+
+Expected: FAIL because candidate registry/content/anchor durable APIs and
+content records in `PackageRegistrySnapshotV0` are missing.
+
+- [ ] **Step 3: Minimum implementation**
+
+Add content records to `PackageRegistrySnapshotV0` using the exact 256-byte
+record layout above. Add candidate registry slot read/write helpers, content
+byte write/read/validate helpers, and publication-anchor slot read/write
+helpers. Use module-local test-sector backing under `#[cfg(test)]` if the
+existing block-device test path has no shared sector store. In non-test code,
+use `block_device::read_sector` and `block_device::write_sector`.
+
+Keep package-content liveness derived only from a selected registry snapshot.
+Do not introduce a persistent `STAGED(transaction_id)` allocator state. Do not
+make a registry slot, content byte write, or anchor read select a package world.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```powershell
+cargo test -p pythos-core package_candidate_registry
+cargo test -p pythos-core package_candidate_content
+cargo test -p pythos-core package_publication_anchor
+cargo test -p pythos-core package_registry
+cargo test -p pythos-core package_content_store
+cargo test -p pythos-core package_prepare_install_candidate
+cargo test -p pythos-core package_publish_install_candidate
+cargo fmt --check
+git diff --check
+```
+
+Expected: PASS. Existing unrelated warnings in `ps2.rs`,
+`storage_backend_screen.rs`, `fb_debug.rs`, `pyth_service_supervisor.rs`,
+`sdhci.rs`, and `serial.rs` may remain warnings only.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add core/src/main.rs core/src/package_registry.rs core/src/package_content_store.rs core/src/package_service.rs
+if (Test-Path core/src/package_candidate_store.rs) { git add core/src/package_candidate_store.rs }
+git commit -m "feat(core): persist package candidate worlds"
+```
+
 ### Task 2.12.z: Complete Package Candidate Prepare/Publish Surface
 
 **Purpose:** expose a production `PackageService` seam that separates
@@ -1827,7 +2099,11 @@ Do not modify `scripts/test-phase13-package-install.py` or
 **Interfaces Consumed:** `PackageInstallRequest`, `PackageSourceService`,
 `CapabilityTable`, `ObjectService`, `PackageArtifactV0`,
 `PackageContentStore`, `PackageContentTransaction`, `PackageRegistry`,
-`PackageRegistryGeneration`, `ObjectCheckpointIdentity`,
+`PackageRegistryGeneration`, `write_candidate_registry_generation`,
+`read_candidate_registry_generation`, `write_publication_anchor`,
+`PackageContentStore::add_staged_records_to_registry`,
+`PackageContentStore::write_candidate_content`,
+`PackageContentStore::read_validate_candidate_content`, `ObjectCheckpointIdentity`,
 `write_object_service_candidate_checkpoint`,
 `read_object_service_candidate_checkpoint`, and
 `PackageTransactionCommitV0`.

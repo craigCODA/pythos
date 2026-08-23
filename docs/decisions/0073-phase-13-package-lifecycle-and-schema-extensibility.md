@@ -353,6 +353,84 @@ PackageRegistrySnapshotV0
 `snapshot_crc32c` is CRC-32C Castagnoli over the exact snapshot bytes with the
 `snapshot_crc32c` field zero-filled.
 
+`PackageRegistrySnapshotV0` has a bounded encoded size of 32768 bytes. The
+snapshot may include content records in Phase 13; those records are the durable
+reachability description for immutable package-content bytes. A selected
+published registry root makes referenced content extents live. A candidate
+registry root that is not selected by a valid publication anchor does not make
+its referenced content extents live.
+
+`PackageRegistryContentRecordV0` is encoded after package and schema records:
+
+```text
+content_index                  u16
+role                           u16
+format                         u16
+extent_count                   u16
+package_object_id              u64
+byte_len                       u64
+release_digest                 [u8; 32]
+sha256                         [u8; 32]
+retention_count                u16
+flags                          u16
+reserved0                      u32
+extent_list[32]                repeated { start_block u16, block_count u16 }
+reserved1                      [u8; 32] zero-filled
+```
+
+The content record length is 256 bytes. `extent_count` must be no greater than
+`MAX_CONTENT_EXTENTS_PER_RECORD`, every referenced extent must be inside
+`PACKAGE_CONTENT_BASE_SECTOR..PACKAGE_CONTENT_BASE_SECTOR +
+PACKAGE_CONTENT_MAX_BLOCKS`, and all reserved bytes must be zero. `content_id`
+remains the tuple `(package_object_id, release_digest, content_index)`.
+
+Phase 13 package-owned durable storage uses these regions:
+
+```rust
+pub const PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES: usize = 32 * 1024;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS: usize = 64;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_A_SECTOR: u64 = 8500;
+pub const PACKAGE_CANDIDATE_REGISTRY_SLOT_B_SECTOR: u64 = 8564;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_A_SECTOR: u64 = 8628;
+pub const PACKAGE_PUBLICATION_ANCHOR_SLOT_B_SECTOR: u64 = 8629;
+```
+
+The package-content byte region remains sectors `256..=8447`.
+Object-service candidate checkpoints remain sectors `8448..=8499`. Registry
+candidate slots and publication-anchor slots begin only after that object
+candidate region and do not overlap content bytes or ordinary object
+checkpoints.
+
+The durable package-domain API must provide these storage surfaces before the
+publication-boundary QEMU task consumes them:
+
+```rust
+pub fn write_candidate_registry_generation(
+    device: BlockDeviceInfo,
+    registry: &PackageRegistry,
+) -> Result<PackageRegistryGeneration, PackageStatus>;
+
+pub fn read_candidate_registry_generation(
+    device: BlockDeviceInfo,
+    expected: PackageRegistryGeneration,
+) -> Result<PackageRegistry, PackageStatus>;
+
+pub fn write_publication_anchor(
+    device: BlockDeviceInfo,
+    anchor: PackageTransactionCommitV0,
+) -> Result<(), PackageStatus>;
+
+pub fn read_publication_anchor_slot(
+    device: BlockDeviceInfo,
+    slot: PackagePublicationAnchorSlot,
+) -> Result<Option<PackageTransactionCommitV0>, PackageStatus>;
+```
+
+`read_publication_anchor_slot` validates anchor layout and CRC only. Later
+publication recovery must still load and validate the referenced object
+candidate checkpoint and package-registry generation before selecting that
+world.
+
 ### Cross-Checkpoint Publication Anchor
 
 Normative Phase 13 transaction invariant:
