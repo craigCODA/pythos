@@ -35,8 +35,8 @@ use crate::{
 use core::cell::UnsafeCell;
 use pythos_shared::{
     package_abi::{
-        OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION, PACKAGE_INSTALL_RESOURCE_ID,
-        PACKAGE_INSTALL_RIGHT, PackageStatus,
+        MAX_REQUIREMENT_RECORDS, OBJECT_KIND_PACKAGE, OBJECT_KIND_SCHEMA_DEFINITION,
+        PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageStatus,
     },
     package_format::{PackageArtifactV0, PackageFormatError},
 };
@@ -104,6 +104,52 @@ pub struct PackageInstallCandidate {
     pub registry_generation: PackageRegistryGeneration,
     pub object_checkpoint_identity: ObjectCheckpointIdentity,
     pub staged_registry_snapshot: [u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageLaunchRequirement {
+    pub requirement_id: u16,
+    pub resource: ResourceId,
+    pub rights: RightsMask,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageLaunchGrant {
+    pub requirement_id: u16,
+    pub capability: CapabilityHandle,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageLaunchRequest<'a> {
+    pub caller: ActiveUserProcess,
+    pub namespace_root: ObjectId,
+    pub locator: &'a str,
+    pub requirements: &'a [PackageLaunchRequirement],
+    pub supplied_grants: &'a [PackageLaunchGrant],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageLaunchResult {
+    pub export: PackageRegistryExportRecord,
+    grants: [Option<PackageLaunchGrant>; MAX_REQUIREMENT_RECORDS],
+    pub grant_count: usize,
+}
+
+impl PackageLaunchResult {
+    const fn new(export: PackageRegistryExportRecord) -> Self {
+        Self {
+            export,
+            grants: [None; MAX_REQUIREMENT_RECORDS],
+            grant_count: 0,
+        }
+    }
+
+    pub const fn grant(&self, index: usize) -> Option<PackageLaunchGrant> {
+        if index >= self.grant_count {
+            return None;
+        }
+        self.grants[index]
+    }
 }
 
 impl PackageInstallResult {
@@ -874,6 +920,15 @@ impl<'a> PackageService<'a> {
         self.registry.export_for_locator(namespace_root, locator)
     }
 
+    pub fn launch(
+        &mut self,
+        request: PackageLaunchRequest<'_>,
+        capabilities: &CapabilityTable,
+    ) -> Result<PackageLaunchResult, PackageStatus> {
+        let export = self.resolve_export(request.namespace_root, request.locator)?;
+        validate_launch_authority(request, capabilities, export)
+    }
+
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
         &self.content_store
     }
@@ -1383,6 +1438,54 @@ fn clear_restore_option<T>(slot: &mut Option<T>) {
     *slot = None;
 }
 
+fn validate_launch_authority(
+    request: PackageLaunchRequest<'_>,
+    capabilities: &CapabilityTable,
+    export: PackageRegistryExportRecord,
+) -> Result<PackageLaunchResult, PackageStatus> {
+    if request.requirements.len() > MAX_REQUIREMENT_RECORDS
+        || request.supplied_grants.len() > MAX_REQUIREMENT_RECORDS
+    {
+        return Err(PackageStatus::BadRequest);
+    }
+
+    let mut launch = PackageLaunchResult::new(export);
+    let mut index = 0usize;
+    while index < request.requirements.len() {
+        let requirement = request.requirements[index];
+        let supplied = find_supplied_launch_grant(requirement, request.supplied_grants)
+            .ok_or(PackageStatus::RequiredGrantMissing)?;
+        capabilities
+            .validate(
+                request.caller.service_id(),
+                supplied.capability,
+                requirement.resource,
+                requirement.rights,
+            )
+            .map_err(|_| PackageStatus::FinalCapabilityDenied)?;
+        launch.grants[launch.grant_count] = Some(supplied);
+        launch.grant_count += 1;
+        index += 1;
+    }
+
+    Ok(launch)
+}
+
+fn find_supplied_launch_grant(
+    requirement: PackageLaunchRequirement,
+    supplied_grants: &[PackageLaunchGrant],
+) -> Option<PackageLaunchGrant> {
+    let mut index = 0usize;
+    while index < supplied_grants.len() {
+        let supplied = supplied_grants[index];
+        if supplied.requirement_id == requirement.requirement_id {
+            return Some(supplied);
+        }
+        index += 1;
+    }
+    None
+}
+
 fn validate_install_authority(
     caller: ActiveUserProcess,
     capabilities: &CapabilityTable,
@@ -1668,8 +1771,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        PackageInstallCandidate, PackageInstallRequest, PackageInstallResult,
-        PackageRecoveryReport, PackageService,
+        PackageInstallCandidate, PackageInstallRequest, PackageInstallResult, PackageLaunchGrant,
+        PackageLaunchRequest, PackageLaunchRequirement, PackageRecoveryReport, PackageService,
     };
     use crate::{
         block_device::BlockDeviceInfo,
@@ -3657,6 +3760,162 @@ mod tests {
                 .package_object_id,
             0x5059_504B_474F_0001
         );
+    }
+
+    #[test]
+    fn package_launch_capability_missing_required_grant_returns_required_grant_missing() {
+        let mut package_service = service_with_launch_export();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4301, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let _ambient_create_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(0x5059_4F42_4A43_0001),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let requirements = [PackageLaunchRequirement {
+            requirement_id: 7,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        }];
+        let supplied_grants = [];
+
+        assert_eq!(
+            package_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    requirements: &requirements,
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            ),
+            Err(PackageStatus::RequiredGrantMissing)
+        );
+    }
+
+    #[test]
+    fn package_launch_capability_final_authority_denial_returns_final_capability_denied() {
+        let mut package_service = service_with_launch_export();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4302, 0x13);
+        let other = ServiceId::from_raw(0x5059_504B_4F54_4852);
+        let mut capabilities = CapabilityTable::new();
+        let wrong_holder_capability = capabilities
+            .grant(
+                other,
+                ResourceId::new(0x5059_4F42_4A43_0001),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let requirements = [PackageLaunchRequirement {
+            requirement_id: 7,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        }];
+        let supplied_grants = [PackageLaunchGrant {
+            requirement_id: 7,
+            capability: wrong_holder_capability,
+        }];
+
+        assert_eq!(
+            package_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    requirements: &requirements,
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            ),
+            Err(PackageStatus::FinalCapabilityDenied)
+        );
+    }
+
+    #[test]
+    fn package_launch_capability_valid_explicit_grants_produce_request_with_only_supplied_grants() {
+        let mut package_service = service_with_launch_export();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4303, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let supplied_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(0x5059_4F42_4A43_0001),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let _not_supplied_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(0x5059_4F42_4A43_0002),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let requirements = [PackageLaunchRequirement {
+            requirement_id: 7,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        }];
+        let supplied_grants = [PackageLaunchGrant {
+            requirement_id: 7,
+            capability: supplied_capability,
+        }];
+
+        let launch = package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    requirements: &requirements,
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+
+        assert_eq!(launch.export.package_object_id, 0x5059_504B_474F_0001);
+        assert_eq!(launch.grant_count, 1);
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+        assert_eq!(launch.grant(1), None);
+    }
+
+    fn service_with_launch_export() -> PackageService<'static> {
+        let mut package_service = PackageService::new_empty_for_test();
+        let release_digest = sha256(b"seed-release");
+        let schema_digest = sha256(b"schema:seed.v0");
+        package_service
+            .registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                0x5059_504B_474F_0001,
+                7,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        package_service
+            .registry
+            .add_export_record(
+                PackageRegistryExportRecord::new(
+                    PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                    b"seed",
+                    b"launch",
+                    0x5059_504B_474F_0001,
+                    7,
+                    release_digest,
+                    1,
+                    0,
+                    0,
+                    0x5059_5343_484F_0001,
+                    1,
+                    schema_digest,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        package_service
     }
 
     fn build_schema_package_artifact() -> Vec<u8> {
