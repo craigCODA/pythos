@@ -15,6 +15,7 @@ use crate::revision_history::{MAX_REVISIONS, RevisionRecord};
 use crate::service_identity::ServiceId;
 use crate::shell_objects::ObjectId;
 use crate::typed_object_format::{RECORD_SIZE, TypedObjectRecord};
+use pythos_shared::package_abi::{PACKAGE_CONTENT_BASE_SECTOR, PACKAGE_CONTENT_MAX_BLOCKS};
 use pythos_shared::sha256::Sha256;
 
 pub const OBJECT_SERVICE_SLOT_A_HEADER_SECTOR: u64 = 192;
@@ -28,14 +29,21 @@ pub const OBJECT_SERVICE_SLOT_B_RELATIONSHIP_TABLE_SECTOR: u64 = 233;
 pub const OBJECT_SERVICE_SLOT_B_REVISION_TABLE_SECTOR: u64 = 237;
 pub const OBJECT_SERVICE_SLOT_B_COMMIT_SECTOR: u64 = 249;
 pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 250;
-pub const OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR: u64 = 256;
-pub const OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR: u64 = 257;
-pub const OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR: u64 = 265;
-pub const OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR: u64 = 269;
-pub const OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR: u64 = 281;
 pub const OBJECT_SERVICE_OBJECT_TABLE_SECTORS: usize = 8;
 pub const OBJECT_SERVICE_RELATIONSHIP_TABLE_SECTORS: usize = 4;
 pub const OBJECT_SERVICE_REVISION_TABLE_SECTORS: usize = 12;
+pub const OBJECT_SERVICE_CANDIDATE_BASE_SECTOR: u64 =
+    PACKAGE_CONTENT_BASE_SECTOR + PACKAGE_CONTENT_MAX_BLOCKS as u64;
+pub const OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR: u64 = OBJECT_SERVICE_CANDIDATE_BASE_SECTOR;
+pub const OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR: u64 =
+    OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR + 1;
+pub const OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR: u64 =
+    OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR + OBJECT_SERVICE_OBJECT_TABLE_SECTORS as u64;
+pub const OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR: u64 =
+    OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR
+        + OBJECT_SERVICE_RELATIONSHIP_TABLE_SECTORS as u64;
+pub const OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR: u64 =
+    OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR + OBJECT_SERVICE_REVISION_TABLE_SECTORS as u64;
 pub const OBJECT_SERVICE_OBJECT_CAPACITY: usize = MAX_DYNAMIC_OBJECTS;
 pub const OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY: usize = MAX_DYNAMIC_OBJECTS;
 pub const OBJECT_SERVICE_CURRENT_REVISION_CAPACITY: usize = MAX_DYNAMIC_OBJECTS;
@@ -153,6 +161,19 @@ impl ObjectServiceSnapshot {
 
 pub fn object_checkpoint_identity(snapshot: &ObjectServiceSnapshot) -> ObjectCheckpointIdentity {
     let slot = slot_for_generation(snapshot.generation);
+    object_checkpoint_identity_for_slot(slot, snapshot)
+}
+
+pub fn object_candidate_checkpoint_identity(
+    snapshot: &ObjectServiceSnapshot,
+) -> ObjectCheckpointIdentity {
+    object_checkpoint_identity_for_slot(CheckpointSlot::Candidate, snapshot)
+}
+
+fn object_checkpoint_identity_for_slot(
+    slot: CheckpointSlot,
+    snapshot: &ObjectServiceSnapshot,
+) -> ObjectCheckpointIdentity {
     #[cfg(test)]
     {
         let image = encode_slot(slot, snapshot, true);
@@ -256,7 +277,7 @@ static IDENTITY_SNAPSHOT_SCRATCH: IdentitySnapshotScratch =
     IdentitySnapshotScratch(UnsafeCell::new(ObjectServiceSnapshot::empty()));
 
 #[cfg(test)]
-const TEST_CHECKPOINT_SECTOR_COUNT: usize = 512;
+const TEST_CHECKPOINT_SECTOR_COUNT: usize = OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR as usize + 1;
 
 #[cfg(test)]
 static TEST_CHECKPOINT_SECTORS: Mutex<[[u8; SECTOR_SIZE]; TEST_CHECKPOINT_SECTOR_COUNT]> =
@@ -337,14 +358,10 @@ pub fn write_object_service_candidate_checkpoint(
             );
             write_candidate_slot_image(device, image)?;
             read_candidate_slot_image_into(device, image)?;
-            let decoded = decode_slot(image)?;
-            let identity = ObjectCheckpointIdentity {
-                generation: decoded.generation,
-                root_digest: slot_image_digest(image),
-            };
+            let identity = object_candidate_checkpoint_identity_from_image(image)?;
             Ok(ObjectServiceCandidateCheckpoint {
                 identity,
-                generation: decoded.generation,
+                generation: identity.generation,
             })
         });
     }
@@ -358,14 +375,10 @@ pub fn write_object_service_candidate_checkpoint(
         write_candidate_slot_image(device, &image)?;
 
         let written = read_candidate_slot_image(device)?;
-        let decoded = decode_slot(&written)?;
-        let identity = ObjectCheckpointIdentity {
-            generation: decoded.generation,
-            root_digest: slot_image_digest(&written),
-        };
+        let identity = object_candidate_checkpoint_identity_from_image(&written)?;
         Ok(ObjectServiceCandidateCheckpoint {
             identity,
-            generation: decoded.generation,
+            generation: identity.generation,
         })
     }
 }
@@ -378,14 +391,11 @@ pub fn read_object_service_candidate_checkpoint(
     {
         return with_slot_scratch(|image| {
             read_candidate_slot_image_into(device, image)?;
-            let snapshot = decode_slot(image)?;
-            let identity = ObjectCheckpointIdentity {
-                generation: snapshot.generation,
-                root_digest: slot_image_digest(image),
-            };
+            let identity = object_candidate_checkpoint_identity_from_image(image)?;
             if identity != expected {
                 return Err(GeneralStoragePersistenceError::BadSnapshot);
             }
+            let snapshot = decode_slot(image)?;
             Ok(snapshot)
         });
     }
@@ -393,14 +403,11 @@ pub fn read_object_service_candidate_checkpoint(
     #[cfg(test)]
     {
         let image = read_candidate_slot_image(device)?;
-        let snapshot = decode_slot(&image)?;
-        let identity = ObjectCheckpointIdentity {
-            generation: snapshot.generation,
-            root_digest: slot_image_digest(&image),
-        };
+        let identity = object_candidate_checkpoint_identity_from_image(&image)?;
         if identity != expected {
             return Err(GeneralStoragePersistenceError::BadSnapshot);
         }
+        let snapshot = decode_slot(&image)?;
         Ok(snapshot)
     }
 }
@@ -683,6 +690,21 @@ fn slot_image_digest(image: &ObjectServiceSlotImage) -> [u8; 32] {
         hasher.update(sector);
     }
     hasher.finalize()
+}
+
+fn object_candidate_checkpoint_identity_from_image(
+    image: &ObjectServiceSlotImage,
+) -> Result<ObjectCheckpointIdentity, GeneralStoragePersistenceError> {
+    let snapshot = decode_slot(image)?;
+    if slot_from_code(read_u16(&image.sectors[HEADER_IMAGE_INDEX], 10))?
+        != CheckpointSlot::Candidate
+    {
+        return Err(GeneralStoragePersistenceError::BadSnapshot);
+    }
+    Ok(ObjectCheckpointIdentity {
+        generation: snapshot.generation,
+        root_digest: slot_image_digest(image),
+    })
 }
 
 #[cfg(not(test))]
@@ -1328,7 +1350,7 @@ fn write_checkpoint_sector(
 }
 
 #[cfg(test)]
-fn reset_checkpoint_storage_for_test() {
+pub(crate) fn reset_checkpoint_storage_for_test() {
     *TEST_CHECKPOINT_SECTORS.lock().unwrap() = [[0; SECTOR_SIZE]; TEST_CHECKPOINT_SECTOR_COUNT];
 }
 
@@ -1383,6 +1405,7 @@ mod tests {
     use crate::shell_objects::{ObjectId, ObjectKind};
     use crate::tasks::TaskId;
     use crate::typed_object_format::{TypedObjectField, TypedObjectRecord};
+    use pythos_shared::package_abi::{PACKAGE_CONTENT_BASE_SECTOR, PACKAGE_CONTENT_MAX_BLOCKS};
     use std::sync::Mutex;
 
     static TEST_LOCK: Mutex<()> = Mutex::new(());
@@ -1576,6 +1599,24 @@ mod tests {
             &committed.sectors[HEADER_IMAGE_INDEX],
             &blank
         ));
+    }
+
+    #[test]
+    fn package_candidate_checkpoint_storage_does_not_overlap_package_content() {
+        let package_content_first = PACKAGE_CONTENT_BASE_SECTOR;
+        let package_content_last =
+            PACKAGE_CONTENT_BASE_SECTOR + u64::from(PACKAGE_CONTENT_MAX_BLOCKS) - 1;
+        let candidate_first = OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR;
+        let candidate_last = OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR;
+
+        assert_eq!(
+            candidate_first,
+            PACKAGE_CONTENT_BASE_SECTOR + u64::from(PACKAGE_CONTENT_MAX_BLOCKS)
+        );
+        assert!(
+            candidate_last < package_content_first || candidate_first > package_content_last,
+            "candidate checkpoint sectors {candidate_first}..={candidate_last} overlap package content sectors {package_content_first}..={package_content_last}"
+        );
     }
 
     #[test]

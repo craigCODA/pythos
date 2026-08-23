@@ -1,4 +1,5 @@
 use crate::{
+    block_device::BlockDeviceInfo,
     capabilities::{CapabilityHandle, CapabilityTable, ResourceId, RightsMask},
     object_locator::LOCATOR_FIELD_SEGMENT,
     object_relationships::{
@@ -6,7 +7,10 @@ use crate::{
         PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
     },
     object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
-    object_service_checkpoint::{ObjectCheckpointIdentity, object_checkpoint_identity},
+    object_service_checkpoint::{
+        ObjectCheckpointIdentity, object_candidate_checkpoint_identity,
+        read_object_service_candidate_checkpoint, write_object_service_candidate_checkpoint,
+    },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
@@ -111,6 +115,7 @@ pub struct PackageService<'a> {
     previous_object_checkpoint_identity: ObjectCheckpointIdentity,
     previous_anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
     previous_anchored_generation_available: bool,
+    unpublished_candidate_checkpoint: Option<ObjectCheckpointIdentity>,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -139,6 +144,7 @@ impl<'a> PackageService<'a> {
             },
             previous_anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
             previous_anchored_generation_available: false,
+            unpublished_candidate_checkpoint: None,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -166,8 +172,51 @@ impl<'a> PackageService<'a> {
         Ok(result)
     }
 
+    pub fn install_with_candidate_checkpoint(
+        &mut self,
+        device: BlockDeviceInfo,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &mut ObjectService,
+        artifact_buffer: &'a mut [u8],
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        let mut result = PackageInstallResult::empty();
+        self.install_into_with_candidate_checkpoint(
+            Some(device),
+            request,
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+            &mut result,
+        )?;
+        Ok(result)
+    }
+
     pub fn install_into(
         &mut self,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &mut ObjectService,
+        artifact_buffer: &'a mut [u8],
+        result: &mut PackageInstallResult,
+    ) -> Result<(), PackageStatus> {
+        self.install_into_with_candidate_checkpoint(
+            None,
+            request,
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+            result,
+        )
+    }
+
+    fn install_into_with_candidate_checkpoint(
+        &mut self,
+        candidate_device: Option<BlockDeviceInfo>,
         request: PackageInstallRequest,
         source_service: &PackageSourceService<'_>,
         capabilities: &CapabilityTable,
@@ -268,7 +317,11 @@ impl<'a> PackageService<'a> {
         let candidate_snapshot = candidate_object_service
             .encode_candidate_snapshot()
             .map_err(map_object_error)?;
-        let object_identity = object_checkpoint_identity(&candidate_snapshot);
+        let object_identity = if let Some(device) = candidate_device {
+            self.persist_candidate_snapshot(device, &candidate_snapshot)?
+        } else {
+            object_candidate_checkpoint_identity(&candidate_snapshot)
+        };
         let transaction_id = self.next_transaction_id;
         let anchor = PackageTransactionCommitV0::new(
             transaction_id,
@@ -294,6 +347,7 @@ impl<'a> PackageService<'a> {
         self.object_checkpoint_identity = object_identity;
         self.anchor_bytes = anchor_bytes;
         self.anchored_generation_available = true;
+        self.unpublished_candidate_checkpoint = None;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
@@ -321,6 +375,17 @@ impl<'a> PackageService<'a> {
 
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
         &self.content_store
+    }
+
+    pub fn write_validate_candidate_checkpoint(
+        &mut self,
+        device: BlockDeviceInfo,
+        object_service: &ObjectService,
+    ) -> Result<ObjectCheckpointIdentity, PackageStatus> {
+        let snapshot = object_service
+            .encode_candidate_snapshot()
+            .map_err(map_object_error)?;
+        self.persist_candidate_snapshot(device, &snapshot)
     }
 
     pub fn recover(&mut self) -> Result<PackageRecoveryReport, PackageStatus> {
@@ -357,6 +422,13 @@ impl<'a> PackageService<'a> {
         let selected_current = current_valid && selected_generation == self.registry_generation();
         let selected_previous =
             previous_valid && selected_generation == self.previous_registry_generation();
+        let selected_object_identity = if selected_current {
+            Some(self.object_checkpoint_identity)
+        } else if selected_previous {
+            Some(self.previous_object_checkpoint_identity)
+        } else {
+            None
+        };
         if !selected_current && !selected_previous {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
@@ -366,14 +438,20 @@ impl<'a> PackageService<'a> {
             self.registry = selected;
         }
 
-        let unpublished_candidate_ignored = self.staged_content.staged_count() != 0
+        let transient_staged_content = self.staged_content.staged_count() != 0
             || self
                 .content_store
                 .staged_bitmap()
                 .iter()
                 .any(|word| *word != 0);
-        if unpublished_candidate_ignored {
+        if transient_staged_content {
             self.content_store.rollback(&mut self.staged_content);
+        }
+        let unpublished_candidate_ignored = self
+            .unpublished_candidate_checkpoint
+            .is_some_and(|candidate| Some(candidate) != selected_object_identity);
+        if unpublished_candidate_ignored {
+            self.unpublished_candidate_checkpoint = None;
         }
 
         Ok(PackageRecoveryReport {
@@ -474,6 +552,23 @@ impl<'a> PackageService<'a> {
             generation: self.previous_registry.generation(),
             root_digest: self.previous_registry.root_digest(),
         }
+    }
+
+    fn persist_candidate_snapshot(
+        &mut self,
+        device: BlockDeviceInfo,
+        snapshot: &crate::object_service_checkpoint::ObjectServiceSnapshot,
+    ) -> Result<ObjectCheckpointIdentity, PackageStatus> {
+        let candidate = write_object_service_candidate_checkpoint(device, snapshot)
+            .map_err(map_storage_error)?;
+        let loaded = read_object_service_candidate_checkpoint(device, candidate.identity)
+            .map_err(map_storage_error)?;
+        let loaded_identity = object_candidate_checkpoint_identity(&loaded);
+        if loaded_identity != candidate.identity {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+        self.unpublished_candidate_checkpoint = Some(candidate.identity);
+        Ok(candidate.identity)
     }
 
     fn replace_current_with_previous(&mut self, selected: PackageRegistry) {
@@ -581,6 +676,12 @@ fn map_object_error(error: ObjectServiceError) -> PackageStatus {
     }
 }
 
+fn map_storage_error(
+    _error: crate::general_storage_persistence::GeneralStoragePersistenceError,
+) -> PackageStatus {
+    PackageStatus::RegistryRecoveryDenied
+}
+
 fn map_relationship_error(_error: RelationshipError) -> PackageStatus {
     PackageStatus::RegistryRecoveryDenied
 }
@@ -613,15 +714,20 @@ mod tests {
         PackageInstallRequest, PackageInstallResult, PackageRecoveryReport, PackageService,
     };
     use crate::{
+        block_device::BlockDeviceInfo,
         capabilities::{CapabilityTable, ResourceId, RightsMask},
         object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, RelationshipKind},
         object_service::ObjectService,
+        object_service_checkpoint::{
+            read_object_service_candidate_checkpoint, read_object_service_checkpoint,
+            reset_checkpoint_storage_for_test,
+        },
         package_content_store::{ContentId, PackageContentTransaction},
         package_registry::PackageTransactionCommitV0,
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
         service_identity::ServiceId,
-        shell_objects::ObjectKind,
+        shell_objects::{ObjectId, ObjectKind},
     };
     use pythos_shared::{
         init_bundle::{self, INIT_BUNDLE_HEADER_LEN, RECORD_ENTRY_LEN, TYPE_PACKAGE_SOURCE},
@@ -634,11 +740,12 @@ mod tests {
         sha256::{Sha256, sha256},
     };
     use std::vec::Vec;
-    use std::{boxed::Box, vec};
+    use std::{boxed::Box, sync::Mutex, vec};
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
     const ORPHAN_CONTENT: &[u8] = b"orphan";
+    static CHECKPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn package_service_recovery_selects_clean_committed_generation() {
@@ -659,7 +766,7 @@ mod tests {
     }
 
     #[test]
-    fn package_recovery_reports_unpublished_candidate_as_ignored_reclaimable() {
+    fn package_recovery_rolls_back_transient_staged_content_without_candidate_report() {
         with_installed_package(|package_service| {
             package_service
                 .content_store
@@ -674,8 +781,8 @@ mod tests {
 
             let report = package_service.recover().unwrap();
 
-            assert!(report.unpublished_candidate_ignored);
-            assert!(report.candidate_content_reclaimable);
+            assert!(!report.unpublished_candidate_ignored);
+            assert!(!report.candidate_content_reclaimable);
             assert_eq!(package_service.staged_content.staged_count(), 0);
             assert!(
                 package_service
@@ -828,6 +935,98 @@ mod tests {
         });
     }
 
+    #[test]
+    fn package_service_candidate_checkpoint_anchor_references_persisted_candidate_identity() {
+        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+
+        let installed =
+            install_recovery_package_with_candidate_checkpoint(&mut package_service, device)
+                .unwrap();
+
+        assert!(read_object_service_checkpoint(device).unwrap().is_none());
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &installed.anchor_bytes,
+                installed.registry_generation,
+                installed.object_checkpoint_identity,
+            )
+            .unwrap(),
+            installed.anchor
+        );
+
+        let candidate =
+            read_object_service_candidate_checkpoint(device, installed.object_checkpoint_identity)
+                .unwrap();
+        assert_eq!(
+            candidate.generation,
+            installed.object_checkpoint_identity.generation
+        );
+        assert!(candidate.objects.iter().flatten().any(|record| {
+            record.object.object_id() == ObjectId::new(installed.package_object_id)
+        }));
+    }
+
+    #[test]
+    fn package_recovery_reports_durable_unanchored_candidate_as_ignored_reclaimable() {
+        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        install_recovery_package_with_candidate_checkpoint(&mut package_service, device).unwrap();
+        let object_service = ObjectService::new_for_test();
+
+        let unanchored = package_service
+            .write_validate_candidate_checkpoint(device, &object_service)
+            .unwrap();
+
+        assert!(read_object_service_candidate_checkpoint(device, unanchored).is_ok());
+        assert!(read_object_service_checkpoint(device).unwrap().is_none());
+
+        let report = package_service.recover().unwrap();
+
+        assert!(report.published_world_selected);
+        assert!(report.unpublished_candidate_ignored);
+        assert!(report.candidate_content_reclaimable);
+        assert!(!report.previous_published_world_selected);
+    }
+
+    #[test]
+    fn package_recovery_rejects_mismatched_anchor_for_durable_candidate_world() {
+        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let first =
+            install_recovery_package_with_candidate_checkpoint(&mut package_service, device)
+                .unwrap();
+        let second =
+            install_recovery_package_with_candidate_checkpoint(&mut package_service, device)
+                .unwrap();
+        assert_eq!(package_service.registry().package_count(), 2);
+        assert!(
+            read_object_service_candidate_checkpoint(device, second.object_checkpoint_identity,)
+                .is_ok()
+        );
+        package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+
+        let report = package_service.recover().unwrap();
+
+        assert!(report.published_world_selected);
+        assert!(report.previous_published_world_selected);
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            first.package_object_id
+        );
+    }
+
     fn with_installed_package(f: impl FnOnce(&mut PackageService<'_>)) {
         let mut package_service = PackageService::new_empty_for_test();
         install_recovery_package(&mut package_service).unwrap();
@@ -863,6 +1062,50 @@ mod tests {
         let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
 
         package_service.install(
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            &mut object_service,
+            artifact_buffer,
+        )
+    }
+
+    fn install_recovery_package_with_candidate_checkpoint(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        let artifact = build_schema_package_artifact();
+        let source_record = build_source_record(0, b"phase13-recovery.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_5245_4356, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let mut object_service = ObjectService::new_for_test();
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
+
+        package_service.install_with_candidate_checkpoint(
+            device,
             PackageInstallRequest {
                 caller,
                 source_handle,
