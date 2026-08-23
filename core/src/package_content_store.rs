@@ -337,8 +337,10 @@ impl<'a> PackageContentStore<'a> {
     }
 
     pub fn from_validated_candidate_registry(
+        &self,
         registry: &PackageRegistry,
         validated_content: PackageContentCommit,
+        prepared_content: &PackageContentTransaction<'a>,
     ) -> Result<Self, PackageStatus> {
         let bitmap = Self::live_bitmap_from_registry(registry)?;
         if bitmap != validated_content.committed_bitmap()
@@ -347,9 +349,48 @@ impl<'a> PackageContentStore<'a> {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
 
+        let mut committed = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        let mut index = 0usize;
+        while let Some(registry_record) = registry.content_record(index) {
+            let expected = PackageContentRecord {
+                content_id: ContentId::new(
+                    registry_record.package_object_id,
+                    registry_record.release_digest,
+                    registry_record.content_index,
+                ),
+                role: registry_record.role,
+                format: registry_record.format,
+                digest: registry_record.digest,
+                byte_len: registry_record.byte_len,
+                extents: registry_record.extents,
+                extent_count: registry_record.extent_count,
+                retention_count: registry_record.retention_count,
+                committed: true,
+            };
+            let slot = self
+                .committed
+                .iter()
+                .flatten()
+                .chain(prepared_content.staged.iter().flatten())
+                .find_map(|slot| {
+                    let mut cached = slot.record;
+                    cached.committed = true;
+                    (cached == expected
+                        && cached.byte_len == slot.bytes.len() as u64
+                        && sha256(slot.bytes) == cached.digest)
+                        .then_some(*slot)
+                })
+                .ok_or(PackageStatus::RegistryRecoveryDenied)?;
+            committed[index] = Some(PackageContentSlot {
+                record: expected,
+                bytes: slot.bytes,
+            });
+            index += 1;
+        }
+
         Ok(Self {
             allocator: PackageExtentAllocator::restore(bitmap)?,
-            committed: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
+            committed,
             committed_count: validated_content.record_count,
         })
     }

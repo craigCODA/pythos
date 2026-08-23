@@ -609,15 +609,23 @@ impl ObjectService {
         snapshot: &ObjectServiceSnapshot,
     ) -> Result<Self, ObjectServiceError> {
         let mut service = Self::new_seeded()?;
-        service.objects = restore_dynamic_objects(snapshot)?;
-        service.relationships = restore_relationships(snapshot)?;
-        service.revisions = ObjectServiceRevisionHistory::restore_from_records(
+        service.apply_snapshot_preserving_runtime_authority(snapshot)?;
+        Ok(service)
+    }
+
+    pub(crate) fn apply_snapshot_preserving_runtime_authority(
+        &mut self,
+        snapshot: &ObjectServiceSnapshot,
+    ) -> Result<(), ObjectServiceError> {
+        self.objects = restore_dynamic_objects(snapshot)?;
+        self.relationships = restore_relationships(snapshot)?;
+        self.revisions = ObjectServiceRevisionHistory::restore_from_records(
             snapshot.current_revisions,
             snapshot.prior_revisions,
         )?;
-        service.generation = snapshot.generation;
-        service.next_shell_note_id = next_shell_note_id(snapshot);
-        Ok(service)
+        self.generation = snapshot.generation;
+        self.next_shell_note_id = next_shell_note_id(snapshot);
+        Ok(())
     }
 
     pub fn encode_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {

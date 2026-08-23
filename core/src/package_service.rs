@@ -158,6 +158,8 @@ pub struct PackageService<'a> {
     prepared_candidate: Option<PackageInstallCandidate>,
     prepared_object_service: Option<ObjectService>,
     prepared_candidate_device: Option<BlockDeviceInfo>,
+    prepared_content_store: Option<PackageContentStore<'a>>,
+    prepared_content: Option<PackageContentTransaction<'a>>,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -190,6 +192,8 @@ impl<'a> PackageService<'a> {
             prepared_candidate: None,
             prepared_object_service: None,
             prepared_candidate_device: None,
+            prepared_content_store: None,
+            prepared_content: None,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -264,6 +268,9 @@ impl<'a> PackageService<'a> {
         object_service: &mut ObjectService,
         artifact_buffer: &'a mut [u8],
     ) -> Result<PackageInstallResult, PackageStatus> {
+        if self.prepared_candidate.is_some() {
+            return Err(PackageStatus::BadRequest);
+        }
         validate_install_authority(request.caller, capabilities, request.install_capability)?;
         let artifact_len = source_service.read(
             request.caller.service_id(),
@@ -471,6 +478,7 @@ impl<'a> PackageService<'a> {
         self.content_store.rollback(&mut self.staged_content);
         self.staged_content
             .reset(package_object_id.raw(), release_digest);
+        let prepared_content_store = self.content_store.clone();
         let prepared = (|| -> Result<PackageInstallCandidate, PackageStatus> {
             let mut descriptor_content_id = None;
             let mut entry_index = 0u16;
@@ -573,6 +581,8 @@ impl<'a> PackageService<'a> {
             };
             self.prepared_object_service = Some(candidate_object_service);
             self.prepared_candidate_device = Some(device);
+            self.prepared_content_store = Some(prepared_content_store);
+            self.prepared_content = Some(self.staged_content.clone());
             self.prepared_candidate = Some(candidate.clone());
             Ok(candidate)
         })();
@@ -582,6 +592,8 @@ impl<'a> PackageService<'a> {
             Err(error) => {
                 self.content_store.rollback(&mut self.staged_content);
                 self.prepared_candidate_device = None;
+                self.prepared_content_store = None;
+                self.prepared_content = None;
                 Err(error)
             }
         }
@@ -623,7 +635,9 @@ impl<'a> PackageService<'a> {
         {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
-        let persisted_object_service = ObjectService::from_snapshot(&persisted_candidate_snapshot)
+        let mut persisted_object_service = *object_service;
+        persisted_object_service
+            .apply_snapshot_preserving_runtime_authority(&persisted_candidate_snapshot)
             .map_err(map_object_error)?;
         #[cfg(test)]
         if TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE
@@ -631,11 +645,21 @@ impl<'a> PackageService<'a> {
         {
             return Err(PackageStatus::QuotaDenied);
         }
-        let persisted_content_store = PackageContentStore::from_validated_candidate_registry(
-            &persisted_registry,
-            persisted_content,
-        )
-        .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
+        let prepared_content_store = self
+            .prepared_content_store
+            .as_ref()
+            .ok_or(PackageStatus::BadRequest)?;
+        let prepared_content = self
+            .prepared_content
+            .as_ref()
+            .ok_or(PackageStatus::BadRequest)?;
+        let persisted_content_store = prepared_content_store
+            .from_validated_candidate_registry(
+                &persisted_registry,
+                persisted_content,
+                prepared_content,
+            )
+            .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
 
         let anchor = PackageTransactionCommitV0::new(
             candidate.transaction_id,
@@ -674,6 +698,8 @@ impl<'a> PackageService<'a> {
         self.prepared_candidate = None;
         self.prepared_object_service = None;
         self.prepared_candidate_device = None;
+        self.prepared_content_store = None;
+        self.prepared_content = None;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
@@ -806,6 +832,9 @@ impl<'a> PackageService<'a> {
             self.unpublished_candidate_checkpoint = None;
             self.prepared_candidate = None;
             self.prepared_object_service = None;
+            self.prepared_candidate_device = None;
+            self.prepared_content_store = None;
+            self.prepared_content = None;
         }
 
         Ok(PackageRecoveryReport {
@@ -1095,7 +1124,7 @@ mod tests {
         block_device::BlockDeviceInfo,
         capabilities::{CapabilityTable, ResourceId, RightsMask},
         object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, RelationshipKind},
-        object_service::ObjectService,
+        object_service::{ObjectService, ObjectServiceError},
         object_service_checkpoint::{
             read_object_service_candidate_checkpoint, read_object_service_checkpoint,
         },
@@ -1105,7 +1134,7 @@ mod tests {
             reset_package_persistence_storage_for_test, write_candidate_registry_generation,
             write_publication_anchor,
         },
-        package_content_store::{PackageContentStore, PackageContentTransaction},
+        package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
         package_registry::{
             PackageRegistry, PackageRegistryPackageRecord, PackageTransactionCommitV0,
         },
@@ -1819,6 +1848,96 @@ mod tests {
             package_service.publish_install_candidate(replay, &mut object_service),
             Err(PackageStatus::BadRequest)
         );
+    }
+
+    #[test]
+    fn package_publish_install_candidate_preserves_revoked_live_capability() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let shell = object_service.test_shell_caller();
+        let revoked = object_service.test_shell_workspace_capability();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        object_service
+            .revoke_object_capability_for_test(shell, revoked)
+            .unwrap();
+        assert_eq!(
+            object_service.query_objects(shell, revoked, ObjectKind::Note),
+            Err(ObjectServiceError::Denied)
+        );
+
+        package_service
+            .publish_install_candidate(candidate, &mut object_service)
+            .unwrap();
+
+        assert_eq!(
+            object_service.query_objects(shell, revoked, ObjectKind::Note),
+            Err(ObjectServiceError::Denied)
+        );
+    }
+
+    #[test]
+    fn package_publish_install_candidate_keeps_durable_content_readable() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        package_service
+            .publish_install_candidate(candidate.clone(), &mut object_service)
+            .unwrap();
+
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_committed(ContentId::new(
+                    candidate.package_object_id,
+                    candidate.release_digest,
+                    0,
+                ))
+                .unwrap(),
+            SCHEMA_DESCRIPTOR
+        );
+    }
+
+    #[test]
+    fn package_install_into_denies_while_durable_candidate_is_pending() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+        let registry_before = package_service.registry().clone();
+        let object_before = object_service.checkpoint_identity().unwrap();
+
+        assert_eq!(
+            install_recovery_package_into(&mut package_service, &mut object_service),
+            Err(PackageStatus::BadRequest)
+        );
+        assert_eq!(package_service.registry(), &registry_before);
+        assert_eq!(object_service.checkpoint_identity().unwrap(), object_before);
+        assert_eq!(package_service.prepared_candidate, Some(candidate));
     }
 
     #[test]
