@@ -144,6 +144,8 @@ pub struct PackageContentStore<'a> {
     allocator: PackageExtentAllocator,
     committed: [Option<PackageContentSlot<'a>>; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
     committed_count: u16,
+    persisted_device: Option<BlockDeviceInfo>,
+    persisted_records: [Option<PackageRegistryContentRecord>; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
 }
 
 impl<'a> PackageContentStore<'a> {
@@ -152,6 +154,8 @@ impl<'a> PackageContentStore<'a> {
             allocator: PackageExtentAllocator::empty(),
             committed: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
             committed_count: 0,
+            persisted_device: None,
+            persisted_records: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
         }
     }
 
@@ -219,6 +223,38 @@ impl<'a> PackageContentStore<'a> {
             }
         }
         Err(PackageStatus::NotFound)
+    }
+
+    pub fn read_published(
+        &self,
+        content_id: ContentId,
+        out: &mut [u8],
+    ) -> Result<usize, PackageStatus> {
+        match self.read_committed(content_id) {
+            Ok(bytes) => {
+                if out.len() < bytes.len() {
+                    return Err(PackageStatus::BufferTooSmall);
+                }
+                out[..bytes.len()].copy_from_slice(bytes);
+                return Ok(bytes.len());
+            }
+            Err(PackageStatus::NotFound) => {}
+            Err(error) => return Err(error),
+        }
+
+        let device = self.persisted_device.ok_or(PackageStatus::NotFound)?;
+        let record = self
+            .persisted_records
+            .iter()
+            .flatten()
+            .find(|record| {
+                record.package_object_id == content_id.package_object_id
+                    && record.release_digest == content_id.release_digest
+                    && record.content_index == content_id.content_index
+            })
+            .copied()
+            .ok_or(PackageStatus::NotFound)?;
+        read_record_bytes_into(device, record, out)
     }
 
     pub fn rollback(&mut self, transaction: &mut PackageContentTransaction<'a>) {
@@ -337,6 +373,7 @@ impl<'a> PackageContentStore<'a> {
     }
 
     pub fn restore_from_validated_registry(
+        device: BlockDeviceInfo,
         registry: &PackageRegistry,
         validated_content: PackageContentCommit,
     ) -> Result<Self, PackageStatus> {
@@ -347,10 +384,19 @@ impl<'a> PackageContentStore<'a> {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
 
+        let mut persisted_records = [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS];
+        let mut index = 0usize;
+        while let Some(record) = registry.content_record(index) {
+            persisted_records[index] = Some(record);
+            index += 1;
+        }
+
         Ok(Self {
             allocator: PackageExtentAllocator::restore(bitmap)?,
             committed: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
             committed_count: validated_content.record_count,
+            persisted_device: Some(device),
+            persisted_records,
         })
     }
 
@@ -410,6 +456,8 @@ impl<'a> PackageContentStore<'a> {
             allocator: PackageExtentAllocator::restore(bitmap)?,
             committed,
             committed_count: validated_content.record_count,
+            persisted_device: None,
+            persisted_records: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
         })
     }
 
@@ -638,6 +686,39 @@ fn validate_record_bytes(
         record.extents,
         record.extent_count,
     )
+}
+
+fn read_record_bytes_into(
+    device: BlockDeviceInfo,
+    record: PackageRegistryContentRecord,
+    out: &mut [u8],
+) -> Result<usize, PackageStatus> {
+    let byte_len = usize::try_from(record.byte_len).map_err(|_| PackageStatus::LengthOverflow)?;
+    if out.len() < byte_len {
+        return Err(PackageStatus::BufferTooSmall);
+    }
+    validate_record_bytes(device, record)?;
+
+    let mut byte_offset = 0usize;
+    let mut extent_index = 0usize;
+    while extent_index < record.extent_count as usize {
+        let extent = record.extents[extent_index];
+        for block_offset in 0..extent.block_count {
+            let sector_number = PACKAGE_CONTENT_BASE_SECTOR
+                .checked_add(u64::from(extent.start_block) + u64::from(block_offset))
+                .ok_or(PackageStatus::LengthOverflow)?;
+            let sector = read_package_candidate_sector(device, sector_number)
+                .map_err(|_| PackageStatus::ContentCorrupt)?;
+            let copy_len = core::cmp::min(byte_len - byte_offset, SECTOR_SIZE);
+            out[byte_offset..byte_offset + copy_len].copy_from_slice(&sector[..copy_len]);
+            byte_offset += copy_len;
+        }
+        extent_index += 1;
+    }
+    if byte_offset != byte_len {
+        return Err(PackageStatus::ContentCorrupt);
+    }
+    Ok(byte_len)
 }
 
 fn validate_stored_bytes(
