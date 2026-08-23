@@ -13,7 +13,7 @@ use crate::pyth_service_supervisor::{
     SupervisorAction,
 };
 use crate::{
-    audio, boot_assets, cinematic_boot, framebuffer, launcher_screen, normal_init,
+    audio, boot_assets, cinematic_boot, framebuffer, launcher_screen, normal_init, package_service,
     process_context::ActiveUserProcess, ps2, pyth_service_supervisor, qemu_exit, retained_services,
     serial,
 };
@@ -50,6 +50,10 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         };
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
         serial::write_line("PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED");
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
+    if package_service::initialize_package_service_from_device(substrate.block_device).is_err() {
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }

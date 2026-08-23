@@ -66,15 +66,35 @@ mod object_service;
 mod object_service_checkpoint;
 #[cfg(any(test, feature = "phase13-package-test"))]
 mod package_acceptance;
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 mod package_candidate_store;
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 mod package_content_store;
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 mod package_registry;
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 mod package_service;
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 mod package_source;
 mod permission_validation;
 mod persistent_objects;

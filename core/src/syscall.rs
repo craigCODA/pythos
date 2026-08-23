@@ -12,7 +12,11 @@ use crate::capabilities::{
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::object_service::{ObjectService, ObjectServiceError};
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 use crate::package_service;
 #[cfg(test)]
 use crate::package_service::PackageService;
@@ -1546,7 +1550,11 @@ fn dispatch_package_context(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(u64::from(PackageStatus::Denied as u16))
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 fn package_runtime_schema_binding(
     caller: ActiveUserProcess,
     schema_slot: u16,
@@ -1557,10 +1565,13 @@ fn package_runtime_schema_binding(
     .unwrap_or(Err(PackageStatus::Denied))
 }
 
-#[cfg(all(
-    not(test),
-    not(feature = "verify"),
-    not(feature = "phase13-package-test")
+#[cfg(any(
+    all(not(test), feature = "verify", not(feature = "phase13-package-test")),
+    all(
+        not(test),
+        feature = "hardware-probe",
+        not(feature = "phase13-package-test")
+    )
 ))]
 fn package_runtime_schema_binding(
     _caller: ActiveUserProcess,

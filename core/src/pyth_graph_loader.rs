@@ -1,12 +1,20 @@
 #![cfg_attr(test, allow(dead_code))]
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 use crate::{
     package_content_store::{ContentId, PackageContentStore},
     package_registry::PackageRegistryExportRecord,
 };
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 use pythos_shared::package_abi::PackageStatus;
 use pythos_shared::{
     boot_protocol::PythBootInfo,
@@ -38,7 +46,11 @@ pub struct LoadedPythGraph<'a> {
     pub verified: VerifiedGraph<'a>,
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LoadedPackageExportGraph<'a> {
     pub content_id: ContentId,
@@ -46,14 +58,22 @@ pub struct LoadedPackageExportGraph<'a> {
     pub verified: VerifiedGraph<'a>,
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageExportGraphValidationError {
     pub status: PackageStatus,
     pub verifier: Option<VerifyError>,
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 impl PackageExportGraphValidationError {
     pub const fn from_status(status: PackageStatus) -> Self {
         Self {
@@ -102,7 +122,11 @@ pub fn validate_named_pyth_graph_payload_bytes_for_admission<'a>(
     validate_named_pyth_graph_payload_bytes_with_profile(bytes, name, false)
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
 pub fn validate_package_export_graph<'a>(
     content_store: &PackageContentStore<'_>,
     export: PackageRegistryExportRecord,

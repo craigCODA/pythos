@@ -34,9 +34,7 @@ use crate::{
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
 use core::cell::UnsafeCell;
-#[cfg(any(test, feature = "phase13-package-test"))]
 use core::mem::MaybeUninit;
-#[cfg(any(test, feature = "phase13-package-test"))]
 use core::sync::atomic::{AtomicBool, Ordering};
 use pythos_shared::{
     object_shell_abi::PackedCapability,
@@ -48,10 +46,7 @@ use pythos_shared::{
     package_format::{PackageArtifactV0, PackageFormatError},
 };
 
-#[cfg_attr(
-    all(not(test), feature = "phase13-package-test"),
-    allow(unused_imports)
-)]
+#[cfg_attr(not(test), allow(unused_imports))]
 pub use crate::pyth_graph_loader::validate_package_export_graph;
 
 const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
@@ -66,10 +61,8 @@ static TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE: std::sync::Mutex<Option<ObjectSer
 static TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 struct RetainedPackageServiceStorage(UnsafeCell<MaybeUninit<PackageService<'static>>>);
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 // SAFETY:
 // 1. Invariant: retained package service storage is initialized at most once
 //    before package-context syscalls read launch contexts.
@@ -81,17 +74,15 @@ struct RetainedPackageServiceStorage(UnsafeCell<MaybeUninit<PackageService<'stat
 //    mutable borrow for one synchronous closure and stores no reference.
 // 5. Alignment: MaybeUninit<PackageService> provides PackageService alignment.
 // 6. Mapped length: exactly one PackageService value is accessed.
-// 7. Concurrency: Phase 13 verify acceptance is single-core and syscall
-//    dispatch is non-reentrant in this slice.
+// 7. Concurrency: Phase 13 production and acceptance package dispatch are
+//    single-core and non-reentrant in this slice.
 // 8. Violation: overlapping borrows could expose package context for the wrong
 //    launched process or corrupt package service state.
 unsafe impl Sync for RetainedPackageServiceStorage {}
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 static RETAINED_PACKAGE_SERVICE: RetainedPackageServiceStorage =
     RetainedPackageServiceStorage(UnsafeCell::new(MaybeUninit::uninit()));
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 static RETAINED_PACKAGE_SERVICE_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(test)]
@@ -106,7 +97,6 @@ fn fail_candidate_content_materialization_for_test() {
     TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE.store(true, std::sync::atomic::Ordering::SeqCst);
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 pub(crate) fn initialize_retained_package_service_for_phase13(
     service: PackageService<'static>,
 ) -> bool {
@@ -128,8 +118,8 @@ pub(crate) fn initialize_retained_package_service_for_phase13(
     // 5. Alignment: MaybeUninit<PackageService> preserves PackageService
     //    alignment.
     // 6. Mapped length: exactly one PackageService value is written.
-    // 7. Concurrency: Phase 13 verify acceptance is single-core and
-    //    non-reentrant.
+    // 7. Concurrency: Phase 13 production and acceptance initialization are
+    //    single-core and non-reentrant.
     // 8. Violation: a second writer could replace launch contexts under an
     //    active package-context syscall.
     unsafe {
@@ -138,7 +128,6 @@ pub(crate) fn initialize_retained_package_service_for_phase13(
     true
 }
 
-#[cfg(any(test, feature = "phase13-package-test"))]
 pub(crate) fn with_retained_package_service_for_phase13<R>(
     f: impl FnOnce(&mut PackageService<'static>) -> R,
 ) -> Option<R> {
@@ -157,13 +146,26 @@ pub(crate) fn with_retained_package_service_for_phase13<R>(
     // 5. Alignment: MaybeUninit<PackageService> provides PackageService
     //    alignment.
     // 6. Mapped length: exactly one initialized PackageService is borrowed.
-    // 7. Concurrency: Phase 13 verify acceptance is single-core and syscall
-    //    dispatch is non-reentrant.
+    // 7. Concurrency: Phase 13 production and acceptance package dispatch are
+    //    single-core and non-reentrant.
     // 8. Violation: reentrant mutable access could corrupt runtime context
     //    records or registry state.
     Some(f(unsafe {
         (*RETAINED_PACKAGE_SERVICE.0.get()).assume_init_mut()
     }))
+}
+
+#[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+pub(crate) fn initialize_package_service_from_device(
+    device: BlockDeviceInfo,
+) -> Result<(), PackageStatus> {
+    let mut service = PackageService::new_empty();
+    service.restore_from_storage(device)?;
+    if initialize_retained_package_service_for_phase13(service) {
+        Ok(())
+    } else {
+        Err(PackageStatus::BadRequest)
+    }
 }
 
 #[cfg(test)]
@@ -525,7 +527,7 @@ fn with_package_restore_scratch<R>(f: impl FnOnce(&mut PackageRestoreScratch) ->
 }
 
 impl<'a> PackageService<'a> {
-    pub const fn new_empty_for_test() -> Self {
+    pub const fn new_empty() -> Self {
         Self {
             registry: PackageRegistry::empty(),
             content_store: PackageContentStore::empty(),
@@ -563,6 +565,10 @@ impl<'a> PackageService<'a> {
             runtime_contexts: [None; MAX_REQUIREMENT_RECORDS],
             runtime_context_count: 0,
         }
+    }
+
+    pub const fn new_empty_for_test() -> Self {
+        Self::new_empty()
     }
 
     pub fn install(
