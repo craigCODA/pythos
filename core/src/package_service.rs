@@ -41,6 +41,8 @@ use pythos_shared::{
     package_format::{PackageArtifactV0, PackageFormatError},
 };
 
+pub use crate::pyth_graph_loader::validate_package_export_graph;
+
 const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const FIRST_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
 const INSTALL_OPERATION: u16 = 1;
