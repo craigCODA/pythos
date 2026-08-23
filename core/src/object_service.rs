@@ -624,6 +624,12 @@ impl ObjectService {
         Ok(snapshot)
     }
 
+    pub fn encode_candidate_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
+        let mut snapshot = self.encode_snapshot()?;
+        snapshot.generation = self.generation.wrapping_add(1);
+        Ok(snapshot)
+    }
+
     pub fn encode_snapshot_into(
         &self,
         snapshot: &mut ObjectServiceSnapshot,

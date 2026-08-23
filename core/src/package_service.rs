@@ -6,7 +6,7 @@ use crate::{
         PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
     },
     object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
-    object_service_checkpoint::ObjectCheckpointIdentity,
+    object_service_checkpoint::{ObjectCheckpointIdentity, object_checkpoint_identity},
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
@@ -89,10 +89,10 @@ impl PackageInstallResult {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageRecoveryReport {
-    pub committed_anchored_generation_selected: bool,
-    pub previous_valid_anchored_generation_selected: bool,
-    pub staged_uncommitted_install_rolled_back: bool,
-    pub orphan_content_reclaimed: bool,
+    pub published_world_selected: bool,
+    pub previous_published_world_selected: bool,
+    pub unpublished_candidate_ignored: bool,
+    pub candidate_content_reclaimable: bool,
     pub locator_mirrors_require_rebuild: bool,
 }
 
@@ -225,8 +225,9 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::InvalidSchema);
         }
 
+        let mut candidate_object_service = *object_service;
         let package = create_package_or_rollback(
-            object_service,
+            &mut candidate_object_service,
             request.caller,
             package_object_id,
             release_digest,
@@ -234,7 +235,7 @@ impl<'a> PackageService<'a> {
             &mut self.staged_content,
         )?;
         let schema = create_schema_or_rollback(
-            object_service,
+            &mut candidate_object_service,
             request.caller,
             schema_object_id,
             package_object_id,
@@ -264,9 +265,10 @@ impl<'a> PackageService<'a> {
         let registry_generation = self
             .staged_registry
             .encode_snapshot(&mut staged_registry_snapshot)?;
-        let object_identity = object_service
-            .checkpoint_identity()
+        let candidate_snapshot = candidate_object_service
+            .encode_candidate_snapshot()
             .map_err(map_object_error)?;
+        let object_identity = object_checkpoint_identity(&candidate_snapshot);
         let transaction_id = self.next_transaction_id;
         let anchor = PackageTransactionCommitV0::new(
             transaction_id,
@@ -296,6 +298,7 @@ impl<'a> PackageService<'a> {
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
         self.locator_mirror_visible = false;
+        *object_service = candidate_object_service;
 
         result.transaction_id = transaction_id;
         result.package_object_id = package.object_id.raw();
@@ -363,21 +366,21 @@ impl<'a> PackageService<'a> {
             self.registry = selected;
         }
 
-        let staged_uncommitted_install_rolled_back = self.staged_content.staged_count() != 0
+        let unpublished_candidate_ignored = self.staged_content.staged_count() != 0
             || self
                 .content_store
                 .staged_bitmap()
                 .iter()
                 .any(|word| *word != 0);
-        if staged_uncommitted_install_rolled_back {
+        if unpublished_candidate_ignored {
             self.content_store.rollback(&mut self.staged_content);
         }
 
         Ok(PackageRecoveryReport {
-            committed_anchored_generation_selected: true,
-            previous_valid_anchored_generation_selected: selected_previous,
-            staged_uncommitted_install_rolled_back,
-            orphan_content_reclaimed: staged_uncommitted_install_rolled_back,
+            published_world_selected: true,
+            previous_published_world_selected: selected_previous,
+            unpublished_candidate_ignored,
+            candidate_content_reclaimable: unpublished_candidate_ignored,
             locator_mirrors_require_rebuild: self.registry.package_count() != 0
                 && !self.locator_mirror_visible,
         })
@@ -645,10 +648,10 @@ mod tests {
             assert_eq!(
                 package_service.recover(),
                 Ok(PackageRecoveryReport {
-                    committed_anchored_generation_selected: true,
-                    previous_valid_anchored_generation_selected: false,
-                    staged_uncommitted_install_rolled_back: false,
-                    orphan_content_reclaimed: false,
+                    published_world_selected: true,
+                    previous_published_world_selected: false,
+                    unpublished_candidate_ignored: false,
+                    candidate_content_reclaimable: false,
                     locator_mirrors_require_rebuild: false,
                 })
             );
@@ -656,7 +659,7 @@ mod tests {
     }
 
     #[test]
-    fn package_service_recovery_rolls_back_unanchored_staged_install() {
+    fn package_recovery_reports_unpublished_candidate_as_ignored_reclaimable() {
         with_installed_package(|package_service| {
             package_service
                 .content_store
@@ -671,8 +674,8 @@ mod tests {
 
             let report = package_service.recover().unwrap();
 
-            assert!(report.staged_uncommitted_install_rolled_back);
-            assert!(report.orphan_content_reclaimed);
+            assert!(report.unpublished_candidate_ignored);
+            assert!(report.candidate_content_reclaimable);
             assert_eq!(package_service.staged_content.staged_count(), 0);
             assert!(
                 package_service
@@ -698,8 +701,8 @@ mod tests {
 
         let report = package_service.recover().unwrap();
 
-        assert!(report.committed_anchored_generation_selected);
-        assert!(report.previous_valid_anchored_generation_selected);
+        assert!(report.published_world_selected);
+        assert!(report.previous_published_world_selected);
         assert_eq!(package_service.registry().package_count(), 1);
         assert_eq!(
             package_service
@@ -740,7 +743,7 @@ mod tests {
 
         let report = package_service.recover().unwrap();
 
-        assert!(report.previous_valid_anchored_generation_selected);
+        assert!(report.previous_published_world_selected);
         assert_eq!(package_service.registry().package_count(), 1);
         assert_eq!(
             package_service
@@ -810,6 +813,19 @@ mod tests {
             Err(PackageStatus::RegistryRecoveryDenied)
         );
         assert_eq!(object_service.checkpoint_identity().unwrap(), before);
+    }
+
+    #[test]
+    fn package_recovery_selects_anchor_published_candidate_world() {
+        with_installed_package(|package_service| {
+            let report = package_service.recover().unwrap();
+
+            assert!(report.published_world_selected);
+            assert!(!report.previous_published_world_selected);
+            assert!(!report.unpublished_candidate_ignored);
+            assert!(!report.candidate_content_reclaimable);
+            assert_eq!(package_service.registry().package_count(), 1);
+        });
     }
 
     fn with_installed_package(f: impl FnOnce(&mut PackageService<'_>)) {

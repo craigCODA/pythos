@@ -3,8 +3,12 @@
 
 #[cfg(not(test))]
 use core::cell::UnsafeCell;
+#[cfg(test)]
+use std::sync::Mutex;
 
-use crate::block_device::{self, BlockDeviceInfo, SECTOR_SIZE};
+#[cfg(not(test))]
+use crate::block_device;
+use crate::block_device::{BlockDeviceInfo, SECTOR_SIZE};
 use crate::dynamic_object_store::MAX_DYNAMIC_OBJECTS;
 use crate::general_storage_persistence::GeneralStoragePersistenceError;
 use crate::revision_history::{MAX_REVISIONS, RevisionRecord};
@@ -24,6 +28,11 @@ pub const OBJECT_SERVICE_SLOT_B_RELATIONSHIP_TABLE_SECTOR: u64 = 233;
 pub const OBJECT_SERVICE_SLOT_B_REVISION_TABLE_SECTOR: u64 = 237;
 pub const OBJECT_SERVICE_SLOT_B_COMMIT_SECTOR: u64 = 249;
 pub const OBJECT_SERVICE_TORN_SECTOR: u64 = 250;
+pub const OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR: u64 = 256;
+pub const OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR: u64 = 257;
+pub const OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR: u64 = 265;
+pub const OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR: u64 = 269;
+pub const OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR: u64 = 281;
 pub const OBJECT_SERVICE_OBJECT_TABLE_SECTORS: usize = 8;
 pub const OBJECT_SERVICE_RELATIONSHIP_TABLE_SECTORS: usize = 4;
 pub const OBJECT_SERVICE_REVISION_TABLE_SECTORS: usize = 12;
@@ -96,6 +105,12 @@ pub struct ObjectCheckpointIdentity {
     pub root_digest: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectServiceCandidateCheckpoint {
+    pub identity: ObjectCheckpointIdentity,
+    pub generation: u64,
+}
+
 impl ObjectServiceSnapshot {
     pub const fn empty() -> Self {
         Self {
@@ -163,6 +178,7 @@ pub fn object_checkpoint_identity(snapshot: &ObjectServiceSnapshot) -> ObjectChe
 pub enum CheckpointSlot {
     A,
     B,
+    Candidate,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -239,6 +255,13 @@ unsafe impl Sync for IdentitySnapshotScratch {}
 static IDENTITY_SNAPSHOT_SCRATCH: IdentitySnapshotScratch =
     IdentitySnapshotScratch(UnsafeCell::new(ObjectServiceSnapshot::empty()));
 
+#[cfg(test)]
+const TEST_CHECKPOINT_SECTOR_COUNT: usize = 512;
+
+#[cfg(test)]
+static TEST_CHECKPOINT_SECTORS: Mutex<[[u8; SECTOR_SIZE]; TEST_CHECKPOINT_SECTOR_COUNT]> =
+    Mutex::new([[0; SECTOR_SIZE]; TEST_CHECKPOINT_SECTOR_COUNT]);
+
 #[cfg(not(test))]
 pub fn with_object_identity_snapshot_scratch<R>(
     f: impl FnOnce(&mut ObjectServiceSnapshot) -> R,
@@ -293,14 +316,103 @@ pub fn write_object_service_checkpoint(
     }
 }
 
+pub fn write_object_service_candidate_checkpoint(
+    device: BlockDeviceInfo,
+    snapshot: &ObjectServiceSnapshot,
+) -> Result<ObjectServiceCandidateCheckpoint, GeneralStoragePersistenceError> {
+    #[cfg(not(test))]
+    {
+        let next_generation = with_restored_object_service_checkpoint(device, |snapshot| {
+            snapshot.map_or(1, |snapshot| snapshot.generation + 1)
+        })?;
+        return with_slot_scratch(|image| {
+            let mut candidate = *snapshot;
+            candidate.generation = next_generation;
+            encode_slot_into_with_generation(
+                image,
+                CheckpointSlot::Candidate,
+                &candidate,
+                next_generation,
+                true,
+            );
+            write_candidate_slot_image(device, image)?;
+            read_candidate_slot_image_into(device, image)?;
+            let decoded = decode_slot(image)?;
+            let identity = ObjectCheckpointIdentity {
+                generation: decoded.generation,
+                root_digest: slot_image_digest(image),
+            };
+            Ok(ObjectServiceCandidateCheckpoint {
+                identity,
+                generation: decoded.generation,
+            })
+        });
+    }
+
+    #[cfg(test)]
+    {
+        let current = read_object_service_checkpoint(device)?;
+        let mut candidate = *snapshot;
+        candidate.generation = current.map_or(1, |snapshot| snapshot.generation + 1);
+        let image = encode_slot(CheckpointSlot::Candidate, &candidate, true);
+        write_candidate_slot_image(device, &image)?;
+
+        let written = read_candidate_slot_image(device)?;
+        let decoded = decode_slot(&written)?;
+        let identity = ObjectCheckpointIdentity {
+            generation: decoded.generation,
+            root_digest: slot_image_digest(&written),
+        };
+        Ok(ObjectServiceCandidateCheckpoint {
+            identity,
+            generation: decoded.generation,
+        })
+    }
+}
+
+pub fn read_object_service_candidate_checkpoint(
+    device: BlockDeviceInfo,
+    expected: ObjectCheckpointIdentity,
+) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError> {
+    #[cfg(not(test))]
+    {
+        return with_slot_scratch(|image| {
+            read_candidate_slot_image_into(device, image)?;
+            let snapshot = decode_slot(image)?;
+            let identity = ObjectCheckpointIdentity {
+                generation: snapshot.generation,
+                root_digest: slot_image_digest(image),
+            };
+            if identity != expected {
+                return Err(GeneralStoragePersistenceError::BadSnapshot);
+            }
+            Ok(snapshot)
+        });
+    }
+
+    #[cfg(test)]
+    {
+        let image = read_candidate_slot_image(device)?;
+        let snapshot = decode_slot(&image)?;
+        let identity = ObjectCheckpointIdentity {
+            generation: snapshot.generation,
+            root_digest: slot_image_digest(&image),
+        };
+        if identity != expected {
+            return Err(GeneralStoragePersistenceError::BadSnapshot);
+        }
+        Ok(snapshot)
+    }
+}
+
 #[cfg(test)]
 pub fn read_object_service_checkpoint(
     device: BlockDeviceInfo,
 ) -> Result<Option<ObjectServiceSnapshot>, GeneralStoragePersistenceError> {
     let first = read_committed_slot_image(device, CheckpointSlot::A)?
-        .and_then(|image| decode_slot(&image).ok());
+        .and_then(|image| decode_ordinary_slot(&image).ok());
     let second = read_committed_slot_image(device, CheckpointSlot::B)?
-        .and_then(|image| decode_slot(&image).ok());
+        .and_then(|image| decode_ordinary_slot(&image).ok());
     Ok(select_highest_generation(first, second))
 }
 
@@ -323,8 +435,8 @@ fn recover_from_slot_images(
     first: &ObjectServiceSlotImage,
     second: &ObjectServiceSlotImage,
 ) -> Result<Option<ObjectServiceSnapshot>, GeneralStoragePersistenceError> {
-    let first = decode_slot(first).ok();
-    let second = decode_slot(second).ok();
+    let first = decode_ordinary_slot(first).ok();
+    let second = decode_ordinary_slot(second).ok();
     Ok(select_highest_generation(first, second))
 }
 
@@ -360,10 +472,8 @@ fn read_committed_slot_image(
     device: BlockDeviceInfo,
     slot: CheckpointSlot,
 ) -> Result<Option<ObjectServiceSlotImage>, GeneralStoragePersistenceError> {
-    let header =
-        block_device::read_sector(device, sector_for_image_index(slot, HEADER_IMAGE_INDEX))?;
-    let commit =
-        block_device::read_sector(device, sector_for_image_index(slot, COMMIT_IMAGE_INDEX))?;
+    let header = read_checkpoint_sector(device, sector_for_image_index(slot, HEADER_IMAGE_INDEX))?;
+    let commit = read_checkpoint_sector(device, sector_for_image_index(slot, COMMIT_IMAGE_INDEX))?;
     if !slot_probe_is_committed(&header, &commit) {
         return Ok(None);
     }
@@ -375,8 +485,7 @@ fn read_committed_slot_image(
     image.sectors[COMMIT_IMAGE_INDEX] = commit;
     let mut index = OBJECT_IMAGE_INDEX;
     while index < COMMIT_IMAGE_INDEX {
-        image.sectors[index] =
-            block_device::read_sector(device, sector_for_image_index(slot, index))?;
+        image.sectors[index] = read_checkpoint_sector(device, sector_for_image_index(slot, index))?;
         index += 1;
     }
     Ok(Some(image))
@@ -390,10 +499,8 @@ fn read_committed_slot_snapshot_into(
     snapshot: &mut Option<ObjectServiceSnapshot>,
 ) -> Result<(), GeneralStoragePersistenceError> {
     *snapshot = None;
-    let header =
-        block_device::read_sector(device, sector_for_image_index(slot, HEADER_IMAGE_INDEX))?;
-    let commit =
-        block_device::read_sector(device, sector_for_image_index(slot, COMMIT_IMAGE_INDEX))?;
+    let header = read_checkpoint_sector(device, sector_for_image_index(slot, HEADER_IMAGE_INDEX))?;
+    let commit = read_checkpoint_sector(device, sector_for_image_index(slot, COMMIT_IMAGE_INDEX))?;
     if !slot_probe_is_committed(&header, &commit) {
         return Ok(());
     }
@@ -402,11 +509,10 @@ fn read_committed_slot_snapshot_into(
     image.sectors[COMMIT_IMAGE_INDEX] = commit;
     let mut index = OBJECT_IMAGE_INDEX;
     while index < COMMIT_IMAGE_INDEX {
-        image.sectors[index] =
-            block_device::read_sector(device, sector_for_image_index(slot, index))?;
+        image.sectors[index] = read_checkpoint_sector(device, sector_for_image_index(slot, index))?;
         index += 1;
     }
-    *snapshot = decode_slot(image).ok();
+    *snapshot = decode_ordinary_slot(image).ok();
     Ok(())
 }
 
@@ -434,8 +540,7 @@ fn read_slot_image_into(
 ) -> Result<(), GeneralStoragePersistenceError> {
     let mut index = 0;
     while index < OBJECT_SERVICE_SLOT_SECTOR_COUNT {
-        image.sectors[index] =
-            block_device::read_sector(device, sector_for_image_index(slot, index))?;
+        image.sectors[index] = read_checkpoint_sector(device, sector_for_image_index(slot, index))?;
         index += 1;
     }
     Ok(())
@@ -446,7 +551,7 @@ fn write_slot_image(
     slot: CheckpointSlot,
     image: &ObjectServiceSlotImage,
 ) -> Result<(), GeneralStoragePersistenceError> {
-    block_device::write_sector(
+    write_checkpoint_sector(
         device,
         sector_for_image_index(slot, COMMIT_IMAGE_INDEX),
         &[0; SECTOR_SIZE],
@@ -454,21 +559,76 @@ fn write_slot_image(
 
     let mut index = OBJECT_IMAGE_INDEX;
     while index < COMMIT_IMAGE_INDEX {
-        block_device::write_sector(
+        write_checkpoint_sector(
             device,
             sector_for_image_index(slot, index),
             &image.sectors[index],
         )?;
         index += 1;
     }
-    block_device::write_sector(
+    write_checkpoint_sector(
         device,
         sector_for_image_index(slot, HEADER_IMAGE_INDEX),
         &image.sectors[HEADER_IMAGE_INDEX],
     )?;
-    block_device::write_sector(
+    write_checkpoint_sector(
         device,
         sector_for_image_index(slot, COMMIT_IMAGE_INDEX),
+        &image.sectors[COMMIT_IMAGE_INDEX],
+    )?;
+    Ok(())
+}
+
+fn read_candidate_slot_image(
+    device: BlockDeviceInfo,
+) -> Result<ObjectServiceSlotImage, GeneralStoragePersistenceError> {
+    let mut image = ObjectServiceSlotImage {
+        sectors: [[0; SECTOR_SIZE]; OBJECT_SERVICE_SLOT_SECTOR_COUNT],
+    };
+    read_candidate_slot_image_into(device, &mut image)?;
+    Ok(image)
+}
+
+fn read_candidate_slot_image_into(
+    device: BlockDeviceInfo,
+    image: &mut ObjectServiceSlotImage,
+) -> Result<(), GeneralStoragePersistenceError> {
+    let mut index = 0;
+    while index < OBJECT_SERVICE_SLOT_SECTOR_COUNT {
+        image.sectors[index] =
+            read_checkpoint_sector(device, sector_for_candidate_image_index(index))?;
+        index += 1;
+    }
+    Ok(())
+}
+
+fn write_candidate_slot_image(
+    device: BlockDeviceInfo,
+    image: &ObjectServiceSlotImage,
+) -> Result<(), GeneralStoragePersistenceError> {
+    write_checkpoint_sector(
+        device,
+        sector_for_candidate_image_index(COMMIT_IMAGE_INDEX),
+        &[0; SECTOR_SIZE],
+    )?;
+
+    let mut index = OBJECT_IMAGE_INDEX;
+    while index < COMMIT_IMAGE_INDEX {
+        write_checkpoint_sector(
+            device,
+            sector_for_candidate_image_index(index),
+            &image.sectors[index],
+        )?;
+        index += 1;
+    }
+    write_checkpoint_sector(
+        device,
+        sector_for_candidate_image_index(HEADER_IMAGE_INDEX),
+        &image.sectors[HEADER_IMAGE_INDEX],
+    )?;
+    write_checkpoint_sector(
+        device,
+        sector_for_candidate_image_index(COMMIT_IMAGE_INDEX),
         &image.sectors[COMMIT_IMAGE_INDEX],
     )?;
     Ok(())
@@ -602,6 +762,17 @@ fn decode_slot(
         return Err(GeneralStoragePersistenceError::BadSnapshot);
     }
     Ok(snapshot)
+}
+
+fn decode_ordinary_slot(
+    image: &ObjectServiceSlotImage,
+) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError> {
+    if slot_from_code(read_u16(&image.sectors[HEADER_IMAGE_INDEX], 10))?
+        == CheckpointSlot::Candidate
+    {
+        return Err(GeneralStoragePersistenceError::BadSnapshot);
+    }
+    decode_slot(image)
 }
 
 fn encode_header(
@@ -1040,6 +1211,12 @@ fn slot_layout(slot: CheckpointSlot) -> SlotLayout {
             revision_table_sector: OBJECT_SERVICE_SLOT_B_REVISION_TABLE_SECTOR,
             commit_sector: OBJECT_SERVICE_SLOT_B_COMMIT_SECTOR,
         },
+        CheckpointSlot::Candidate => SlotLayout {
+            object_table_sector: OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR,
+            relationship_table_sector: OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR,
+            revision_table_sector: OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR,
+            commit_sector: OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR,
+        },
     }
 }
 
@@ -1047,6 +1224,7 @@ fn slot_code(slot: CheckpointSlot) -> u16 {
     match slot {
         CheckpointSlot::A => 0,
         CheckpointSlot::B => 1,
+        CheckpointSlot::Candidate => 2,
     }
 }
 
@@ -1062,6 +1240,7 @@ fn slot_from_code(code: u16) -> Result<CheckpointSlot, GeneralStoragePersistence
     match code {
         0 => Ok(CheckpointSlot::A),
         1 => Ok(CheckpointSlot::B),
+        2 => Ok(CheckpointSlot::Candidate),
         _ => Err(GeneralStoragePersistenceError::BadSnapshot),
     }
 }
@@ -1071,6 +1250,7 @@ fn sector_for_image_index(slot: CheckpointSlot, image_index: usize) -> u64 {
         HEADER_IMAGE_INDEX => match slot {
             CheckpointSlot::A => OBJECT_SERVICE_SLOT_A_HEADER_SECTOR,
             CheckpointSlot::B => OBJECT_SERVICE_SLOT_B_HEADER_SECTOR,
+            CheckpointSlot::Candidate => OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR,
         },
         index if (OBJECT_IMAGE_INDEX..RELATIONSHIP_IMAGE_INDEX).contains(&index) => {
             slot_layout(slot).object_table_sector + (index - OBJECT_IMAGE_INDEX) as u64
@@ -1084,6 +1264,72 @@ fn sector_for_image_index(slot: CheckpointSlot, image_index: usize) -> u64 {
         COMMIT_IMAGE_INDEX => slot_layout(slot).commit_sector,
         _ => OBJECT_SERVICE_TORN_SECTOR,
     }
+}
+
+fn sector_for_candidate_image_index(image_index: usize) -> u64 {
+    match image_index {
+        HEADER_IMAGE_INDEX => OBJECT_SERVICE_CANDIDATE_HEADER_SECTOR,
+        index if (OBJECT_IMAGE_INDEX..RELATIONSHIP_IMAGE_INDEX).contains(&index) => {
+            OBJECT_SERVICE_CANDIDATE_OBJECT_TABLE_SECTOR + (index - OBJECT_IMAGE_INDEX) as u64
+        }
+        index if (RELATIONSHIP_IMAGE_INDEX..REVISION_IMAGE_INDEX).contains(&index) => {
+            OBJECT_SERVICE_CANDIDATE_RELATIONSHIP_TABLE_SECTOR
+                + (index - RELATIONSHIP_IMAGE_INDEX) as u64
+        }
+        index if (REVISION_IMAGE_INDEX..COMMIT_IMAGE_INDEX).contains(&index) => {
+            OBJECT_SERVICE_CANDIDATE_REVISION_TABLE_SECTOR + (index - REVISION_IMAGE_INDEX) as u64
+        }
+        COMMIT_IMAGE_INDEX => OBJECT_SERVICE_CANDIDATE_COMMIT_SECTOR,
+        _ => OBJECT_SERVICE_TORN_SECTOR,
+    }
+}
+
+fn read_checkpoint_sector(
+    device: BlockDeviceInfo,
+    sector: u64,
+) -> Result<[u8; SECTOR_SIZE], GeneralStoragePersistenceError> {
+    #[cfg(not(test))]
+    {
+        block_device::read_sector(device, sector).map_err(GeneralStoragePersistenceError::from)
+    }
+
+    #[cfg(test)]
+    {
+        let _ = device;
+        let index = sector as usize;
+        if index >= TEST_CHECKPOINT_SECTOR_COUNT {
+            return Err(GeneralStoragePersistenceError::BadSnapshot);
+        }
+        Ok(TEST_CHECKPOINT_SECTORS.lock().unwrap()[index])
+    }
+}
+
+fn write_checkpoint_sector(
+    device: BlockDeviceInfo,
+    sector: u64,
+    bytes: &[u8; SECTOR_SIZE],
+) -> Result<(), GeneralStoragePersistenceError> {
+    #[cfg(not(test))]
+    {
+        block_device::write_sector(device, sector, bytes)
+            .map_err(GeneralStoragePersistenceError::from)
+    }
+
+    #[cfg(test)]
+    {
+        let _ = device;
+        let index = sector as usize;
+        if index >= TEST_CHECKPOINT_SECTOR_COUNT {
+            return Err(GeneralStoragePersistenceError::BadSnapshot);
+        }
+        TEST_CHECKPOINT_SECTORS.lock().unwrap()[index] = *bytes;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+fn reset_checkpoint_storage_for_test() {
+    *TEST_CHECKPOINT_SECTORS.lock().unwrap() = [[0; SECTOR_SIZE]; TEST_CHECKPOINT_SECTOR_COUNT];
 }
 
 fn write_u16(bytes: &mut [u8; SECTOR_SIZE], offset: usize, value: u16) {
@@ -1129,12 +1375,17 @@ fn recover_from_slot_images_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::block_device::BlockDeviceInfo;
+    use crate::general_storage_persistence::GeneralStoragePersistenceError;
     use crate::object_relationships::{EXTERNAL_WORKSPACE_OBJECT_ID, SHELL_WORKSPACE_OBJECT_ID};
     use crate::revision_history::RevisionRecord;
     use crate::service_identity::ServiceIdentityTable;
     use crate::shell_objects::{ObjectId, ObjectKind};
     use crate::tasks::TaskId;
     use crate::typed_object_format::{TypedObjectField, TypedObjectRecord};
+    use std::sync::Mutex;
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn note(object_id: u64, text: &[u8]) -> TypedObjectRecord {
         let mut record = TypedObjectRecord::new(ObjectId::new(object_id), ObjectKind::Note, 1);
@@ -1325,5 +1576,50 @@ mod tests {
             &committed.sectors[HEADER_IMAGE_INDEX],
             &blank
         ));
+    }
+
+    #[test]
+    fn package_candidate_checkpoint_is_durable_but_not_ordinary_recovery_eligible() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(512, 8);
+        let ordinary = snapshot(1, 1042, SHELL_WORKSPACE_OBJECT_ID);
+        let candidate_world = snapshot(2, 2001, EXTERNAL_WORKSPACE_OBJECT_ID);
+
+        write_object_service_checkpoint(device, &ordinary).unwrap();
+        let candidate =
+            write_object_service_candidate_checkpoint(device, &candidate_world).unwrap();
+
+        let ordinary_recovered = read_object_service_checkpoint(device).unwrap().unwrap();
+        assert_eq!(ordinary_recovered.generation, 1);
+        assert_eq!(
+            ordinary_recovered.objects[0].unwrap().object.object_id(),
+            ObjectId::new(1042)
+        );
+
+        let candidate_recovered =
+            read_object_service_candidate_checkpoint(device, candidate.identity).unwrap();
+        assert_eq!(candidate_recovered.generation, candidate.generation);
+        assert_eq!(
+            candidate_recovered.objects[0].unwrap().object.object_id(),
+            ObjectId::new(2001)
+        );
+    }
+
+    #[test]
+    fn package_candidate_checkpoint_root_mismatch_is_denied() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(512, 8);
+        let candidate_world = snapshot(2, 2001, EXTERNAL_WORKSPACE_OBJECT_ID);
+        let candidate =
+            write_object_service_candidate_checkpoint(device, &candidate_world).unwrap();
+        let mut wrong_identity = candidate.identity;
+        wrong_identity.root_digest[0] ^= 0x80;
+
+        assert_eq!(
+            read_object_service_candidate_checkpoint(device, wrong_identity),
+            Err(GeneralStoragePersistenceError::BadSnapshot)
+        );
     }
 }
