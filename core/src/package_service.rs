@@ -998,7 +998,8 @@ impl<'a> PackageService<'a> {
         }
         if self.launch_requirements.iter().flatten().any(|record| {
             record.export == export
-                && record.requirement.requirement_id == requirement.requirement_id
+                && (record.requirement.requirement_id == requirement.requirement_id
+                    || record.requirement.graph_import_slot == requirement.graph_import_slot)
         }) {
             return Err(PackageStatus::DuplicateStableName);
         }
@@ -4022,6 +4023,40 @@ mod tests {
         assert_eq!(launch.grant_count, 1);
         assert_eq!(launch.grant(0), Some(supplied_grants[0]));
         assert_eq!(launch.grant(1), None);
+    }
+
+    #[test]
+    fn package_launch_requirement_registration_rejects_duplicate_graph_import_slot() {
+        let mut package_service = service_with_launch_export();
+        let first_requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        let duplicate_slot_requirement = PackageLaunchRequirement {
+            requirement_id: 8,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0002),
+            rights: RightsMask::new(RightsMask::READ),
+        };
+
+        package_service
+            .record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/launch",
+                first_requirement,
+            )
+            .unwrap();
+
+        assert_eq!(
+            package_service.record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/launch",
+                duplicate_slot_requirement,
+            ),
+            Err(PackageStatus::DuplicateStableName)
+        );
     }
 
     #[test]
