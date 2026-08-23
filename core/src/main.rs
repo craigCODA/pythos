@@ -112,7 +112,11 @@ mod pyth_runtime_launch;
 mod pyth_service_supervisor;
 mod qemu_exit;
 mod resource_quotas;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
 mod retained_services;
 mod revision_history;
 mod runtime_loader;

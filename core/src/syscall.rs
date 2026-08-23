@@ -10,7 +10,13 @@ use crate::capabilities::{
     CapabilityError, CapabilityHandle, CapabilityTable, ResourceId, RightsMask,
 };
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use crate::object_service::{ObjectService, ObjectServiceError, PackageDefinedCreateInput};
 #[cfg(any(
     test,
@@ -22,12 +28,24 @@ use crate::package_service;
 use crate::package_service::PackageService;
 use crate::permission_validation::{self, PermissionError};
 use crate::process_context::{self, ActiveUserProcess, ProcessContextError};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use crate::retained_services::{self, RetainedServiceError};
 #[cfg(not(test))]
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::system_api::{SystemApiError, SystemApiHost};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -53,10 +71,22 @@ use core::cell::UnsafeCell;
     all(not(test), feature = "phase13-package-test")
 ))]
 use core::mem::{align_of, size_of};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use pythos_shared::object_shell_abi::{
     FIELD_TEXT, MAX_QUERY_RESULTS, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR,
     OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT, OP_QUERY_OBJECTS,
@@ -67,20 +97,28 @@ use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
+use pythos_shared::package_abi::OP_PACKAGE_CONTEXT_SCHEMA;
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use pythos_shared::package_abi::{
     OBJECT_KIND_PACKAGE_DEFINED_OBJECT, PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES,
     PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
     PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
     PackageDefinedObjectCreateV0,
 };
-#[cfg(any(
-    test,
-    all(not(test), not(feature = "verify")),
-    all(not(test), feature = "phase13-package-test")
-))]
-use pythos_shared::package_abi::{OP_PACKAGE_CONTEXT_SCHEMA, PackageRuntimeSchemaBindingV0};
-use pythos_shared::package_abi::{PackageStatus, SYSCALL_PACKAGE_CONTEXT};
+use pythos_shared::package_abi::{
+    PackageRuntimeSchemaBindingV0, PackageStatus, SYSCALL_PACKAGE_CONTEXT,
+};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::pyth_runtime_abi::{
     GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR, GRAPH_MAX_LOG_BYTES,
@@ -188,9 +226,21 @@ pub enum SyscallError {
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
     UserCopy(UserCopyError),
-    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    #[cfg(any(
+        test,
+        all(
+            not(test),
+            any(not(feature = "verify"), feature = "phase13-package-test")
+        )
+    ))]
     ObjectService(ObjectServiceError),
-    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    #[cfg(any(
+        test,
+        all(
+            not(test),
+            any(not(feature = "verify"), feature = "phase13-package-test")
+        )
+    ))]
     RetainedService(RetainedServiceError),
     System(SystemApiError),
     UnexpectedSyscall,
@@ -359,14 +409,26 @@ impl From<UserCopyError> for SyscallError {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 impl From<ObjectServiceError> for SyscallError {
     fn from(error: ObjectServiceError) -> Self {
         Self::ObjectService(error)
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 impl From<RetainedServiceError> for SyscallError {
     fn from(error: RetainedServiceError) -> Self {
         Self::RetainedService(error)
@@ -698,7 +760,13 @@ fn dispatch_console_write_for_caller(
     Ok(SYSCALL_OK)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
     let caller = process_context::current_caller()?;
     if args.arg1 != size_of::<ObjectShellRequest>() as u64
@@ -750,12 +818,18 @@ fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(SYSCALL_OK)
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_object_request(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request_with_raw_buffers(
     caller: ActiveUserProcess,
     copy_map: &UserCopyMap,
@@ -831,7 +905,13 @@ fn dispatch_object_request_with_raw_buffers(
     Ok(response)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn object_operation_mutates(operation: u16) -> bool {
     matches!(operation, OP_CREATE_OBJECT | OP_REVISE_FIELD)
 }
@@ -1339,7 +1419,13 @@ fn validate_user_buffer(
     Ok(())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn checked_package_defined_create_input<'a>(
     copy_map: &UserCopyMap,
     request: &ObjectShellRequest,
@@ -1426,7 +1512,13 @@ fn checked_package_defined_create_input<'a>(
     }))
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn checked_query_output<'a>(
     copy_map: &UserCopyMap,
     request: &ObjectShellRequest,
@@ -1457,7 +1549,13 @@ fn checked_query_output<'a>(
     Ok(unsafe { slice::from_raw_parts_mut(output_ptr, MAX_QUERY_RESULTS) })
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn checked_request_input<'a>(
     copy_map: &UserCopyMap,
     request: &ObjectShellRequest,
@@ -1735,7 +1833,13 @@ fn emit_graph_exit_marker(exit: GraphExitRecord) {
 #[cfg(test)]
 fn emit_graph_exit_marker(_exit: GraphExitRecord) {}
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request_to_service(
     service: &mut ObjectService,
     caller: ActiveUserProcess,
@@ -1844,7 +1948,13 @@ fn dispatch_object_request_to_service(
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn valid_object_request_header(request: &ObjectShellRequest) -> bool {
     request.abi_major == OBJECT_SHELL_ABI_MAJOR
         && request.abi_minor == OBJECT_SHELL_ABI_MINOR
@@ -1853,7 +1963,13 @@ fn valid_object_request_header(request: &ObjectShellRequest) -> bool {
         && request.reserved2 == 0
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn request_object_kind(kind: u16) -> Result<ObjectKind, ObjectServiceError> {
     if kind == OBJECT_KIND_NOTE {
         Ok(ObjectKind::Note)
@@ -1862,7 +1978,13 @@ fn request_object_kind(kind: u16) -> Result<ObjectKind, ObjectServiceError> {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
     let status = match error {
         ObjectServiceError::Denied => {
@@ -1879,7 +2001,13 @@ fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn object_error_response(
     caller: ActiveUserProcess,
     request: ObjectShellRequest,
@@ -1889,7 +2017,10 @@ fn object_error_response(
     error_response(error)
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_pythtig_object_success_marker(
     caller: ActiveUserProcess,
     operation: u16,
@@ -1955,7 +2086,10 @@ fn emit_pythtig_object_success_marker(
 ) {
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_pythtig_object_denial_marker(
     caller: ActiveUserProcess,
     request: ObjectShellRequest,
@@ -1984,7 +2118,13 @@ fn emit_pythtig_object_denial_marker(
 ) {
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn empty_response() -> ObjectShellResponse {
     ObjectShellResponse {
         status: STATUS_BAD_REQUEST,
@@ -2000,12 +2140,24 @@ const fn empty_response() -> ObjectShellResponse {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn bad_request_response() -> ObjectShellResponse {
     empty_response()
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn buffer_too_small_response() -> ObjectShellResponse {
     ObjectShellResponse {
         status: STATUS_BUFFER_TOO_SMALL,
