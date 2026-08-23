@@ -48,7 +48,7 @@ package-format
 - `core/src/object_relationships.rs` already contains `NameBinding` and `BindingTarget`; package locator publication must reuse these as rebuildable mirrors.
 - `core/src/storage_allocator.rs::BlockAllocator` has `MAX_ALLOCATOR_BLOCKS = 64`, a `u64` bitmap, and `AllocatorJournal` capacity 8. At 512-byte sectors this represents only 32 KiB, not the accepted 4 MiB package-content limit.
 - `core/src/storage_quotas.rs::StorageQuotaTable` has charge/release accounting but no durable reservation object. Phase 13 install can use in-memory candidate accounting before publication and selected-registry reachability after publication.
-- `core/src/object_service_checkpoint.rs` provides two ordinary object checkpoint slots and generations. Current ordinary recovery ignores uncommitted slot bytes but selects the newest valid committed checkpoint automatically. Phase 13 therefore needs a narrow candidate-checkpoint eligibility surface before Task 2.13.
+- `core/src/object_service_checkpoint.rs` provides two ordinary object checkpoint slots and generations. Current ordinary recovery ignores uncommitted slot bytes but selects the newest valid committed checkpoint automatically. Phase 13 therefore needs a narrow candidate-checkpoint eligibility surface, a prepare/publish package-service seam, and durable publication-state hydration before Task 2.13.
 
 ## Phase 13 Transaction Correction After Task 2.12.x
 
@@ -64,7 +64,10 @@ world A remains authoritative
 
 Recovery selects the newest valid published world. Candidate material without a valid publication anchor is non-authoritative and unreachable/reclaimable. Ordinary object-service checkpoints remain unchanged: a normal object checkpoint still becomes recovery-eligible through the existing commit-sector protocol, and ordinary recovery still selects the newest valid committed object checkpoint.
 
-Preserve completed commits through Task 2.12.x. Do not rewrite task history. Task 2.12.y is the correction task that introduces the missing candidate checkpoint eligibility surface before Task 2.13 resumes.
+Preserve completed commits through Task 2.12.y. Do not rewrite task history.
+Task 2.12.y introduced the candidate checkpoint eligibility surface. Tasks
+2.12.z and 2.12.zz add the missing prepare/publish and durable hydration
+surfaces before Task 2.13 resumes.
 
 ## Storage Substrate Decision For ADR 0073
 
@@ -1576,8 +1579,9 @@ inside the acceptance harness.
 
 **Status note:** completed at `b92cdc2` under the earlier rollback-oriented
 terminology. Preserve that commit. Task 2.12.y is the accepted architectural
-correction that revises this surface to world-selection terminology before
-Task 2.13 resumes.
+correction that revises this surface to world-selection terminology; Tasks
+2.12.z and 2.12.zz complete the production seams required before Task 2.13
+resumes.
 
 **Files:**
 - Modify: `core/src/package_service.rs`
@@ -1805,27 +1809,346 @@ git add core/src/object_service_checkpoint.rs core/src/object_service.rs core/sr
 git commit -m "feat(core): add package candidate checkpoint eligibility"
 ```
 
-### Task 2.13: killed-before-anchor Publication Boundary
+### Task 2.12.z: Complete Package Candidate Prepare/Publish Surface
+
+**Purpose:** expose a production `PackageService` seam that separates
+preparing a durable, validated package candidate from publishing it with a
+`PackageTransactionCommitV0` anchor. Task 2.13 must exercise this seam
+directly; it must not infer a pre-anchor state from marker ordering after
+`install_into` has already published.
+
+**Files:**
+- Modify: `core/src/package_service.rs`
+- Test: `core/src/package_service.rs`
+
+Do not modify `scripts/test-phase13-package-install.py` or
+`core/src/package_acceptance.rs` in this task. Those remain Task 2.13.
+
+**Interfaces Consumed:** `PackageInstallRequest`, `PackageSourceService`,
+`CapabilityTable`, `ObjectService`, `PackageArtifactV0`,
+`PackageContentStore`, `PackageContentTransaction`, `PackageRegistry`,
+`PackageRegistryGeneration`, `ObjectCheckpointIdentity`,
+`write_object_service_candidate_checkpoint`,
+`read_object_service_candidate_checkpoint`, and
+`PackageTransactionCommitV0`.
+
+**Interfaces Produced:**
+
+```rust
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageInstallCandidate {
+    pub transaction_id: u64,
+    pub package_object_id: u64,
+    pub package_revision: u64,
+    pub schema_object_id: u64,
+    pub schema_revision: u64,
+    pub release_digest: [u8; 32],
+    pub schema_descriptor_content_id: ContentId,
+    pub content_commit: PackageContentCommit,
+    pub registry_generation: PackageRegistryGeneration,
+    pub object_checkpoint_identity: ObjectCheckpointIdentity,
+    pub staged_registry_snapshot: [u8; 4096],
+}
+
+impl<'a> PackageService<'a> {
+    pub fn prepare_install_candidate(
+        &mut self,
+        device: BlockDeviceInfo,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &ObjectService,
+        artifact_buffer: &'a mut [u8],
+    ) -> Result<PackageInstallCandidate, PackageStatus>;
+
+    pub fn publish_install_candidate(
+        &mut self,
+        candidate: PackageInstallCandidate,
+        object_service: &mut ObjectService,
+    ) -> Result<PackageInstallResult, PackageStatus>;
+}
+```
+
+`prepare_install_candidate` must durably write, reread, and validate the
+complete candidate world required by `PackageTransactionCommitV0`: candidate
+object checkpoint identity/root, candidate package-registry identity/root,
+candidate package content references/state, Package `ObjectId`,
+SchemaDefinition identities, and release/content digests. It must not publish
+`PackageTransactionCommitV0`, select candidate world B, expose active package
+locator bindings, or rebuild active locator mirrors.
+
+At successful return:
+
+```text
+candidate B physically exists
+candidate B validates
+world A remains reality
+```
+
+`publish_install_candidate` must create and encode the
+`PackageTransactionCommitV0`, select the candidate package/object world, update
+the current/previous publication state, advance package/schema/transaction
+ids, and leave locator mirrors unpublished for Task 2.13's
+after-anchor-before-mirror proof. `install_with_candidate_checkpoint` and
+`install_into` may become wrappers around prepare + publish, but they must keep
+their existing public signatures and acceptance behavior.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add focused tests:
+
+```rust
+#[test]
+fn package_prepare_install_candidate_writes_validated_candidate_without_publication() {
+    // Arrange: existing world A plus a valid package source and capabilities.
+    // Act: call prepare_install_candidate.
+    // Assert: the returned candidate has nonzero transaction/package/schema
+    // ids, content commit, registry generation, object checkpoint identity,
+    // and a candidate checkpoint readable from durable candidate storage.
+    // Assert: service recovery with no published anchor still selects world A,
+    // active registry remains unchanged, locator mirrors remain hidden, and
+    // the live ObjectService generation is unchanged.
+}
+
+#[test]
+fn package_publish_install_candidate_selects_prepared_world_once() {
+    // Arrange: prepare a candidate.
+    // Act: call publish_install_candidate.
+    // Assert: the result anchor decodes against the candidate registry and
+    // object roots, active registry now contains Package and SchemaDefinition
+    // records, the live ObjectService generation matches the candidate object
+    // checkpoint generation, and locator mirrors remain unpublished.
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```powershell
+cargo test -p pythos-core package_prepare_install_candidate
+cargo test -p pythos-core package_publish_install_candidate
+```
+
+Expected: FAIL because `PackageInstallCandidate`,
+`PackageService::prepare_install_candidate`, and
+`PackageService::publish_install_candidate` do not exist.
+
+- [ ] **Step 3: Minimum implementation**
+
+Refactor `install_into_with_candidate_checkpoint` so the current body's
+pre-anchor work moves into `prepare_install_candidate` and the publication
+work moves into `publish_install_candidate`. Preserve rollback on prepare
+denial/failure, preserve ordinary object checkpoint semantics, and do not make
+locator mirrors visible during prepare or publish. Do not add boot/QEMU marker
+logic in this task.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```powershell
+cargo test -p pythos-core package_prepare_install_candidate
+cargo test -p pythos-core package_publish_install_candidate
+cargo test -p pythos-core package_service_recovery
+cargo test -p pythos-core package_candidate_checkpoint
+cargo test -p pythos-core package_content_store
+cargo test -p pythos-core package_registry
+cargo test -p pythos-core object_service_checkpoint
+py -3 -m unittest tests.test_interface_compatibility_freeze
+cargo fmt --check
+git diff --check
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add core/src/package_service.rs
+git commit -m "feat(core): separate package candidate preparation from publication"
+```
+
+### Task 2.12.zz: Durable Package Publication-State Hydration
+
+**Purpose:** add a production reboot/restoration path that discovers package
+publication state from durable storage without retaining Boot 1 RAM state and
+without scenario knowledge. A test may control expected assertions, but
+production recovery must independently discover which world to select.
+
+**Files:**
+- Modify: `core/src/package_service.rs`
+- Modify as needed for the smallest persistence representation:
+  `core/src/package_registry.rs`
+- Modify as needed for durable package content bytes/liveness:
+  `core/src/package_content_store.rs`
+- Test: `core/src/package_service.rs`
+- Test as needed: `core/src/package_registry.rs`
+- Test as needed: `core/src/package_content_store.rs`
+
+Do not modify `scripts/test-phase13-package-install.py` or
+`core/src/package_acceptance.rs` in this task. Those remain Task 2.13.
+
+**Interfaces Consumed:** `PackageInstallCandidate`,
+`PackageService::prepare_install_candidate`,
+`PackageService::publish_install_candidate`,
+`PackageTransactionCommitV0`, `PackageRegistry::decode_snapshot`,
+`read_object_service_candidate_checkpoint`, block-device sector read/write,
+and selected-registry content reachability.
+
+**Interfaces Produced:**
+
+```rust
+impl<'a> PackageService<'a> {
+    pub fn restore_from_storage(
+        &mut self,
+        device: BlockDeviceInfo,
+    ) -> Result<PackageRecoveryReport, PackageStatus>;
+}
+```
+
+If the implementation needs additional helper types, keep them package-domain
+specific and make them describe persisted facts rather than authority. The
+restoration path must independently discover and validate:
+
+```text
+available PackageTransactionCommitV0 anchors
+their generation/order
+referenced candidate ObjectCheckpointIdentity/root
+referenced package-registry generation/root
+package-content liveness/reachability needed by the selected registry
+```
+
+Recovery semantics:
+
+```text
+newest completely valid publication anchor
+    -> load exact referenced object candidate
+    -> load exact referenced registry generation
+    -> validate both roots
+    -> select world B
+
+no valid package publication anchor
+    -> retain/fall back to world A
+```
+
+Before completing this task, prove that everything Boot 2 requires is genuinely
+persisted on the shared storage image:
+
+```text
+candidate object checkpoint
+candidate package registry
+PackageTransactionCommitV0
+candidate/installed package content
+content-liveness information
+```
+
+If any of those still exist only in memory, stop and report that as the next
+plan dependency. Do not reconstruct them synthetically from `INIT.PAK`, fixture
+constants, or scenario names.
+
+- [ ] **Step 1: Write the failing tests**
+
+Add focused tests:
+
+```rust
+#[test]
+fn package_restore_from_storage_selects_published_candidate_without_boot1_ram() {
+    // Arrange: service A prepares and publishes a package candidate to the
+    // shared test block device, then drop service A.
+    // Act: create a fresh PackageService and call restore_from_storage(device).
+    // Assert: the report selects the published world, active registry contains
+    // the Package and SchemaDefinition records, the referenced candidate object
+    // checkpoint validates from storage, and locator mirrors require rebuild.
+}
+
+#[test]
+fn package_restore_from_storage_falls_back_when_no_publication_anchor_exists() {
+    // Arrange: service A prepares a package candidate to the shared test block
+    // device but does not publish it, then drop service A.
+    // Act: create a fresh PackageService and call restore_from_storage(device).
+    // Assert: recovery reports no published package world, active registry is
+    // empty/previous, and the prepared candidate's content is not live.
+}
+
+#[test]
+fn package_restore_from_storage_rejects_mismatched_publication_anchor() {
+    // Arrange: persist candidate object and registry state plus an anchor whose
+    // object or registry digest does not match the stored roots.
+    // Act: create a fresh PackageService and call restore_from_storage(device).
+    // Assert: the mismatched anchor cannot select world B and the service
+    // retains/falls back to world A.
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```powershell
+cargo test -p pythos-core package_restore_from_storage
+```
+
+Expected: FAIL because `PackageService::restore_from_storage` does not exist
+and/or because registry, anchor, or content publication state is not yet
+durably hydrated from storage.
+
+- [ ] **Step 3: Minimum implementation**
+
+Persist the selected Phase 13 publication state through package-owned storage
+sectors without changing ordinary object checkpoint semantics. The minimum
+acceptable implementation must load anchors, registry generations, candidate
+object checkpoints, and content liveness from the block device. It must select
+the newest completely valid publication anchor and reject mismatched anchors.
+Reachability from the selected anchored registry determines package-content
+liveness; do not introduce rollback-oriented install intent or
+transaction-owned `STAGED` allocation state unless this task proves it is
+unavoidable and stops for owner review.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```powershell
+cargo test -p pythos-core package_restore_from_storage
+cargo test -p pythos-core package_prepare_install_candidate
+cargo test -p pythos-core package_publish_install_candidate
+cargo test -p pythos-core package_service_recovery
+cargo test -p pythos-core package_candidate_checkpoint
+cargo test -p pythos-core package_content_store
+cargo test -p pythos-core package_registry
+cargo test -p pythos-core object_service_checkpoint
+py -3 -m unittest tests.test_interface_compatibility_freeze
+cargo fmt --check
+git diff --check
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add core/src/package_service.rs core/src/package_registry.rs core/src/package_content_store.rs
+git commit -m "feat(core): hydrate package publication state from storage"
+```
+
+### Task 2.13: Two-boot Publication-Boundary QEMU Acceptance
 
 **Files:**
 - Modify: `scripts/test-phase13-package-install.py`
 - Modify: `core/src/package_acceptance.rs`
 - Test: `scripts/test-phase13-package-install.py`
 
-**Interfaces Consumed:** `PackageService::recover`.
+**Interfaces Consumed:** `PackageService::prepare_install_candidate`,
+`PackageService::publish_install_candidate`, `PackageService::restore_from_storage`,
+and `PackageRecoveryReport`.
 
-**Interfaces Produced:** `kill-before-anchor` scenario.
+**Interfaces Produced:** `kill-before-anchor` and
+`kill-after-anchor-before-mirror` scenarios proving that
+`PackageTransactionCommitV0` is the single semantic publication boundary.
 
 - [ ] **Step 1: Write the failing scenario**
 
-Required markers before the kill:
+`kill-before-anchor` required markers before the kill:
 
 ```text
 PYTHOS:CORE:PACKAGE_CANDIDATE_READY
 PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED
 ```
 
-Required markers after reboot:
+`kill-before-anchor` required markers after reboot:
 
 ```text
 PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
@@ -1842,51 +2165,17 @@ PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
 PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE
 ```
 
-- [ ] **Step 2: Run scenario to verify it fails**
-
-```powershell
-python scripts/test-phase13-package-install.py --scenario kill-before-anchor
-```
-
-Expected: FAIL because candidate-before-publication recovery markers are missing.
-
-- [ ] **Step 3: Minimum implementation**
-
-Use `scripts/run-qemu.py --kill-after-marker PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED`, then reboot the same storage image. Boot 2 must select the previous published world, prove package/schema/locator B are absent, and prove B-only storage is not live.
-
-- [ ] **Step 4: Run scenario to verify it passes**
-
-```powershell
-python scripts/test-phase13-package-install.py --scenario kill-before-anchor
-```
-
-Expected: PASS.
-
-- [ ] **Step 5: Commit**
-
-```powershell
-git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs
-git commit -m "test(qemu): prove package candidate is unpublished before anchor"
-```
-
-### Task 2.14: published-anchor And mismatched-anchor Recovery
-
-**Files:**
-- Modify: `scripts/test-phase13-package-install.py`
-- Modify: `core/src/package_acceptance.rs`
-- Modify: `core/src/package_registry.rs`
-- Test: `scripts/test-phase13-package-install.py`
-
-**Interfaces Consumed:** publication anchor pair selection.
-
-**Interfaces Produced:** `kill-after-anchor-before-mirror`, `mismatched-anchor`.
-
-- [ ] **Step 1: Write the failing scenarios**
-
-`kill-after-anchor-before-mirror` required:
+`kill-after-anchor-before-mirror` required markers before the kill:
 
 ```text
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED
 PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
+```
+
+`kill-after-anchor-before-mirror` required markers after reboot:
+
+```text
 PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PUBLISHED
 PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT
 PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY
@@ -1901,40 +2190,30 @@ PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
 PYTHOS:CORE:PACKAGE_CANDIDATE:IGNORED_RECLAIMABLE
 ```
 
-`mismatched-anchor` required:
-
-```text
-PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
-PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY
-QEMU_OUTCOME success
-```
-
-Forbidden:
-
-```text
-PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_WORLD_SELECTED:MISMATCHED
-PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE_FROM_BAD_ANCHOR
-```
-
-- [ ] **Step 2: Run scenarios to verify they fail**
+- [ ] **Step 2: Run scenario to verify it fails**
 
 ```powershell
+python scripts/test-phase13-package-install.py --scenario kill-before-anchor
 python scripts/test-phase13-package-install.py --scenario kill-after-anchor-before-mirror
-python scripts/test-phase13-package-install.py --scenario mismatched-anchor
 ```
 
-Expected: FAIL because publication-boundary markers are missing.
+Expected: FAIL because publication-boundary scenarios and markers are missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Select the anchor-published generation before mirror rebuild and select the previous valid published world when registry/object roots do not match.
+Use `scripts/run-qemu.py --kill-after-marker PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED`, then reboot the same storage image. Boot 2 must select the previous published world, prove package/schema/locator B are absent, and prove B-only storage is not live.
 
-- [ ] **Step 4: Run scenarios to verify they pass**
+Use `scripts/run-qemu.py --kill-after-marker PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED`, then reboot the same storage image. Boot 2 must independently select the anchor-published world from durable publication state, prove Package/SchemaDefinition/content B are present/live, and rebuild derived locator mirrors from selected world B.
+
+The boot-2 acceptance code must invoke production package restoration. It must
+not reconstruct `PackageService` state synthetically from `INIT.PAK`, fixture
+constants, marker order, or scenario names.
+
+- [ ] **Step 4: Run scenario to verify it passes**
 
 ```powershell
+python scripts/test-phase13-package-install.py --scenario kill-before-anchor
 python scripts/test-phase13-package-install.py --scenario kill-after-anchor-before-mirror
-python scripts/test-phase13-package-install.py --scenario mismatched-anchor
 ```
 
 Expected: PASS.
@@ -1942,7 +2221,7 @@ Expected: PASS.
 - [ ] **Step 5: Commit**
 
 ```powershell
-git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs core/src/package_registry.rs
+git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs
 git commit -m "test(qemu): prove package anchor publication boundary"
 ```
 
