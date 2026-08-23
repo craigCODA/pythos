@@ -42,6 +42,30 @@ fn lowering_emits_object_create_flow_shape_accepted_by_verifier() {
 }
 
 #[test]
+fn object_create_package_defined_lowers_to_graph_kind_token() {
+    let typed = typecheck_source(
+        r#"
+program package_defined_object_create principal 0x5059544847520007 {
+    import workspace: capability<object.workspace, create>;
+    fn main() -> unit {
+        let object_id: object_id = object.create(workspace, 2);
+        return;
+    }
+}
+"#,
+    )
+    .unwrap();
+    let graph = lower_program(&typed).unwrap();
+
+    assert!(
+        graph
+            .string_table
+            .windows(b"package-defined".len())
+            .any(|window| window == b"package-defined")
+    );
+}
+
+#[test]
 fn lowering_emits_object_restore_flow_shape_accepted_by_verifier() {
     let typed = typecheck_source(include_str!(
         "../../../programs/examples/object-restore.pyth"
