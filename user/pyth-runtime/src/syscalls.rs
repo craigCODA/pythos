@@ -7,6 +7,12 @@ use pythos_shared::{
         OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
         ObjectShellResponse, PackedCapability, STATUS_OK, SYSCALL_OBJECT_REQUEST, SYSCALL_OK,
     },
+    package_abi::{
+        OBJECT_KIND_PACKAGE_DEFINED_OBJECT, OP_PACKAGE_CONTEXT_SCHEMA,
+        PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+        PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PackageDefinedObjectCreateV0,
+        PackageRuntimeSchemaBindingV0, PackageStatus, SYSCALL_PACKAGE_CONTEXT,
+    },
     pyth_runtime_abi::{
         GraphExitRecord, HostCallResult, MAX_HOST_RESULT_BYTES, MAX_PYTH_GRAPH_IMPORTS,
         PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR,
@@ -69,7 +75,18 @@ impl Host for GraphSyscallHost {
         kind: &[u8],
     ) -> Result<HostCallResult, HostError> {
         let mut request = base_object_request(OP_CREATE_OBJECT, capability);
-        request.object_kind = object_kind_from_graph(kind)?;
+        let object_kind = object_kind_from_graph(kind)?;
+        request.object_kind = object_kind;
+        let create_input = if object_kind == OBJECT_KIND_PACKAGE_DEFINED_OBJECT {
+            let binding = package_schema_binding(0)?;
+            Some(package_defined_object_create_input(binding))
+        } else {
+            None
+        };
+        if let Some(input) = create_input.as_ref() {
+            request.input_ptr = input as *const PackageDefinedObjectCreateV0 as u64;
+            request.input_len = size_of::<PackageDefinedObjectCreateV0>() as u64;
+        }
         let response = send_object_request(&mut request, &mut empty_query_output())?;
         Ok(result_from_response(response, request.object_id, None))
     }
@@ -193,8 +210,73 @@ fn base_object_request(operation: u16, authority: PackedCapability) -> ObjectShe
 fn object_kind_from_graph(kind: &[u8]) -> Result<u16, HostError> {
     if kind == b"note" {
         Ok(OBJECT_KIND_NOTE)
+    } else if kind == b"package-defined" {
+        Ok(OBJECT_KIND_PACKAGE_DEFINED_OBJECT)
     } else {
         Err(HostError::Failed)
+    }
+}
+
+fn package_schema_binding(schema_slot: u16) -> Result<PackageRuntimeSchemaBindingV0, HostError> {
+    let mut binding = PackageRuntimeSchemaBindingV0 {
+        abi_major: 0,
+        abi_minor: 0,
+        schema_slot: 0,
+        reserved0: 0,
+        package_object_id: 0,
+        package_revision: 0,
+        schema_object_id: 0,
+        schema_revision: 0,
+        schema_descriptor_sha256: [0; 32],
+        reserved1: [0; 16],
+    };
+    // SAFETY:
+    // 1. Invariant: `binding` is a live writable
+    //    `PackageRuntimeSchemaBindingV0` output for this synchronous syscall.
+    // 2. Established by: the runtime owns the stack slot and passes the exact
+    //    ABI size to PythCore.
+    // 3. Lifetime: the pointer is consumed only during this syscall and the
+    //    copied binding is used by value afterward.
+    // 4. Pointer ownership: the runtime owns the output buffer; PythCore
+    //    writes exactly one ABI record and keeps no reference.
+    // 5. Alignment: `binding` has the ABI type's natural alignment.
+    // 6. Mapped length: `size_of::<PackageRuntimeSchemaBindingV0>()` names the
+    //    exact output length.
+    // 7. Concurrency: the v1 runtime is single-threaded.
+    // 8. Violation: PythCore rejects bad package context state by returning a
+    //    non-OK `PackageStatus`, which this helper maps to `HostError::Failed`.
+    let result = unsafe {
+        syscall5(
+            SYSCALL_PACKAGE_CONTEXT,
+            u64::from(OP_PACKAGE_CONTEXT_SCHEMA),
+            u64::from(schema_slot),
+            &mut binding as *mut PackageRuntimeSchemaBindingV0 as u64,
+            size_of::<PackageRuntimeSchemaBindingV0>() as u64,
+            0,
+        )
+    };
+    if result == u64::from(PackageStatus::Ok as u16) {
+        Ok(binding)
+    } else {
+        Err(HostError::Failed)
+    }
+}
+
+fn package_defined_object_create_input(
+    binding: PackageRuntimeSchemaBindingV0,
+) -> PackageDefinedObjectCreateV0 {
+    PackageDefinedObjectCreateV0 {
+        abi_major: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR,
+        abi_minor: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+        state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+        flags: 0,
+        schema_object_id: binding.schema_object_id,
+        schema_revision: binding.schema_revision,
+        initial_state_ptr: 0,
+        initial_state_len: 0,
+        reserved0: 0,
+        reserved1: 0,
+        reserved2: 0,
     }
 }
 
@@ -588,6 +670,7 @@ pub fn notify_exit(block: &PythGraphBootstrapBlock) -> Result<(), ExitNotifyErro
     }
 }
 
+#[cfg(not(test))]
 unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
     let result: u64;
     // SAFETY:
@@ -624,6 +707,11 @@ unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5
     result
 }
 
+#[cfg(test)]
+unsafe fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
+    syscall_test_support::dispatch(number, arg1, arg2, arg3, arg4, arg5)
+}
+
 pub const fn expected_result_size() -> usize {
     size_of::<GraphExitRecord>()
 }
@@ -651,6 +739,249 @@ pub const fn empty_bootstrap_block() -> PythGraphBootstrapBlock {
         instruction_budget: 0,
         result_ptr: 0,
         imports: [empty_capability_binding(); MAX_PYTH_GRAPH_IMPORTS],
+    }
+}
+
+#[cfg(test)]
+mod syscall_test_support {
+    extern crate std;
+
+    use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    #[derive(Clone, Copy)]
+    struct TestSyscallState {
+        package_context_status: u64,
+        package_context_count: usize,
+        last_package_context_args: [u64; 5],
+        schema_binding: PackageRuntimeSchemaBindingV0,
+        object_syscall_result: u64,
+        object_request_count: usize,
+        last_object_request: ObjectShellRequest,
+        object_response: ObjectShellResponse,
+        last_create_input: PackageDefinedObjectCreateV0,
+    }
+
+    impl TestSyscallState {
+        const fn empty() -> Self {
+            Self {
+                package_context_status: PackageStatus::Ok as u64,
+                package_context_count: 0,
+                last_package_context_args: [0; 5],
+                schema_binding: empty_schema_binding(),
+                object_syscall_result: SYSCALL_OK,
+                object_request_count: 0,
+                last_object_request: empty_object_request(),
+                object_response: default_object_response(),
+                last_create_input: empty_create_input(),
+            }
+        }
+    }
+
+    static TEST_LOCK: Mutex<()> = Mutex::new(());
+    static TEST_STATE: Mutex<TestSyscallState> = Mutex::new(TestSyscallState::empty());
+
+    pub(super) fn test_lock() -> MutexGuard<'static, ()> {
+        TEST_LOCK.lock().unwrap()
+    }
+
+    pub(super) fn reset() {
+        *TEST_STATE.lock().unwrap() = TestSyscallState::empty();
+    }
+
+    pub(super) fn set_schema_binding(binding: PackageRuntimeSchemaBindingV0) {
+        TEST_STATE.lock().unwrap().schema_binding = binding;
+    }
+
+    pub(super) fn package_context_count() -> usize {
+        TEST_STATE.lock().unwrap().package_context_count
+    }
+
+    pub(super) fn last_package_context_args() -> [u64; 5] {
+        TEST_STATE.lock().unwrap().last_package_context_args
+    }
+
+    pub(super) fn object_request_count() -> usize {
+        TEST_STATE.lock().unwrap().object_request_count
+    }
+
+    pub(super) fn last_object_request() -> ObjectShellRequest {
+        TEST_STATE.lock().unwrap().last_object_request
+    }
+
+    pub(super) fn last_create_input() -> PackageDefinedObjectCreateV0 {
+        TEST_STATE.lock().unwrap().last_create_input
+    }
+
+    pub(super) fn dispatch(
+        number: u64,
+        arg1: u64,
+        arg2: u64,
+        arg3: u64,
+        arg4: u64,
+        arg5: u64,
+    ) -> u64 {
+        match number {
+            SYSCALL_PACKAGE_CONTEXT => package_context(arg1, arg2, arg3, arg4, arg5),
+            SYSCALL_OBJECT_REQUEST => object_request(arg1, arg2, arg3, arg4),
+            _ => 0,
+        }
+    }
+
+    fn package_context(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
+        let mut state = TEST_STATE.lock().unwrap();
+        state.package_context_count += 1;
+        state.last_package_context_args = [arg1, arg2, arg3, arg4, arg5];
+        if state.package_context_status == PackageStatus::Ok as u64
+            && arg4 == size_of::<PackageRuntimeSchemaBindingV0>() as u64
+        {
+            // SAFETY:
+            // 1. Invariant: `arg3` is the output pointer supplied by
+            //    `package_schema_binding` for one `PackageRuntimeSchemaBindingV0`.
+            // 2. Established by: this test stub is only reached from the
+            //    runtime code under test, which passes a live stack output and
+            //    the exact ABI size in `arg4`.
+            // 3. Lifetime: the write completes before the synchronous stub
+            //    returns.
+            // 4. Pointer ownership: the runtime owns the output slot; the stub
+            //    writes exactly one test binding and keeps no reference.
+            // 5. Alignment: the runtime stack slot has the ABI type alignment.
+            // 6. Mapped length: `arg4` was checked against the ABI record size.
+            // 7. Concurrency: `TEST_LOCK` serializes tests that exercise this
+            //    syscall path.
+            // 8. Violation: a bad test pointer would be a test harness bug.
+            unsafe {
+                (arg3 as *mut PackageRuntimeSchemaBindingV0).write(state.schema_binding);
+            }
+        }
+        state.package_context_status
+    }
+
+    fn object_request(arg1: u64, arg2: u64, arg3: u64, arg4: u64) -> u64 {
+        let mut state = TEST_STATE.lock().unwrap();
+        if arg2 == size_of::<ObjectShellRequest>() as u64 {
+            // SAFETY:
+            // 1. Invariant: `arg1` points at the runtime's live
+            //    `ObjectShellRequest` stack value.
+            // 2. Established by: `send_object_request` passes that exact
+            //    pointer and ABI size to the syscall wrapper.
+            // 3. Lifetime: the copy happens before `send_object_request`
+            //    returns.
+            // 4. Pointer ownership: the runtime owns the request; the test
+            //    stub copies it and does not mutate it.
+            // 5. Alignment: the pointer came from a typed Rust reference.
+            // 6. Mapped length: `arg2` was checked against the ABI size.
+            // 7. Concurrency: `TEST_LOCK` serializes tests using this stub.
+            // 8. Violation: a bad pointer would be a test harness bug.
+            let request = unsafe { (arg1 as *const ObjectShellRequest).read() };
+            state.last_object_request = request;
+            state.object_request_count += 1;
+            if request.input_len == size_of::<PackageDefinedObjectCreateV0>() as u64 {
+                // SAFETY:
+                // 1. Invariant: `input_ptr` names the runtime's live
+                //    `PackageDefinedObjectCreateV0` stack value.
+                // 2. Established by: package-defined object creation sets
+                //    `input_ptr/input_len` immediately before the synchronous
+                //    object request.
+                // 3. Lifetime: the copy happens during that synchronous call.
+                // 4. Pointer ownership: the runtime owns the input; the test
+                //    stub copies it and keeps no reference.
+                // 5. Alignment: the pointer came from a typed Rust reference.
+                // 6. Mapped length: `input_len` was checked against the ABI
+                //    record size.
+                // 7. Concurrency: `TEST_LOCK` serializes tests using this
+                //    stub.
+                // 8. Violation: a bad pointer would be a test harness bug.
+                state.last_create_input =
+                    unsafe { (request.input_ptr as *const PackageDefinedObjectCreateV0).read() };
+            }
+        }
+        if state.object_syscall_result == SYSCALL_OK
+            && arg4 == size_of::<ObjectShellResponse>() as u64
+        {
+            // SAFETY:
+            // 1. Invariant: `arg3` points at the runtime's live
+            //    `ObjectShellResponse` stack output.
+            // 2. Established by: `send_object_request` passes that exact
+            //    pointer and ABI size to the syscall wrapper.
+            // 3. Lifetime: the write completes before the synchronous stub
+            //    returns.
+            // 4. Pointer ownership: the runtime owns the response slot; the
+            //    stub writes exactly one response and retains no reference.
+            // 5. Alignment: the pointer came from a typed Rust reference.
+            // 6. Mapped length: `arg4` was checked against the ABI size.
+            // 7. Concurrency: `TEST_LOCK` serializes tests using this stub.
+            // 8. Violation: a bad pointer would be a test harness bug.
+            unsafe {
+                (arg3 as *mut ObjectShellResponse).write(state.object_response);
+            }
+        }
+        state.object_syscall_result
+    }
+
+    const fn empty_schema_binding() -> PackageRuntimeSchemaBindingV0 {
+        PackageRuntimeSchemaBindingV0 {
+            abi_major: 0,
+            abi_minor: 0,
+            schema_slot: 0,
+            reserved0: 0,
+            package_object_id: 0,
+            package_revision: 0,
+            schema_object_id: 0,
+            schema_revision: 0,
+            schema_descriptor_sha256: [0; 32],
+            reserved1: [0; 16],
+        }
+    }
+
+    const fn empty_create_input() -> PackageDefinedObjectCreateV0 {
+        PackageDefinedObjectCreateV0 {
+            abi_major: 0,
+            abi_minor: 0,
+            state_format: 0,
+            flags: 0,
+            schema_object_id: 0,
+            schema_revision: 0,
+            initial_state_ptr: 0,
+            initial_state_len: 0,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    const fn empty_object_request() -> ObjectShellRequest {
+        ObjectShellRequest {
+            abi_major: 0,
+            abi_minor: 0,
+            operation: 0,
+            object_kind: 0,
+            field_id: 0,
+            reserved0: 0,
+            authority: PackedCapability::from_raw(0),
+            object_id: 0,
+            input_ptr: 0,
+            input_len: 0,
+            output_ptr: 0,
+            output_len: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    const fn default_object_response() -> ObjectShellResponse {
+        ObjectShellResponse {
+            status: STATUS_OK,
+            reserved0: 0,
+            object_kind: OBJECT_KIND_PACKAGE_DEFINED_OBJECT,
+            field_id: 0,
+            object_id: 0x5100,
+            revision: 1,
+            revision_count: 1,
+            bytes_written: 0,
+            capability: PackedCapability::from_parts(11, 2),
+            field_bytes: [0; 16],
+        }
     }
 }
 
@@ -733,5 +1064,80 @@ mod tests {
             result_from_task_context(response, summary),
             Err(HostError::Failed)
         );
+    }
+
+    #[test]
+    fn package_defined_object_create_buffer_recognizes_kind_tokens() {
+        assert_eq!(
+            object_kind_from_graph(b"package-defined"),
+            Ok(OBJECT_KIND_PACKAGE_DEFINED_OBJECT)
+        );
+        assert_eq!(object_kind_from_graph(b"unknown"), Err(HostError::Failed));
+    }
+
+    #[test]
+    fn package_defined_object_create_buffer_uses_schema_context_input() {
+        let _guard = syscall_test_support::test_lock();
+        syscall_test_support::reset();
+        let binding = PackageRuntimeSchemaBindingV0 {
+            abi_major: 0,
+            abi_minor: 1,
+            schema_slot: 0,
+            reserved0: 0,
+            package_object_id: 0x4100,
+            package_revision: 3,
+            schema_object_id: 0x4200,
+            schema_revision: 7,
+            schema_descriptor_sha256: [0xA5; 32],
+            reserved1: [0; 16],
+        };
+        syscall_test_support::set_schema_binding(binding);
+        let authority = PackedCapability::from_parts(8, 4);
+        let mut host = GraphSyscallHost;
+
+        let result = host.object_create(authority, b"package-defined").unwrap();
+
+        assert_eq!(result.status, STATUS_OK);
+        assert_eq!(result.object_id, 0x5100);
+        assert_eq!(result.revision, 1);
+        assert_eq!(result.capability, PackedCapability::from_parts(11, 2));
+        assert_eq!(syscall_test_support::package_context_count(), 1);
+        let package_context_args = syscall_test_support::last_package_context_args();
+        assert_eq!(
+            package_context_args[0],
+            u64::from(OP_PACKAGE_CONTEXT_SCHEMA)
+        );
+        assert_eq!(package_context_args[1], 0);
+        assert_ne!(package_context_args[2], 0);
+        assert_eq!(
+            package_context_args[3],
+            size_of::<PackageRuntimeSchemaBindingV0>() as u64
+        );
+        assert_eq!(package_context_args[4], 0);
+        assert_eq!(syscall_test_support::object_request_count(), 1);
+
+        let request = syscall_test_support::last_object_request();
+        assert_eq!(request.operation, OP_CREATE_OBJECT);
+        assert_eq!(request.object_kind, OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_eq!(request.authority, authority);
+        assert_ne!(request.input_ptr, 0);
+        assert_eq!(
+            request.input_len,
+            size_of::<PackageDefinedObjectCreateV0>() as u64
+        );
+        assert_eq!(size_of::<PackageDefinedObjectCreateV0>(), 64);
+
+        let create = syscall_test_support::last_create_input();
+        assert_eq!(create.abi_major, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR);
+        assert_eq!(create.abi_minor, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR);
+        assert_eq!(create.state_format, PACKAGE_DEFINED_STATE_FORMAT_EMPTY);
+        assert_eq!(create.flags, 0);
+        assert_eq!(create.schema_object_id, binding.schema_object_id);
+        assert_eq!(create.schema_revision, binding.schema_revision);
+        assert_eq!(create.initial_state_ptr, 0);
+        assert_eq!(create.initial_state_len, 0);
+        assert_eq!(create.reserved0, 0);
+        assert_eq!(create.reserved1, 0);
+        assert_eq!(create.reserved2, 0);
     }
 }
