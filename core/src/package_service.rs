@@ -33,8 +33,11 @@ use crate::{
     shell_objects::{ObjectId, ObjectKind},
     typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
 };
-#[cfg(not(test))]
 use core::cell::UnsafeCell;
+#[cfg(any(test, feature = "phase13-package-test"))]
+use core::mem::MaybeUninit;
+#[cfg(any(test, feature = "phase13-package-test"))]
+use core::sync::atomic::{AtomicBool, Ordering};
 use pythos_shared::{
     object_shell_abi::PackedCapability,
     package_abi::{
@@ -45,6 +48,10 @@ use pythos_shared::{
     package_format::{PackageArtifactV0, PackageFormatError},
 };
 
+#[cfg_attr(
+    all(not(test), feature = "phase13-package-test"),
+    allow(unused_imports)
+)]
 pub use crate::pyth_graph_loader::validate_package_export_graph;
 
 const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
@@ -59,6 +66,34 @@ static TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE: std::sync::Mutex<Option<ObjectSer
 static TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+#[cfg(any(test, feature = "phase13-package-test"))]
+struct RetainedPackageServiceStorage(UnsafeCell<MaybeUninit<PackageService<'static>>>);
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+// SAFETY:
+// 1. Invariant: retained package service storage is initialized at most once
+//    before package-context syscalls read launch contexts.
+// 2. Established by: initialize_retained_package_service_for_phase13 flips the
+//    initialized flag with compare_exchange before writing the static slot.
+// 3. Lifetime: the retained service lives in static storage for the boot or
+//    until the test-only reset drops it.
+// 4. Pointer ownership: with_retained_package_service_for_phase13 grants one
+//    mutable borrow for one synchronous closure and stores no reference.
+// 5. Alignment: MaybeUninit<PackageService> provides PackageService alignment.
+// 6. Mapped length: exactly one PackageService value is accessed.
+// 7. Concurrency: Phase 13 verify acceptance is single-core and syscall
+//    dispatch is non-reentrant in this slice.
+// 8. Violation: overlapping borrows could expose package context for the wrong
+//    launched process or corrupt package service state.
+unsafe impl Sync for RetainedPackageServiceStorage {}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+static RETAINED_PACKAGE_SERVICE: RetainedPackageServiceStorage =
+    RetainedPackageServiceStorage(UnsafeCell::new(MaybeUninit::uninit()));
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+static RETAINED_PACKAGE_SERVICE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
 #[cfg(test)]
 fn set_candidate_snapshot_write_override_for_test(snapshot: ObjectServiceSnapshot) {
     *TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE
@@ -69,6 +104,116 @@ fn set_candidate_snapshot_write_override_for_test(snapshot: ObjectServiceSnapsho
 #[cfg(test)]
 fn fail_candidate_content_materialization_for_test() {
     TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+pub(crate) fn initialize_retained_package_service_for_phase13(
+    service: PackageService<'static>,
+) -> bool {
+    if RETAINED_PACKAGE_SERVICE_INITIALIZED
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        return false;
+    }
+    // SAFETY:
+    // 1. Invariant: this is the only initialization write to the retained
+    //    package service slot.
+    // 2. Established by: compare_exchange above transitions false -> true for
+    //    exactly one caller before this write.
+    // 3. Lifetime: the moved PackageService lives in static storage until boot
+    //    exit or test-only reset.
+    // 4. Pointer ownership: RETAINED_PACKAGE_SERVICE owns the storage; the
+    //    input service is moved and not used again by the caller.
+    // 5. Alignment: MaybeUninit<PackageService> preserves PackageService
+    //    alignment.
+    // 6. Mapped length: exactly one PackageService value is written.
+    // 7. Concurrency: Phase 13 verify acceptance is single-core and
+    //    non-reentrant.
+    // 8. Violation: a second writer could replace launch contexts under an
+    //    active package-context syscall.
+    unsafe {
+        (*RETAINED_PACKAGE_SERVICE.0.get()).write(service);
+    }
+    true
+}
+
+#[cfg(any(test, feature = "phase13-package-test"))]
+pub(crate) fn with_retained_package_service_for_phase13<R>(
+    f: impl FnOnce(&mut PackageService<'static>) -> R,
+) -> Option<R> {
+    if !RETAINED_PACKAGE_SERVICE_INITIALIZED.load(Ordering::SeqCst) {
+        return None;
+    }
+    // SAFETY:
+    // 1. Invariant: the retained service slot contains one initialized
+    //    PackageService while the initialized flag is true.
+    // 2. Established by: initialize_retained_package_service_for_phase13 is
+    //    non-reentrant in this single-core slice and writes the slot before
+    //    returning to any caller that can issue package-context syscalls.
+    // 3. Lifetime: the mutable borrow is limited to this synchronous closure.
+    // 4. Pointer ownership: this module owns the static slot and lends one
+    //    mutable reference without retaining it.
+    // 5. Alignment: MaybeUninit<PackageService> provides PackageService
+    //    alignment.
+    // 6. Mapped length: exactly one initialized PackageService is borrowed.
+    // 7. Concurrency: Phase 13 verify acceptance is single-core and syscall
+    //    dispatch is non-reentrant.
+    // 8. Violation: reentrant mutable access could corrupt runtime context
+    //    records or registry state.
+    Some(f(unsafe {
+        (*RETAINED_PACKAGE_SERVICE.0.get()).assume_init_mut()
+    }))
+}
+
+#[cfg(test)]
+fn reset_retained_package_service_for_phase13_test() {
+    if RETAINED_PACKAGE_SERVICE_INITIALIZED.swap(false, Ordering::SeqCst) {
+        // SAFETY:
+        // 1. Invariant: the initialized flag was true, so the slot contains
+        //    one initialized PackageService.
+        // 2. Established by: initialize_retained_package_service_for_phase13 is
+        //    the only writer and sets the flag before tests can use the slot.
+        // 3. Lifetime: this test-only reset ends the stored service lifetime.
+        // 4. Pointer ownership: tests hold the retained-service test lock and
+        //    no service borrow while resetting.
+        // 5. Alignment: MaybeUninit<PackageService> preserves alignment.
+        // 6. Mapped length: exactly one PackageService is dropped.
+        // 7. Concurrency: tests serialize retained package service use with
+        //    RETAINED_PACKAGE_SERVICE_TEST_LOCK.
+        // 8. Violation: resetting while borrowed would invalidate a live
+        //    mutable reference.
+        unsafe {
+            (*RETAINED_PACKAGE_SERVICE.0.get()).assume_init_drop();
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct RetainedPackageServicePhase13TestGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl Drop for RetainedPackageServicePhase13TestGuard {
+    fn drop(&mut self) {
+        reset_retained_package_service_for_phase13_test();
+    }
+}
+
+#[cfg(test)]
+static RETAINED_PACKAGE_SERVICE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn initialize_retained_package_service_for_phase13_test(
+    service: PackageService<'static>,
+) -> RetainedPackageServicePhase13TestGuard {
+    let lock = RETAINED_PACKAGE_SERVICE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    reset_retained_package_service_for_phase13_test();
+    assert!(initialize_retained_package_service_for_phase13(service));
+    RetainedPackageServicePhase13TestGuard { _lock: lock }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

@@ -12,6 +12,8 @@ use crate::capabilities::{
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::object_service::{ObjectService, ObjectServiceError};
+#[cfg(any(test, feature = "phase13-package-test"))]
+use crate::package_service;
 #[cfg(test)]
 use crate::package_service::PackageService;
 use crate::permission_validation::{self, PermissionError};
@@ -30,14 +32,22 @@ use crate::task_context::TaskContextEvent;
 use crate::task_service::{self, TaskServiceError};
 use crate::tasks::TaskId;
 use crate::user_copy::UserCopyError;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 use crate::user_copy::{UserCopyAccess, UserCopyMap};
 use crate::user_mode;
 use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 #[cfg(not(test))]
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 use core::mem::{align_of, size_of};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use core::slice;
@@ -53,7 +63,11 @@ use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 use pythos_shared::package_abi::{OP_PACKAGE_CONTEXT_SCHEMA, PackageRuntimeSchemaBindingV0};
 use pythos_shared::package_abi::{PackageStatus, SYSCALL_PACKAGE_CONTEXT};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -154,42 +168,6 @@ unsafe impl Sync for SyscallCapabilityStorage {}
 
 static SYSCALL_CAPABILITIES: SyscallCapabilityStorage =
     SyscallCapabilityStorage(UnsafeCell::new(CapabilityTable::new()));
-
-#[cfg(test)]
-static PACKAGE_CONTEXT_SERVICE_FOR_TEST: std::sync::Mutex<Option<PackageService<'static>>> =
-    std::sync::Mutex::new(None);
-
-#[cfg(test)]
-struct PackageContextServiceTestGuard;
-
-#[cfg(test)]
-impl Drop for PackageContextServiceTestGuard {
-    fn drop(&mut self) {
-        *PACKAGE_CONTEXT_SERVICE_FOR_TEST
-            .lock()
-            .unwrap_or_else(|error| error.into_inner()) = None;
-    }
-}
-
-#[cfg(test)]
-fn install_package_context_service_for_test(
-    service: PackageService<'static>,
-) -> PackageContextServiceTestGuard {
-    *PACKAGE_CONTEXT_SERVICE_FOR_TEST
-        .lock()
-        .unwrap_or_else(|error| error.into_inner()) = Some(service);
-    PackageContextServiceTestGuard
-}
-
-#[cfg(test)]
-fn with_package_context_service_for_test<R>(
-    f: impl FnOnce(&mut PackageService<'static>) -> R,
-) -> Option<R> {
-    let mut service = PACKAGE_CONTEXT_SERVICE_FOR_TEST
-        .lock()
-        .unwrap_or_else(|error| error.into_inner());
-    service.as_mut().map(f)
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SyscallError {
@@ -1306,7 +1284,11 @@ fn task_operation_mutates(operation: u16) -> bool {
     )
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 fn validate_user_buffer(
     copy_map: &UserCopyMap,
     ptr: u64,
@@ -1510,7 +1492,11 @@ fn dispatch_pyth_graph_exit(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 fn dispatch_package_context(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg0 != u64::from(OP_PACKAGE_CONTEXT_SCHEMA) || args.arg4 != 0 {
         return Ok(u64::from(PackageStatus::BadRequest as u16));
@@ -1555,23 +1541,27 @@ fn dispatch_package_context(args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(u64::from(PackageStatus::Ok as u16))
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_package_context(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(u64::from(PackageStatus::Denied as u16))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "phase13-package-test"))]
 fn package_runtime_schema_binding(
     caller: ActiveUserProcess,
     schema_slot: u16,
 ) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
-    with_package_context_service_for_test(|service| {
+    package_service::with_retained_package_service_for_phase13(|service| {
         service.runtime_schema_binding(caller, schema_slot)
     })
     .unwrap_or(Err(PackageStatus::Denied))
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    not(feature = "verify"),
+    not(feature = "phase13-package-test")
+))]
 fn package_runtime_schema_binding(
     _caller: ActiveUserProcess,
     _schema_slot: u16,
@@ -1927,7 +1917,11 @@ const fn unpack_syscall_capability(capability: PackedCapability) -> CapabilityHa
     CapabilityHandle::from_parts(capability.slot(), capability.generation())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 const fn is_aligned(ptr: u64, alignment: usize) -> bool {
     ptr != 0 && ptr.is_multiple_of(alignment as u64)
 }
@@ -2305,7 +2299,8 @@ mod tests {
         let package_process = package_context_process();
         let non_package_process = package_context_intruder_process();
         let service = package_context_service_with_launch_context(package_process);
-        let _service_guard = install_package_context_service_for_test(service);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
         let mut output = Box::new(empty_package_schema_binding_output());
         let original_output = *output;
         let mut copy_map = UserCopyMap::new();
@@ -2324,7 +2319,8 @@ mod tests {
         let _guard = package_context_syscall_test_lock();
         let package_process = package_context_process();
         let service = package_context_service_with_launch_context(package_process);
-        let _service_guard = install_package_context_service_for_test(service);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
         let mut output = Box::new(empty_package_schema_binding_output());
         let mut copy_map = UserCopyMap::new();
         map_value(&mut copy_map, &*output, true, true);
@@ -2350,11 +2346,36 @@ mod tests {
     }
 
     #[test]
+    fn package_context_syscall_uses_phase13_retained_package_service() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+        assert_eq!(output.package_object_id, PACKAGE_CONTEXT_PACKAGE_ID);
+        assert_eq!(output.schema_object_id, PACKAGE_CONTEXT_SCHEMA_ID);
+        assert_eq!(
+            output.schema_descriptor_sha256,
+            PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST
+        );
+    }
+
+    #[test]
     fn package_context_syscall_rejects_wrong_output_length_without_writing() {
         let _guard = package_context_syscall_test_lock();
         let package_process = package_context_process();
         let service = package_context_service_with_launch_context(package_process);
-        let _service_guard = install_package_context_service_for_test(service);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
         let mut output = Box::new(empty_package_schema_binding_output());
         let original_output = *output;
         let mut copy_map = UserCopyMap::new();
@@ -2377,7 +2398,8 @@ mod tests {
         let _guard = package_context_syscall_test_lock();
         let package_process = package_context_process();
         let service = package_context_service_with_launch_context(package_process);
-        let _service_guard = install_package_context_service_for_test(service);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
         let before = package_context_state_snapshot();
         let mut output = Box::new(empty_package_schema_binding_output());
         let mut copy_map = UserCopyMap::new();
@@ -3271,7 +3293,7 @@ mod tests {
     }
 
     fn package_context_state_snapshot() -> PackageContextStateSnapshot {
-        with_package_context_service_for_test(|service| {
+        crate::package_service::with_retained_package_service_for_phase13(|service| {
             let export = service
                 .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
                 .unwrap();
