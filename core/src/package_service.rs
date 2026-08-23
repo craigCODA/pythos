@@ -1809,10 +1809,32 @@ impl<'a> PackageService<'a> {
         if !selected_current && !selected_previous {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
+        let fallback_from_tombstone = selected_previous && {
+            let mut index = 0usize;
+            let mut contains_tombstone = false;
+            while let Some(record) = self.registry.package_record(index) {
+                if record.status == PackageStatus::PackageTombstoned as u16 {
+                    contains_tombstone = true;
+                    break;
+                }
+                index += 1;
+            }
+            contains_tombstone
+        };
         if selected_previous {
             self.replace_current_with_previous(selected);
         } else {
             self.registry = selected;
+        }
+        if fallback_from_tombstone && let Some(device) = candidate_device {
+            let validated_content =
+                PackageContentStore::read_validate_candidate_content(device, &self.registry)?;
+            PackageContentStore::restore_from_validated_registry_into(
+                device,
+                &self.registry,
+                validated_content,
+                &mut self.content_store,
+            )?;
         }
 
         let transient_staged_content = self.staged_content.staged_count() != 0
@@ -3528,6 +3550,228 @@ mod tests {
                 .content_store()
                 .read_published(descriptor_content_id, &mut descriptor_bytes),
             Err(PackageStatus::NotFound)
+        );
+    }
+
+    #[test]
+    fn package_uninstall_recovery_failed_tombstone_publication_restores_installed_content_world() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let tool_content_id =
+            ContentId::new(installed.package_object_id, installed.release_digest, 1);
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+        assert_eq!(package_service.registry().content_count(), 0);
+        package_service.object_checkpoint_identity.root_digest[0] ^= 0xFF;
+
+        let report = package_service
+            .recover_with_candidate_checkpoint(device)
+            .unwrap();
+
+        assert!(report.published_world_selected);
+        assert!(report.previous_published_world_selected);
+        assert_eq!(
+            package_service.registry().package_record(0).unwrap().status,
+            PackageStatus::Ok as u16
+        );
+        assert_eq!(
+            package_service
+                .resolve_export(root, "seed/launch")
+                .unwrap()
+                .package_object_id,
+            installed.package_object_id
+        );
+        assert_eq!(package_service.registry().content_count(), 2);
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+        let mut tool_bytes = [0u8; ADDITIONAL_CONTENT.len()];
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Ok(ADDITIONAL_CONTENT.len())
+        );
+        assert_eq!(&tool_bytes, ADDITIONAL_CONTENT);
+    }
+
+    #[test]
+    fn package_uninstall_recovery_corrupt_tombstone_anchor_fresh_restore_selects_installed_world() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let tool_content_id =
+            ContentId::new(installed.package_object_id, installed.release_digest, 1);
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+        let tombstone_generation = package_service.registry_generation();
+        let mut corrupt_tombstone_anchor = read_publication_anchor_slot(
+            device,
+            if tombstone_generation.generation & 1 == 0 {
+                PackagePublicationAnchorSlot::A
+            } else {
+                PackagePublicationAnchorSlot::B
+            },
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            corrupt_tombstone_anchor.package_object_id,
+            installed.package_object_id
+        );
+        assert!(
+            corrupt_tombstone_anchor.package_registry_generation
+                > installed.registry_generation.generation
+        );
+        corrupt_tombstone_anchor.object_checkpoint_root_digest[0] ^= 0x80;
+        write_publication_anchor(device, corrupt_tombstone_anchor).unwrap();
+
+        let mut restored_service = PackageService::new_empty_for_test();
+        let report = restored_service.restore_from_storage(device).unwrap();
+
+        assert!(report.published_world_selected);
+        assert!(report.previous_published_world_selected);
+        assert_eq!(
+            restored_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .status,
+            PackageStatus::Ok as u16
+        );
+        assert_eq!(
+            restored_service
+                .resolve_export(root, "seed/launch")
+                .unwrap()
+                .package_object_id,
+            installed.package_object_id
+        );
+        assert_eq!(restored_service.registry().content_count(), 2);
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+        let mut tool_bytes = [0u8; ADDITIONAL_CONTENT.len()];
+        assert_eq!(
+            restored_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+        assert_eq!(
+            restored_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Ok(ADDITIONAL_CONTENT.len())
+        );
+        assert_eq!(&tool_bytes, ADDITIONAL_CONTENT);
+    }
+
+    #[test]
+    fn package_uninstall_recovery_published_tombstone_survives_fresh_restore() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        let mut restored_service = PackageService::new_empty_for_test();
+        let report = restored_service.restore_from_storage(device).unwrap();
+
+        assert!(report.published_world_selected);
+        assert!(!report.previous_published_world_selected);
+        assert_eq!(restored_service.registry().package_count(), 1);
+        assert_eq!(
+            restored_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            installed.package_object_id
+        );
+        assert_eq!(
+            restored_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .status,
+            PackageStatus::PackageTombstoned as u16
+        );
+        assert_eq!(
+            restored_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::ExportMissing)
+        );
+        assert_eq!(restored_service.registry().schema_count(), 1);
+        assert_eq!(restored_service.registry().content_count(), 0);
+    }
+
+    #[test]
+    fn package_uninstall_recovery_does_not_expose_active_locator_and_tombstone_together() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+        let mut restored_service = PackageService::new_empty_for_test();
+        restored_service.restore_from_storage(device).unwrap();
+
+        assert_eq!(restored_service.registry().package_count(), 1);
+        let package = restored_service.registry().package_record(0).unwrap();
+        assert_eq!(package.package_object_id, installed.package_object_id);
+        assert_eq!(package.status, PackageStatus::PackageTombstoned as u16);
+        assert_eq!(
+            restored_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::ExportMissing)
         );
     }
 
