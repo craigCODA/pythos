@@ -70,6 +70,20 @@ class Phase13PackageContextProductionWiringTests(unittest.TestCase):
             source("normal_boot.rs"),
         )
 
+    def test_production_package_service_restore_uses_retained_slot_in_place(self):
+        """Break caught: normal boot stack overflows restoring a local PackageService."""
+        text = source("package_service.rs")
+        start = text.index("pub(crate) fn initialize_package_service_from_device")
+        end = text.index("\n#[cfg(test)]", start)
+        initializer = text[start:end]
+
+        self.assertNotIn("let mut service = PackageService::new_empty();", initializer)
+        self.assertIn("restore_retained_package_service_from_device", initializer)
+        self.assertIn(
+            "service.restore_from_storage(device)",
+            initializer,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
