@@ -304,115 +304,115 @@ impl<'a> PackageService<'a> {
         let package_object_id = ObjectId::new(self.next_package_object_id);
         let schema_object_id = ObjectId::new(self.next_schema_object_id);
 
+        self.content_store.rollback(&mut self.staged_content);
         self.staged_content
             .reset(package_object_id.raw(), release_digest);
-        let mut descriptor_content_id = None;
-        let mut entry_index = 0u16;
-        while let Some(entry) = artifact.content_entry(entry_index) {
-            let content_bytes = artifact.content_bytes(entry).map_err(map_format_error)?;
-            let content_id = self.content_store.stage_content(
-                &mut self.staged_content,
-                entry.role,
-                entry.format,
-                content_bytes,
-                entry.sha256,
-            )?;
-            if entry_index == descriptor_entry.content_index {
-                descriptor_content_id = Some(content_id);
+        let prepared = (|| -> Result<PackageInstallCandidate, PackageStatus> {
+            let mut descriptor_content_id = None;
+            let mut entry_index = 0u16;
+            while let Some(entry) = artifact.content_entry(entry_index) {
+                let content_bytes = artifact.content_bytes(entry).map_err(map_format_error)?;
+                let content_id = self.content_store.stage_content(
+                    &mut self.staged_content,
+                    entry.role,
+                    entry.format,
+                    content_bytes,
+                    entry.sha256,
+                )?;
+                if entry_index == descriptor_entry.content_index {
+                    descriptor_content_id = Some(content_id);
+                }
+                entry_index = entry_index.wrapping_add(1);
             }
-            entry_index = entry_index.wrapping_add(1);
-        }
-        let schema_descriptor_content_id =
-            descriptor_content_id.ok_or(PackageStatus::InvalidSchema)?;
-        if descriptor_bytes.is_empty() {
-            self.content_store.rollback(&mut self.staged_content);
-            return Err(PackageStatus::InvalidSchema);
-        }
-        let Some(device) = candidate_device else {
-            self.content_store.rollback(&mut self.staged_content);
-            return Err(PackageStatus::RegistryWriteDenied);
-        };
+            let schema_descriptor_content_id =
+                descriptor_content_id.ok_or(PackageStatus::InvalidSchema)?;
+            if descriptor_bytes.is_empty() {
+                return Err(PackageStatus::InvalidSchema);
+            }
+            let device = candidate_device.ok_or(PackageStatus::RegistryWriteDenied)?;
 
-        let mut candidate_object_service = *object_service;
-        let package = create_package_or_rollback(
-            &mut candidate_object_service,
-            request.caller,
-            package_object_id,
-            release_digest,
-            &mut self.content_store,
-            &mut self.staged_content,
-        )?;
-        let schema = create_schema_or_rollback(
-            &mut candidate_object_service,
-            request.caller,
-            schema_object_id,
-            package_object_id,
-            descriptor_entry.sha256,
-            &mut self.content_store,
-            &mut self.staged_content,
-        )?;
-
-        self.staged_registry.copy_from_committed(&self.registry);
-        self.staged_registry
-            .add_package_record(PackageRegistryPackageRecord::new(
-                package.object_id.raw(),
-                package.revision,
+            let mut candidate_object_service = *object_service;
+            let package = create_package_or_rollback(
+                &mut candidate_object_service,
+                request.caller,
+                package_object_id,
                 release_digest,
-                PackageStatus::Ok as u16,
-            ))?;
-        self.staged_registry
-            .add_schema_record(PackageRegistrySchemaRecord::new(
-                schema.object_id.raw(),
-                schema.revision,
-                package.object_id.raw(),
-                descriptor_entry.content_index,
+                &mut self.content_store,
+                &mut self.staged_content,
+            )?;
+            let schema = create_schema_or_rollback(
+                &mut candidate_object_service,
+                request.caller,
+                schema_object_id,
+                package_object_id,
                 descriptor_entry.sha256,
-            ))?;
+                &mut self.content_store,
+                &mut self.staged_content,
+            )?;
 
-        let mut staged_registry_snapshot = [0; 4096];
-        let registry_generation = self
-            .staged_registry
-            .encode_snapshot(&mut staged_registry_snapshot)?;
-        let decoded_registry = PackageRegistry::decode_snapshot(
-            &staged_registry_snapshot[..self.staged_registry.encoded_len()],
-        )?;
-        let decoded_registry_generation = PackageRegistryGeneration {
-            generation: decoded_registry.generation(),
-            root_digest: decoded_registry.root_digest(),
-        };
-        if decoded_registry_generation != registry_generation {
-            self.content_store.rollback(&mut self.staged_content);
-            return Err(PackageStatus::RegistryRecoveryDenied);
-        }
-        let candidate_snapshot = candidate_object_service
-            .encode_candidate_snapshot()
-            .map_err(map_object_error)?;
-        let object_identity = self.persist_candidate_snapshot(device, &candidate_snapshot)?;
-        let transaction_id = self.next_transaction_id;
-        let content_commit = match self.content_store.commit(&mut self.staged_content) {
-            Ok(content_commit) => content_commit,
+            self.staged_registry.copy_from_committed(&self.registry);
+            self.staged_registry
+                .add_package_record(PackageRegistryPackageRecord::new(
+                    package.object_id.raw(),
+                    package.revision,
+                    release_digest,
+                    PackageStatus::Ok as u16,
+                ))?;
+            self.staged_registry
+                .add_schema_record(PackageRegistrySchemaRecord::new(
+                    schema.object_id.raw(),
+                    schema.revision,
+                    package.object_id.raw(),
+                    descriptor_entry.content_index,
+                    descriptor_entry.sha256,
+                ))?;
+
+            let mut staged_registry_snapshot = [0; 4096];
+            let registry_generation = self
+                .staged_registry
+                .encode_snapshot(&mut staged_registry_snapshot)?;
+            let decoded_registry = PackageRegistry::decode_snapshot(
+                &staged_registry_snapshot[..self.staged_registry.encoded_len()],
+            )?;
+            let decoded_registry_generation = PackageRegistryGeneration {
+                generation: decoded_registry.generation(),
+                root_digest: decoded_registry.root_digest(),
+            };
+            if decoded_registry_generation != registry_generation {
+                return Err(PackageStatus::RegistryRecoveryDenied);
+            }
+            let candidate_snapshot = candidate_object_service
+                .encode_candidate_snapshot()
+                .map_err(map_object_error)?;
+            let object_identity = self.persist_candidate_snapshot(device, &candidate_snapshot)?;
+            let transaction_id = self.next_transaction_id;
+            let content_commit = self.content_store.commit(&mut self.staged_content)?;
+
+            let candidate = PackageInstallCandidate {
+                transaction_id,
+                package_object_id: package.object_id.raw(),
+                package_revision: package.revision,
+                schema_object_id: schema.object_id.raw(),
+                schema_revision: schema.revision,
+                release_digest,
+                schema_descriptor_content_id,
+                content_commit,
+                registry_generation,
+                object_checkpoint_identity: object_identity,
+                staged_registry_snapshot,
+            };
+            self.prepared_object_service = Some(candidate_object_service);
+            self.prepared_candidate = Some(candidate.clone());
+            Ok(candidate)
+        })();
+
+        match prepared {
+            Ok(candidate) => Ok(candidate),
             Err(error) => {
                 self.content_store.rollback(&mut self.staged_content);
-                return Err(error);
+                Err(error)
             }
-        };
-
-        let candidate = PackageInstallCandidate {
-            transaction_id,
-            package_object_id: package.object_id.raw(),
-            package_revision: package.revision,
-            schema_object_id: schema.object_id.raw(),
-            schema_revision: schema.revision,
-            release_digest,
-            schema_descriptor_content_id,
-            content_commit,
-            registry_generation,
-            object_checkpoint_identity: object_identity,
-            staged_registry_snapshot,
-        };
-        self.prepared_object_service = Some(candidate_object_service);
-        self.prepared_candidate = Some(candidate.clone());
-        Ok(candidate)
+        }
     }
 
     pub fn publish_install_candidate(
@@ -900,7 +900,9 @@ mod tests {
             reset_checkpoint_storage_for_test,
         },
         package_content_store::{ContentId, PackageContentTransaction},
-        package_registry::{PackageRegistry, PackageTransactionCommitV0},
+        package_registry::{
+            PackageRegistry, PackageRegistryPackageRecord, PackageTransactionCommitV0,
+        },
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
         service_identity::ServiceId,
@@ -921,6 +923,7 @@ mod tests {
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
+    const ADDITIONAL_CONTENT: &[u8] = b"payload:seed.v0";
     const ORPHAN_CONTENT: &[u8] = b"orphan";
     static CHECKPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
 
@@ -1377,6 +1380,48 @@ mod tests {
     }
 
     #[test]
+    fn package_prepare_install_candidate_rolls_back_staged_content_after_registry_failure() {
+        let mut package_service = PackageService::new_empty_for_test();
+        let object_service = ObjectService::new_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+
+        for index in 0..32 {
+            package_service
+                .registry
+                .add_package_record(PackageRegistryPackageRecord::new(
+                    0x5059_4649_4C4C_0000 + index,
+                    1,
+                    [index as u8; 32],
+                    PackageStatus::Ok as u16,
+                ))
+                .unwrap();
+        }
+
+        assert_eq!(
+            prepare_two_content_recovery_package_install_candidate(
+                &mut package_service,
+                device,
+                &object_service,
+            ),
+            Err(PackageStatus::QuotaDenied)
+        );
+        assert_eq!(package_service.staged_content.staged_count(), 0);
+        assert!(
+            package_service
+                .content_store
+                .staged_bitmap()
+                .iter()
+                .all(|word| *word == 0)
+        );
+        assert_eq!(
+            package_service.content_store.committed_bitmap(),
+            [0; PACKAGE_CONTENT_BITMAP_WORDS]
+        );
+        assert!(package_service.prepared_candidate.is_none());
+        assert!(package_service.prepared_object_service.is_none());
+    }
+
+    #[test]
     fn package_recovery_reports_durable_unanchored_candidate_as_ignored_reclaimable() {
         let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
@@ -1721,6 +1766,50 @@ mod tests {
         )
     }
 
+    fn prepare_two_content_recovery_package_install_candidate(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &ObjectService,
+    ) -> Result<PackageInstallCandidate, PackageStatus> {
+        let artifact = build_two_content_schema_package_artifact();
+        let source_record = build_source_record(0, b"phase13-rollback.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_524F_4C4C, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
+
+        package_service.prepare_install_candidate(
+            device,
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            object_service,
+            artifact_buffer,
+        )
+    }
+
     #[test]
     fn package_install_transaction_commits_package_schema_content_registry_and_anchor_as_one_unit()
     {
@@ -1932,6 +2021,59 @@ mod tests {
         artifact.extend_from_slice(&manifest);
         artifact.extend_from_slice(&content_table);
         artifact.extend_from_slice(SCHEMA_DESCRIPTOR);
+        let digest = artifact_digest(&artifact);
+        artifact[96..128].copy_from_slice(&digest);
+        artifact
+    }
+
+    fn build_two_content_schema_package_artifact() -> Vec<u8> {
+        let mut manifest = b"PYTHMAN0".to_vec();
+        manifest.extend_from_slice(&1u32.to_le_bytes());
+        push_manifest_record(&mut manifest, 1, b"seed.v0", &0u16.to_le_bytes());
+
+        let mut content_table = vec![0u8; 2 * CONTENT_ENTRY_V0_LEN];
+        content_table[0..2].copy_from_slice(&0u16.to_le_bytes());
+        content_table[2..4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[4..6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[6..8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[8..16].copy_from_slice(&0u64.to_le_bytes());
+        content_table[16..24].copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[24..56].copy_from_slice(&sha256(SCHEMA_DESCRIPTOR));
+
+        let second = CONTENT_ENTRY_V0_LEN;
+        content_table[second..second + 2].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 2..second + 4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[second + 4..second + 6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 6..second + 8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 8..second + 16]
+            .copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[second + 16..second + 24]
+            .copy_from_slice(&(ADDITIONAL_CONTENT.len() as u64).to_le_bytes());
+        content_table[second + 24..second + 56].copy_from_slice(&sha256(ADDITIONAL_CONTENT));
+
+        let manifest_offset = PACKAGE_ARTIFACT_HEADER_LEN;
+        let content_table_offset = manifest_offset + manifest.len();
+        let content_offset = content_table_offset + content_table.len();
+        let mut header = vec![0u8; PACKAGE_ARTIFACT_HEADER_LEN];
+        header[0..8].copy_from_slice(b"PYTHPKG0");
+        header[8..10].copy_from_slice(&0u16.to_le_bytes());
+        header[10..12].copy_from_slice(&1u16.to_le_bytes());
+        header[12..16].copy_from_slice(&(PACKAGE_ARTIFACT_HEADER_LEN as u32).to_le_bytes());
+        header[16..24].copy_from_slice(&(manifest_offset as u64).to_le_bytes());
+        header[24..32].copy_from_slice(&(manifest.len() as u64).to_le_bytes());
+        header[32..40].copy_from_slice(&(content_table_offset as u64).to_le_bytes());
+        header[40..48].copy_from_slice(&(content_table.len() as u64).to_le_bytes());
+        header[48..56].copy_from_slice(&(content_offset as u64).to_le_bytes());
+        header[56..64].copy_from_slice(
+            &((SCHEMA_DESCRIPTOR.len() + ADDITIONAL_CONTENT.len()) as u64).to_le_bytes(),
+        );
+        header[64..96].copy_from_slice(&sha256(&manifest));
+
+        let mut artifact = header;
+        artifact.extend_from_slice(&manifest);
+        artifact.extend_from_slice(&content_table);
+        artifact.extend_from_slice(SCHEMA_DESCRIPTOR);
+        artifact.extend_from_slice(ADDITIONAL_CONTENT);
         let digest = artifact_digest(&artifact);
         artifact[96..128].copy_from_slice(&digest);
         artifact
