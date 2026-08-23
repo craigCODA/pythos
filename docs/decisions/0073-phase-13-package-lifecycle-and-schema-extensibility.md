@@ -319,10 +319,12 @@ pub const PACKAGE_CONTENT_BITMAP_WORDS: usize = 128;
 pub const PACKAGE_CONTENT_MAX_STAGED_RECORDS: usize = 64;
 ```
 
-The allocator stages immutable content extents, commits a bitmap only at the
-package transaction boundary, and can roll back staged extents. Package content
-bytes are immutable release-scoped bytes. Runtime instance state belongs to
-the object service and remains object-owned and revisioned.
+The allocator tracks immutable content extents for candidate package worlds,
+but allocation metadata must not become independently authoritative. Selected
+anchored registry reachability determines which package-content extents are
+live; candidate-only bytes are unreachable/reclaimable. Package content bytes
+are immutable release-scoped bytes. Runtime instance state belongs to the
+object service and remains object-owned and revisioned.
 
 ### Package Registry Snapshot
 
@@ -351,7 +353,26 @@ PackageRegistrySnapshotV0
 `snapshot_crc32c` is CRC-32C Castagnoli over the exact snapshot bytes with the
 `snapshot_crc32c` field zero-filled.
 
-### Cross-Checkpoint Transaction Anchor
+### Cross-Checkpoint Publication Anchor
+
+Normative Phase 13 transaction invariant:
+
+```text
+Uncommitted state was never reality.
+```
+
+Package installation is a world publication transition:
+
+```text
+world A remains authoritative
+-> construct candidate world B durably
+-> validate B
+-> publish B with PackageTransactionCommitV0
+-> B becomes authoritative
+```
+
+Durability does not imply publication. Validity does not imply publication.
+Only a valid publication anchor selects reality.
 
 ```text
 PackageTransactionCommitV0
@@ -369,11 +390,19 @@ PackageTransactionCommitV0
 `commit_crc32c` is CRC-32C Castagnoli over the exact canonical anchor bytes
 with the `commit_crc32c` field zero-filled.
 
-Recovery accepts a package transaction only when the selected object-service
-checkpoint and selected package-registry generation match the same valid
-`PackageTransactionCommitV0` anchor. Otherwise, recovery selects the previous
-valid anchored pair or denies package operations while preserving older object
-store behavior.
+Recovery accepts a package world only when the referenced object-service
+candidate checkpoint and referenced package-registry generation match the same
+valid `PackageTransactionCommitV0` publication anchor. Otherwise, recovery
+selects the previous valid published world or denies package operations while
+preserving older object-store behavior.
+
+Ordinary object-service checkpoint semantics are unchanged. Normal object
+checkpoints become recovery-eligible through the existing commit-sector
+protocol, and ordinary recovery selects the newest valid committed object
+checkpoint. Phase 13 adds a package-transaction path for durable,
+root-addressable, verifiable ObjectService candidate state that is excluded
+from ordinary recovery selection until selected by a valid
+`PackageTransactionCommitV0`.
 
 ### Marker Order
 
@@ -406,6 +435,10 @@ Package installation, launch, and uninstall are capability-scoped. A manifest
 stating a requirement does not grant it. A package source handle does not grant
 source reading. Locator publication is a rebuildable mirror, not semantic
 truth.
+
+Package content liveness is derived from the selected anchored package
+registry. Physically written candidate package bytes are not live merely
+because they exist; unpublished candidate content is unreachable/reclaimable.
 
 Disable prevents new launches, preserves the Package `ObjectId`, does not
 terminate already-running processes, and does not revoke capabilities from

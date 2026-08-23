@@ -21,6 +21,8 @@
 - Serial/QEMU evidence is the acceptance oracle. A compile-only result is not acceptance.
 - Every QEMU script added by this phase must verify exact required markers, forbidden markers, required ordering, and `QEMU_OUTCOME success`.
 - Phase 13 markers are emitted after the current Phase 12 completion path and before the framebuffer tail markers.
+- Normative Phase 13 transaction invariant: uncommitted state was never reality.
+- Durability does not imply publication. Validity does not imply publication. Only a valid `PackageTransactionCommitV0` publication anchor selects package reality.
 
 ## Locked Phase 13 Slice Sequence
 
@@ -45,8 +47,24 @@ package-format
 - `shared/src/init_bundle.rs` supports record types `0x0000_0001` through `0x0000_0005`; the package-source record must be the next explicit record type.
 - `core/src/object_relationships.rs` already contains `NameBinding` and `BindingTarget`; package locator publication must reuse these as rebuildable mirrors.
 - `core/src/storage_allocator.rs::BlockAllocator` has `MAX_ALLOCATOR_BLOCKS = 64`, a `u64` bitmap, and `AllocatorJournal` capacity 8. At 512-byte sectors this represents only 32 KiB, not the accepted 4 MiB package-content limit.
-- `core/src/storage_quotas.rs::StorageQuotaTable` has charge/release accounting but no durable reservation object. Phase 13 install can use an in-memory reservation before commit and a committed registry charge after anchor commit.
-- `core/src/object_service_checkpoint.rs` provides two object checkpoint slots and generations, but no root digest or package transaction anchor.
+- `core/src/storage_quotas.rs::StorageQuotaTable` has charge/release accounting but no durable reservation object. Phase 13 install can use in-memory candidate accounting before publication and selected-registry reachability after publication.
+- `core/src/object_service_checkpoint.rs` provides two ordinary object checkpoint slots and generations. Current ordinary recovery ignores uncommitted slot bytes but selects the newest valid committed checkpoint automatically. Phase 13 therefore needs a narrow candidate-checkpoint eligibility surface before Task 2.13.
+
+## Phase 13 Transaction Correction After Task 2.12.x
+
+Task 2.13 exposed a defect in the accepted execution plan: rollback-oriented recovery cannot satisfy the accepted package architecture cleanly. The governing model is now:
+
+```text
+world A remains authoritative
+-> construct candidate world B durably
+-> validate B
+-> publish B with PackageTransactionCommitV0
+-> B becomes authoritative
+```
+
+Recovery selects the newest valid published world. Candidate material without a valid publication anchor is non-authoritative and unreachable/reclaimable. Ordinary object-service checkpoints remain unchanged: a normal object checkpoint still becomes recovery-eligible through the existing commit-sector protocol, and ordinary recovery still selects the newest valid committed object checkpoint.
+
+Preserve completed commits through Task 2.12.x. Do not rewrite task history. Task 2.12.y is the correction task that introduces the missing candidate checkpoint eligibility surface before Task 2.13 resumes.
 
 ## Storage Substrate Decision For ADR 0073
 
@@ -57,7 +75,7 @@ The current Phase 10 allocator cannot directly represent the accepted Phase 13 c
 current allocator max = 64 sectors
 ```
 
-It also does not carry content-record extent lists, staged-but-uncommitted owner records, orphan-staging recovery records, or durable quota reservation records.
+It also does not carry content-record extent lists or candidate package-content reachability records.
 
 ADR 0073 must therefore define a package-content allocator inside `core/src/package_content_store.rs` with this exact Phase 13 interface:
 
@@ -82,16 +100,16 @@ pub struct PackageExtentAllocator {
     base_sector: u64,
     block_count: u16,
     bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
-    committed_bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
+    selected_bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
 }
 
 impl PackageExtentAllocator {
     pub fn new(base_sector: u64, block_count: u16) -> Result<Self, PackageError>;
     pub fn restore(base_sector: u64, block_count: u16, bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS]) -> Result<Self, PackageError>;
-    pub fn allocate_staged(&mut self, requested_blocks: u16) -> Result<PackageExtent, PackageError>;
-    pub fn commit(&mut self) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS];
-    pub fn rollback_staged(&mut self);
-    pub fn free_committed(&mut self, extent: PackageExtent) -> Result<(), PackageError>;
+    pub fn allocate_candidate(&mut self, requested_blocks: u16) -> Result<PackageExtent, PackageError>;
+    pub fn select_reachable(&mut self, reachable: [u64; PACKAGE_CONTENT_BITMAP_WORDS]) -> Result<(), PackageError>;
+    pub fn candidate_reclaimable(&self, extent: PackageExtent) -> Result<bool, PackageError>;
+    pub fn free_selected(&mut self, extent: PackageExtent) -> Result<(), PackageError>;
 }
 ```
 
@@ -425,17 +443,17 @@ impl<'a> PackageSourceService<'a> {
 ```rust
 // core/src/package_content_store.rs
 pub struct PackageContentStore { /* registry-restored immutable content */ }
-pub struct PackageContentTransaction { /* staged content */ }
-pub struct PackageContentCommit { pub content_count: u16, pub bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS] }
+pub struct PackageContentCandidate { /* unpublished candidate content */ }
+pub struct PackageContentPublication { pub content_count: u16, pub reachable_bitmap: [u64; PACKAGE_CONTENT_BITMAP_WORDS] }
 pub type ContentId = u64;
 
 impl PackageContentStore {
     pub fn new(base_sector: u64, block_count: u16) -> Result<Self, PackageError>;
-    pub fn begin_install(&mut self, package_object_id: ObjectId, release_sha256: [u8; 32]) -> Result<PackageContentTransaction, PackageError>;
-    pub fn stage(&mut self, tx: &mut PackageContentTransaction, role: PackageContentRole, digest: [u8; 32], bytes: &[u8]) -> Result<ContentId, PackageError>;
-    pub fn commit(&mut self, tx: PackageContentTransaction) -> Result<PackageContentCommit, PackageError>;
-    pub fn rollback(&mut self, tx: PackageContentTransaction);
-    pub fn read_committed(&self, content_id: ContentId, out: &mut [u8]) -> Result<usize, PackageError>;
+    pub fn begin_candidate(&mut self, package_object_id: ObjectId, release_sha256: [u8; 32]) -> Result<PackageContentCandidate, PackageError>;
+    pub fn write_candidate(&mut self, candidate: &mut PackageContentCandidate, role: PackageContentRole, digest: [u8; 32], bytes: &[u8]) -> Result<ContentId, PackageError>;
+    pub fn validate_candidate(&self, candidate: &PackageContentCandidate) -> Result<PackageContentPublication, PackageError>;
+    pub fn ignore_candidate(&mut self, candidate: PackageContentCandidate);
+    pub fn read_published(&self, content_id: ContentId, out: &mut [u8]) -> Result<usize, PackageError>;
     pub fn retain(&mut self, content_id: ContentId) -> Result<(), PackageError>;
     pub fn release(&mut self, content_id: ContentId) -> Result<(), PackageError>;
 }
@@ -443,8 +461,8 @@ impl PackageContentStore {
 
 ```rust
 // core/src/package_registry.rs
-pub struct PackageRegistry { /* current committed generation */ }
-pub struct PackageInstallDraft { /* package/schema/content/locator records before anchor */ }
+pub struct PackageRegistry { /* current published generation */ }
+pub struct PackageInstallCandidate { /* package/schema/content/locator records before anchor */ }
 pub struct PackageRegistryGeneration { pub generation: u64, pub root_digest: [u8; 32] }
 pub struct PackageTransactionCommitV0 { /* fields from accepted design */ }
 
@@ -452,8 +470,8 @@ impl PackageRegistry {
     pub fn empty() -> Self;
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageError>;
     pub fn encode_snapshot(&self, out: &mut [u8]) -> Result<PackageRegistryGeneration, PackageError>;
-    pub fn stage_install(&self, artifact: &PackageArtifactV0<'_>, content: &PackageContentCommit) -> Result<PackageInstallDraft, PackageError>;
-    pub fn commit_install(&mut self, draft: PackageInstallDraft, anchor: PackageTransactionCommitV0) -> Result<PackageRegistryGeneration, PackageError>;
+    pub fn prepare_install_candidate(&self, artifact: &PackageArtifactV0<'_>, content: &PackageContentPublication) -> Result<PackageInstallCandidate, PackageError>;
+    pub fn publish_install(&mut self, candidate: PackageInstallCandidate, anchor: PackageTransactionCommitV0) -> Result<PackageRegistryGeneration, PackageError>;
     pub fn disable(&mut self, package_object_id: ObjectId) -> Result<PackageRegistryGeneration, PackageError>;
     pub fn uninstall(&mut self, package_object_id: ObjectId) -> Result<PackageRegistryGeneration, PackageError>;
     pub fn export_for_locator(&self, locator: &crate::object_locator::ObjectLocator) -> Result<PackageExportRecord, PackageError>;
@@ -463,6 +481,7 @@ impl PackageRegistry {
 ```rust
 // core/src/package_service.rs
 pub struct PackageService { /* source/content/registry/object-service orchestration */ }
+pub struct PackageRecoveryReport { /* selected published world facts */ }
 
 impl PackageService {
     pub fn install(&mut self, request: PackageInstallRequest<'_>) -> Result<PackageInstallResult, PackageError>;
@@ -497,7 +516,7 @@ impl PackageService {
 - `core/src/shell_objects.rs`: new object kind variants after ADR 0073.
 - `core/src/typed_object_format.rs`: new kind encode/decode mappings after ADR 0073.
 - `core/src/object_service.rs`: internal package/schema/object creation helpers.
-- `core/src/object_service_checkpoint.rs`: checkpoint root digest support.
+- `core/src/object_service_checkpoint.rs`: checkpoint root digest support and package candidate checkpoint eligibility.
 - `core/src/object_relationships.rs`: reuse `NameBinding`/`BindingTarget` mirrors.
 - `core/src/object_locator.rs`: consume existing resolver semantics.
 - `core/src/package_source.rs`: package source table and authority.
@@ -957,8 +976,8 @@ Forbidden:
 
 ```text
 PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_INSTALL:STAGED
-PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
 PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED
 ```
 
@@ -1097,7 +1116,7 @@ git commit -m "feat(core): gate package source reads by capability"
 
 - [ ] **Step 1: Write the failing tests**
 
-Add tests that allocate 8192 one-block extents, reject the 8193rd block, roll back staged blocks without mutating committed bitmap, commit staged blocks, restore from bitmap, and reject extents outside 8192 blocks.
+Add tests that allocate 8192 one-block candidate extents, reject the 8193rd block, ignore candidate-only extents without mutating the selected bitmap, select a reachable bitmap from the published registry view, restore from the selected bitmap, and reject extents outside 8192 blocks.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1109,7 +1128,7 @@ Expected: FAIL because allocator type is missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Implement `[u64; 128]` bitmap allocation, rollback, commit, restore, and free.
+Implement `[u64; 128]` bitmap allocation, candidate ignore, selected-reachability restore, and free.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1126,7 +1145,7 @@ git add core/src/package_content_store.rs core/src/main.rs
 git commit -m "feat(core): add package content extent allocator"
 ```
 
-### Task 2.4: Content Staging And Digest Commit
+### Task 2.4: Candidate Content And Digest Validation
 
 **Files:**
 - Modify: `core/src/package_content_store.rs`
@@ -1134,11 +1153,11 @@ git commit -m "feat(core): add package content extent allocator"
 
 **Interfaces Consumed:** `PackageExtentAllocator`, `sha256`.
 
-**Interfaces Produced:** `PackageContentStore`, `PackageContentTransaction`, `PackageContentCommit`, `ContentId`.
+**Interfaces Produced:** `PackageContentStore`, `PackageContentCandidate`, `PackageContentPublication`, `ContentId`.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add tests that stage bytes, reject digest mismatch, hide staged content from `read_committed`, expose content after `commit`, reclaim staged extents on `rollback`, and keep `content_id` scoped to one package/release.
+Add tests that write candidate bytes, reject digest mismatch, hide candidate content from `read_published`, expose content only after the selected registry makes it reachable, treat candidate-only extents as reclaimable, and keep `content_id` scoped to one package/release.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1146,11 +1165,11 @@ Add tests that stage bytes, reject digest mismatch, hide staged content from `re
 cargo test -p pythos-core package_content_store
 ```
 
-Expected: FAIL because staging methods are missing.
+Expected: FAIL because candidate content methods are missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Implement content transaction records with package object id, release digest, role, digest, extent list, byte length, retention count, and committed flag.
+Implement candidate content records with package object id, release digest, role, digest, extent list, byte length, retention count, and a selected-reachability flag.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1164,7 +1183,7 @@ Expected: PASS.
 
 ```powershell
 git add core/src/package_content_store.rs
-git commit -m "feat(core): stage immutable package content"
+git commit -m "feat(core): validate candidate package content"
 ```
 
 ### Task 2.5: Package Registry V0 Encoding
@@ -1174,7 +1193,7 @@ git commit -m "feat(core): stage immutable package content"
 - Modify: `core/src/main.rs`
 - Test: `core/src/package_registry.rs`
 
-**Interfaces Consumed:** `PackageContentCommit`, `PackageArtifactV0`.
+**Interfaces Consumed:** `PackageContentPublication`, `PackageArtifactV0`.
 
 **Interfaces Produced:** `PackageRegistry::encode_snapshot`, `decode_snapshot`, `PackageRegistryGeneration`.
 
@@ -1399,7 +1418,7 @@ git commit -m "feat(core): create package and schema definition objects"
 
 - [ ] **Step 1: Write the failing test**
 
-Add `install_commits_package_schema_content_registry_and_anchor_as_one_unit`. It must assert one Package object, one SchemaDefinition object, committed content, committed registry generation, valid anchor, and no locator mirror before publish step.
+Add `install_publishes_package_schema_content_registry_and_anchor_as_one_unit`. It must assert one Package object candidate, one SchemaDefinition object candidate, candidate content, candidate registry generation, valid publication anchor, and no locator mirror before mirror rebuild.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1411,7 +1430,7 @@ Expected: FAIL because `PackageService` is missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Implement install sequence exactly: source read, artifact parse, digest verify, PythTIG export verify, schema validate, quota reservation, content stage, Package/Schema object creation, registry snapshot, object checkpoint identity, transaction anchor, content commit.
+Implement install sequence exactly: source read, artifact parse, digest verify, PythTIG export verify, schema validate, candidate quota accounting, candidate content write, candidate Package/Schema object creation, candidate registry snapshot, candidate object checkpoint identity, publication anchor, and selected-registry content liveness.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -1441,7 +1460,7 @@ git commit -m "feat(core): install package as anchored transaction"
 
 - [ ] **Step 1: Write the failing test**
 
-Add `locator_mirrors_are_rebuilt_from_committed_registry_generation` and assert mirrors disappear when registry state is absent.
+Add `locator_mirrors_are_rebuilt_from_published_registry_generation` and assert mirrors disappear when registry state is absent.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1487,9 +1506,11 @@ git commit -m "feat(core): rebuild package locator mirrors"
 
 ```text
 PYTHOS:CORE:PACKAGE_SOURCE_AUTHORITY_READY
-PYTHOS:CORE:PACKAGE_INSTALL:STAGED
-PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED
-PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PUBLISHED
+PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT
 PYTHOS:CORE:PACKAGE_INSTALL_READY
 QEMU_OUTCOME success
 ```
@@ -1499,7 +1520,7 @@ QEMU_OUTCOME success
 ```text
 PYTHOS:PANIC
 PYTHOS:CORE:PACKAGE_SOURCE:DENIED
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:ABSENT
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
 ```
 
 `source-denied` required markers:
@@ -1513,9 +1534,8 @@ QEMU_OUTCOME success
 
 ```text
 PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_INSTALL:STAGED
-PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED
-PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
 ```
 
 - [ ] **Step 2: Run script to verify it fails**
@@ -1549,10 +1569,15 @@ git commit -m "test(qemu): prove package install and source denial"
 
 ### Task 2.12.x: Package Service Recovery Surface
 
-**Purpose:** expose the already-designed package-registry/object-checkpoint
-recovery machinery through `PackageService` so later QEMU recovery scenarios
-invoke one stable package-domain recovery operation rather than reconstructing
-recovery policy inside the acceptance harness.
+**Purpose:** expose package-registry/object-checkpoint recovery machinery
+through `PackageService` so later QEMU recovery scenarios invoke one stable
+package-domain recovery operation rather than reconstructing recovery policy
+inside the acceptance harness.
+
+**Status note:** completed at `b92cdc2` under the earlier rollback-oriented
+terminology. Preserve that commit. Task 2.12.y is the accepted architectural
+correction that revises this surface to world-selection terminology before
+Task 2.13 resumes.
 
 **Files:**
 - Modify: `core/src/package_service.rs`
@@ -1563,18 +1588,18 @@ Do not modify `scripts/test-phase13-package-install.py` or
 
 **Interfaces Consumed:** newest-valid anchored object-checkpoint /
 package-registry pair selection, mismatched-anchor rejection, unanchored
-staged-state rollback/reclaim result, locator-mirror rebuild requirement/state,
-and package-registry recovery denial state.
+candidate ignore/reclaim result, locator-mirror rebuild requirement/state, and
+package-registry recovery denial state.
 
 **Interfaces Produced:**
 
 ```rust
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageRecoveryReport {
-    pub committed_anchored_generation_selected: bool,
-    pub previous_valid_anchored_generation_selected: bool,
-    pub staged_uncommitted_install_rolled_back: bool,
-    pub orphan_content_reclaimed: bool,
+    pub published_world_selected: bool,
+    pub previous_published_world_selected: bool,
+    pub unpublished_candidate_ignored: bool,
+    pub candidate_content_reclaimable: bool,
     pub locator_mirrors_require_rebuild: bool,
 }
 
@@ -1591,10 +1616,10 @@ checkpoint or package-registry validation.
 
 Add focused `package_service_recovery` tests for at least:
 
-- clean committed recovery;
-- unanchored staged install -> rollback report;
-- mismatched newest anchor -> previous valid pair report;
-- committed generation with missing mirrors -> rebuild report;
+- clean published-world recovery;
+- unanchored candidate state -> ignored/reclaimable report;
+- mismatched newest anchor -> previous published world report;
+- published generation with missing mirrors -> rebuild report;
 - no valid package anchor -> `PackageStatus::RegistryRecoveryDenied` without
   weakening existing object-store recovery.
 
@@ -1632,7 +1657,155 @@ git add core/src/package_service.rs
 git commit -m "feat(core): expose package recovery service"
 ```
 
-### Task 2.13: killed-before-anchor Recovery
+### Task 2.12.y: Package Candidate Checkpoint Eligibility
+
+**Purpose:** produce ObjectService candidate state that is durable, verifiable,
+root-addressable, package-anchor-referenceable, and excluded from ordinary
+object-service recovery selection. Ordinary object checkpoints must keep their
+existing semantics: a normal checkpoint with the ordinary commit sector is
+recovery-eligible, and ordinary recovery selects the newest valid committed
+ordinary checkpoint.
+
+**Files:**
+- Modify: `core/src/object_service_checkpoint.rs`
+- Modify: `core/src/object_service.rs`
+- Modify: `core/src/package_service.rs`
+- Test: `core/src/object_service_checkpoint.rs`
+- Test: `core/src/package_service.rs`
+
+Do not modify `scripts/test-phase13-package-install.py` or
+`core/src/package_acceptance.rs` in this task. Those remain Task 2.13.
+
+**Interfaces Consumed:** `ObjectServiceSnapshot`,
+`ObjectCheckpointIdentity`, `PackageTransactionCommitV0`,
+`PackageRegistryGeneration`, existing ordinary
+`write_object_service_checkpoint`, and existing ordinary
+`with_restored_object_service_checkpoint`.
+
+**Interfaces Produced:**
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ObjectServiceCandidateCheckpoint {
+    pub identity: ObjectCheckpointIdentity,
+    pub generation: u64,
+}
+
+pub fn write_object_service_candidate_checkpoint(
+    device: BlockDeviceInfo,
+    snapshot: &ObjectServiceSnapshot,
+) -> Result<ObjectServiceCandidateCheckpoint, GeneralStoragePersistenceError>;
+
+pub fn read_object_service_candidate_checkpoint(
+    device: BlockDeviceInfo,
+    expected: ObjectCheckpointIdentity,
+) -> Result<ObjectServiceSnapshot, GeneralStoragePersistenceError>;
+
+impl ObjectService {
+    pub fn encode_candidate_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError>;
+}
+
+impl<'a> PackageService<'a> {
+    pub fn recover(&mut self) -> Result<PackageRecoveryReport, PackageStatus>;
+}
+```
+
+`write_object_service_candidate_checkpoint` must not write an ordinary object
+checkpoint commit sector that makes the candidate eligible for ordinary
+`with_restored_object_service_checkpoint` selection. The implementation may use
+the smallest representation that satisfies this contract after inspecting the
+live checkpoint code path, with the current inspection favoring a complete
+candidate payload/header plus a non-ordinary publication marker or omitted
+ordinary commit sector. If satisfying this contract requires changing ordinary
+object checkpoint semantics globally, stop and report.
+
+`PackageRecoveryReport` fields are now:
+
+```rust
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageRecoveryReport {
+    pub published_world_selected: bool,
+    pub previous_published_world_selected: bool,
+    pub unpublished_candidate_ignored: bool,
+    pub candidate_content_reclaimable: bool,
+    pub locator_mirrors_require_rebuild: bool,
+}
+```
+
+- [ ] **Step 1: Write the failing tests**
+
+Add focused tests:
+
+```rust
+#[test]
+fn package_candidate_checkpoint_is_durable_but_not_ordinary_recovery_eligible() {
+    // Arrange: write ordinary world A, then write candidate world B.
+    // Assert: ordinary read/recovery still selects A.
+    // Assert: explicit candidate read by B identity returns B.
+}
+
+#[test]
+fn package_candidate_checkpoint_root_mismatch_is_denied() {
+    // Arrange: write candidate B.
+    // Assert: explicit candidate read with a modified root digest returns an error.
+}
+
+#[test]
+fn package_recovery_reports_unpublished_candidate_as_ignored_reclaimable() {
+    // Arrange: package service has a candidate with no publication anchor.
+    // Assert: recover selects the published world and reports
+    // unpublished_candidate_ignored + candidate_content_reclaimable.
+}
+
+#[test]
+fn package_recovery_selects_anchor_published_candidate_world() {
+    // Arrange: package anchor references candidate object + registry roots.
+    // Assert: recover selects the published world and reports
+    // published_world_selected.
+}
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+```powershell
+cargo test -p pythos-core package_candidate_checkpoint
+cargo test -p pythos-core package_service_recovery
+```
+
+Expected: FAIL because candidate checkpoint write/read APIs and the revised
+`PackageRecoveryReport` fields do not exist.
+
+- [ ] **Step 3: Minimum implementation**
+
+Implement only the narrow candidate eligibility surface. Do not change ordinary
+`write_object_service_checkpoint` or ordinary
+`with_restored_object_service_checkpoint` selection semantics. Refactor
+`PackageService::install_into` recovery-facing state so Package/SchemaDefinition
+creation is represented in candidate state and is not authoritative until
+`PackageTransactionCommitV0` publishes the matching candidate object and
+registry roots.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+```powershell
+cargo test -p pythos-core package_candidate_checkpoint
+cargo test -p pythos-core package_service_recovery
+cargo test -p pythos-core object_service_checkpoint
+cargo test -p pythos-core package_registry
+cargo test -p pythos-core package_content_store
+py -3 -m unittest tests.test_interface_compatibility_freeze
+```
+
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```powershell
+git add core/src/object_service_checkpoint.rs core/src/object_service.rs core/src/package_service.rs
+git commit -m "feat(core): add package candidate checkpoint eligibility"
+```
+
+### Task 2.13: killed-before-anchor Publication Boundary
 
 **Files:**
 - Modify: `scripts/test-phase13-package-install.py`
@@ -1645,12 +1818,19 @@ git commit -m "feat(core): expose package recovery service"
 
 - [ ] **Step 1: Write the failing scenario**
 
+Required markers before the kill:
+
+```text
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED
+```
+
 Required markers after reboot:
 
 ```text
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:ABSENT
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:ORPHAN_CONTENT_RECLAIMED
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
+PYTHOS:CORE:PACKAGE_CANDIDATE:IGNORED_RECLAIMABLE
+PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY
 QEMU_OUTCOME success
 ```
 
@@ -1658,8 +1838,7 @@ Forbidden:
 
 ```text
 PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED
-PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
 PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE
 ```
 
@@ -1669,11 +1848,11 @@ PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE
 python scripts/test-phase13-package-install.py --scenario kill-before-anchor
 ```
 
-Expected: FAIL because killed-mid-install recovery is missing.
+Expected: FAIL because candidate-before-publication recovery markers are missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Use `scripts/run-qemu.py --kill-after-marker PYTHOS:CORE:PACKAGE_INSTALL:STAGED`, then reboot the same storage image and recover absent package state.
+Use `scripts/run-qemu.py --kill-after-marker PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED`, then reboot the same storage image. Boot 2 must select the previous published world, prove package/schema/locator B are absent, and prove B-only storage is not live.
 
 - [ ] **Step 4: Run scenario to verify it passes**
 
@@ -1687,10 +1866,10 @@ Expected: PASS.
 
 ```powershell
 git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs
-git commit -m "test(qemu): recover killed package install before anchor"
+git commit -m "test(qemu): prove package candidate is unpublished before anchor"
 ```
 
-### Task 2.14: killed-after-anchor And mismatched-anchor Recovery
+### Task 2.14: published-anchor And mismatched-anchor Recovery
 
 **Files:**
 - Modify: `scripts/test-phase13-package-install.py`
@@ -1698,7 +1877,7 @@ git commit -m "test(qemu): recover killed package install before anchor"
 - Modify: `core/src/package_registry.rs`
 - Test: `scripts/test-phase13-package-install.py`
 
-**Interfaces Consumed:** transaction anchor pair selection.
+**Interfaces Consumed:** publication anchor pair selection.
 
 **Interfaces Produced:** `kill-after-anchor-before-mirror`, `mismatched-anchor`.
 
@@ -1707,10 +1886,10 @@ git commit -m "test(qemu): recover killed package install before anchor"
 `kill-after-anchor-before-mirror` required:
 
 ```text
-PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:COMMITTED
-PYTHOS:CORE:PACKAGE_LOCATOR:REBUILT
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PUBLISHED
+PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT
+PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY
 QEMU_OUTCOME success
 ```
 
@@ -1718,14 +1897,15 @@ Forbidden:
 
 ```text
 PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:ABSENT
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
+PYTHOS:CORE:PACKAGE_CANDIDATE:IGNORED_RECLAIMABLE
 ```
 
 `mismatched-anchor` required:
 
 ```text
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:PREVIOUS_ANCHOR_SELECTED
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS
+PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY
 QEMU_OUTCOME success
 ```
 
@@ -1733,7 +1913,7 @@ Forbidden:
 
 ```text
 PYTHOS:PANIC
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:COMMITTED_MISMATCH
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED:MISMATCHED
 PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE_FROM_BAD_ANCHOR
 ```
 
@@ -1744,11 +1924,11 @@ python scripts/test-phase13-package-install.py --scenario kill-after-anchor-befo
 python scripts/test-phase13-package-install.py --scenario mismatched-anchor
 ```
 
-Expected: FAIL because anchor recovery markers are missing.
+Expected: FAIL because publication-boundary markers are missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Recover anchored committed generation before mirror rebuild and select previous valid pair when registry/object roots do not match.
+Select the anchor-published generation before mirror rebuild and select the previous valid published world when registry/object roots do not match.
 
 - [ ] **Step 4: Run scenarios to verify they pass**
 
@@ -1763,7 +1943,7 @@ Expected: PASS.
 
 ```powershell
 git add scripts/test-phase13-package-install.py core/src/package_acceptance.rs core/src/package_registry.rs
-git commit -m "test(qemu): recover anchored package install states"
+git commit -m "test(qemu): prove package anchor publication boundary"
 ```
 
 ---
@@ -1819,7 +1999,7 @@ git commit -m "feat(core): resolve installed package exports"
 - Modify: `core/src/package_service.rs`
 - Test: `core/src/pyth_graph_loader.rs`
 
-**Interfaces Consumed:** `PackageContentStore::read_committed`, existing PythTIG verifier.
+**Interfaces Consumed:** `PackageContentStore::read_published`, existing PythTIG verifier.
 
 **Interfaces Produced:** `validate_package_export_graph`.
 
@@ -1837,7 +2017,7 @@ Expected: FAIL because helper is missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Read committed content, verify content digest, then call existing PythTIG verifier without changing PythTIG package bytes.
+Read published content, verify content digest, then call existing PythTIG verifier without changing PythTIG package bytes.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2136,7 +2316,7 @@ Expected: FAIL because uninstall is missing.
 
 - [ ] **Step 3: Minimum implementation**
 
-Track package-launched process ids, deny uninstall when any remain live, and commit tombstone lifecycle state.
+Track package-launched process ids, deny uninstall when any remain live, and publish tombstone lifecycle state.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2203,13 +2383,13 @@ git commit -m "feat(core): retain schemas while reclaiming package content"
 - Modify: `core/src/package_service.rs`
 - Test: `core/src/package_service.rs`
 
-**Interfaces Consumed:** transaction anchor and registry recovery.
+**Interfaces Consumed:** publication anchor and registry recovery.
 
 **Interfaces Produced:** crash-safe uninstall recovery.
 
 - [ ] **Step 1: Write the failing tests**
 
-Add tests that a crash before tombstone anchor restores old installed state, a crash after tombstone anchor restores tombstoned state, and no recovery exposes both active locator and tombstone for the same Package `ObjectId`.
+Add tests that a crash before tombstone publication selects the old installed world, a crash after tombstone publication selects the tombstoned world, and no recovery exposes both active locator and tombstone for the same Package `ObjectId`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -2607,12 +2787,12 @@ Every scenario must verify required markers, forbidden markers, order, and `QEMU
 
 | Script | Scenario | Required terminal marker | Forbidden marker examples |
 | --- | --- | --- | --- |
-| `scripts/test-phase13-package-format.py` | default | `PYTHOS:CORE:PACKAGE_FORMAT_READY` | `PYTHOS:CORE:PACKAGE_INSTALL:STAGED`, `PYTHOS:PANIC` |
+| `scripts/test-phase13-package-format.py` | default | `PYTHOS:CORE:PACKAGE_FORMAT_READY` | `PYTHOS:CORE:PACKAGE_CANDIDATE_READY`, `PYTHOS:PANIC` |
 | `scripts/test-phase13-package-install.py` | `success` | `PYTHOS:CORE:PACKAGE_INSTALL_READY` | `PYTHOS:CORE:PACKAGE_SOURCE:DENIED`, `PYTHOS:PANIC` |
-| `scripts/test-phase13-package-install.py` | `source-denied` | `PYTHOS:CORE:PACKAGE_SOURCE:DENIED` | `PYTHOS:CORE:PACKAGE_INSTALL:STAGED`, `PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED` |
-| `scripts/test-phase13-package-install.py` | `kill-before-anchor` | `PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY` | `PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY`, `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE` |
-| `scripts/test-phase13-package-install.py` | `kill-after-anchor-before-mirror` | `PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY` | `PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY:ABSENT` |
-| `scripts/test-phase13-package-install.py` | `mismatched-anchor` | `PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE_FROM_BAD_ANCHOR` |
+| `scripts/test-phase13-package-install.py` | `source-denied` | `PYTHOS:CORE:PACKAGE_SOURCE:DENIED` | `PYTHOS:CORE:PACKAGE_CANDIDATE_READY`, `PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED` |
+| `scripts/test-phase13-package-install.py` | `kill-before-anchor` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED`, `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE` |
+| `scripts/test-phase13-package-install.py` | `kill-after-anchor-before-mirror` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS` |
+| `scripts/test-phase13-package-install.py` | `mismatched-anchor` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE_FROM_BAD_ANCHOR` |
 | `scripts/test-phase13-package-launch.py` | `success` | `PYTHOS:CORE:PACKAGE_LAUNCH_READY` | `PYTHOS:CORE:PACKAGE_LAUNCH:CAPABILITY_DENIED` |
 | `scripts/test-phase13-package-launch.py` | `grant-denied` | `PYTHOS:CORE:PACKAGE_LAUNCH_CAPABILITY_DENIED_READY` | `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |
 | `scripts/test-phase13-package-launch.py` | `corrupt-content` | `PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_CORRUPT_DENIED` | `PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED`, `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |

@@ -206,7 +206,7 @@ installer-observed provenance
 The second category is PythOS-observed history. It records what the installer
 actually saw and did, but it still does not prove cryptographic publisher
 authenticity in Phase 13. It is not a manifest field; it is recorded in the
-committed Package revision and package-registry provenance state.
+published Package revision and package-registry provenance state.
 
 ### Package Format Bounds
 
@@ -583,7 +583,7 @@ locator bindings, export records, quota accounting, provenance, and install
 transactions.
 
 The package registry must not become a second authoritative object graph.
-Semantic authority remains the committed package/object graph: Package
+Semantic authority remains the published package/object graph: Package
 ObjectIds, SchemaDefinition ObjectIds, PackageDefinedObject ObjectIds, object
 revisions, retained schema revisions, typed relationships, provenance, and
 capability decisions. The package registry checkpoint is the specialized
@@ -591,12 +591,12 @@ crash-consistent persistence and index representation used to restore and
 materialize that graph.
 
 There is no meaningful state where the Package object says `Installed` while
-the registry says `Tombstoned`, or the reverse. A package lifecycle transaction
-commits the object/revision state and the package registry generation as one
+the registry says `Tombstoned`, or the reverse. A package lifecycle publication
+selects the object/revision state and the package registry generation as one
 semantic unit. If recovery observes object-service state and package-registry
-state that cannot be reconciled for the selected generation, that generation is
-invalid. Recovery must select the previous valid generation or deny package
-operations rather than treating the disagreement as live policy.
+state that cannot be reconciled for the selected publication anchor, that world
+is invalid. Recovery must select the previous valid published world or deny
+package operations rather than treating the disagreement as live policy.
 
 The registry should follow existing object-service checkpoint and Phase 10
 journal/recovery discipline. It should not introduce a parallel filesystem or
@@ -633,11 +633,34 @@ for immutable package artifacts and content; the registry CRC is a checkpoint
 corruption detector aligned with the existing storage recovery style, not a
 content identity.
 
-### Cross-Checkpoint Transaction Anchor
+### Cross-Checkpoint Publication Anchor
 
 Package registry recovery must know which object-service checkpoint belongs to
-which package-registry generation. Phase 13 therefore needs a durable commit
-anchor tying the two persisted views together.
+which package-registry generation. Phase 13 therefore needs a durable
+publication anchor that selects the candidate object/package pair as the next
+authoritative world.
+
+Normative transaction invariant:
+
+```text
+Uncommitted state was never reality.
+```
+
+Phase 13 must distinguish three concepts that are not equivalent:
+
+```text
+Physical durability
+  bytes have reached storage
+
+Candidate validity
+  bytes decode, checksum, and form a complete candidate world
+
+Semantic publication
+  a valid PackageTransactionCommitV0 selects that candidate world
+```
+
+Durability does not imply publication. Validity does not imply publication.
+Only a valid publication anchor selects reality.
 
 Proposed commit anchor:
 
@@ -657,25 +680,35 @@ PackageTransactionCommitV0
 `commit_crc32c` is CRC-32C Castagnoli over the exact canonical anchor bytes
 with the `commit_crc32c` field zero-filled.
 
-Recovery accepts a Phase 13 transaction only when the selected object-service
-checkpoint and selected package-registry generation match the same valid
-`PackageTransactionCommitV0` anchor:
+Recovery accepts a Phase 13 world only when the referenced object-service
+candidate checkpoint and package-registry generation match the same valid
+`PackageTransactionCommitV0` publication anchor:
 
 ```text
-object checkpoint A
-+ package registry generation B
-+ transaction commit anchor C
-  -> one committed Phase 13 transaction
+candidate object checkpoint B
++ candidate package registry generation B
++ publication anchor B
+  -> published Phase 13 world B
 ```
 
-If the newest registry generation and newest object checkpoint do not match a
-valid anchor, recovery selects the previous valid anchored pair. If no valid
-pair exists, package operations are denied while older object-store behavior
-continues according to the existing object-service recovery rules.
+If the newest candidate registry generation and candidate object checkpoint do
+not match a valid publication anchor, recovery selects the previous valid
+published world. If no valid package publication anchor exists, package
+operations are denied while older object-store behavior continues according to
+the existing ordinary object-service recovery rules.
 
 This anchor is the mechanism behind the "one semantic unit" rule. The registry
 does not decide package truth independently; it restores the object/package
-graph state proven by the matching commit anchor.
+graph state selected by the matching publication anchor.
+
+Ordinary object-service checkpoint semantics are unchanged. A normal object
+checkpoint still becomes recovery-eligible through its existing commit-sector
+protocol, and ordinary recovery still selects the newest valid committed object
+checkpoint. Phase 13 package installation requires a separate candidate path
+capable of producing object-service state that is durable, verifiable,
+root-addressable, package-anchor-referenceable, and excluded from ordinary
+object-service recovery selection until a valid package publication anchor
+selects it.
 
 ### Package Record
 
@@ -722,7 +755,7 @@ ref_count
 quota_owner
 ```
 
-`content_id` is a registry-local persistent handle scoped to one committed
+`content_id` is a registry-local persistent handle scoped to one published
 package ObjectId and release digest. It is not canonical content identity and
 does not replace SHA-256 verification. In Phase 13, identical content bytes do
 not deduplicate across packages or across package releases. A new release gets
@@ -757,7 +790,7 @@ required_for_exports[]
 
 ### Locator Binding Record
 
-Committed locator visibility is derived directly from the selected committed
+Published locator visibility is derived directly from the selected published
 registry generation. A binding record may be materialized into ADR 0069
 name-binding relationships, but those materialized bindings are rebuildable
 mirrors. They cannot become authoritative independently of the selected
@@ -773,10 +806,10 @@ release_digest
 state
 ```
 
-A crash between selecting a committed generation and rebuilding materialized
-name-binding mirrors must recover as a committed package with rebuildable
-mirrors, not as a half-installed package. A crash before selecting the
-committed generation must recover as absent or as the previous committed state.
+A crash between publishing a generation and rebuilding materialized
+name-binding mirrors must recover as a published package with rebuildable
+mirrors, not as a half-installed package. A crash before publication must
+recover by selecting the previous published world.
 
 The semantic checkpoint contract should include package registry state,
 materialized locator bindings, package artifact digests, export records,
@@ -792,14 +825,22 @@ Content-store invariants:
 - committed content is immutable;
 - every committed content record has digest, size, role, extent metadata,
   package ObjectId, and release digest;
-- staged content is not reachable through package locators or launch until the
-  install transaction commits;
-- content digest is verified before commit;
+- candidate content is not reachable through package locators or launch until a
+  valid publication anchor selects the candidate package world;
+- content digest is verified before candidate validation;
 - launch revalidates the content digest before verifying PythTIG content;
-- orphan staged content is detectable and reclaimable after recovery;
-- content quota accounting is tied to transaction commit or rollback;
+- unpublished candidate content is unreachable and reclaimable after recovery;
+- content quota accounting is derived from the selected anchored package world;
 - retained schema revisions hold live references to their schema descriptor
   content records and extents.
+
+Package-content allocation metadata must not become an independently
+authoritative allocation map. Selected anchored package registry state
+references content extents, and referenced extents are live. Candidate registry
+state may reference physically written candidate bytes, but those bytes are not
+live in the authoritative world until the candidate registry is selected by a
+valid publication anchor. No selected anchored root reference means the extent
+is reclaimable/free.
 
 `PackageContent` should not be introduced as a core object kind merely because
 content bytes exist. If future phases need content objects with independent
@@ -808,80 +849,92 @@ authority, that should be justified separately.
 ## 6. Atomic Install, Upgrade, Uninstall, And Recovery
 
 Installation, upgrade, and uninstall must be crash-consistent semantic
-transactions over the package registry and content store.
+publication transitions over the package registry and content store.
 
 The key invariant:
 
 ```text
-After recovery, an install is either authoritatively committed or
-authoritatively absent.
+Uncommitted state was never reality.
 ```
+
+After recovery, the previous published world or the newly published world is
+authoritative. No half-world is authoritative.
 
 No recovered state may expose:
 
-- a locator binding without committed package content;
+- a locator binding without published package content;
 - a Package object without required SchemaDefinition records;
 - a package release without verified content digests;
-- quota-consumed content with no committed package or staged transaction owner;
-- a launchable export whose manifest or PythTIG content did not commit.
+- quota-consumed content with no selected published package world;
+- a launchable export whose manifest or PythTIG content was not published.
 
-### Install Commit Boundary
+### Install Publication Boundary
 
 Proposed install sequence:
 
 ```text
 1. Allocate transaction id.
-2. Record install-intent journal entry.
-3. Stage content extents as unexposed.
-4. Verify artifact, manifest, and per-content digests.
-5. Validate manifest structure and bounded names.
-6. Verify PythTIG exports without launching them, preserving any existing
+2. Verify artifact, manifest, and per-content digests.
+3. Validate manifest structure and bounded names.
+4. Verify PythTIG exports without launching them, preserving any existing
    PythTIG verifier denial identity as the nested cause of package rejection.
-7. Validate schema declarations.
-8. Validate locator bindings through ADR 0069 grammar rules.
-9. Reserve and charge quota in a recoverable transaction record.
-10. Allocate Package and SchemaDefinition object identities in a shadow graph.
-11. Prepare package registry next generation, including package records,
+5. Validate schema declarations.
+6. Validate locator bindings through ADR 0069 grammar rules.
+7. Reserve candidate quota in memory or candidate metadata without exposing it
+   as authoritative usage.
+8. Allocate Package and SchemaDefinition object identities in a candidate
+   object graph.
+9. Prepare package registry candidate generation, including package records,
     schema records, content records, export records, requirement records, and
     locator binding records.
-12. Record commit marker selecting the next registry generation and its
-    matching object/revision state as one semantic unit, with a
-    `PackageTransactionCommitV0` anchor binding the object checkpoint root and
-    package registry root.
-13. Rebuild or refresh materialized ADR 0069 name-binding mirrors from the
-    selected committed generation.
-14. Clear transaction staging state.
+10. Write candidate content bytes.
+11. Write candidate package registry state.
+12. Write candidate object-service checkpoint state through a candidate path
+    that is not eligible for ordinary object-service recovery selection.
+13. Re-read and validate the candidate content, registry root, and object root.
+14. Emit candidate-ready evidence only after the complete candidate world is
+    durable and valid.
+15. Publish the candidate world by writing `PackageTransactionCommitV0` as the
+    semantic anchor binding the object checkpoint root and package registry
+    root.
+16. Rebuild or refresh materialized ADR 0069 name-binding mirrors from the
+    selected published generation.
 ```
 
-The package is not installed until step 12 commits. Locator exposure is derived
-from the selected committed generation, not an earlier side effect and not a
-separate authority source.
+The package is not installed until step 15 publishes. Locator exposure is
+derived from the selected published generation, not an earlier side effect and
+not a separate authority source.
 
 ### Install Recovery
 
 Recovery rules:
 
 ```text
-valid committed generation
-  -> select the newest valid PackageTransactionCommitV0 anchored pair of
-     object checkpoint and package registry generation
+valid publication anchor
+  -> load the exact referenced object candidate/checkpoint and package
+     registry generation
+  -> validate both roots
+  -> select that published world
 
-install intent without valid commit marker
-  -> roll back staged objects, staged content, staged locator bindings, and
-     recoverable quota reservations
+candidate state without valid publication anchor
+  -> ignore as non-authoritative
+  -> treat candidate-only material as unreachable/reclaimable
 
 torn or corrupt transaction tail
-  -> select previous valid generation
+  -> select previous valid published world
 
-staged content with no live transaction
-  -> mark reclaimable and release quota reservation if it was not committed
+candidate content with no selected anchored registry reference
+  -> mark reclaimable/free
 
-valid commit marker but missing materialized locator mirrors
-  -> rebuild mirrors from the selected committed registry generation
+valid publication anchor but missing materialized locator mirrors
+  -> rebuild mirrors from the selected published registry generation
 
-registry generation without matching object checkpoint anchor
-  -> reject that generation and select the previous valid anchored pair
+registry generation without matching object checkpoint publication anchor
+  -> reject that generation and select the previous valid published world
 ```
+
+Recovery does not reconstruct or undo an unfinished semantic world. If
+publication never occurred, the candidate world was never authoritative.
 
 ### Upgrade Semantics
 
@@ -895,11 +948,11 @@ manifest digest.
 
 Upgrade transaction invariants:
 
-- old release remains authoritative until new generation commits;
+- old release remains authoritative until new generation publishes;
 - new schema revisions are retained before any instance can reference them;
 - incompatible schema changes require a new SchemaDefinition identity or
   explicit migration/supersession relationship;
-- failed upgrade recovery preserves the old installed package state.
+- failed upgrade recovery selects the old published package world.
 
 ### Uninstall Semantics
 
@@ -909,24 +962,24 @@ For Phase 13, uninstall is denied while any launched process from the package
 remains live. This avoids mixing durable uninstall with irreversible live
 process teardown in the same slice.
 
-Uninstall transaction ordering:
+Uninstall publication ordering:
 
 ```text
-1. Deny new launches for the package while the uninstall transaction is active.
+1. Deny new launches for the package while the uninstall publication is active.
 2. Verify no package-launched Phase 9 process remains live.
-3. Prepare next registry generation with Package state Tombstoned, active
+3. Prepare candidate registry generation with Package state Tombstoned, active
    locator bindings removed, launchability removed, and reclaimable content
    identified.
-4. Commit the tombstone generation and matching object/revision state as one
-   semantic unit.
+4. Publish the tombstone generation and matching object/revision state as one
+   semantic unit through `PackageTransactionCommitV0`.
 5. Revoke or invalidate package launch-derived capability state as part of the
-   committed transition.
-6. On recovery after commit, replay revocation/invalidation until complete.
-7. On recovery before commit, restore the previous installed state and do not
-   claim uninstall success.
+   published transition.
+6. On recovery after publication, replay revocation/invalidation until complete.
+7. On recovery before publication, select the previous installed world and do
+   not claim uninstall success.
 ```
 
-Uninstall committed effects:
+Uninstall published effects:
 
 - revoke package-created launch capabilities according to existing capability
   revocation machinery;
@@ -937,8 +990,8 @@ Uninstall committed effects:
 - retain package provenance and tombstone records;
 - preserve enough registry state to interpret existing PackageDefinedObjects.
 
-Failed uninstall recovery preserves either the old installed state or the
-fully committed tombstone state. It must not leave partially revoked or
+Failed uninstall recovery selects either the old installed world or the
+fully published tombstone world. It must not leave partially revoked or
 partially exposed package state.
 
 ## 7. Launch And Capability Grant Semantics
@@ -1037,13 +1090,13 @@ the owner explicitly expands Phase 13 scope.
 Recommended grouping:
 
 - syntax/format denials before graph resolution;
-- install authority and quota denials before committing state;
+- install authority and quota denials before publishing state;
 - content integrity denials before launch;
 - PythTIG verifier denials preserve the existing verifier identity as a nested
   cause;
 - package lifecycle denials for disabled/tombstoned/not-installed states;
 - launch authority denials distinct from missing export or corrupt content;
-- recovery identities for committed-vs-rolled-back evidence.
+- recovery identities for published-vs-ignored-candidate evidence.
 
 Do not claim package security from these identities alone. They prove logical
 package lifecycle isolation under the existing object/capability model.
@@ -1124,7 +1177,7 @@ RetainedForInstances
 TombstonedButReferenced
 ```
 
-A schema revision cannot be physically forgotten while any committed
+A schema revision cannot be physically forgotten while any published
 PackageDefinedObject references it. Schema uninstall cannot create semantic
 amnesia.
 
@@ -1217,7 +1270,7 @@ Purpose:
 
 ```text
 Install one local package into Phase 10 storage as a crash-consistent semantic
-transaction.
+publication transition.
 ```
 
 Acceptance:
@@ -1226,28 +1279,33 @@ Acceptance:
   package-source handle, not a POSIX path, remote registry, or network source;
 - package source reads require `PackageSourceRead` authority and installation
   requires `PackageInstall` authority;
-- staged content is hidden before commit;
-- all digests are verified before commit;
+- candidate content is hidden before publication;
+- all digests are verified before candidate validation and publication;
 - PythTIG exports are verified before install acceptance and preserve nested
   verifier denial identities on failure;
-- SchemaDefinition and Package object identities are created in the committed
-  package graph;
-- registry generation and matching object/revision state commit atomically
+- SchemaDefinition and Package object identities are created in the candidate
+  package graph before publication and become authoritative only when selected
+  by a valid `PackageTransactionCommitV0` anchor;
+- registry generation and matching object/revision state publish atomically
   through a valid `PackageTransactionCommitV0` anchor;
-- package locator visibility is derived from the selected committed generation;
-- reboot restores committed package registry state;
-- interrupted install recovers as absent and reclaims staged orphan content;
-- a crash after commit but before materialized locator mirror rebuild recovers
-  by rebuilding mirrors from the committed generation.
+- package locator visibility is derived from the selected published generation;
+- reboot restores published package registry state;
+- interrupted install before publication leaves the previous world selected and
+  leaves candidate-only material unreachable/reclaimable;
+- a crash after publication but before materialized locator mirror rebuild
+  recovers by rebuilding mirrors from the published generation.
 
 QEMU evidence:
 
 ```text
 PYTHOS:CORE:PACKAGE_SOURCE_READY
 PYTHOS:CORE:PACKAGE_SOURCE_AUTHORITY_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_READY
+PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED
+PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED
+PYTHOS:CORE:PACKAGE_WORLD_SELECTED
+PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT
 PYTHOS:CORE:PACKAGE_INSTALL_READY
-PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY
-PYTHOS:CORE:PACKAGE_INSTALL_RECOVERY_READY
 ```
 
 Suggested tests:
@@ -1255,9 +1313,9 @@ Suggested tests:
 ```text
 qemu: successful INIT.PAK package-source install and reboot restore
 qemu: deny package source read without PackageSourceRead capability
-qemu/script: killed-mid-install recovery with no exposed locator and reclaimed staged content
-qemu/script: killed-after-commit-before-mirror-rebuild recovery with committed locator visibility
-qemu/script: mismatched object checkpoint / registry generation selects previous valid anchor
+qemu/script: killed-before-anchor selects previous world with no exposed locator and candidate-only content reclaimable
+qemu/script: killed-after-anchor-before-mirror rebuilds locator visibility from the published generation
+qemu/script: mismatched object checkpoint / registry generation selects previous valid publication anchor
 ```
 
 ### Phase 13 Slice 3: package-launch
@@ -1436,6 +1494,7 @@ numbers or writing code:
    without disturbing existing object storage evidence?
 5. Which package registry relationships are persisted as materialized object
    relationships, and which are registry-only records?
-6. What exact recovery script proves killed-mid-install rollback?
+6. What exact recovery script proves candidate-before-publication is ignored as
+   non-authoritative and reclaimable?
 7. What exact fixture proves independently authored package lifecycle without
    reviving the conventional application model?
