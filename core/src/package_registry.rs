@@ -17,8 +17,10 @@ pub const PACKAGE_REGISTRY_CRC_LEN: usize = 4;
 pub const PACKAGE_REGISTRY_PACKAGE_RECORD_LEN: usize = 64;
 pub const PACKAGE_REGISTRY_SCHEMA_RECORD_LEN: usize = 96;
 pub const PACKAGE_REGISTRY_CONTENT_RECORD_LEN: usize = 256;
+pub const PACKAGE_REGISTRY_EXPORT_RECORD_LEN: usize = 160;
 pub const PACKAGE_RECORD_FLAGS_OFFSET: usize = 50;
 const SCHEMA_RECORD_FLAGS_OFFSET: usize = 26;
+const EXPORT_RECORD_FLAGS_OFFSET: usize = 10;
 pub const REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT: u16 = 0x8000;
 pub const PACKAGE_TRANSACTION_COMMIT_V0_LEN: usize = 128;
 pub const PACKAGE_TRANSACTION_COMMIT_CRC_OFFSET: usize = 112;
@@ -461,21 +463,19 @@ impl PackageRegistry {
         let requirement_count = read_u32(bytes, 76);
         let locator_binding_count = read_u32(bytes, 80);
         let tombstone_count = read_u32(bytes, 84);
-        if export_count != 0
-            || requirement_count != 0
-            || locator_binding_count != 0
-            || tombstone_count != 0
-        {
+        if requirement_count != 0 || locator_binding_count != 0 || tombstone_count != 0 {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
         if package_count as usize > MAX_REGISTRY_PACKAGES
             || schema_count as usize > MAX_REGISTRY_SCHEMAS
             || content_count as usize > MAX_REGISTRY_CONTENT
+            || export_count as usize > MAX_REGISTRY_EXPORTS
         {
             return Err(PackageStatus::BoundsExceeded);
         }
 
-        let expected_len = encoded_len_for(package_count, schema_count, content_count)?;
+        let expected_len =
+            encoded_len_for(package_count, schema_count, content_count, export_count)?;
         if expected_len != bytes.len() {
             return Err(PackageStatus::BoundsExceeded);
         }
@@ -517,6 +517,19 @@ impl PackageRegistry {
             registry.add_content_record(record)?;
             offset += PACKAGE_REGISTRY_CONTENT_RECORD_LEN;
         }
+        for _ in 0..export_count {
+            let (record, flags) = decode_export_record(bytes, offset)?;
+            if minor > PACKAGE_REGISTRY_MINOR
+                && (flags & REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT) != 0
+            {
+                return Err(PackageStatus::UnsupportedRequiredMinor);
+            }
+            if !registry.published_content_for_export(record) {
+                return Err(PackageStatus::RegistryRecoveryDenied);
+            }
+            registry.add_export_record(record)?;
+            offset += PACKAGE_REGISTRY_EXPORT_RECORD_LEN;
+        }
 
         Ok(())
     }
@@ -557,6 +570,7 @@ impl PackageRegistry {
         write_u32(out, 60, self.package_count);
         write_u32(out, 64, self.schema_count);
         write_u32(out, 68, self.content_count);
+        write_u32(out, 72, self.export_count);
 
         let mut offset = PACKAGE_REGISTRY_HEADER_LEN;
         let mut encoded_packages = 0usize;
@@ -599,6 +613,18 @@ impl PackageRegistry {
             encoded_content += 1;
         }
 
+        let mut encoded_exports = 0usize;
+        let mut previous_export = None;
+        while encoded_exports < self.export_count as usize {
+            let record = self
+                .next_export_record(previous_export)
+                .ok_or(PackageStatus::RegistryRecoveryDenied)?;
+            encode_export_record(record, out, offset);
+            offset += PACKAGE_REGISTRY_EXPORT_RECORD_LEN;
+            previous_export = Some(export_sort_key(record));
+            encoded_exports += 1;
+        }
+
         let crc = crc32c_castagnoli(&out[..encoded_len]);
         write_u32(out, encoded_len - PACKAGE_REGISTRY_CRC_LEN, crc);
         Ok(PackageRegistryGeneration {
@@ -612,6 +638,7 @@ impl PackageRegistry {
             + self.package_count as usize * PACKAGE_REGISTRY_PACKAGE_RECORD_LEN
             + self.schema_count as usize * PACKAGE_REGISTRY_SCHEMA_RECORD_LEN
             + self.content_count as usize * PACKAGE_REGISTRY_CONTENT_RECORD_LEN
+            + self.export_count as usize * PACKAGE_REGISTRY_EXPORT_RECORD_LEN
             + PACKAGE_REGISTRY_CRC_LEN
     }
 
@@ -744,6 +771,7 @@ impl PackageRegistry {
             read_u32(bytes, 60),
             read_u32(bytes, 64),
             read_u32(bytes, 68),
+            read_u32(bytes, 72),
         )
     }
 
@@ -795,6 +823,21 @@ impl PackageRegistry {
             index += 1;
         }
         Err(PackageStatus::ExportMissing)
+    }
+
+    fn published_content_for_export(&self, export: PackageRegistryExportRecord) -> bool {
+        let mut index = 0usize;
+        while index < self.content_count as usize {
+            if let Some(record) = self.content_records[index]
+                && record.package_object_id == export.package_object_id
+                && record.release_digest == export.release_digest
+                && record.content_index == export.content_index
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 
     fn next_schema_record(
@@ -850,6 +893,51 @@ impl PackageRegistry {
         }
         selected
     }
+
+    fn next_export_record(
+        &self,
+        previous_export: Option<ExportSortKey>,
+    ) -> Option<PackageRegistryExportRecord> {
+        let mut selected = None;
+        let mut index = 0usize;
+        while index < self.export_count as usize {
+            if let Some(record) = self.export_records[index] {
+                let key = export_sort_key(record);
+                let after_previous = previous_export.is_none_or(|previous| key > previous);
+                let before_selected =
+                    selected.is_none_or(|current: PackageRegistryExportRecord| {
+                        key < export_sort_key(current)
+                    });
+                if after_previous && before_selected {
+                    selected = Some(record);
+                }
+            }
+            index += 1;
+        }
+        selected
+    }
+}
+
+type ExportSortKey = (
+    u64,
+    [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    u8,
+    [u8; MAX_LOCATOR_SEGMENT_BYTES],
+    u8,
+    u64,
+    u64,
+);
+
+fn export_sort_key(record: PackageRegistryExportRecord) -> ExportSortKey {
+    (
+        record.namespace_root_object_id,
+        record.package_locator,
+        record.package_locator_len,
+        record.export_name,
+        record.export_name_len,
+        record.package_object_id,
+        record.package_revision,
+    )
 }
 
 struct ExportLocatorParts<'a> {
@@ -901,6 +989,7 @@ fn encoded_len_for(
     package_count: u32,
     schema_count: u32,
     content_count: u32,
+    export_count: u32,
 ) -> Result<usize, PackageStatus> {
     let package_bytes = (package_count as usize)
         .checked_mul(PACKAGE_REGISTRY_PACKAGE_RECORD_LEN)
@@ -911,10 +1000,14 @@ fn encoded_len_for(
     let content_bytes = (content_count as usize)
         .checked_mul(PACKAGE_REGISTRY_CONTENT_RECORD_LEN)
         .ok_or(PackageStatus::LengthOverflow)?;
+    let export_bytes = (export_count as usize)
+        .checked_mul(PACKAGE_REGISTRY_EXPORT_RECORD_LEN)
+        .ok_or(PackageStatus::LengthOverflow)?;
     PACKAGE_REGISTRY_HEADER_LEN
         .checked_add(package_bytes)
         .and_then(|value| value.checked_add(schema_bytes))
         .and_then(|value| value.checked_add(content_bytes))
+        .and_then(|value| value.checked_add(export_bytes))
         .and_then(|value| value.checked_add(PACKAGE_REGISTRY_CRC_LEN))
         .ok_or(PackageStatus::LengthOverflow)
 }
@@ -1019,6 +1112,72 @@ fn decode_content_record(
         retention_count: read_u16(bytes, offset + 88),
         flags: read_u16(bytes, offset + 90),
     })
+}
+
+fn encode_export_record(record: PackageRegistryExportRecord, out: &mut [u8], offset: usize) {
+    out[offset..offset + PACKAGE_REGISTRY_EXPORT_RECORD_LEN].fill(0);
+    write_u64(out, offset, record.namespace_root_object_id);
+    out[offset + 8] = record.package_locator_len;
+    out[offset + 9] = record.export_name_len;
+    write_u16(out, offset + EXPORT_RECORD_FLAGS_OFFSET, 0);
+    write_u16(out, offset + 12, record.export_kind);
+    write_u16(out, offset + 14, record.content_index);
+    write_u16(out, offset + 16, record.entrypoint);
+    out[offset + 20..offset + 36].copy_from_slice(&record.package_locator);
+    out[offset + 36..offset + 52].copy_from_slice(&record.export_name);
+    write_u64(out, offset + 56, record.package_object_id);
+    write_u64(out, offset + 64, record.package_revision);
+    out[offset + 72..offset + 104].copy_from_slice(&record.release_digest);
+    write_u64(out, offset + 104, record.schema_object_id);
+    write_u64(out, offset + 112, record.schema_revision);
+    out[offset + 120..offset + 152].copy_from_slice(&record.schema_descriptor_digest);
+}
+
+fn decode_export_record(
+    bytes: &[u8],
+    offset: usize,
+) -> Result<(PackageRegistryExportRecord, u16), PackageStatus> {
+    let package_locator_len = bytes[offset + 8] as usize;
+    let export_name_len = bytes[offset + 9] as usize;
+    if package_locator_len > MAX_LOCATOR_SEGMENT_BYTES
+        || export_name_len > MAX_LOCATOR_SEGMENT_BYTES
+    {
+        return Err(PackageStatus::InvalidLocator);
+    }
+    if bytes[offset + 18..offset + 20]
+        .iter()
+        .any(|byte| *byte != 0)
+        || bytes[offset + 52..offset + 56]
+            .iter()
+            .any(|byte| *byte != 0)
+        || bytes[offset + 20 + package_locator_len..offset + 36]
+            .iter()
+            .any(|byte| *byte != 0)
+        || bytes[offset + 36 + export_name_len..offset + 52]
+            .iter()
+            .any(|byte| *byte != 0)
+        || bytes[offset + 152..offset + 160]
+            .iter()
+            .any(|byte| *byte != 0)
+    {
+        return Err(PackageStatus::RegistryRecoveryDenied);
+    }
+    let flags = read_u16(bytes, offset + EXPORT_RECORD_FLAGS_OFFSET);
+    let record = PackageRegistryExportRecord::new(
+        read_u64(bytes, offset),
+        &bytes[offset + 20..offset + 20 + package_locator_len],
+        &bytes[offset + 36..offset + 36 + export_name_len],
+        read_u64(bytes, offset + 56),
+        read_u64(bytes, offset + 64),
+        read_sha256(bytes, offset + 72),
+        read_u16(bytes, offset + 12),
+        read_u16(bytes, offset + 14),
+        read_u16(bytes, offset + 16),
+        read_u64(bytes, offset + 104),
+        read_u64(bytes, offset + 112),
+        read_sha256(bytes, offset + 120),
+    )?;
+    Ok((record, flags))
 }
 
 fn validate_content_record(record: PackageRegistryContentRecord) -> Result<(), PackageStatus> {
@@ -1146,12 +1305,14 @@ mod tests {
     };
     use crate::{
         block_device::BlockDeviceInfo,
+        object_relationships::PACKAGE_LOCATOR_ROOT_OBJECT_ID,
         object_service_checkpoint::ObjectCheckpointIdentity,
         package_candidate_store::{
             PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, read_candidate_registry_generation,
             reset_package_candidate_storage_for_test, write_candidate_registry_generation,
         },
         package_content_store::PackageExtent,
+        shell_objects::ObjectId,
     };
     use pythos_shared::package_abi::PackageStatus;
 
@@ -1329,6 +1490,115 @@ mod tests {
         assert_eq!(
             restored.schema_record(0).unwrap(),
             PackageRegistrySchemaRecord::new(77, 3, 42, 0, digest(7))
+        );
+    }
+
+    #[test]
+    fn package_registry_round_trips_export_records() {
+        let mut registry = PackageRegistry::empty();
+        registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                42,
+                7,
+                digest(4),
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(77, 3, 42, 0, digest(7)))
+            .unwrap();
+        let mut extents = [PackageExtent::EMPTY; 32];
+        extents[0] = PackageExtent::new(7, 1);
+        registry
+            .add_content_record(PackageRegistryContentRecord {
+                package_object_id: 42,
+                release_digest: digest(4),
+                content_index: 1,
+                role: 2,
+                format: 1,
+                digest: digest(5),
+                byte_len: 3,
+                extents,
+                extent_count: 1,
+                retention_count: 0,
+                flags: 0,
+            })
+            .unwrap();
+        let export = PackageRegistryExportRecord::new(
+            PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+            b"seed",
+            b"launch",
+            42,
+            7,
+            digest(4),
+            1,
+            1,
+            0,
+            77,
+            3,
+            digest(7),
+        )
+        .unwrap();
+        registry.add_export_record(export).unwrap();
+        let mut encoded = [0u8; 1024];
+
+        registry.encode_snapshot(&mut encoded).unwrap();
+        let used = registry.encoded_len();
+        let restored = PackageRegistry::decode_snapshot(&encoded[..used]).unwrap();
+
+        assert_eq!(
+            u32::from_le_bytes([encoded[72], encoded[73], encoded[74], encoded[75]]),
+            1
+        );
+        assert_eq!(
+            restored
+                .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+                .unwrap(),
+            export
+        );
+    }
+
+    #[test]
+    fn package_registry_recovery_denies_export_without_published_content_record() {
+        let mut registry = PackageRegistry::empty();
+        registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                42,
+                7,
+                digest(4),
+                PackageStatus::Ok as u16,
+            ))
+            .unwrap();
+        registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(77, 3, 42, 0, digest(7)))
+            .unwrap();
+        registry
+            .add_export_record(
+                PackageRegistryExportRecord::new(
+                    PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                    b"seed",
+                    b"launch",
+                    42,
+                    7,
+                    digest(4),
+                    1,
+                    1,
+                    0,
+                    77,
+                    3,
+                    digest(7),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        let mut encoded = [0u8; 1024];
+
+        registry.encode_snapshot(&mut encoded).unwrap();
+        let used = registry.encoded_len();
+
+        assert_eq!(
+            PackageRegistry::decode_snapshot(&encoded[..used]),
+            Err(PackageStatus::RegistryRecoveryDenied)
         );
     }
 

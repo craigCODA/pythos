@@ -42,7 +42,7 @@ use pythos_shared::{
         PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageRuntimeSchemaBindingV0,
         PackageStatus,
     },
-    package_format::{PackageArtifactV0, PackageFormatError},
+    package_format::{ContentEntryV0, PackageArtifactV0, PackageFormatError},
 };
 
 #[cfg_attr(not(test), allow(unused_imports))]
@@ -51,6 +51,8 @@ pub use crate::pyth_graph_loader::validate_package_export_graph;
 const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const FIRST_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
 const INSTALL_OPERATION: u16 = 1;
+const MANIFEST_RECORD_PACKAGE_EXPORT: u16 = 2;
+const MANIFEST_EXPORT_PAYLOAD_LEN: usize = 6;
 
 #[cfg(test)]
 static TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE: std::sync::Mutex<Option<ObjectServiceSnapshot>> =
@@ -732,6 +734,16 @@ impl<'a> PackageService<'a> {
                 ))?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
+            add_manifest_exports_to_registry(
+                artifact,
+                &mut self.staged_registry,
+                package.object_id.raw(),
+                package.revision,
+                release_digest,
+                schema.object_id.raw(),
+                schema.revision,
+                descriptor_entry,
+            )?;
 
             self.content_store
                 .validate_commit_capacity(&self.staged_content)?;
@@ -921,6 +933,16 @@ impl<'a> PackageService<'a> {
                 ))?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
+            add_manifest_exports_to_registry(
+                artifact,
+                &mut self.staged_registry,
+                package.object_id.raw(),
+                package.revision,
+                release_digest,
+                schema.object_id.raw(),
+                schema.revision,
+                descriptor_entry,
+            )?;
             let candidate_snapshot = candidate_object_service
                 .encode_candidate_snapshot()
                 .map_err(map_object_error)?;
@@ -1189,6 +1211,7 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::BadRequest);
         }
         let export = self.resolve_export(request.namespace_root, request.locator)?;
+        ensure_launchable_export(export)?;
         let launch = validate_launch_authority(
             request.caller,
             request.supplied_grants,
@@ -1855,6 +1878,15 @@ fn validate_launch_authority(
     Ok(launch)
 }
 
+fn ensure_launchable_export(export: PackageRegistryExportRecord) -> Result<(), PackageStatus> {
+    const PACKAGE_EXPORT_KIND_TOOL: u16 = 1;
+
+    if export.export_kind != PACKAGE_EXPORT_KIND_TOOL {
+        return Err(PackageStatus::BadRequest);
+    }
+    Ok(())
+}
+
 fn same_runtime_context_identity(
     left: PackageRuntimeContextRecord,
     right: PackageRuntimeContextRecord,
@@ -2106,6 +2138,72 @@ fn create_schema_or_rollback<'a>(
     }
 }
 
+fn add_manifest_exports_to_registry(
+    artifact: PackageArtifactV0<'_>,
+    registry: &mut PackageRegistry,
+    package_object_id: u64,
+    package_revision: u64,
+    release_digest: [u8; 32],
+    schema_object_id: u64,
+    schema_revision: u64,
+    descriptor_entry: ContentEntryV0,
+) -> Result<(), PackageStatus> {
+    let manifest = artifact.manifest();
+    let mut index = 0u32;
+    while index < manifest.record_count() {
+        let record = manifest
+            .record(index)
+            .ok_or(PackageStatus::InvalidManifest)?;
+        if record.record_type() == MANIFEST_RECORD_PACKAGE_EXPORT {
+            let payload = record.payload();
+            if payload.len() != MANIFEST_EXPORT_PAYLOAD_LEN {
+                return Err(PackageStatus::InvalidManifest);
+            }
+            let export_kind = read_u16_le(payload, 0);
+            let content_index = read_u16_le(payload, 2);
+            let entrypoint = read_u16_le(payload, 4);
+            artifact
+                .content_entry(content_index)
+                .ok_or(PackageStatus::InvalidManifest)?;
+            let (package_locator, export_name) = split_manifest_export_name(record.stable_name())?;
+            let export = PackageRegistryExportRecord::new(
+                PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                package_locator,
+                export_name,
+                package_object_id,
+                package_revision,
+                release_digest,
+                export_kind,
+                content_index,
+                entrypoint,
+                schema_object_id,
+                schema_revision,
+                descriptor_entry.sha256,
+            )?;
+            registry.add_export_record(export)?;
+        }
+        index += 1;
+    }
+    Ok(())
+}
+
+fn split_manifest_export_name(stable_name: &[u8]) -> Result<(&[u8], &[u8]), PackageStatus> {
+    let Some(separator) = stable_name.iter().position(|byte| *byte == b'/') else {
+        return Err(PackageStatus::InvalidLocator);
+    };
+    if separator == 0
+        || separator + 1 == stable_name.len()
+        || stable_name[separator + 1..].contains(&b'/')
+    {
+        return Err(PackageStatus::InvalidLocator);
+    }
+    Ok((&stable_name[..separator], &stable_name[separator + 1..]))
+}
+
+fn read_u16_le(bytes: &[u8], offset: usize) -> u16 {
+    u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
 fn map_format_error(error: PackageFormatError) -> PackageStatus {
     match error {
         PackageFormatError::InvalidMagic => PackageStatus::InvalidMagic,
@@ -2217,6 +2315,8 @@ mod tests {
     use std::{boxed::Box, vec};
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
+    const TEST_LAUNCHABLE_EXPORT_KIND: u16 = 1;
+    const TEST_NON_LAUNCH_EXPORT_KIND: u16 = 3;
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
     const ADDITIONAL_CONTENT: &[u8] = b"payload:seed.v0";
     const ORPHAN_CONTENT: &[u8] = b"orphan";
@@ -2502,6 +2602,168 @@ mod tests {
 
         assert_eq!(restored_len, SCHEMA_DESCRIPTOR.len());
         assert_eq!(&restored, SCHEMA_DESCRIPTOR);
+    }
+
+    #[test]
+    fn installed_manifest_export_survives_restore_and_launch_uses_registry_path() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        let report = boot_two_service.restore_from_storage(device).unwrap();
+        assert!(report.published_world_selected);
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let resolved = boot_two_service
+            .resolve_export(root, "seed/launch")
+            .unwrap();
+
+        assert_eq!(resolved.package_object_id, installed.package_object_id);
+        assert_eq!(resolved.package_revision, installed.package_revision);
+        assert_eq!(resolved.release_digest, installed.release_digest);
+        assert_eq!(resolved.content_index, 1);
+        assert_eq!(resolved.entrypoint, 0);
+        assert_eq!(resolved.schema_object_id, installed.schema_object_id);
+        assert_eq!(resolved.schema_revision, installed.schema_revision);
+        assert_eq!(resolved.schema_descriptor_digest, sha256(SCHEMA_DESCRIPTOR));
+
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5921, 0x13);
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        boot_two_service
+            .record_launch_requirement(root, "seed/launch", requirement)
+            .unwrap();
+        let missing_grants = [];
+        assert_eq!(
+            boot_two_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &missing_grants,
+                },
+                &CapabilityTable::new(),
+            ),
+            Err(PackageStatus::RequiredGrantMissing)
+        );
+
+        let mut capabilities = CapabilityTable::new();
+        let supplied_capability = capabilities
+            .grant(
+                caller.service_id(),
+                requirement.resource,
+                requirement.rights,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant {
+            requirement_id: requirement.requirement_id,
+            capability: supplied_capability,
+        }];
+        let launch = boot_two_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+
+        assert_eq!(launch.export, resolved);
+        assert_eq!(launch.grant_count, 1);
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+    }
+
+    #[test]
+    fn installed_package_without_manifest_export_keeps_launch_missing_export() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        install_recovery_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        boot_two_service.restore_from_storage(device).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5922, 0x13);
+        let grants = [];
+
+        assert_eq!(
+            boot_two_service
+                .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch",),
+            Err(PackageStatus::ExportMissing)
+        );
+        assert_eq!(
+            boot_two_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &grants,
+                },
+                &CapabilityTable::new(),
+            ),
+            Err(PackageStatus::ExportMissing)
+        );
+    }
+
+    #[test]
+    fn installed_non_launch_manifest_export_resolves_but_launch_rejects() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        install_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+            TEST_NON_LAUNCH_EXPORT_KIND,
+        )
+        .unwrap();
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        boot_two_service.restore_from_storage(device).unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let resolved = boot_two_service
+            .resolve_export(root, "seed/launch")
+            .unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5924, 0x13);
+        let grants = [];
+
+        assert_eq!(resolved.export_kind, TEST_NON_LAUNCH_EXPORT_KIND);
+        assert_eq!(
+            boot_two_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &grants,
+                },
+                &CapabilityTable::new(),
+            ),
+            Err(PackageStatus::BadRequest)
+        );
+        assert_eq!(boot_two_service.runtime_context_count_for_test(), 0);
     }
 
     #[test]
@@ -3768,6 +4030,64 @@ mod tests {
         )
     }
 
+    fn install_launch_export_package_with_candidate_checkpoint_into(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &mut ObjectService,
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        install_export_package_with_candidate_checkpoint_into(
+            package_service,
+            device,
+            object_service,
+            TEST_LAUNCHABLE_EXPORT_KIND,
+        )
+    }
+
+    fn install_export_package_with_candidate_checkpoint_into(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &mut ObjectService,
+        export_kind: u16,
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        let artifact = build_export_package_artifact(export_kind);
+        let source_record = build_source_record(0, b"phase13-launch-export.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5923, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
+
+        package_service.install_with_candidate_checkpoint(
+            device,
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            object_service,
+            artifact_buffer,
+        )
+    }
+
     fn prepare_recovery_package_install_candidate(
         package_service: &mut PackageService<'static>,
         device: BlockDeviceInfo,
@@ -4533,6 +4853,66 @@ mod tests {
         content_table[second + 16..second + 24]
             .copy_from_slice(&(ADDITIONAL_CONTENT.len() as u64).to_le_bytes());
         content_table[second + 24..second + 56].copy_from_slice(&sha256(ADDITIONAL_CONTENT));
+
+        let manifest_offset = PACKAGE_ARTIFACT_HEADER_LEN;
+        let content_table_offset = manifest_offset + manifest.len();
+        let content_offset = content_table_offset + content_table.len();
+        let mut header = vec![0u8; PACKAGE_ARTIFACT_HEADER_LEN];
+        header[0..8].copy_from_slice(b"PYTHPKG0");
+        header[8..10].copy_from_slice(&0u16.to_le_bytes());
+        header[10..12].copy_from_slice(&1u16.to_le_bytes());
+        header[12..16].copy_from_slice(&(PACKAGE_ARTIFACT_HEADER_LEN as u32).to_le_bytes());
+        header[16..24].copy_from_slice(&(manifest_offset as u64).to_le_bytes());
+        header[24..32].copy_from_slice(&(manifest.len() as u64).to_le_bytes());
+        header[32..40].copy_from_slice(&(content_table_offset as u64).to_le_bytes());
+        header[40..48].copy_from_slice(&(content_table.len() as u64).to_le_bytes());
+        header[48..56].copy_from_slice(&(content_offset as u64).to_le_bytes());
+        header[56..64].copy_from_slice(
+            &((SCHEMA_DESCRIPTOR.len() + ADDITIONAL_CONTENT.len()) as u64).to_le_bytes(),
+        );
+        header[64..96].copy_from_slice(&sha256(&manifest));
+
+        let mut artifact = header;
+        artifact.extend_from_slice(&manifest);
+        artifact.extend_from_slice(&content_table);
+        artifact.extend_from_slice(SCHEMA_DESCRIPTOR);
+        artifact.extend_from_slice(ADDITIONAL_CONTENT);
+        let digest = artifact_digest(&artifact);
+        artifact[96..128].copy_from_slice(&digest);
+        artifact
+    }
+
+    fn build_export_package_artifact(export_kind: u16) -> Vec<u8> {
+        let mut export_payload = Vec::new();
+        export_payload.extend_from_slice(&export_kind.to_le_bytes());
+        export_payload.extend_from_slice(&1u16.to_le_bytes());
+        export_payload.extend_from_slice(&0u16.to_le_bytes());
+
+        let mut manifest = b"PYTHMAN0".to_vec();
+        manifest.extend_from_slice(&2u32.to_le_bytes());
+        push_manifest_record(&mut manifest, 1, b"seed.v0", &0u16.to_le_bytes());
+        push_manifest_record(&mut manifest, 2, b"seed/launch", &export_payload);
+
+        let mut content_table = vec![0u8; 2 * CONTENT_ENTRY_V0_LEN];
+        content_table[0..2].copy_from_slice(&0u16.to_le_bytes());
+        content_table[2..4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[4..6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[6..8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[8..16].copy_from_slice(&0u64.to_le_bytes());
+        content_table[16..24].copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[24..56].copy_from_slice(&sha256(SCHEMA_DESCRIPTOR));
+
+        let second = CONTENT_ENTRY_V0_LEN;
+        content_table[second..second + 2].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 2..second + 4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[second + 4..second + 6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 6..second + 8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 8..second + 16]
+            .copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[second + 16..second + 24]
+            .copy_from_slice(&(ADDITIONAL_CONTENT.len() as u64).to_le_bytes());
+        content_table[second + 24..second + 56].copy_from_slice(&sha256(ADDITIONAL_CONTENT));
+        content_table[second + 58..second + 60].copy_from_slice(&0u16.to_le_bytes());
 
         let manifest_offset = PACKAGE_ARTIFACT_HEADER_LEN;
         let content_table_offset = manifest_offset + manifest.len();
