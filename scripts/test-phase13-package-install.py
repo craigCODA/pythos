@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -20,6 +22,8 @@ PACKAGE_ARTIFACT_HEADER_LEN = 160
 PACKAGE_MANIFEST_MAGIC = b"PYTHMAN0"
 CONTENT_ENTRY_V0_LEN = 64
 SCHEMA_DESCRIPTOR = b"schema:seed.v0"
+PUBLICATION_A_SCHEMA_DESCRIPTOR = b"schema:publication-a.v0"
+PUBLICATION_B_SCHEMA_DESCRIPTOR = b"schema:publication-b.v0"
 
 SCENARIOS = {
     "success": {
@@ -57,6 +61,67 @@ SCENARIOS = {
             "PYTHOS:CORE:PACKAGE_TRANSACTION_ANCHOR_READY",
         ),
     },
+    "kill-before-anchor": {
+        "label": b"phase13-kill-before-anchor-a.pkg",
+        "serial_log": ROOT / "target" / "phase13-package-kill-before-anchor.log",
+        "storage_image": ROOT / "target" / "phase13-package-kill-before-anchor.img",
+        "success_marker": "PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY",
+        "required": (
+            "PYTHOS:CORE:PACKAGE_CANDIDATE_READY",
+            "PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED",
+            "PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS",
+            "PYTHOS:CORE:PACKAGE_CANDIDATE:IGNORED_RECLAIMABLE",
+            "PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY",
+        ),
+        "forbidden": (
+            "PYTHOS:LOADER:FAIL",
+            "PYTHOS:PANIC",
+            "PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED",
+            "PYTHOS:CORE:PACKAGE_INSTALL:COMMITTED",
+            "PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PUBLISHED",
+            "PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE",
+        ),
+        "kill_marker": "PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED",
+        "fixtures": (
+            (b"phase13-kill-before-anchor-a.pkg", PUBLICATION_A_SCHEMA_DESCRIPTOR),
+            (b"phase13-kill-before-anchor-b.pkg", PUBLICATION_B_SCHEMA_DESCRIPTOR),
+        ),
+    },
+    "kill-after-anchor-before-mirror": {
+        "label": b"phase13-kill-after-anchor-before-mirror-a.pkg",
+        "serial_log": ROOT
+        / "target"
+        / "phase13-package-kill-after-anchor-before-mirror.log",
+        "storage_image": ROOT
+        / "target"
+        / "phase13-package-kill-after-anchor-before-mirror.img",
+        "success_marker": "PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY",
+        "required": (
+            "PYTHOS:CORE:PACKAGE_CANDIDATE_READY",
+            "PYTHOS:CORE:PACKAGE_CANDIDATE_VALIDATED",
+            "PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED",
+            "PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PUBLISHED",
+            "PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT",
+            "PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY",
+        ),
+        "forbidden": (
+            "PYTHOS:LOADER:FAIL",
+            "PYTHOS:PANIC",
+            "PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS",
+            "PYTHOS:CORE:PACKAGE_CANDIDATE:IGNORED_RECLAIMABLE",
+        ),
+        "kill_marker": "PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED",
+        "fixtures": (
+            (
+                b"phase13-kill-after-anchor-before-mirror-a.pkg",
+                PUBLICATION_A_SCHEMA_DESCRIPTOR,
+            ),
+            (
+                b"phase13-kill-after-anchor-before-mirror-b.pkg",
+                PUBLICATION_B_SCHEMA_DESCRIPTOR,
+            ),
+        ),
+    },
 }
 
 
@@ -84,7 +149,7 @@ def artifact_digest_domain(artifact: bytes) -> bytes:
     return bytes(out)
 
 
-def build_install_fixture() -> bytes:
+def build_install_fixture(schema_descriptor: bytes = SCHEMA_DESCRIPTOR) -> bytes:
     manifest_payload = (0).to_bytes(2, "little")
     manifest = (
         PACKAGE_MANIFEST_MAGIC
@@ -103,8 +168,8 @@ def build_install_fixture() -> bytes:
     content_table[4:6] = (1).to_bytes(2, "little")
     content_table[6:8] = (1).to_bytes(2, "little")
     content_table[8:16] = (0).to_bytes(8, "little")
-    content_table[16:24] = len(SCHEMA_DESCRIPTOR).to_bytes(8, "little")
-    content_table[24:56] = hashlib.sha256(SCHEMA_DESCRIPTOR).digest()
+    content_table[16:24] = len(schema_descriptor).to_bytes(8, "little")
+    content_table[24:56] = hashlib.sha256(schema_descriptor).digest()
 
     manifest_offset = PACKAGE_ARTIFACT_HEADER_LEN
     content_table_offset = manifest_offset + len(manifest)
@@ -119,10 +184,10 @@ def build_install_fixture() -> bytes:
     header[32:40] = content_table_offset.to_bytes(8, "little")
     header[40:48] = len(content_table).to_bytes(8, "little")
     header[48:56] = content_offset.to_bytes(8, "little")
-    header[56:64] = len(SCHEMA_DESCRIPTOR).to_bytes(8, "little")
+    header[56:64] = len(schema_descriptor).to_bytes(8, "little")
     header[64:96] = hashlib.sha256(manifest).digest()
 
-    artifact = bytes(header) + manifest + bytes(content_table) + SCHEMA_DESCRIPTOR
+    artifact = bytes(header) + manifest + bytes(content_table) + schema_descriptor
     digest = hashlib.sha256(artifact_digest_domain(artifact)).digest()
     artifact = artifact[:96] + digest + artifact[128:]
     return artifact
@@ -136,10 +201,13 @@ def build_verified_user_shell() -> None:
 def build_boot_image(scenario: str) -> None:
     config = SCENARIOS[scenario]
     TARGET.mkdir(parents=True, exist_ok=True)
-    fixture = TARGET / f"{scenario}.pkg"
-    fixture.write_bytes(build_install_fixture())
-    relative_fixture = fixture.relative_to(ROOT).as_posix()
-    source_spec = f"{relative_fixture}:{config['label'].decode('ascii')}"
+    fixtures = config.get("fixtures", ((config["label"], SCHEMA_DESCRIPTOR),))
+    source_specs: list[str] = []
+    for ordinal, (label, descriptor) in enumerate(fixtures):
+        fixture = TARGET / f"{scenario}-{ordinal}.pkg"
+        fixture.write_bytes(build_install_fixture(descriptor))
+        relative_fixture = fixture.relative_to(ROOT).as_posix()
+        source_specs.append(f"{relative_fixture}:{label.decode('ascii')}")
 
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
     run(
@@ -157,16 +225,15 @@ def build_boot_image(scenario: str) -> None:
         ]
     )
     build_verified_user_shell()
-    run(
-        [
-            sys.executable,
-            "scripts/build-image.py",
-            "--kernel",
-            str(CORE_ELF),
-            "--phase13-package-source",
-            source_spec,
-        ]
-    )
+    command = [
+        sys.executable,
+        "scripts/build-image.py",
+        "--kernel",
+        str(CORE_ELF),
+    ]
+    for source_spec in source_specs:
+        command.extend(("--phase13-package-source", source_spec))
+    run(command)
 
 
 def run_qemu(scenario: str) -> str:
@@ -192,6 +259,86 @@ def run_qemu(scenario: str) -> str:
             "success",
         ]
     )
+
+
+def wait_for_file_marker(serial_log: Path, marker: str, timeout: float) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if serial_log.exists() and marker in serial_log.read_text(errors="replace"):
+            return
+        time.sleep(0.1)
+    observed = serial_log.read_text(errors="replace") if serial_log.exists() else ""
+    raise AssertionError(f"timed out waiting for {marker!r}:\n{observed}")
+
+
+def terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        os.killpg(os.getpgid(process.pid), 15)
+    process.wait(timeout=10)
+
+
+def run_two_boot_qemu(scenario: str) -> str:
+    config = SCENARIOS[scenario]
+    serial_log: Path = config["serial_log"]  # type: ignore[assignment]
+    storage_image: Path = config["storage_image"]  # type: ignore[assignment]
+    for path in (serial_log, storage_image):
+        if path.exists():
+            path.unlink()
+
+    popen_kwargs: dict[str, object] = {}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "scripts/run-qemu.py",
+            "--serial-log",
+            str(serial_log),
+            "--storage-image",
+            str(storage_image),
+            "--timeout",
+            "60",
+            "--expect-outcome",
+            "timeout",
+        ],
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        **popen_kwargs,
+    )
+    try:
+        wait_for_file_marker(serial_log, str(config["kill_marker"]), 45)
+    finally:
+        terminate_process_tree(process)
+
+    boot_one = serial_log.read_text(errors="replace")
+    boot_two = run(
+        [
+            sys.executable,
+            "scripts/run-qemu.py",
+            "--serial-log",
+            str(serial_log),
+            "--storage-image",
+            str(storage_image),
+            "--timeout",
+            "60",
+            "--success-marker",
+            str(config["success_marker"]),
+            "--expect-outcome",
+            "success",
+        ]
+    )
+    return boot_one + "\n" + boot_two
 
 
 def serial_lines(output: str) -> list[str]:
@@ -221,7 +368,10 @@ def main() -> int:
     args = parser.parse_args()
 
     build_boot_image(args.scenario)
-    output = run_qemu(args.scenario)
+    if "kill_marker" in SCENARIOS[args.scenario]:
+        output = run_two_boot_qemu(args.scenario)
+    else:
+        output = run_qemu(args.scenario)
     lines = serial_lines(output)
     config = SCENARIOS[args.scenario]
     reject_forbidden(lines, config["forbidden"])  # type: ignore[arg-type]
