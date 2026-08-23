@@ -213,3 +213,30 @@ pub(crate) fn reset_package_candidate_storage_for_test() {
     *TEST_PACKAGE_CANDIDATE_SECTORS.lock().unwrap() =
         [[0; SECTOR_SIZE]; TEST_PACKAGE_CANDIDATE_SECTOR_COUNT];
 }
+
+#[cfg(test)]
+pub(crate) fn reset_package_persistence_storage_for_test() {
+    reset_package_candidate_storage_for_test();
+    crate::object_service_checkpoint::reset_checkpoint_storage_for_test();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, read_candidate_registry_generation,
+        reset_package_persistence_storage_for_test, write_candidate_registry_generation,
+    };
+    use crate::{block_device::BlockDeviceInfo, package_registry::PackageRegistry};
+
+    #[test]
+    fn package_persistence_test_reset_uses_common_storage_boundary() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let registry = PackageRegistry::empty();
+        let generation = write_candidate_registry_generation(device, &registry).unwrap();
+
+        reset_package_persistence_storage_for_test();
+
+        assert!(read_candidate_registry_generation(device, generation).is_err());
+    }
+}

@@ -395,10 +395,8 @@ impl<'a> PackageService<'a> {
                 .map_err(map_object_error)?;
             let object_identity = self.persist_candidate_snapshot(device, &candidate_snapshot)?;
             let transaction_id = self.next_transaction_id;
-            let in_memory_content_commit = self.content_store.commit(&mut self.staged_content)?;
-            if in_memory_content_commit != content_commit {
-                return Err(PackageStatus::RegistryRecoveryDenied);
-            }
+            self.content_store
+                .validate_commit_capacity(&self.staged_content)?;
             let mut staged_registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
             self.staged_registry
                 .encode_snapshot(&mut staged_registry_snapshot)?;
@@ -479,6 +477,10 @@ impl<'a> PackageService<'a> {
             .prepared_candidate_device
             .ok_or(PackageStatus::RegistryWriteDenied)?;
         write_publication_anchor(device, anchor)?;
+        let in_memory_content_commit = self.content_store.commit(&mut self.staged_content)?;
+        if in_memory_content_commit != candidate.content_commit {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
 
         let previous_registry = self.registry.clone();
         let previous_registry_snapshot = self.registry_snapshot;
@@ -919,12 +921,11 @@ mod tests {
         object_service::ObjectService,
         object_service_checkpoint::{
             read_object_service_candidate_checkpoint, read_object_service_checkpoint,
-            reset_checkpoint_storage_for_test,
         },
         package_candidate_store::{
             PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, PackagePublicationAnchorSlot,
             read_candidate_registry_generation, read_publication_anchor_slot,
-            reset_package_candidate_storage_for_test, write_candidate_registry_generation,
+            reset_package_persistence_storage_for_test, write_candidate_registry_generation,
             write_publication_anchor,
         },
         package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
@@ -947,14 +948,12 @@ mod tests {
         sha256::{Sha256, sha256},
     };
     use std::vec::Vec;
-    use std::{boxed::Box, sync::Mutex, vec};
+    use std::{boxed::Box, vec};
 
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
     const ADDITIONAL_CONTENT: &[u8] = b"payload:seed.v0";
     const ORPHAN_CONTENT: &[u8] = b"orphan";
-    static CHECKPOINT_TEST_LOCK: Mutex<()> = Mutex::new(());
-
     #[test]
     fn package_service_recovery_selects_clean_committed_generation() {
         with_installed_package(|package_service| {
@@ -978,7 +977,7 @@ mod tests {
         static CONTENT: &[u8] = b"anchor-candidate-content";
 
         let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
-        reset_package_candidate_storage_for_test();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut store = PackageContentStore::empty();
         let mut transaction = PackageContentTransaction::new(42, sha256(b"anchor-release"));
@@ -1047,8 +1046,8 @@ mod tests {
 
     #[test]
     fn package_service_recovery_selects_older_committed_registry_after_newest_anchor_mismatch() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1106,8 +1105,8 @@ mod tests {
 
     #[test]
     fn package_service_recovery_normalizes_fallback_pair_before_a_later_install() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1160,8 +1159,8 @@ mod tests {
 
     #[test]
     fn package_service_recovery_keeps_committed_snapshot_after_content_commit_failure() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1250,8 +1249,8 @@ mod tests {
 
     #[test]
     fn package_service_candidate_checkpoint_anchor_references_persisted_candidate_identity() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
 
@@ -1284,8 +1283,8 @@ mod tests {
 
     #[test]
     fn package_prepare_install_candidate_writes_validated_candidate_without_publication() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1371,8 +1370,8 @@ mod tests {
 
     #[test]
     fn package_publish_install_candidate_selects_prepared_world_once() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1494,8 +1493,8 @@ mod tests {
 
     #[test]
     fn package_recovery_reports_durable_unanchored_candidate_as_ignored_reclaimable() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1524,9 +1523,56 @@ mod tests {
     }
 
     #[test]
+    fn package_recovery_reuses_unanchored_candidate_content_extent() {
+        static RETRY_CONTENT: &[u8] = b"reused-candidate-extent";
+
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let world_a = install_recovery_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+        let candidate_only = bitmap_difference(
+            candidate.content_commit.committed_bitmap(),
+            world_a.content_commit.committed_bitmap(),
+        );
+        assert!(candidate_only.iter().any(|word| *word != 0));
+
+        let report = package_service
+            .recover_with_candidate_checkpoint(device)
+            .unwrap();
+        assert!(report.unpublished_candidate_ignored);
+        let mut retry = PackageContentTransaction::new(0x9000, sha256(b"retry-release"));
+        package_service
+            .content_store
+            .stage_content(&mut retry, 1, 1, RETRY_CONTENT, sha256(RETRY_CONTENT))
+            .unwrap();
+
+        assert!(
+            package_service
+                .content_store
+                .staged_bitmap()
+                .iter()
+                .zip(candidate_only.iter())
+                .any(|(staged, candidate)| (*staged & *candidate) != 0)
+        );
+    }
+
+    #[test]
     fn package_recovery_rejects_mismatched_anchor_for_durable_candidate_world() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1595,8 +1641,8 @@ mod tests {
 
     #[test]
     fn package_install_with_candidate_checkpoint_advances_live_object_generation() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1632,8 +1678,8 @@ mod tests {
 
     #[test]
     fn package_recovery_validates_candidate_checkpoint_storage_before_selection() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1644,7 +1690,7 @@ mod tests {
         )
         .unwrap();
 
-        reset_checkpoint_storage_for_test();
+        reset_package_persistence_storage_for_test();
 
         assert_eq!(
             package_service.recover_with_candidate_checkpoint(device),
@@ -1654,8 +1700,8 @@ mod tests {
 
     #[test]
     fn package_recovery_ignores_unanchored_candidate_without_overwriting_anchor() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
@@ -1687,12 +1733,25 @@ mod tests {
     }
 
     fn with_installed_package(f: impl FnOnce(&mut PackageService<'_>)) {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let mut package_service = PackageService::new_empty_for_test();
         install_recovery_package_with_candidate_checkpoint(&mut package_service, device).unwrap();
         f(&mut package_service);
+    }
+
+    fn bitmap_difference(
+        newer: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
+        older: [u64; PACKAGE_CONTENT_BITMAP_WORDS],
+    ) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS] {
+        let mut difference = [0; PACKAGE_CONTENT_BITMAP_WORDS];
+        let mut index = 0usize;
+        while index < PACKAGE_CONTENT_BITMAP_WORDS {
+            difference[index] = newer[index] & !older[index];
+            index += 1;
+        }
+        difference
     }
 
     fn install_recovery_package_into(
@@ -1884,8 +1943,8 @@ mod tests {
     #[test]
     fn package_install_transaction_commits_package_schema_content_registry_and_anchor_as_one_unit()
     {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let artifact = build_schema_package_artifact();
         let source_record = build_source_record(0, b"phase13-install.pkg", &artifact);
@@ -1984,8 +2043,8 @@ mod tests {
 
     #[test]
     fn package_locator_mirrors_are_rebuilt_from_committed_registry_generation() {
-        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
-        reset_checkpoint_storage_for_test();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(9000, 8);
         let artifact = build_schema_package_artifact();
         let source_record = build_source_record(0, b"phase13-mirror.pkg", &artifact);

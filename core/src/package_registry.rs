@@ -418,6 +418,11 @@ impl PackageRegistry {
         }
         for _ in 0..content_count {
             let record = decode_content_record(bytes, offset)?;
+            if minor > PACKAGE_REGISTRY_MINOR
+                && (record.flags & REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT) != 0
+            {
+                return Err(PackageStatus::UnsupportedRequiredMinor);
+            }
             registry.add_content_record(record)?;
             offset += PACKAGE_REGISTRY_CONTENT_RECORD_LEN;
         }
@@ -1018,6 +1023,40 @@ mod tests {
         encoded[10..12].copy_from_slice(&2u16.to_le_bytes());
         let flags_offset = PACKAGE_REGISTRY_HEADER_LEN + PACKAGE_RECORD_FLAGS_OFFSET;
         encoded[flags_offset..flags_offset + 2]
+            .copy_from_slice(&REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT.to_le_bytes());
+        refresh_crc(&mut encoded[..used]);
+
+        assert_eq!(
+            PackageRegistry::decode_snapshot(&encoded[..used]),
+            Err(PackageStatus::UnsupportedRequiredMinor)
+        );
+    }
+
+    #[test]
+    fn package_registry_rejects_unsupported_required_minor_content_record_flag() {
+        let mut registry = registry_with_one_package_and_schema();
+        registry
+            .add_content_record(PackageRegistryContentRecord {
+                package_object_id: 42,
+                release_digest: digest(4),
+                content_index: 0,
+                role: 1,
+                format: 1,
+                digest: digest(8),
+                byte_len: 0,
+                extents: [PackageExtent::EMPTY; 32],
+                extent_count: 0,
+                retention_count: 0,
+                flags: 0,
+            })
+            .unwrap();
+        let mut encoded = [0u8; 512];
+        registry.encode_snapshot(&mut encoded).unwrap();
+        let used = registry.encoded_len();
+
+        encoded[10..12].copy_from_slice(&2u16.to_le_bytes());
+        let content_flags_offset = PACKAGE_REGISTRY_HEADER_LEN + 64 + 96 + 90;
+        encoded[content_flags_offset..content_flags_offset + 2]
             .copy_from_slice(&REGISTRY_RECORD_FLAG_REQUIRES_MINOR_SUPPORT.to_le_bytes());
         refresh_crc(&mut encoded[..used]);
 

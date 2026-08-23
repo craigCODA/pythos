@@ -230,11 +230,7 @@ impl<'a> PackageContentStore<'a> {
         &mut self,
         transaction: &mut PackageContentTransaction<'a>,
     ) -> Result<PackageContentCommit, PackageStatus> {
-        if (self.committed_count as usize + transaction.staged_count as usize)
-            > PACKAGE_CONTENT_MAX_STAGED_RECORDS
-        {
-            return Err(PackageStatus::QuotaDenied);
-        }
+        self.validate_commit_capacity(transaction)?;
 
         let mut record_count = 0usize;
 
@@ -254,6 +250,18 @@ impl<'a> PackageContentStore<'a> {
             record_count: record_count as u16,
             committed_bitmap,
         })
+    }
+
+    pub fn validate_commit_capacity(
+        &self,
+        transaction: &PackageContentTransaction<'a>,
+    ) -> Result<(), PackageStatus> {
+        if (self.committed_count as usize + transaction.staged_count as usize)
+            > PACKAGE_CONTENT_MAX_STAGED_RECORDS
+        {
+            return Err(PackageStatus::QuotaDenied);
+        }
+        Ok(())
     }
 
     pub const fn committed_bitmap(&self) -> [u64; PACKAGE_CONTENT_BITMAP_WORDS] {
