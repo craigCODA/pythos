@@ -158,6 +158,7 @@ pub struct PackageService<'a> {
     prepared_candidate: Option<PackageInstallCandidate>,
     prepared_object_service: Option<ObjectService>,
     prepared_candidate_device: Option<BlockDeviceInfo>,
+    prepared_live_object_checkpoint_identity: Option<ObjectCheckpointIdentity>,
     prepared_content_store: Option<PackageContentStore<'a>>,
     prepared_content: Option<PackageContentTransaction<'a>>,
     next_transaction_id: u64,
@@ -192,6 +193,7 @@ impl<'a> PackageService<'a> {
             prepared_candidate: None,
             prepared_object_service: None,
             prepared_candidate_device: None,
+            prepared_live_object_checkpoint_identity: None,
             prepared_content_store: None,
             prepared_content: None,
             next_transaction_id: 1,
@@ -479,6 +481,9 @@ impl<'a> PackageService<'a> {
         self.staged_content
             .reset(package_object_id.raw(), release_digest);
         let prepared_content_store = self.content_store.clone();
+        let prepared_live_object_checkpoint_identity = object_service
+            .checkpoint_identity()
+            .map_err(map_object_error)?;
         let prepared = (|| -> Result<PackageInstallCandidate, PackageStatus> {
             let mut descriptor_content_id = None;
             let mut entry_index = 0u16;
@@ -581,6 +586,8 @@ impl<'a> PackageService<'a> {
             };
             self.prepared_object_service = Some(candidate_object_service);
             self.prepared_candidate_device = Some(device);
+            self.prepared_live_object_checkpoint_identity =
+                Some(prepared_live_object_checkpoint_identity);
             self.prepared_content_store = Some(prepared_content_store);
             self.prepared_content = Some(self.staged_content.clone());
             self.prepared_candidate = Some(candidate.clone());
@@ -592,6 +599,7 @@ impl<'a> PackageService<'a> {
             Err(error) => {
                 self.content_store.rollback(&mut self.staged_content);
                 self.prepared_candidate_device = None;
+                self.prepared_live_object_checkpoint_identity = None;
                 self.prepared_content_store = None;
                 self.prepared_content = None;
                 Err(error)
@@ -606,6 +614,15 @@ impl<'a> PackageService<'a> {
     ) -> Result<PackageInstallResult, PackageStatus> {
         if self.prepared_candidate.as_ref() != Some(&candidate)
             || self.unpublished_candidate_checkpoint != Some(candidate.object_checkpoint_identity)
+        {
+            return Err(PackageStatus::BadRequest);
+        }
+        if self.prepared_live_object_checkpoint_identity
+            != Some(
+                object_service
+                    .checkpoint_identity()
+                    .map_err(map_object_error)?,
+            )
         {
             return Err(PackageStatus::BadRequest);
         }
@@ -698,6 +715,7 @@ impl<'a> PackageService<'a> {
         self.prepared_candidate = None;
         self.prepared_object_service = None;
         self.prepared_candidate_device = None;
+        self.prepared_live_object_checkpoint_identity = None;
         self.prepared_content_store = None;
         self.prepared_content = None;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
@@ -833,6 +851,7 @@ impl<'a> PackageService<'a> {
             self.prepared_candidate = None;
             self.prepared_object_service = None;
             self.prepared_candidate_device = None;
+            self.prepared_live_object_checkpoint_identity = None;
             self.prepared_content_store = None;
             self.prepared_content = None;
         }
@@ -1881,6 +1900,51 @@ mod tests {
         assert_eq!(
             object_service.query_objects(shell, revoked, ObjectKind::Note),
             Err(ObjectServiceError::Denied)
+        );
+    }
+
+    #[test]
+    fn package_publish_install_candidate_denies_stale_live_object_world_before_anchor() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let shell = object_service.test_shell_caller();
+        let workspace = object_service.test_shell_workspace_capability();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        let created = object_service
+            .create_object(shell, workspace, ObjectKind::Note)
+            .unwrap();
+        let live_identity = object_service.checkpoint_identity().unwrap();
+
+        assert_eq!(
+            package_service.publish_install_candidate(candidate.clone(), &mut object_service),
+            Err(PackageStatus::BadRequest)
+        );
+        assert_eq!(
+            read_publication_anchor_slot(
+                device,
+                if candidate.registry_generation.generation & 1 == 0 {
+                    PackagePublicationAnchorSlot::A
+                } else {
+                    PackagePublicationAnchorSlot::B
+                },
+            ),
+            Ok(None)
+        );
+        assert_eq!(object_service.checkpoint_identity().unwrap(), live_identity);
+        assert!(object_service.object_exists_for_test(created.object_id));
+        assert!(
+            object_service
+                .inspect_object(shell, created.object_capability, created.object_id)
+                .is_ok()
         );
     }
 
