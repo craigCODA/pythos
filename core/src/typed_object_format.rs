@@ -245,6 +245,16 @@ pub fn run_self_test() -> Result<(), ObjectFormatError> {
     Ok(())
 }
 
+pub fn package_schema_ref_value(
+    schema_object_id: ObjectId,
+    schema_revision: u64,
+) -> [u8; FIELD_VALUE_CAPACITY] {
+    let mut bytes = [0; FIELD_VALUE_CAPACITY];
+    write_u64(&mut bytes, 0, schema_object_id.raw());
+    write_u64(&mut bytes, 8, schema_revision);
+    bytes
+}
+
 fn kind_code(kind: ObjectKind) -> u16 {
     match kind {
         ObjectKind::ApplicationLauncherWindow => 1,
@@ -472,6 +482,14 @@ mod tests {
             TypedObjectRecord::decode(&encoded).unwrap().object_kind(),
             ObjectKind::PackageDefinedObject
         );
+    }
+
+    #[test]
+    fn package_defined_schema_ref_value_encodes_identity_and_revision() {
+        let value = package_schema_ref_value(ObjectId::new(0x1122_3344_5566_7788), 0x99AA_BBCC);
+
+        assert_eq!(&value[..8], &0x1122_3344_5566_7788u64.to_le_bytes());
+        assert_eq!(&value[8..16], &0x99AA_BBCCu64.to_le_bytes());
     }
 
     #[test]

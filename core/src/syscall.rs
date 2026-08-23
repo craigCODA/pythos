@@ -11,7 +11,7 @@ use crate::capabilities::{
 };
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
-use crate::object_service::{ObjectService, ObjectServiceError};
+use crate::object_service::{ObjectService, ObjectServiceError, PackageDefinedCreateInput};
 #[cfg(any(
     test,
     feature = "phase13-package-test",
@@ -66,6 +66,13 @@ use pythos_shared::object_shell_abi::{
 use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
+};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+use pythos_shared::package_abi::{
+    OBJECT_KIND_PACKAGE_DEFINED_OBJECT, PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES,
+    PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+    PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+    PackageDefinedObjectCreateV0,
 };
 #[cfg(any(
     test,
@@ -757,13 +764,38 @@ fn dispatch_object_request_with_raw_buffers(
     if !valid_object_request_header(&request) {
         return Ok(bad_request_response());
     }
+    let package_defined_create_input = if request.operation == OP_CREATE_OBJECT
+        && request.object_kind == OBJECT_KIND_PACKAGE_DEFINED_OBJECT
+    {
+        match checked_package_defined_create_input(copy_map, &request)? {
+            Some(input) => Some(input),
+            None => return Ok(bad_request_response()),
+        }
+    } else {
+        None
+    };
     let input = if request.operation == OP_REVISE_FIELD {
         checked_request_input(copy_map, &request)?
     } else {
         &[]
     };
     let mut query_marker_entry = None;
-    let response = if request.operation == OP_QUERY_OBJECTS {
+    let response = if let Some(input) = package_defined_create_input {
+        retained_services::with_object_service(|service| {
+            match service.create_package_defined_object(caller, request.authority, input) {
+                Ok(created) => ObjectShellResponse {
+                    status: STATUS_OK,
+                    object_kind: request.object_kind,
+                    object_id: created.object_id.raw(),
+                    revision: created.revision,
+                    capability: created.object_capability,
+                    ..empty_response()
+                },
+                Err(error) => object_error_response(caller, request, error),
+            }
+        })
+        .map_err(SyscallError::from)?
+    } else if request.operation == OP_QUERY_OBJECTS {
         if request.output_len < size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64 {
             return Ok(buffer_too_small_response());
         }
@@ -1305,6 +1337,93 @@ fn validate_user_buffer(
     }
     copy_map.validate_range(ptr, len, access)?;
     Ok(())
+}
+
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+fn checked_package_defined_create_input<'a>(
+    copy_map: &UserCopyMap,
+    request: &ObjectShellRequest,
+) -> Result<Option<PackageDefinedCreateInput<'a>>, SyscallError> {
+    if request.input_len != size_of::<PackageDefinedObjectCreateV0>() as u64 {
+        return Ok(None);
+    }
+    validate_user_buffer(
+        copy_map,
+        request.input_ptr,
+        request.input_len,
+        align_of::<PackageDefinedObjectCreateV0>(),
+        UserCopyAccess::Read,
+    )?;
+    let create_ptr = request.input_ptr as *const PackageDefinedObjectCreateV0;
+    // SAFETY:
+    // 1. Invariant: `create_ptr` names one readable
+    //    PackageDefinedObjectCreateV0 in the active caller's user copy map.
+    // 2. Established by: exact input_len check, repr(C) alignment check, and
+    //    UserCopyMap readable-range validation above.
+    // 3. Lifetime: the record is copied by value and not retained.
+    // 4. Pointer ownership: user space owns the buffer; PythCore only reads it.
+    // 5. Alignment: checked against PackageDefinedObjectCreateV0 alignment.
+    // 6. Mapped length: UserCopyMap validated the full ABI record size.
+    // 7. Concurrency: object-shell syscalls are handled one at a time here.
+    // 8. Violation: stale copy-map state could read unrelated user memory.
+    let create = unsafe { create_ptr.read() };
+    if create.abi_major != PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR
+        || create.abi_minor != PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR
+        || create.flags != 0
+        || create.reserved0 != 0
+        || create.reserved1 != 0
+        || create.reserved2 != 0
+    {
+        return Ok(None);
+    }
+    let initial_state = match create.state_format {
+        PACKAGE_DEFINED_STATE_FORMAT_EMPTY => {
+            if create.initial_state_ptr != 0 || create.initial_state_len != 0 {
+                return Ok(None);
+            }
+            &[]
+        }
+        PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 => {
+            if create.initial_state_ptr == 0
+                || create.initial_state_len == 0
+                || create.initial_state_len > PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES
+            {
+                return Ok(None);
+            }
+            copy_map.validate_range(
+                create.initial_state_ptr,
+                create.initial_state_len,
+                UserCopyAccess::Read,
+            )?;
+            // SAFETY:
+            // 1. Invariant: non-empty inline package-defined state names at
+            //    most PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES readable bytes
+            //    in the active caller's user copy map.
+            // 2. Established by: nonzero pointer/length checks, bounded length
+            //    check, and UserCopyMap readable-range validation above.
+            // 3. Lifetime: the slice is consumed synchronously while creating
+            //    the object and is not retained.
+            // 4. Pointer ownership: user space owns the bytes; PythCore copies
+            //    them into an object-owned typed field.
+            // 5. Alignment: byte slices require no stricter alignment than 1.
+            // 6. Mapped length: UserCopyMap validated the exact state range.
+            // 7. Concurrency: object-shell syscalls are handled one at a time.
+            // 8. Violation: stale copy-map state could read unrelated memory.
+            unsafe {
+                slice::from_raw_parts(
+                    create.initial_state_ptr as *const u8,
+                    create.initial_state_len as usize,
+                )
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(PackageDefinedCreateInput {
+        schema_object_id: ObjectId::new(create.schema_object_id),
+        schema_revision: create.schema_revision,
+        state_format: create.state_format,
+        initial_state,
+    }))
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -2236,10 +2355,14 @@ mod tests {
     use pythos_shared::object_shell_abi::{
         FIELD_TEXT, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR,
         OP_CREATE_OBJECT, OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
-        ObjectShellResponse, STATUS_DENIED, STATUS_OK,
+        ObjectShellResponse, STATUS_BAD_REQUEST, STATUS_DENIED, STATUS_NOT_FOUND, STATUS_OK,
     };
     use pythos_shared::package_abi::{
-        OP_PACKAGE_CONTEXT_SCHEMA, PackageRuntimeSchemaBindingV0, PackageStatus,
+        FIELD_PACKAGE_INLINE_STATE_V0, FIELD_PACKAGE_SCHEMA_REF_V0,
+        OBJECT_KIND_PACKAGE_DEFINED_OBJECT, OP_PACKAGE_CONTEXT_SCHEMA,
+        PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+        PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+        PackageDefinedObjectCreateV0, PackageRuntimeSchemaBindingV0, PackageStatus,
         SYSCALL_PACKAGE_CONTEXT,
     };
     use pythos_shared::task_abi::{
@@ -2689,6 +2812,177 @@ mod tests {
     }
 
     #[test]
+    fn package_defined_object_syscall_creates_with_schema_ref_and_inline_state() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let state = Box::new(*b"seed-state");
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+            state.as_ptr() as u64,
+            state.len() as u64,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, Some(&state[..]));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_eq!(response.revision, 1);
+        assert_ne!(response.object_id, 0);
+        assert_ne!(response.capability.raw(), 0);
+
+        retained_services::with_object_service(|service| {
+            let inspection = service
+                .inspect_object(
+                    shell,
+                    response.capability,
+                    ObjectId::new(response.object_id),
+                )
+                .unwrap();
+            let schema_ref = inspection
+                .field_bytes(FIELD_PACKAGE_SCHEMA_REF_V0)
+                .expect("schema ref field");
+            let inline_state = inspection
+                .field_bytes(FIELD_PACKAGE_INLINE_STATE_V0)
+                .expect("inline state field");
+            assert_eq!(
+                inspection.object.object_kind(),
+                ObjectKind::PackageDefinedObject
+            );
+            assert_eq!(inspection.revision, 1);
+            assert_eq!(&schema_ref[..8], &schema.object_id.raw().to_le_bytes());
+            assert_eq!(&schema_ref[8..16], &schema.revision.to_le_bytes());
+            assert_eq!(
+                inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+                Some(16)
+            );
+            assert_eq!(
+                inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+                Some(state.len() as u16)
+            );
+            assert_eq!(&inline_state[..state.len()], &state[..]);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_invalid_schema_revision_without_creation() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision + 1,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_NOT_FOUND);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_nonzero_reserved_fields_without_creation() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        create.reserved0 = 1;
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_BAD_REQUEST);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_oversized_inline_state_without_creation() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let state = Box::new([0x5Au8; 17]);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+            state.as_ptr() as u64,
+            state.len() as u64,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, Some(&state[..]));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_BAD_REQUEST);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_preserves_legacy_note_create_behavior() {
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &*response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_NOTE);
+        assert_eq!(response.revision, 1);
+        retained_services::with_object_service(|service| {
+            let inspection = service
+                .inspect_object(
+                    shell,
+                    response.capability,
+                    ObjectId::new(response.object_id),
+                )
+                .unwrap();
+            assert_eq!(inspection.object.object_kind(), ObjectKind::Note);
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn object_request_rejects_unmapped_request_before_service_mutation() {
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
@@ -3123,6 +3417,81 @@ mod tests {
             reserved1: 0,
             reserved2: 0,
         }
+    }
+
+    fn package_defined_schema_fixture() -> (
+        ObjectService,
+        ActiveUserProcess,
+        PackedCapability,
+        crate::object_service::ObjectCreateResult,
+    ) {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                [7; 32],
+            )
+            .unwrap();
+        (service, shell, workspace, schema)
+    }
+
+    const fn package_defined_create_record(
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+        state_format: u16,
+        initial_state_ptr: u64,
+        initial_state_len: u64,
+    ) -> PackageDefinedObjectCreateV0 {
+        PackageDefinedObjectCreateV0 {
+            abi_major: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR,
+            abi_minor: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+            state_format,
+            flags: 0,
+            schema_object_id: schema_object_id.raw(),
+            schema_revision,
+            initial_state_ptr,
+            initial_state_len,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    fn package_defined_create_request(
+        authority: PackedCapability,
+        create: &PackageDefinedObjectCreateV0,
+    ) -> ObjectShellRequest {
+        let mut request = object_request(OP_CREATE_OBJECT, authority);
+        request.object_kind = OBJECT_KIND_PACKAGE_DEFINED_OBJECT;
+        request.input_ptr = create as *const PackageDefinedObjectCreateV0 as u64;
+        request.input_len = size_of::<PackageDefinedObjectCreateV0>() as u64;
+        request
+    }
+
+    fn bind_package_defined_copy_map(
+        caller: ActiveUserProcess,
+        request: &ObjectShellRequest,
+        response: &ObjectShellResponse,
+        create: &PackageDefinedObjectCreateV0,
+        state: Option<&[u8]>,
+    ) {
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, request, true, false);
+        map_value(&mut copy_map, response, true, true);
+        map_value(&mut copy_map, create, true, false);
+        if let Some(state) = state {
+            map_slice(&mut copy_map, state, true, false);
+        }
+        process_context::bind_current_process(caller.with_copy_map(copy_map));
+    }
+
+    fn retained_object_exists(object_id: ObjectId) -> bool {
+        retained_services::with_object_service(|service| service.object_exists_for_test(object_id))
+            .unwrap()
     }
 
     const fn empty_test_response() -> ObjectShellResponse {

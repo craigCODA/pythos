@@ -24,12 +24,19 @@ use crate::{
     storage_allocator::BlockExtent,
     storage_quotas::{StorageQuotaError, StorageQuotaTable},
     tasks::TaskId,
-    typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
+    typed_object_format::{
+        ObjectFormatError, TypedObjectField, TypedObjectRecord, package_schema_ref_value,
+    },
 };
 #[cfg(not(test))]
 use core::mem::MaybeUninit;
 use pythos_shared::{
     object_shell_abi::{MAX_QUERY_RESULTS, ObjectListEntry, PackedCapability},
+    package_abi::{
+        FIELD_PACKAGE_INLINE_STATE_V0, FIELD_PACKAGE_SCHEMA_REF_V0,
+        PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES, PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+        PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+    },
     user_program_manifest::{INTRUDER_PRINCIPAL_ID, SHELL_PRINCIPAL_ID},
 };
 
@@ -109,6 +116,14 @@ pub struct ObjectCreateResult {
     pub object_id: ObjectId,
     pub revision: u64,
     pub object_capability: PackedCapability,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageDefinedCreateInput<'a> {
+    pub schema_object_id: ObjectId,
+    pub schema_revision: u64,
+    pub state_format: u16,
+    pub initial_state: &'a [u8],
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -513,6 +528,73 @@ impl ObjectService {
         )
     }
 
+    pub fn create_package_defined_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        authority: PackedCapability,
+        input: PackageDefinedCreateInput<'_>,
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.validate_workspace(caller, authority, RightsMask::new(RightsMask::WRITE))?;
+        if !self.schema_definition_revision_exists(input.schema_object_id, input.schema_revision) {
+            return Err(ObjectServiceError::NotFound);
+        }
+        if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_EMPTY {
+            if !input.initial_state.is_empty() {
+                return Err(ObjectServiceError::UnsupportedKind);
+            }
+        } else if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 {
+            if input.initial_state.is_empty()
+                || input.initial_state.len() as u64 > PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES
+            {
+                return Err(ObjectServiceError::ObjectFormat(
+                    ObjectFormatError::FieldValueTooLarge,
+                ));
+            }
+        } else {
+            return Err(ObjectServiceError::UnsupportedKind);
+        }
+
+        let mut staged = *self;
+        staged.ensure_storage_quota(caller.service_id())?;
+        staged.quotas.charge_blocks(caller.service_id(), 1)?;
+        let object_id = ObjectId::new(staged.next_shell_note_id);
+        staged.next_shell_note_id = staged.next_shell_note_id.wrapping_add(1);
+        let mut object = TypedObjectRecord::new(object_id, ObjectKind::PackageDefinedObject, 1);
+        let schema_ref = package_schema_ref_value(input.schema_object_id, input.schema_revision);
+        object.push_field(TypedObjectField::new(
+            FIELD_PACKAGE_SCHEMA_REF_V0,
+            1,
+            &schema_ref,
+        )?)?;
+        if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 {
+            object.push_field(TypedObjectField::new(
+                FIELD_PACKAGE_INLINE_STATE_V0,
+                1,
+                input.initial_state,
+            )?)?;
+        }
+        staged.objects.create_object(object)?;
+        staged.relationships.insert_object(object)?;
+        staged
+            .relationships
+            .add_relationship(ObjectRelationship::new(
+                object_id,
+                RelationshipKind::BelongsTo,
+                ObjectId::new(SHELL_WORKSPACE_OBJECT_ID),
+            ))?;
+        let timestamp = staged.take_timestamp();
+        staged
+            .revisions
+            .create_object(object, timestamp, caller.service_id())?;
+        let object_capability = staged.grant_object_capability(caller, object_id)?;
+        *self = staged;
+        Ok(ObjectCreateResult {
+            object_id,
+            revision: 1,
+            object_capability,
+        })
+    }
+
     pub(crate) fn revise_task_service_object(
         &mut self,
         caller: ActiveUserProcess,
@@ -849,6 +931,21 @@ impl ObjectService {
         self.relationships
             .query_first(object_id, RelationshipKind::BelongsTo)
             .is_some_and(|relationship| relationship.target() == workspace_id)
+    }
+
+    fn schema_definition_revision_exists(&self, object_id: ObjectId, revision: u64) -> bool {
+        if let Some(record) = self.revisions.current_revision(object_id)
+            && record.revision() == revision
+            && record.object().object_kind() == ObjectKind::SchemaDefinition
+        {
+            return true;
+        }
+        if let Some(record) = self.revisions.prior_revision(object_id, revision)
+            && record.object().object_kind() == ObjectKind::SchemaDefinition
+        {
+            return true;
+        }
+        false
     }
 
     fn take_timestamp(&mut self) -> u64 {
@@ -1277,6 +1374,10 @@ mod tests {
             service.create_object(shell, workspace, ObjectKind::Package),
             Err(ObjectServiceError::UnsupportedKind)
         );
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::PackageDefinedObject),
+            Err(ObjectServiceError::UnsupportedKind)
+        );
     }
 
     #[test]
@@ -1312,6 +1413,134 @@ mod tests {
         );
         assert_eq!(package_inspection.revision, 1);
         assert_eq!(schema_inspection.revision, 1);
+    }
+
+    #[test]
+    fn package_defined_object_creation_records_schema_ref_and_inline_state() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        let created = service
+            .create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+                    initial_state: b"abc",
+                },
+            )
+            .unwrap();
+
+        let inspection = service
+            .inspect_object(shell, created.object_capability, created.object_id)
+            .unwrap();
+        let schema_ref = inspection
+            .field_bytes(FIELD_PACKAGE_SCHEMA_REF_V0)
+            .expect("schema ref");
+        let inline_state = inspection
+            .field_bytes(FIELD_PACKAGE_INLINE_STATE_V0)
+            .expect("inline state");
+
+        assert_eq!(created.revision, 1);
+        assert_eq!(
+            inspection.object.object_kind(),
+            ObjectKind::PackageDefinedObject
+        );
+        assert_eq!(inspection.object.field_count(), 2);
+        assert_eq!(&schema_ref[..8], &schema.object_id.raw().to_le_bytes());
+        assert_eq!(&schema_ref[8..16], &schema.revision.to_le_bytes());
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+            Some(16)
+        );
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+            Some(3)
+        );
+        assert_eq!(&inline_state[..3], b"abc");
+    }
+
+    #[test]
+    fn package_defined_object_creation_denies_invalid_schema_revision_without_allocating() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        assert_eq!(
+            service.create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision + 1,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            ),
+            Err(ObjectServiceError::NotFound)
+        );
+        assert!(!service.object_exists_for_test(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_creation_empty_state_omits_inline_state_field() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        let created = service
+            .create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+
+        let inspection = service
+            .inspect_object(shell, created.object_capability, created.object_id)
+            .unwrap();
+
+        assert_eq!(inspection.object.field_count(), 1);
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+            Some(16)
+        );
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+            None
+        );
     }
 
     #[test]
