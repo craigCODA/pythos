@@ -5,10 +5,15 @@ use pythos_shared::{
     init_bundle, init_pak,
     package_abi::{
         MAX_PACKAGE_ARTIFACT_BYTES, MAX_PACKAGE_SOURCE_LABEL_BYTES, MAX_PACKAGE_SOURCES,
-        PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PACKAGE_SOURCE_READ_RIGHT,
-        PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
+        PACKAGE_CONTENT_BASE_SECTOR, PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT,
+        PACKAGE_SOURCE_READ_RIGHT, PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
     },
     package_format::PackageArtifactV0,
+    pyth_runtime_abi::{GraphExitRecord, PythGraphBootstrapBlock},
+    pyth_tig::{
+        opcode::{RESOURCE_SYSTEM_LOG, RIGHTS_READ},
+        verify::{self, VerifyError},
+    },
     sha256::sha256,
 };
 
@@ -28,25 +33,30 @@ use crate::{
         PACKAGE_CANDIDATE_REGISTRY_SLOT_SECTORS, PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES,
         PackagePublicationAnchorSlot, read_candidate_registry_generation_into,
         read_package_candidate_sector, read_publication_anchor_slot,
-        write_candidate_registry_generation_into, write_publication_anchor,
+        write_candidate_registry_generation_into, write_package_candidate_sector,
+        write_publication_anchor,
     },
     package_content_store::{
         ContentId, PackageContentCommit, PackageContentStore, PackageContentTransaction,
     },
     package_registry::{
-        PackageRegistry, PackageRegistryGeneration, PackageRegistryPackageRecord,
-        PackageRegistrySchemaRecord, PackageTransactionCommitV0,
+        PackageRegistry, PackageRegistryContentRecord, PackageRegistryExportRecord,
+        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistrySchemaRecord,
+        PackageTransactionCommitV0,
     },
     package_service::{
-        PackageInstallCandidate, PackageInstallRequest, PackageInstallResult, PackageService,
+        PackageInstallCandidate, PackageInstallRequest, PackageInstallResult, PackageLaunchGrant,
+        PackageLaunchRequest, PackageLaunchRequirement, PackageService,
     },
     package_source::PackageSourceService,
-    process_context::ActiveUserProcess,
-    serial,
+    process_context::{ActiveUserProcess, PythRuntimeCopyMapSpec},
+    pyth_runtime_launch, serial,
     service_identity::ServiceId,
     shell_objects::{ObjectId, ObjectKind},
+    user_copy::UserCopyAccess,
+    user_stacks,
 };
-use core::mem::MaybeUninit;
+use core::mem::{MaybeUninit, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(test))]
 use core::{arch::global_asm, cell::UnsafeCell};
@@ -61,9 +71,22 @@ const RESTORE_STACK_SMOKE_LABEL: &[u8] = b"phase13-restore-stack-smoke.pkg";
 const KILL_BEFORE_ANCHOR_LABEL: &[u8] = b"phase13-kill-before-anchor-a.pkg";
 const KILL_AFTER_ANCHOR_BEFORE_MIRROR_LABEL: &[u8] =
     b"phase13-kill-after-anchor-before-mirror-a.pkg";
+const PACKAGE_LAUNCH_SUCCESS_LABEL: &[u8] = b"phase13-launch-success.pkg";
+const PACKAGE_LAUNCH_GRANT_DENIED_LABEL: &[u8] = b"phase13-launch-grant-denied.pkg";
+const PACKAGE_LAUNCH_CORRUPT_CONTENT_LABEL: &[u8] = b"phase13-launch-corrupt-content.pkg";
+const PACKAGE_LAUNCH_PYTHTIG_DENIED_LABEL: &[u8] = b"phase13-launch-pythtig-denied.pkg";
+const PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_LABEL: &[u8] = b"phase13-launch-non-launch.pkg";
 const PACKAGE_INSTALL_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5354);
 const PACKAGE_INSTALL_PRINCIPAL_ID: u64 = 0x5059_504B_494E_5354;
 const PACKAGE_INSTALL_PROGRAM_DIGEST: u64 = 0x5059_0013;
+const PACKAGE_LAUNCH_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_4C41_554E);
+const PACKAGE_LAUNCH_PRINCIPAL_ID: u64 = 0x5059_504B_4C41_554E;
+const PACKAGE_LAUNCH_PROGRAM_DIGEST: u64 = 0x5059_0013_0006;
+const PACKAGE_LAUNCH_LOCATOR: &str = "seed/launch";
+const PACKAGE_LAUNCH_CONTENT_INDEX: u16 = 1;
+const PACKAGE_LAUNCH_REQUIREMENT_ID: u16 = 7;
+const PACKAGE_LAUNCH_IMPORT_SLOT: u16 = 0;
+const PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID: u64 = 0x5059_5447_4C4F_4700;
 const RESTORE_SMOKE_TRANSACTION_ID: u64 = 1;
 const RESTORE_SMOKE_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const RESTORE_SMOKE_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
@@ -78,6 +101,16 @@ const PACKAGE_STACK_MODE_INSTALL_SOURCE_DENIED: u8 = 2;
 const PACKAGE_STACK_MODE_PUBLICATION_BEFORE_ANCHOR: u8 = 3;
 #[cfg(not(test))]
 const PACKAGE_STACK_MODE_PUBLICATION_AFTER_ANCHOR: u8 = 4;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_LAUNCH_SUCCESS: u8 = 5;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_LAUNCH_GRANT_DENIED: u8 = 6;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_LAUNCH_CORRUPT_CONTENT: u8 = 7;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_LAUNCH_PYTHTIG_DENIED: u8 = 8;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT: u8 = 9;
 
 static mut PACKAGE_ACCEPTANCE_OBJECT_SERVICE: MaybeUninit<ObjectService> = MaybeUninit::uninit();
 static mut PACKAGE_ACCEPTANCE_PACKAGE_SERVICE: PackageService<'static> =
@@ -186,6 +219,15 @@ pub enum PackageAcceptanceError {
     ObjectService,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PackageLaunchAcceptanceScenario {
+    Success,
+    GrantDenied,
+    CorruptContent,
+    PythTigDenied,
+    NonLaunchExport,
+}
+
 struct PackageRestoreSmokeSeed {
     content_store: PackageContentStore<'static>,
     content: PackageContentTransaction<'static>,
@@ -252,6 +294,41 @@ pub fn run_package_format_acceptance(
     if source.label == KILL_AFTER_ANCHOR_BEFORE_MIRROR_LABEL {
         return run_publication_boundary_acceptance(block_device, &bundle, true);
     }
+    if source.label == PACKAGE_LAUNCH_SUCCESS_LABEL {
+        return run_package_launch_acceptance(
+            block_device,
+            &bundle,
+            PackageLaunchAcceptanceScenario::Success,
+        );
+    }
+    if source.label == PACKAGE_LAUNCH_GRANT_DENIED_LABEL {
+        return run_package_launch_acceptance(
+            block_device,
+            &bundle,
+            PackageLaunchAcceptanceScenario::GrantDenied,
+        );
+    }
+    if source.label == PACKAGE_LAUNCH_CORRUPT_CONTENT_LABEL {
+        return run_package_launch_acceptance(
+            block_device,
+            &bundle,
+            PackageLaunchAcceptanceScenario::CorruptContent,
+        );
+    }
+    if source.label == PACKAGE_LAUNCH_PYTHTIG_DENIED_LABEL {
+        return run_package_launch_acceptance(
+            block_device,
+            &bundle,
+            PackageLaunchAcceptanceScenario::PythTigDenied,
+        );
+    }
+    if source.label == PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_LABEL {
+        return run_package_launch_acceptance(
+            block_device,
+            &bundle,
+            PackageLaunchAcceptanceScenario::NonLaunchExport,
+        );
+    }
 
     Err(PackageAcceptanceError::UnexpectedScenario)
 }
@@ -314,6 +391,35 @@ fn run_publication_boundary_acceptance(
     #[cfg(test)]
     {
         run_publication_boundary_acceptance_inner(block_device, bundle, publish_candidate_anchor)
+    }
+}
+
+fn run_package_launch_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    scenario: PackageLaunchAcceptanceScenario,
+) -> Result<(), PackageAcceptanceError> {
+    #[cfg(not(test))]
+    {
+        let mode = match scenario {
+            PackageLaunchAcceptanceScenario::Success => PACKAGE_STACK_MODE_LAUNCH_SUCCESS,
+            PackageLaunchAcceptanceScenario::GrantDenied => PACKAGE_STACK_MODE_LAUNCH_GRANT_DENIED,
+            PackageLaunchAcceptanceScenario::CorruptContent => {
+                PACKAGE_STACK_MODE_LAUNCH_CORRUPT_CONTENT
+            }
+            PackageLaunchAcceptanceScenario::PythTigDenied => {
+                PACKAGE_STACK_MODE_LAUNCH_PYTHTIG_DENIED
+            }
+            PackageLaunchAcceptanceScenario::NonLaunchExport => {
+                PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT
+            }
+        };
+        return run_acceptance_on_static_stack(block_device, bundle, mode);
+    }
+
+    #[cfg(test)]
+    {
+        run_package_launch_acceptance_inner(block_device, bundle, scenario)
     }
 }
 
@@ -429,6 +535,31 @@ extern "C" fn package_acceptance_stack_entry(context: *mut core::ffi::c_void) ->
         PACKAGE_STACK_MODE_PUBLICATION_AFTER_ANCHOR => {
             run_publication_boundary_acceptance_inner(context.block_device, bundle, true)
         }
+        PACKAGE_STACK_MODE_LAUNCH_SUCCESS => run_package_launch_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageLaunchAcceptanceScenario::Success,
+        ),
+        PACKAGE_STACK_MODE_LAUNCH_GRANT_DENIED => run_package_launch_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageLaunchAcceptanceScenario::GrantDenied,
+        ),
+        PACKAGE_STACK_MODE_LAUNCH_CORRUPT_CONTENT => run_package_launch_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageLaunchAcceptanceScenario::CorruptContent,
+        ),
+        PACKAGE_STACK_MODE_LAUNCH_PYTHTIG_DENIED => run_package_launch_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageLaunchAcceptanceScenario::PythTigDenied,
+        ),
+        PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT => run_package_launch_acceptance_inner(
+            context.block_device,
+            bundle,
+            PackageLaunchAcceptanceScenario::NonLaunchExport,
+        ),
         _ => Err(PackageAcceptanceError::UnexpectedScenario),
     };
     match result {
@@ -737,6 +868,420 @@ fn validate_published_boundary_after_reboot(
     }
     serial::write_line("PYTHOS:CORE:PACKAGE_MIRRORS_REBUILT");
     Ok(())
+}
+
+fn run_package_launch_acceptance_inner(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    scenario: PackageLaunchAcceptanceScenario,
+) -> Result<(), PackageAcceptanceError> {
+    let installed = install_and_restore_launch_fixture(block_device, bundle)?;
+    let restored_service = restore_service_for_acceptance();
+    let namespace_root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+    let export = restored_service
+        .resolve_export(namespace_root, PACKAGE_LAUNCH_LOCATOR)
+        .map_err(map_package_status)?;
+    validate_launch_export(&installed, export)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:EXPORT_RESOLVED");
+
+    match scenario {
+        PackageLaunchAcceptanceScenario::GrantDenied => {
+            return run_package_launch_grant_denied(restored_service, namespace_root);
+        }
+        PackageLaunchAcceptanceScenario::NonLaunchExport => {
+            return run_package_launch_non_launch_denied(restored_service, namespace_root);
+        }
+        PackageLaunchAcceptanceScenario::CorruptContent => {
+            corrupt_launch_content(block_device, restored_service.registry(), export)?;
+            let denied = read_launch_content(
+                restored_service,
+                export,
+                content_read_buffer_for_acceptance(),
+            );
+            if denied == Err(PackageStatus::ContentCorrupt) {
+                serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_CORRUPT_DENIED");
+                assert_no_launch_runtime_context(restored_service)?;
+                serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_CONTENT_CORRUPT_DENIED_READY");
+                return Ok(());
+            }
+            return Err(PackageAcceptanceError::PackageOperation);
+        }
+        PackageLaunchAcceptanceScenario::Success
+        | PackageLaunchAcceptanceScenario::PythTigDenied => {}
+    }
+
+    let content = read_launch_content(
+        restored_service,
+        export,
+        content_read_buffer_for_acceptance(),
+    )
+    .map_err(map_package_status)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_VERIFIED");
+
+    let verified = match verify::verify_bytes(content) {
+        Ok(verified) => verified,
+        Err(VerifyError::EffectFork { producer: 0 })
+            if scenario == PackageLaunchAcceptanceScenario::PythTigDenied =>
+        {
+            serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_DENIED:EffectFork");
+            assert_no_launch_runtime_context(restored_service)?;
+            serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_PYTHTIG_DENIED_READY");
+            return Ok(());
+        }
+        Err(_) => return Err(PackageAcceptanceError::PackageOperation),
+    };
+    if scenario == PackageLaunchAcceptanceScenario::PythTigDenied {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED");
+
+    restored_service
+        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, launch_requirement())
+        .map_err(map_package_status)?;
+    let launch_process = package_runtime_process_for_acceptance(content.len())?;
+    let capabilities = capabilities_for_acceptance();
+    let capability = capabilities
+        .grant(
+            launch_process.service_id(),
+            ResourceId::new(PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID),
+            RightsMask::new(RightsMask::READ),
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let supplied_grants = [PackageLaunchGrant {
+        requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
+        capability,
+    }];
+    let launch = restored_service
+        .launch(
+            PackageLaunchRequest {
+                caller: launch_process,
+                namespace_root,
+                locator: PACKAGE_LAUNCH_LOCATOR,
+                supplied_grants: &supplied_grants,
+            },
+            capabilities,
+        )
+        .map_err(map_package_status)?;
+    if launch.export != export
+        || launch.grant_count != 1
+        || launch.grant(0) != Some(supplied_grants[0])
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let graph_import_grant = launch
+        .graph_import_grant(0)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if graph_import_grant.import_slot != PACKAGE_LAUNCH_IMPORT_SLOT {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let binding = restored_service
+        .runtime_schema_binding(launch_process, 0)
+        .map_err(map_package_status)?;
+    if binding.package_object_id != export.package_object_id
+        || binding.package_revision != export.package_revision
+        || binding.schema_object_id != export.schema_object_id
+        || binding.schema_revision != export.schema_revision
+        || binding.schema_descriptor_sha256 != export.schema_descriptor_digest
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:GRANTS_VALIDATED");
+
+    let graph_import_grants = [graph_import_grant];
+    let bootstrap = pyth_runtime_launch::prepare_package_launch_runtime_bootstrap(
+        &verified,
+        content.len() as u64,
+        &graph_import_grants,
+    )
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    if bootstrap.import_count != 1
+        || bootstrap.imports[0].import_slot != PACKAGE_LAUNCH_IMPORT_SLOT
+        || bootstrap.imports[0].resource_kind != RESOURCE_SYSTEM_LOG
+        || bootstrap.imports[0].rights != RIGHTS_READ
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED");
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_READY");
+    Ok(())
+}
+
+fn install_and_restore_launch_fixture(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+) -> Result<PackageInstallResult, PackageAcceptanceError> {
+    let source_service = package_source_service_for_acceptance(bundle)?;
+    let source_handle = source_service
+        .handle_at(0)
+        .ok_or(PackageAcceptanceError::MissingSource)?;
+    let caller = ActiveUserProcess::new(
+        PACKAGE_INSTALL_SERVICE_ID,
+        PACKAGE_INSTALL_PRINCIPAL_ID,
+        PACKAGE_INSTALL_PROGRAM_DIGEST,
+    );
+    let capabilities = capabilities_for_acceptance();
+    let source_read_capability = capabilities
+        .grant(
+            caller.service_id(),
+            ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+            RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let install_capability = capabilities
+        .grant(
+            caller.service_id(),
+            ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+            RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let object_service = object_service_for_acceptance(block_device)?;
+    let package_service = package_service_for_acceptance();
+    let artifact_buffer = acceptance_artifact_buffer();
+    let installed = package_service
+        .install_with_candidate_checkpoint(
+            block_device,
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+        )
+        .map_err(map_package_status)?;
+
+    let restored_service = restore_service_for_acceptance();
+    {
+        let report = restored_service
+            .restore_from_storage(block_device)
+            .map_err(map_package_status)?;
+        if !report.published_world_selected
+            || report.previous_published_world_selected
+            || report.selected_object_checkpoint().is_none()
+        {
+            return Err(PackageAcceptanceError::PackageOperation);
+        }
+    }
+    if restored_service.registry().package_count() != 1
+        || restored_service.registry().schema_count() != 1
+        || restored_service.registry().content_count() < 2
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:INSTALLED_RESTORED");
+    Ok(installed)
+}
+
+fn validate_launch_export(
+    installed: &PackageInstallResult,
+    export: PackageRegistryExportRecord,
+) -> Result<(), PackageAcceptanceError> {
+    if export.package_object_id != installed.package_object_id
+        || export.package_revision != installed.package_revision
+        || export.release_digest != installed.release_digest
+        || export.schema_object_id != installed.schema_object_id
+        || export.schema_revision != installed.schema_revision
+        || export.content_index != PACKAGE_LAUNCH_CONTENT_INDEX
+        || export.entrypoint != 0
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
+fn run_package_launch_grant_denied(
+    restored_service: &mut PackageService<'_>,
+    namespace_root: ObjectId,
+) -> Result<(), PackageAcceptanceError> {
+    restored_service
+        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, launch_requirement())
+        .map_err(map_package_status)?;
+    let missing_grants: [PackageLaunchGrant; 0] = [];
+    let denied = restored_service.launch(
+        PackageLaunchRequest {
+            caller: launch_identity_for_acceptance(),
+            namespace_root,
+            locator: PACKAGE_LAUNCH_LOCATOR,
+            supplied_grants: &missing_grants,
+        },
+        capabilities_for_acceptance(),
+    );
+    if denied == Err(PackageStatus::RequiredGrantMissing) {
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:CAPABILITY_DENIED");
+        assert_no_launch_runtime_context(restored_service)?;
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_CAPABILITY_DENIED_READY");
+        Ok(())
+    } else {
+        Err(PackageAcceptanceError::PackageOperation)
+    }
+}
+
+fn run_package_launch_non_launch_denied(
+    restored_service: &mut PackageService<'_>,
+    namespace_root: ObjectId,
+) -> Result<(), PackageAcceptanceError> {
+    let missing_grants: [PackageLaunchGrant; 0] = [];
+    let denied = restored_service.launch(
+        PackageLaunchRequest {
+            caller: launch_identity_for_acceptance(),
+            namespace_root,
+            locator: PACKAGE_LAUNCH_LOCATOR,
+            supplied_grants: &missing_grants,
+        },
+        capabilities_for_acceptance(),
+    );
+    if denied == Err(PackageStatus::BadRequest) {
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:NON_LAUNCH_EXPORT_DENIED");
+        assert_no_launch_runtime_context(restored_service)?;
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_DENIED_READY");
+        Ok(())
+    } else {
+        Err(PackageAcceptanceError::PackageOperation)
+    }
+}
+
+fn read_launch_content<'out>(
+    restored_service: &PackageService<'_>,
+    export: PackageRegistryExportRecord,
+    out: &'out mut [u8],
+) -> Result<&'out [u8], PackageStatus> {
+    let content = content_record_for_export(restored_service.registry(), export)
+        .ok_or(PackageStatus::NotFound)?;
+    let read_len = restored_service.content_store().read_published(
+        ContentId::new(
+            content.package_object_id,
+            content.release_digest,
+            content.content_index,
+        ),
+        out,
+    )?;
+    let expected_len =
+        usize::try_from(content.byte_len).map_err(|_| PackageStatus::LengthOverflow)?;
+    if read_len != expected_len || sha256(&out[..read_len]) != content.digest {
+        return Err(PackageStatus::ContentCorrupt);
+    }
+    Ok(&out[..read_len])
+}
+
+fn corrupt_launch_content(
+    block_device: BlockDeviceInfo,
+    registry: &PackageRegistry,
+    export: PackageRegistryExportRecord,
+) -> Result<(), PackageAcceptanceError> {
+    let content = content_record_for_export(registry, export)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if content.extent_count == 0 {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let first_extent = content.extents[0];
+    let sector_number = PACKAGE_CONTENT_BASE_SECTOR
+        .checked_add(u64::from(first_extent.start_block))
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let mut bytes = [0xA5u8; SECTOR_SIZE];
+    bytes[0] = 0x5A;
+    write_package_candidate_sector(block_device, sector_number, &bytes)
+        .map_err(|_| PackageAcceptanceError::PackageOperation)
+}
+
+fn content_record_for_export(
+    registry: &PackageRegistry,
+    export: PackageRegistryExportRecord,
+) -> Option<PackageRegistryContentRecord> {
+    let mut index = 0usize;
+    while let Some(record) = registry.content_record(index) {
+        if record.package_object_id == export.package_object_id
+            && record.release_digest == export.release_digest
+            && record.content_index == export.content_index
+        {
+            return Some(record);
+        }
+        index += 1;
+    }
+    None
+}
+
+fn launch_requirement() -> PackageLaunchRequirement {
+    PackageLaunchRequirement {
+        requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
+        graph_import_slot: PACKAGE_LAUNCH_IMPORT_SLOT,
+        resource: ResourceId::new(PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID),
+        rights: RightsMask::new(RightsMask::READ),
+    }
+}
+
+fn launch_identity_for_acceptance() -> ActiveUserProcess {
+    ActiveUserProcess::new(
+        PACKAGE_LAUNCH_SERVICE_ID,
+        PACKAGE_LAUNCH_PRINCIPAL_ID,
+        PACKAGE_LAUNCH_PROGRAM_DIGEST,
+    )
+}
+
+fn package_runtime_process_for_acceptance(
+    package_len: usize,
+) -> Result<ActiveUserProcess, PackageAcceptanceError> {
+    let package_len =
+        u64::try_from(package_len).map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let process = ActiveUserProcess::from_pyth_runtime_launch(
+        PACKAGE_LAUNCH_SERVICE_ID,
+        PACKAGE_LAUNCH_PRINCIPAL_ID,
+        PACKAGE_LAUNCH_PROGRAM_DIGEST,
+        PythRuntimeCopyMapSpec {
+            stack: user_stacks::regions()[1],
+            bootstrap_user_ptr: pyth_runtime_launch::PYTH_GRAPH_BOOTSTRAP_USER_PTR,
+            bootstrap_len: size_of::<PythGraphBootstrapBlock>() as u64,
+            package_user_ptr: pyth_runtime_launch::PYTH_GRAPH_PACKAGE_USER_PTR,
+            package_len,
+            result_user_ptr: pyth_runtime_launch::PYTH_GRAPH_RESULT_USER_PTR,
+            result_len: size_of::<GraphExitRecord>() as u64,
+        },
+    )
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let copy_map = process.copy_map();
+    copy_map
+        .validate_range(
+            pyth_runtime_launch::PYTH_GRAPH_BOOTSTRAP_USER_PTR,
+            size_of::<PythGraphBootstrapBlock>() as u64,
+            UserCopyAccess::Read,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    copy_map
+        .validate_range(
+            pyth_runtime_launch::PYTH_GRAPH_PACKAGE_USER_PTR,
+            package_len,
+            UserCopyAccess::Read,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    copy_map
+        .validate_range(
+            pyth_runtime_launch::PYTH_GRAPH_PACKAGE_USER_PTR,
+            1,
+            UserCopyAccess::Write,
+        )
+        .map_or(Ok(()), |_| Err(PackageAcceptanceError::PackageOperation))?;
+    copy_map
+        .validate_range(
+            pyth_runtime_launch::PYTH_GRAPH_RESULT_USER_PTR,
+            size_of::<GraphExitRecord>() as u64,
+            UserCopyAccess::Write,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    Ok(process)
+}
+
+fn assert_no_launch_runtime_context(
+    restored_service: &PackageService<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    if restored_service.runtime_schema_binding(launch_identity_for_acceptance(), 0)
+        == Err(PackageStatus::Denied)
+    {
+        Ok(())
+    } else {
+        Err(PackageAcceptanceError::PackageOperation)
+    }
 }
 
 fn run_format_acceptance() -> Result<(), PackageAcceptanceError> {
