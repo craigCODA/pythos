@@ -336,6 +336,24 @@ impl<'a> PackageContentStore<'a> {
         })
     }
 
+    pub fn from_validated_candidate_registry(
+        registry: &PackageRegistry,
+        validated_content: PackageContentCommit,
+    ) -> Result<Self, PackageStatus> {
+        let bitmap = Self::live_bitmap_from_registry(registry)?;
+        if bitmap != validated_content.committed_bitmap()
+            || registry.content_count() != validated_content.record_count()
+        {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+
+        Ok(Self {
+            allocator: PackageExtentAllocator::restore(bitmap)?,
+            committed: [None; PACKAGE_CONTENT_MAX_STAGED_RECORDS],
+            committed_count: validated_content.record_count,
+        })
+    }
+
     pub fn live_bitmap_from_registry(
         registry: &PackageRegistry,
     ) -> Result<[u64; PACKAGE_CONTENT_BITMAP_WORDS], PackageStatus> {

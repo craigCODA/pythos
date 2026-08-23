@@ -8,7 +8,7 @@ use crate::{
     },
     object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
     object_service_checkpoint::{
-        ObjectCheckpointIdentity, object_candidate_checkpoint_identity,
+        ObjectCheckpointIdentity, ObjectServiceSnapshot, object_candidate_checkpoint_identity,
         read_object_service_candidate_checkpoint, write_object_service_candidate_checkpoint,
     },
     package_candidate_store::{
@@ -35,6 +35,26 @@ use pythos_shared::{
 const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const FIRST_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
 const INSTALL_OPERATION: u16 = 1;
+
+#[cfg(test)]
+static TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE: std::sync::Mutex<Option<ObjectServiceSnapshot>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(test)]
+static TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn set_candidate_snapshot_write_override_for_test(snapshot: ObjectServiceSnapshot) {
+    *TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = Some(snapshot);
+}
+
+#[cfg(test)]
+fn fail_candidate_content_materialization_for_test() {
+    TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PackageInstallRequest {
@@ -226,37 +246,175 @@ impl<'a> PackageService<'a> {
         artifact_buffer: &'a mut [u8],
         result: &mut PackageInstallResult,
     ) -> Result<(), PackageStatus> {
-        self.install_into_with_candidate_checkpoint(
-            None,
-            request,
-            source_service,
-            capabilities,
-            object_service,
-            artifact_buffer,
-            result,
-        )
-    }
-
-    fn install_into_with_candidate_checkpoint(
-        &mut self,
-        candidate_device: Option<BlockDeviceInfo>,
-        request: PackageInstallRequest,
-        source_service: &PackageSourceService<'_>,
-        capabilities: &CapabilityTable,
-        object_service: &mut ObjectService,
-        artifact_buffer: &'a mut [u8],
-        result: &mut PackageInstallResult,
-    ) -> Result<(), PackageStatus> {
-        let candidate = self.prepare_install_candidate_inner(
-            candidate_device,
+        *result = self.install_compatibility(
             request,
             source_service,
             capabilities,
             object_service,
             artifact_buffer,
         )?;
-        *result = self.publish_install_candidate(candidate, object_service)?;
         Ok(())
+    }
+
+    fn install_compatibility(
+        &mut self,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &mut ObjectService,
+        artifact_buffer: &'a mut [u8],
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        validate_install_authority(request.caller, capabilities, request.install_capability)?;
+        let artifact_len = source_service.read(
+            request.caller.service_id(),
+            capabilities,
+            request.source_handle,
+            request.source_read_capability,
+            artifact_buffer,
+        )?;
+        let artifact =
+            PackageArtifactV0::parse(&artifact_buffer[..artifact_len]).map_err(map_format_error)?;
+        let descriptor_entry = artifact
+            .content_entry(0)
+            .ok_or(PackageStatus::InvalidSchema)?;
+        let descriptor_bytes = artifact
+            .content_bytes(descriptor_entry)
+            .map_err(map_format_error)?;
+        let release_digest = artifact.artifact_sha256();
+        let package_object_id = ObjectId::new(self.next_package_object_id);
+        let schema_object_id = ObjectId::new(self.next_schema_object_id);
+
+        self.content_store.rollback(&mut self.staged_content);
+        self.staged_content
+            .reset(package_object_id.raw(), release_digest);
+        let installed = (|| -> Result<PackageInstallResult, PackageStatus> {
+            let mut descriptor_content_id = None;
+            let mut entry_index = 0u16;
+            while let Some(entry) = artifact.content_entry(entry_index) {
+                let content_id = self.content_store.stage_content(
+                    &mut self.staged_content,
+                    entry.role,
+                    entry.format,
+                    artifact.content_bytes(entry).map_err(map_format_error)?,
+                    entry.sha256,
+                )?;
+                if entry_index == descriptor_entry.content_index {
+                    descriptor_content_id = Some(content_id);
+                }
+                entry_index = entry_index.wrapping_add(1);
+            }
+            let schema_descriptor_content_id =
+                descriptor_content_id.ok_or(PackageStatus::InvalidSchema)?;
+            if descriptor_bytes.is_empty() {
+                return Err(PackageStatus::InvalidSchema);
+            }
+
+            let mut candidate_object_service = *object_service;
+            let package = create_package_or_rollback(
+                &mut candidate_object_service,
+                request.caller,
+                package_object_id,
+                release_digest,
+                &mut self.content_store,
+                &mut self.staged_content,
+            )?;
+            let schema = create_schema_or_rollback(
+                &mut candidate_object_service,
+                request.caller,
+                schema_object_id,
+                package_object_id,
+                descriptor_entry.sha256,
+                &mut self.content_store,
+                &mut self.staged_content,
+            )?;
+            self.staged_registry.copy_from_committed(&self.registry);
+            self.staged_registry
+                .begin_candidate_generation(self.next_transaction_id)?;
+            self.staged_registry
+                .add_package_record(PackageRegistryPackageRecord::new(
+                    package.object_id.raw(),
+                    package.revision,
+                    release_digest,
+                    PackageStatus::Ok as u16,
+                ))?;
+            self.staged_registry
+                .add_schema_record(PackageRegistrySchemaRecord::new(
+                    schema.object_id.raw(),
+                    schema.revision,
+                    package.object_id.raw(),
+                    descriptor_entry.content_index,
+                    descriptor_entry.sha256,
+                ))?;
+            self.content_store
+                .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
+
+            self.content_store
+                .validate_commit_capacity(&self.staged_content)?;
+            let mut registry_snapshot = [0; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+            let registry_generation = self
+                .staged_registry
+                .encode_snapshot(&mut registry_snapshot)?;
+            let candidate_snapshot = candidate_object_service
+                .encode_candidate_snapshot()
+                .map_err(map_object_error)?;
+            let object_checkpoint_identity =
+                object_candidate_checkpoint_identity(&candidate_snapshot);
+            let anchor = PackageTransactionCommitV0::new(
+                self.next_transaction_id,
+                INSTALL_OPERATION,
+                registry_generation,
+                object_checkpoint_identity,
+                package.object_id.raw(),
+                package.revision,
+            );
+            let mut anchor_bytes = [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
+            anchor.encode(&mut anchor_bytes)?;
+
+            let content_commit = self.content_store.commit(&mut self.staged_content)?;
+            self.staged_registry
+                .record_committed_generation(registry_generation);
+            let previous_registry = self.registry.clone();
+            let previous_registry_snapshot = self.registry_snapshot;
+            let previous_object_checkpoint_identity = self.object_checkpoint_identity;
+            let previous_anchor_bytes = self.anchor_bytes;
+            let previous_anchored_generation_available = self.anchored_generation_available;
+            self.registry.copy_from_committed(&self.staged_registry);
+            self.registry_snapshot = registry_snapshot;
+            self.previous_registry = previous_registry;
+            self.previous_registry_snapshot = previous_registry_snapshot;
+            self.previous_object_checkpoint_identity = previous_object_checkpoint_identity;
+            self.previous_anchor_bytes = previous_anchor_bytes;
+            self.previous_anchored_generation_available = previous_anchored_generation_available;
+            self.object_checkpoint_identity = object_checkpoint_identity;
+            self.anchor_bytes = anchor_bytes;
+            self.anchored_generation_available = true;
+            self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
+            self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
+            self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
+            self.locator_mirror_visible = false;
+            candidate_object_service
+                .publish_candidate_generation(object_checkpoint_identity.generation);
+            *object_service = candidate_object_service;
+
+            Ok(PackageInstallResult {
+                transaction_id: anchor.transaction_id,
+                package_object_id: package.object_id.raw(),
+                package_revision: package.revision,
+                schema_object_id: schema.object_id.raw(),
+                schema_revision: schema.revision,
+                release_digest,
+                schema_descriptor_content_id,
+                content_commit,
+                registry_generation,
+                object_checkpoint_identity,
+                anchor,
+                anchor_bytes,
+            })
+        })();
+        if installed.is_err() {
+            self.content_store.rollback(&mut self.staged_content);
+        }
+        installed
     }
 
     pub fn prepare_install_candidate(
@@ -269,7 +427,7 @@ impl<'a> PackageService<'a> {
         artifact_buffer: &'a mut [u8],
     ) -> Result<PackageInstallCandidate, PackageStatus> {
         self.prepare_install_candidate_inner(
-            Some(device),
+            device,
             request,
             source_service,
             capabilities,
@@ -280,7 +438,7 @@ impl<'a> PackageService<'a> {
 
     fn prepare_install_candidate_inner(
         &mut self,
-        candidate_device: Option<BlockDeviceInfo>,
+        device: BlockDeviceInfo,
         request: PackageInstallRequest,
         source_service: &PackageSourceService<'_>,
         capabilities: &CapabilityTable,
@@ -335,8 +493,6 @@ impl<'a> PackageService<'a> {
             if descriptor_bytes.is_empty() {
                 return Err(PackageStatus::InvalidSchema);
             }
-            let device = candidate_device.ok_or(PackageStatus::RegistryWriteDenied)?;
-
             let mut candidate_object_service = *object_service;
             let package = create_package_or_rollback(
                 &mut candidate_object_service,
@@ -442,16 +598,6 @@ impl<'a> PackageService<'a> {
             return Err(PackageStatus::BadRequest);
         }
 
-        let mut validated_registry_snapshot = [0u8; PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
-        let validated_registry_generation = self
-            .staged_registry
-            .encode_snapshot(&mut validated_registry_snapshot)?;
-        if validated_registry_generation != candidate.registry_generation
-            || validated_registry_snapshot != candidate.staged_registry_snapshot
-        {
-            return Err(PackageStatus::RegistryRecoveryDenied);
-        }
-
         let device = self
             .prepared_candidate_device
             .ok_or(PackageStatus::RegistryWriteDenied)?;
@@ -466,24 +612,30 @@ impl<'a> PackageService<'a> {
         {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
-        PackageContentStore::read_validate_candidate_content(device, &persisted_registry)
-            .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
-
-        let mut candidate_object_service = self
-            .prepared_object_service
-            .ok_or(PackageStatus::BadRequest)?;
-        let candidate_snapshot = candidate_object_service
-            .encode_candidate_snapshot()
-            .map_err(map_object_error)?;
+        let persisted_content =
+            PackageContentStore::read_validate_candidate_content(device, &persisted_registry)
+                .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
         let persisted_candidate_snapshot =
             read_object_service_candidate_checkpoint(device, candidate.object_checkpoint_identity)
                 .map_err(map_storage_error)?;
-        if object_candidate_checkpoint_identity(&candidate_snapshot)
+        if object_candidate_checkpoint_identity(&persisted_candidate_snapshot)
             != candidate.object_checkpoint_identity
-            || persisted_candidate_snapshot != candidate_snapshot
         {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
+        let persisted_object_service = ObjectService::from_snapshot(&persisted_candidate_snapshot)
+            .map_err(map_object_error)?;
+        #[cfg(test)]
+        if TEST_CANDIDATE_CONTENT_MATERIALIZATION_FAILURE
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(PackageStatus::QuotaDenied);
+        }
+        let persisted_content_store = PackageContentStore::from_validated_candidate_registry(
+            &persisted_registry,
+            persisted_content,
+        )
+        .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
 
         let anchor = PackageTransactionCommitV0::new(
             candidate.transaction_id,
@@ -496,10 +648,6 @@ impl<'a> PackageService<'a> {
         let mut anchor_bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         anchor.encode(&mut anchor_bytes)?;
         write_publication_anchor(device, anchor)?;
-        let in_memory_content_commit = self.content_store.commit(&mut self.staged_content)?;
-        if in_memory_content_commit != candidate.content_commit {
-            return Err(PackageStatus::RegistryRecoveryDenied);
-        }
 
         let previous_registry = self.registry.clone();
         let previous_registry_snapshot = self.registry_snapshot;
@@ -510,8 +658,10 @@ impl<'a> PackageService<'a> {
         let mut published_registry = persisted_registry;
         published_registry.record_committed_generation(candidate.registry_generation);
         self.registry = published_registry;
+        self.content_store = persisted_content_store;
+        self.staged_content = PackageContentTransaction::new(0, [0; 32]);
         self.staged_registry.copy_from_committed(&self.registry);
-        self.registry_snapshot = candidate.staged_registry_snapshot;
+        self.registry_snapshot = persisted_registry_snapshot;
         self.previous_registry = previous_registry;
         self.previous_registry_snapshot = previous_registry_snapshot;
         self.previous_object_checkpoint_identity = previous_object_checkpoint_identity;
@@ -528,9 +678,7 @@ impl<'a> PackageService<'a> {
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
         self.locator_mirror_visible = false;
-        candidate_object_service
-            .publish_candidate_generation(candidate.object_checkpoint_identity.generation);
-        *object_service = candidate_object_service;
+        *object_service = persisted_object_service;
 
         Ok(PackageInstallResult {
             transaction_id: candidate.transaction_id,
@@ -779,12 +927,21 @@ impl<'a> PackageService<'a> {
         device: BlockDeviceInfo,
         snapshot: &crate::object_service_checkpoint::ObjectServiceSnapshot,
     ) -> Result<ObjectCheckpointIdentity, PackageStatus> {
-        let candidate = write_object_service_candidate_checkpoint(device, snapshot)
+        #[cfg(test)]
+        let snapshot_to_write = TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .take()
+            .unwrap_or(*snapshot);
+        #[cfg(not(test))]
+        let snapshot_to_write = *snapshot;
+
+        let candidate = write_object_service_candidate_checkpoint(device, &snapshot_to_write)
             .map_err(map_storage_error)?;
         let loaded = read_object_service_candidate_checkpoint(device, candidate.identity)
             .map_err(map_storage_error)?;
         let loaded_identity = object_candidate_checkpoint_identity(&loaded);
-        if loaded_identity != candidate.identity {
+        if loaded_identity != candidate.identity || loaded != *snapshot {
             return Err(PackageStatus::RegistryRecoveryDenied);
         }
         self.unpublished_candidate_checkpoint = Some(candidate.identity);
@@ -948,7 +1105,7 @@ mod tests {
             reset_package_persistence_storage_for_test, write_candidate_registry_generation,
             write_publication_anchor,
         },
-        package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
+        package_content_store::{PackageContentStore, PackageContentTransaction},
         package_registry::{
             PackageRegistry, PackageRegistryPackageRecord, PackageTransactionCommitV0,
         },
@@ -1406,6 +1563,129 @@ mod tests {
     }
 
     #[test]
+    fn package_prepare_install_candidate_rejects_unintended_valid_checkpoint() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let object_service = ObjectService::new_for_test();
+
+        super::set_candidate_snapshot_write_override_for_test(
+            ObjectService::new_for_test()
+                .encode_candidate_snapshot()
+                .unwrap(),
+        );
+
+        assert_eq!(
+            prepare_recovery_package_install_candidate(
+                &mut package_service,
+                device,
+                &object_service
+            ),
+            Err(PackageStatus::RegistryRecoveryDenied)
+        );
+        assert_eq!(package_service.registry().package_count(), 0);
+        assert!(package_service.prepared_candidate.is_none());
+        assert!(package_service.prepared_object_service.is_none());
+    }
+
+    #[test]
+    fn package_publish_install_candidate_materializes_before_writing_anchor() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        super::fail_candidate_content_materialization_for_test();
+
+        assert_eq!(
+            package_service.publish_install_candidate(candidate.clone(), &mut object_service),
+            Err(PackageStatus::QuotaDenied)
+        );
+        assert_eq!(
+            read_publication_anchor_slot(
+                device,
+                if candidate.registry_generation.generation & 1 == 0 {
+                    PackagePublicationAnchorSlot::A
+                } else {
+                    PackagePublicationAnchorSlot::B
+                },
+            ),
+            Ok(None)
+        );
+        assert_eq!(package_service.registry().package_count(), 0);
+    }
+
+    #[test]
+    fn package_publish_install_candidate_selects_persisted_world_not_mutated_ram() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+        let persisted_registry =
+            read_candidate_registry_generation(device, candidate.registry_generation).unwrap();
+        let mut persisted_registry_snapshot = [0; super::PACKAGE_REGISTRY_SNAPSHOT_MAX_BYTES];
+        persisted_registry
+            .encode_snapshot(&mut persisted_registry_snapshot)
+            .unwrap();
+        let persisted_content =
+            PackageContentStore::read_validate_candidate_content(device, &persisted_registry)
+                .unwrap();
+        let persisted_object_snapshot =
+            read_object_service_candidate_checkpoint(device, candidate.object_checkpoint_identity)
+                .unwrap();
+
+        package_service.staged_registry = PackageRegistry::empty();
+        package_service
+            .content_store
+            .rollback(&mut package_service.staged_content);
+        package_service.prepared_object_service = Some(ObjectService::new_for_test());
+
+        let installed = package_service
+            .publish_install_candidate(candidate.clone(), &mut object_service)
+            .unwrap();
+
+        assert_eq!(installed.registry_generation, candidate.registry_generation);
+        let mut selected_registry = persisted_registry;
+        selected_registry.record_committed_generation(candidate.registry_generation);
+        assert_eq!(package_service.registry(), &selected_registry);
+        assert_eq!(
+            package_service.registry_snapshot,
+            persisted_registry_snapshot
+        );
+        assert_eq!(
+            package_service.content_store.committed_bitmap(),
+            persisted_content.committed_bitmap()
+        );
+        assert_eq!(
+            object_service.encode_snapshot().unwrap(),
+            persisted_object_snapshot
+        );
+        assert_eq!(
+            object_service
+                .dynamic_object_for_test(ObjectId::new(candidate.package_object_id))
+                .unwrap()
+                .object_kind(),
+            ObjectKind::Package
+        );
+        assert!(!package_service.locator_mirror_visible_for_test());
+    }
+
+    #[test]
     fn package_publish_install_candidate_denies_persisted_registry_mismatch() {
         let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_package_persistence_storage_for_test();
@@ -1705,30 +1985,24 @@ mod tests {
     }
 
     #[test]
-    fn package_install_without_candidate_checkpoint_device_denies_without_publication() {
+    fn package_install_into_preserves_valid_compatibility_install() {
         let mut package_service = PackageService::new_empty_for_test();
         let mut object_service = ObjectService::new_for_test();
-        let before = object_service.checkpoint_identity().unwrap();
+        let installed =
+            install_recovery_package_into(&mut package_service, &mut object_service).unwrap();
 
-        for _ in 0..2 {
-            assert_eq!(
-                install_recovery_package_into(&mut package_service, &mut object_service),
-                Err(PackageStatus::RegistryWriteDenied)
-            );
-
-            assert_eq!(package_service.staged_content.staged_count(), 0);
-            assert_eq!(
-                package_service.content_store.staged_bitmap(),
-                [0; PACKAGE_CONTENT_BITMAP_WORDS]
-            );
-            assert_eq!(
-                package_service.content_store.committed_bitmap(),
-                [0; PACKAGE_CONTENT_BITMAP_WORDS]
-            );
-        }
-
-        assert_eq!(package_service.registry().package_count(), 0);
-        assert_eq!(object_service.checkpoint_identity().unwrap(), before);
+        assert_ne!(installed.content_commit.record_count(), 0);
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(package_service.registry().schema_count(), 1);
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &installed.anchor_bytes,
+                installed.registry_generation,
+                installed.object_checkpoint_identity,
+            )
+            .unwrap(),
+            installed.anchor
+        );
     }
 
     #[test]
@@ -2086,15 +2360,13 @@ mod tests {
         assert_eq!(installed.schema_revision, 1);
         assert_eq!(installed.content_commit.record_count(), 1);
         assert_eq!(
-            package_service
-                .content_store()
-                .read_committed(ContentId::new(
-                    installed.package_object_id,
-                    installed.release_digest,
-                    0,
-                ))
-                .unwrap(),
-            SCHEMA_DESCRIPTOR
+            PackageContentStore::read_validate_candidate_content(
+                device,
+                package_service.registry()
+            )
+            .unwrap()
+            .record_count(),
+            1
         );
         assert_eq!(
             package_service

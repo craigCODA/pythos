@@ -259,7 +259,7 @@ impl ObjectService {
     #[cfg(test)]
     pub fn restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError> {
         match read_object_service_checkpoint(device).map_err(|_| ObjectServiceError::BadSnapshot)? {
-            Some(snapshot) => Self::decode_snapshot(&snapshot),
+            Some(snapshot) => Self::from_snapshot(&snapshot),
             None => Self::new_seeded(),
         }
     }
@@ -605,7 +605,9 @@ impl ObjectService {
         Ok(())
     }
 
-    fn decode_snapshot(snapshot: &ObjectServiceSnapshot) -> Result<Self, ObjectServiceError> {
+    pub(crate) fn from_snapshot(
+        snapshot: &ObjectServiceSnapshot,
+    ) -> Result<Self, ObjectServiceError> {
         let mut service = Self::new_seeded()?;
         service.objects = restore_dynamic_objects(snapshot)?;
         service.relationships = restore_relationships(snapshot)?;
@@ -912,7 +914,7 @@ impl ObjectService {
     pub fn decode_snapshot_for_test(
         snapshot: ObjectServiceSnapshot,
     ) -> Result<Self, ObjectServiceError> {
-        Self::decode_snapshot(&snapshot)
+        Self::from_snapshot(&snapshot)
     }
 
     pub fn object_capability_for_test(
