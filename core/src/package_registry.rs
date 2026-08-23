@@ -476,6 +476,36 @@ impl PackageRegistry {
         Err(PackageStatus::NotFound)
     }
 
+    pub fn tombstone(
+        &mut self,
+        package_object_id: ObjectId,
+    ) -> Result<PackageRegistryPackageRecord, PackageStatus> {
+        let mut index = 0usize;
+        while index < self.package_count as usize {
+            if let Some(mut record) = self.package_records[index]
+                && record.package_object_id == package_object_id.raw()
+            {
+                return match record.status {
+                    status
+                        if status == PackageStatus::Ok as u16
+                            || status == PackageStatus::PackageDisabled as u16 =>
+                    {
+                        record.status = PackageStatus::PackageTombstoned as u16;
+                        self.package_records[index] = Some(record);
+                        self.remove_exports_for_package(record.package_object_id);
+                        Ok(record)
+                    }
+                    status if status == PackageStatus::PackageTombstoned as u16 => {
+                        Err(PackageStatus::PackageTombstoned)
+                    }
+                    _ => Err(PackageStatus::Denied),
+                };
+            }
+            index += 1;
+        }
+        Err(PackageStatus::NotFound)
+    }
+
     pub fn decode_snapshot(bytes: &[u8]) -> Result<Self, PackageStatus> {
         let mut registry = Self::empty();
         Self::decode_snapshot_into(bytes, &mut registry)?;
@@ -894,6 +924,26 @@ impl PackageRegistry {
             }
             _ => Err(PackageStatus::ExportMissing),
         }
+    }
+
+    fn remove_exports_for_package(&mut self, package_object_id: u64) {
+        let mut read_index = 0usize;
+        let mut write_index = 0usize;
+        while read_index < self.export_count as usize {
+            if let Some(record) = self.export_records[read_index]
+                && record.package_object_id != package_object_id
+            {
+                self.export_records[write_index] = Some(record);
+                write_index += 1;
+            }
+            read_index += 1;
+        }
+        let retained_count = write_index as u32;
+        while write_index < self.export_count as usize {
+            self.export_records[write_index] = None;
+            write_index += 1;
+        }
+        self.export_count = retained_count;
     }
 
     fn published_content_for_export(&self, export: PackageRegistryExportRecord) -> bool {

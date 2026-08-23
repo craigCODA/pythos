@@ -953,6 +953,7 @@ impl<'a> PackageService<'a> {
                 device,
                 self.staged_registry.generation(),
                 candidate_snapshot.generation,
+                &self.registry,
             )?;
 
             let content_commit = self
@@ -1225,6 +1226,83 @@ impl<'a> PackageService<'a> {
         committed
     }
 
+    pub fn uninstall(&mut self, package_object_id: ObjectId) -> Result<(), PackageStatus> {
+        if self.prepared_candidate.is_some() {
+            return Err(PackageStatus::BadRequest);
+        }
+        if self.package_has_live_runtime_context(package_object_id) {
+            return Err(PackageStatus::LiveProcessExists);
+        }
+        self.staged_registry.copy_from_committed(&self.registry);
+        if let Err(status) = self
+            .staged_registry
+            .begin_candidate_generation(self.next_transaction_id)
+        {
+            self.staged_registry.copy_from_committed(&self.registry);
+            return Err(status);
+        }
+        let tombstoned = match self.staged_registry.tombstone(package_object_id) {
+            Ok(record) => record,
+            Err(status) => {
+                self.staged_registry.copy_from_committed(&self.registry);
+                return Err(status);
+            }
+        };
+
+        let committed = with_package_restore_scratch(|scratch| {
+            let durable_device = if self.anchored_generation_available {
+                self.publication_device
+            } else {
+                None
+            };
+            let registry_generation = match durable_device {
+                Some(device) => write_candidate_registry_generation_into(
+                    device,
+                    &self.staged_registry,
+                    &mut scratch.registry_snapshot,
+                    &mut scratch.candidate.registry,
+                )?,
+                None => self
+                    .staged_registry
+                    .encode_snapshot(&mut scratch.registry_snapshot)?,
+            };
+            let anchor = PackageTransactionCommitV0::new(
+                self.next_transaction_id,
+                INSTALL_OPERATION,
+                registry_generation,
+                self.object_checkpoint_identity,
+                tombstoned.package_object_id,
+                tombstoned.installed_revision,
+            );
+            anchor.encode(&mut scratch.anchor_bytes)?;
+            if let Some(device) = durable_device {
+                write_publication_anchor(device, anchor)?;
+            }
+
+            self.staged_registry
+                .record_committed_generation(registry_generation);
+            self.previous_registry.copy_from_committed(&self.registry);
+            self.previous_registry_snapshot
+                .copy_from_slice(&self.registry_snapshot);
+            self.previous_object_checkpoint_identity = self.object_checkpoint_identity;
+            self.previous_anchor_bytes
+                .copy_from_slice(&self.anchor_bytes);
+            self.previous_anchored_generation_available = self.anchored_generation_available;
+            self.registry.copy_from_committed(&self.staged_registry);
+            self.registry_snapshot
+                .copy_from_slice(&scratch.registry_snapshot);
+            self.anchor_bytes.copy_from_slice(&scratch.anchor_bytes);
+            self.anchored_generation_available = self.previous_anchored_generation_available;
+            self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
+            self.locator_mirror_visible = false;
+            Ok(())
+        });
+        if committed.is_err() {
+            self.staged_registry.copy_from_committed(&self.registry);
+        }
+        committed
+    }
+
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn seed_launch_export_for_test(
@@ -1381,6 +1459,7 @@ impl<'a> PackageService<'a> {
         while index < self.runtime_context_count {
             if let Some(existing) = self.runtime_contexts[index]
                 && same_runtime_context_identity(existing, record)
+                && existing.export == record.export
             {
                 self.runtime_contexts[index] = Some(record);
                 return Ok(());
@@ -1409,6 +1488,19 @@ impl<'a> PackageService<'a> {
             index += 1;
         }
         None
+    }
+
+    fn package_has_live_runtime_context(&self, package_object_id: ObjectId) -> bool {
+        let mut index = 0usize;
+        while index < self.runtime_context_count {
+            if let Some(record) = self.runtime_contexts[index]
+                && record.export.package_object_id == package_object_id.raw()
+            {
+                return true;
+            }
+            index += 1;
+        }
+        false
     }
 
     pub const fn content_store(&self) -> &PackageContentStore<'a> {
@@ -2040,6 +2132,7 @@ fn ensure_candidate_backing_slots_available(
     device: BlockDeviceInfo,
     registry_generation: u64,
     object_checkpoint_generation: u64,
+    selected_registry: &PackageRegistry,
 ) -> Result<(), PackageStatus> {
     for slot in [
         PackagePublicationAnchorSlot::A,
@@ -2052,10 +2145,33 @@ fn ensure_candidate_backing_slots_available(
             && ((anchor.package_registry_generation & 1) == (registry_generation & 1)
                 || (anchor.object_checkpoint_generation & 1) == (object_checkpoint_generation & 1))
         {
+            if selected_registry_tombstones_anchor_package(selected_registry, anchor) {
+                continue;
+            }
             return Err(PackageStatus::RegistryWriteDenied);
         }
     }
     Ok(())
+}
+
+fn selected_registry_tombstones_anchor_package(
+    selected_registry: &PackageRegistry,
+    anchor: PackageTransactionCommitV0,
+) -> bool {
+    if selected_registry.generation() <= anchor.package_registry_generation {
+        return false;
+    }
+
+    let mut index = 0usize;
+    while let Some(record) = selected_registry.package_record(index) {
+        if record.package_object_id == anchor.package_object_id
+            && record.installed_revision == anchor.package_installed_revision
+        {
+            return record.status == PackageStatus::PackageTombstoned as u16;
+        }
+        index += 1;
+    }
+    false
 }
 
 fn publication_anchor_is_complete(
@@ -2973,6 +3089,222 @@ mod tests {
     }
 
     #[test]
+    fn package_uninstall_tombstone_denies_live_package_process_without_mutating_launch_state() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service.restore_from_storage(device).unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let resolved = package_service.resolve_export(root, "seed/launch").unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_554E_494E_0001, 0x13);
+        let no_grants = [];
+
+        let launch = package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &no_grants,
+                },
+                &CapabilityTable::new(),
+            )
+            .unwrap();
+        let binding_before_uninstall = package_service.runtime_schema_binding(caller, 0).unwrap();
+
+        assert_eq!(launch.export, resolved);
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            package_service.uninstall(ObjectId::new(installed.package_object_id)),
+            Err(PackageStatus::LiveProcessExists)
+        );
+        assert_eq!(
+            package_service.registry().package_record(0).unwrap().status,
+            PackageStatus::Ok as u16
+        );
+        assert_eq!(
+            package_service.resolve_export(root, "seed/launch"),
+            Ok(resolved)
+        );
+        assert_eq!(package_service.runtime_context_count_for_test(), 1);
+        assert_eq!(
+            package_service.runtime_schema_binding(caller, 0),
+            Ok(binding_before_uninstall)
+        );
+    }
+
+    #[test]
+    fn package_uninstall_tombstone_hides_locator_preserves_history_and_reinstall_gets_new_id() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let first = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+
+        package_service
+            .uninstall(ObjectId::new(first.package_object_id))
+            .unwrap();
+
+        let tombstoned = package_service.registry().package_record(0).unwrap();
+        assert_eq!(tombstoned.package_object_id, first.package_object_id);
+        assert_eq!(tombstoned.installed_revision, first.package_revision);
+        assert_eq!(tombstoned.release_digest, first.release_digest);
+        assert_eq!(tombstoned.status, PackageStatus::PackageTombstoned as u16);
+        assert_eq!(
+            package_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::ExportMissing)
+        );
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(package_service.registry().schema_count(), 1);
+        assert_eq!(package_service.registry().content_count(), 2);
+
+        let mut restored_service = PackageService::new_empty_for_test();
+        restored_service.restore_from_storage(device).unwrap();
+        let restored_tombstone = restored_service.registry().package_record(0).unwrap();
+        assert_eq!(
+            restored_tombstone.package_object_id,
+            first.package_object_id
+        );
+        assert_eq!(
+            restored_tombstone.status,
+            PackageStatus::PackageTombstoned as u16
+        );
+        assert_eq!(
+            restored_service.resolve_export(root, "seed/launch"),
+            Err(PackageStatus::ExportMissing)
+        );
+        assert_eq!(restored_service.registry().schema_count(), 1);
+        assert_eq!(restored_service.registry().content_count(), 2);
+
+        let second = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+
+        assert_ne!(second.package_object_id, first.package_object_id);
+        assert_eq!(
+            package_service
+                .resolve_export(root, "seed/launch")
+                .unwrap()
+                .package_object_id,
+            second.package_object_id
+        );
+    }
+
+    #[test]
+    fn package_uninstall_tombstone_preserves_previous_publication_backing() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let first = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+
+        package_service
+            .uninstall(ObjectId::new(first.package_object_id))
+            .unwrap();
+
+        let previous_registry =
+            read_candidate_registry_generation(device, first.registry_generation).unwrap();
+        assert_eq!(
+            previous_registry
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            first.package_object_id
+        );
+        let previous_export = previous_registry
+            .export_for_locator(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+            .unwrap();
+        assert_eq!(previous_export.package_object_id, first.package_object_id);
+        assert_eq!(previous_export.package_revision, first.package_revision);
+        assert_eq!(previous_export.release_digest, first.release_digest);
+    }
+
+    #[test]
+    fn package_uninstall_tombstone_denies_after_same_identity_launches_second_package() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let first = install_named_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+            b"seed-a/launch",
+        )
+        .unwrap();
+        let second = install_named_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+            b"seed-b/launch",
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let same_identity = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_554E_494E_0002, 0x13);
+        let no_grants = [];
+
+        package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller: same_identity,
+                    namespace_root: root,
+                    locator: "seed-a/launch",
+                    supplied_grants: &no_grants,
+                },
+                &CapabilityTable::new(),
+            )
+            .unwrap();
+        package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller: same_identity,
+                    namespace_root: root,
+                    locator: "seed-b/launch",
+                    supplied_grants: &no_grants,
+                },
+                &CapabilityTable::new(),
+            )
+            .unwrap();
+
+        assert_eq!(package_service.runtime_context_count_for_test(), 2);
+        assert_eq!(
+            package_service.uninstall(ObjectId::new(first.package_object_id)),
+            Err(PackageStatus::LiveProcessExists)
+        );
+        assert_eq!(
+            package_service.uninstall(ObjectId::new(second.package_object_id)),
+            Err(PackageStatus::LiveProcessExists)
+        );
+    }
+
+    #[test]
     fn installed_package_without_manifest_export_keeps_launch_missing_export() {
         let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_package_persistence_storage_for_test();
@@ -3022,6 +3354,7 @@ mod tests {
             device,
             &mut boot_one_objects,
             TEST_NON_LAUNCH_EXPORT_KIND,
+            b"seed/launch",
         )
         .unwrap();
 
@@ -4319,11 +4652,26 @@ mod tests {
         device: BlockDeviceInfo,
         object_service: &mut ObjectService,
     ) -> Result<PackageInstallResult, PackageStatus> {
+        install_named_launch_export_package_with_candidate_checkpoint_into(
+            package_service,
+            device,
+            object_service,
+            b"seed/launch",
+        )
+    }
+
+    fn install_named_launch_export_package_with_candidate_checkpoint_into(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &mut ObjectService,
+        export_stable_name: &[u8],
+    ) -> Result<PackageInstallResult, PackageStatus> {
         install_export_package_with_candidate_checkpoint_into(
             package_service,
             device,
             object_service,
             TEST_LAUNCHABLE_EXPORT_KIND,
+            export_stable_name,
         )
     }
 
@@ -4332,8 +4680,9 @@ mod tests {
         device: BlockDeviceInfo,
         object_service: &mut ObjectService,
         export_kind: u16,
+        export_stable_name: &[u8],
     ) -> Result<PackageInstallResult, PackageStatus> {
-        let artifact = build_export_package_artifact(export_kind);
+        let artifact = build_export_package_artifact(export_kind, export_stable_name);
         let source_record = build_source_record(0, b"phase13-launch-export.pkg", &artifact);
         let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
         let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
@@ -5166,7 +5515,7 @@ mod tests {
         artifact
     }
 
-    fn build_export_package_artifact(export_kind: u16) -> Vec<u8> {
+    fn build_export_package_artifact(export_kind: u16, export_stable_name: &[u8]) -> Vec<u8> {
         let mut export_payload = Vec::new();
         export_payload.extend_from_slice(&export_kind.to_le_bytes());
         export_payload.extend_from_slice(&1u16.to_le_bytes());
@@ -5175,7 +5524,7 @@ mod tests {
         let mut manifest = b"PYTHMAN0".to_vec();
         manifest.extend_from_slice(&2u32.to_le_bytes());
         push_manifest_record(&mut manifest, 1, b"seed.v0", &0u16.to_le_bytes());
-        push_manifest_record(&mut manifest, 2, b"seed/launch", &export_payload);
+        push_manifest_record(&mut manifest, 2, export_stable_name, &export_payload);
 
         let mut content_table = vec![0u8; 2 * CONTENT_ENTRY_V0_LEN];
         content_table[0..2].copy_from_slice(&0u16.to_le_bytes());
