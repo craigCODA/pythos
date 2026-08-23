@@ -56,6 +56,21 @@ pub struct PackageInstallResult {
     pub anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PackageInstallCandidate {
+    pub transaction_id: u64,
+    pub package_object_id: u64,
+    pub package_revision: u64,
+    pub schema_object_id: u64,
+    pub schema_revision: u64,
+    pub release_digest: [u8; 32],
+    pub schema_descriptor_content_id: ContentId,
+    pub content_commit: PackageContentCommit,
+    pub registry_generation: PackageRegistryGeneration,
+    pub object_checkpoint_identity: ObjectCheckpointIdentity,
+    pub staged_registry_snapshot: [u8; 4096],
+}
+
 impl PackageInstallResult {
     pub const fn empty() -> Self {
         Self {
@@ -116,6 +131,8 @@ pub struct PackageService<'a> {
     previous_anchor_bytes: [u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
     previous_anchored_generation_available: bool,
     unpublished_candidate_checkpoint: Option<ObjectCheckpointIdentity>,
+    prepared_candidate: Option<PackageInstallCandidate>,
+    prepared_object_service: Option<ObjectService>,
     next_transaction_id: u64,
     next_package_object_id: u64,
     next_schema_object_id: u64,
@@ -145,6 +162,8 @@ impl<'a> PackageService<'a> {
             previous_anchor_bytes: [0; PACKAGE_TRANSACTION_COMMIT_V0_LEN],
             previous_anchored_generation_available: false,
             unpublished_candidate_checkpoint: None,
+            prepared_candidate: None,
+            prepared_object_service: None,
             next_transaction_id: 1,
             next_package_object_id: FIRST_PACKAGE_OBJECT_ID,
             next_schema_object_id: FIRST_SCHEMA_OBJECT_ID,
@@ -181,17 +200,15 @@ impl<'a> PackageService<'a> {
         object_service: &mut ObjectService,
         artifact_buffer: &'a mut [u8],
     ) -> Result<PackageInstallResult, PackageStatus> {
-        let mut result = PackageInstallResult::empty();
-        self.install_into_with_candidate_checkpoint(
-            Some(device),
+        let candidate = self.prepare_install_candidate(
+            device,
             request,
             source_service,
             capabilities,
             object_service,
             artifact_buffer,
-            &mut result,
         )?;
-        Ok(result)
+        self.publish_install_candidate(candidate, object_service)
     }
 
     pub fn install_into(
@@ -224,12 +241,50 @@ impl<'a> PackageService<'a> {
         artifact_buffer: &'a mut [u8],
         result: &mut PackageInstallResult,
     ) -> Result<(), PackageStatus> {
+        let candidate = self.prepare_install_candidate_inner(
+            candidate_device,
+            request,
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+        )?;
+        *result = self.publish_install_candidate(candidate, object_service)?;
+        Ok(())
+    }
+
+    pub fn prepare_install_candidate(
+        &mut self,
+        device: BlockDeviceInfo,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &ObjectService,
+        artifact_buffer: &'a mut [u8],
+    ) -> Result<PackageInstallCandidate, PackageStatus> {
+        self.prepare_install_candidate_inner(
+            Some(device),
+            request,
+            source_service,
+            capabilities,
+            object_service,
+            artifact_buffer,
+        )
+    }
+
+    fn prepare_install_candidate_inner(
+        &mut self,
+        candidate_device: Option<BlockDeviceInfo>,
+        request: PackageInstallRequest,
+        source_service: &PackageSourceService<'_>,
+        capabilities: &CapabilityTable,
+        object_service: &ObjectService,
+        artifact_buffer: &'a mut [u8],
+    ) -> Result<PackageInstallCandidate, PackageStatus> {
+        if self.prepared_candidate.is_some() {
+            return Err(PackageStatus::BadRequest);
+        }
         validate_install_authority(request.caller, capabilities, request.install_capability)?;
-        let previous_registry = self.registry.clone();
-        let previous_registry_snapshot = self.registry_snapshot;
-        let previous_object_checkpoint_identity = self.object_checkpoint_identity;
-        let previous_anchor_bytes = self.anchor_bytes;
-        let previous_anchored_generation_available = self.anchored_generation_available;
         let artifact_len = source_service.read(
             request.caller.service_id(),
             capabilities,
@@ -318,56 +373,135 @@ impl<'a> PackageService<'a> {
         let registry_generation = self
             .staged_registry
             .encode_snapshot(&mut staged_registry_snapshot)?;
+        let decoded_registry = PackageRegistry::decode_snapshot(
+            &staged_registry_snapshot[..self.staged_registry.encoded_len()],
+        )?;
+        let decoded_registry_generation = PackageRegistryGeneration {
+            generation: decoded_registry.generation(),
+            root_digest: decoded_registry.root_digest(),
+        };
+        if decoded_registry_generation != registry_generation {
+            self.content_store.rollback(&mut self.staged_content);
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
         let candidate_snapshot = candidate_object_service
             .encode_candidate_snapshot()
             .map_err(map_object_error)?;
         let object_identity = self.persist_candidate_snapshot(device, &candidate_snapshot)?;
         let transaction_id = self.next_transaction_id;
-        let anchor = PackageTransactionCommitV0::new(
+        let content_commit = match self.content_store.commit(&mut self.staged_content) {
+            Ok(content_commit) => content_commit,
+            Err(error) => {
+                self.content_store.rollback(&mut self.staged_content);
+                return Err(error);
+            }
+        };
+
+        let candidate = PackageInstallCandidate {
             transaction_id,
-            INSTALL_OPERATION,
+            package_object_id: package.object_id.raw(),
+            package_revision: package.revision,
+            schema_object_id: schema.object_id.raw(),
+            schema_revision: schema.revision,
+            release_digest,
+            schema_descriptor_content_id,
+            content_commit,
             registry_generation,
-            object_identity,
-            package.object_id.raw(),
-            package.revision,
+            object_checkpoint_identity: object_identity,
+            staged_registry_snapshot,
+        };
+        self.prepared_object_service = Some(candidate_object_service);
+        self.prepared_candidate = Some(candidate.clone());
+        Ok(candidate)
+    }
+
+    pub fn publish_install_candidate(
+        &mut self,
+        candidate: PackageInstallCandidate,
+        object_service: &mut ObjectService,
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        if self.prepared_candidate.as_ref() != Some(&candidate)
+            || self.unpublished_candidate_checkpoint != Some(candidate.object_checkpoint_identity)
+        {
+            return Err(PackageStatus::BadRequest);
+        }
+
+        let mut validated_registry_snapshot = [0u8; 4096];
+        let validated_registry_generation = self
+            .staged_registry
+            .encode_snapshot(&mut validated_registry_snapshot)?;
+        if validated_registry_generation != candidate.registry_generation
+            || validated_registry_snapshot != candidate.staged_registry_snapshot
+        {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+
+        let mut candidate_object_service = self
+            .prepared_object_service
+            .ok_or(PackageStatus::BadRequest)?;
+        let candidate_snapshot = candidate_object_service
+            .encode_candidate_snapshot()
+            .map_err(map_object_error)?;
+        if object_candidate_checkpoint_identity(&candidate_snapshot)
+            != candidate.object_checkpoint_identity
+        {
+            return Err(PackageStatus::RegistryRecoveryDenied);
+        }
+
+        let anchor = PackageTransactionCommitV0::new(
+            candidate.transaction_id,
+            INSTALL_OPERATION,
+            candidate.registry_generation,
+            candidate.object_checkpoint_identity,
+            candidate.package_object_id,
+            candidate.package_revision,
         );
         let mut anchor_bytes = [0u8; PACKAGE_TRANSACTION_COMMIT_V0_LEN];
         anchor.encode(&mut anchor_bytes)?;
-        let content_commit = self.content_store.commit(&mut self.staged_content)?;
+
+        let previous_registry = self.registry.clone();
+        let previous_registry_snapshot = self.registry_snapshot;
+        let previous_object_checkpoint_identity = self.object_checkpoint_identity;
+        let previous_anchor_bytes = self.anchor_bytes;
+        let previous_anchored_generation_available = self.anchored_generation_available;
 
         self.staged_registry
-            .record_committed_generation(registry_generation);
+            .record_committed_generation(candidate.registry_generation);
         self.registry.copy_from_committed(&self.staged_registry);
-        self.registry_snapshot = staged_registry_snapshot;
+        self.registry_snapshot = candidate.staged_registry_snapshot;
         self.previous_registry = previous_registry;
         self.previous_registry_snapshot = previous_registry_snapshot;
         self.previous_object_checkpoint_identity = previous_object_checkpoint_identity;
         self.previous_anchor_bytes = previous_anchor_bytes;
         self.previous_anchored_generation_available = previous_anchored_generation_available;
-        self.object_checkpoint_identity = object_identity;
+        self.object_checkpoint_identity = candidate.object_checkpoint_identity;
         self.anchor_bytes = anchor_bytes;
         self.anchored_generation_available = true;
         self.unpublished_candidate_checkpoint = None;
+        self.prepared_candidate = None;
+        self.prepared_object_service = None;
         self.next_transaction_id = self.next_transaction_id.wrapping_add(1);
         self.next_package_object_id = self.next_package_object_id.wrapping_add(1);
         self.next_schema_object_id = self.next_schema_object_id.wrapping_add(1);
         self.locator_mirror_visible = false;
-        candidate_object_service.publish_candidate_generation(object_identity.generation);
+        candidate_object_service
+            .publish_candidate_generation(candidate.object_checkpoint_identity.generation);
         *object_service = candidate_object_service;
 
-        result.transaction_id = transaction_id;
-        result.package_object_id = package.object_id.raw();
-        result.package_revision = package.revision;
-        result.schema_object_id = schema.object_id.raw();
-        result.schema_revision = schema.revision;
-        result.release_digest = release_digest;
-        result.schema_descriptor_content_id = schema_descriptor_content_id;
-        result.content_commit = content_commit;
-        result.registry_generation = registry_generation;
-        result.object_checkpoint_identity = object_identity;
-        result.anchor = anchor;
-        result.anchor_bytes = anchor_bytes;
-        Ok(())
+        Ok(PackageInstallResult {
+            transaction_id: candidate.transaction_id,
+            package_object_id: candidate.package_object_id,
+            package_revision: candidate.package_revision,
+            schema_object_id: candidate.schema_object_id,
+            schema_revision: candidate.schema_revision,
+            release_digest: candidate.release_digest,
+            schema_descriptor_content_id: candidate.schema_descriptor_content_id,
+            content_commit: candidate.content_commit,
+            registry_generation: candidate.registry_generation,
+            object_checkpoint_identity: candidate.object_checkpoint_identity,
+            anchor,
+            anchor_bytes,
+        })
     }
 
     pub const fn registry(&self) -> &PackageRegistry {
@@ -478,6 +612,8 @@ impl<'a> PackageService<'a> {
                 });
         if unpublished_candidate_ignored {
             self.unpublished_candidate_checkpoint = None;
+            self.prepared_candidate = None;
+            self.prepared_object_service = None;
         }
 
         Ok(PackageRecoveryReport {
@@ -751,7 +887,8 @@ mod tests {
     extern crate std;
 
     use super::{
-        PackageInstallRequest, PackageInstallResult, PackageRecoveryReport, PackageService,
+        PackageInstallCandidate, PackageInstallRequest, PackageInstallResult,
+        PackageRecoveryReport, PackageService,
     };
     use crate::{
         block_device::BlockDeviceInfo,
@@ -763,7 +900,7 @@ mod tests {
             reset_checkpoint_storage_for_test,
         },
         package_content_store::{ContentId, PackageContentTransaction},
-        package_registry::PackageTransactionCommitV0,
+        package_registry::{PackageRegistry, PackageTransactionCommitV0},
         package_source::PackageSourceService,
         process_context::ActiveUserProcess,
         service_identity::ServiceId,
@@ -1072,6 +1209,174 @@ mod tests {
     }
 
     #[test]
+    fn package_prepare_install_candidate_writes_validated_candidate_without_publication() {
+        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let world_a = install_recovery_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let live_object_identity = object_service.checkpoint_identity().unwrap();
+
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+
+        assert_ne!(candidate.transaction_id, 0);
+        assert_ne!(candidate.package_object_id, 0);
+        assert_ne!(candidate.schema_object_id, 0);
+        assert_ne!(candidate.content_commit.record_count(), 0);
+        assert_ne!(candidate.registry_generation.generation, 0);
+        assert_ne!(candidate.object_checkpoint_identity.generation, 0);
+        let candidate_registry = PackageRegistry::decode_snapshot(
+            &candidate.staged_registry_snapshot[..package_service.staged_registry.encoded_len()],
+        )
+        .unwrap();
+        assert_eq!(
+            candidate_registry.generation(),
+            candidate.registry_generation.generation
+        );
+        assert_eq!(
+            candidate_registry.root_digest(),
+            candidate.registry_generation.root_digest
+        );
+        let persisted =
+            read_object_service_candidate_checkpoint(device, candidate.object_checkpoint_identity)
+                .unwrap();
+        assert!(persisted.objects.iter().flatten().any(|record| {
+            record.object.object_id() == ObjectId::new(candidate.package_object_id)
+        }));
+        assert!(persisted.objects.iter().flatten().any(|record| {
+            record.object.object_id() == ObjectId::new(candidate.schema_object_id)
+        }));
+
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            world_a.package_object_id
+        );
+        assert_eq!(
+            object_service.checkpoint_identity().unwrap(),
+            live_object_identity
+        );
+        assert!(!package_service.locator_mirror_visible_for_test());
+
+        let report = package_service
+            .recover_with_candidate_checkpoint(device)
+            .unwrap();
+        assert!(report.published_world_selected);
+        assert!(report.unpublished_candidate_ignored);
+        assert!(report.candidate_content_reclaimable);
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            world_a.package_object_id
+        );
+        assert_eq!(
+            object_service.checkpoint_identity().unwrap(),
+            live_object_identity
+        );
+        assert!(!package_service.locator_mirror_visible_for_test());
+    }
+
+    #[test]
+    fn package_publish_install_candidate_selects_prepared_world_once() {
+        let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
+        reset_checkpoint_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let candidate = prepare_recovery_package_install_candidate(
+            &mut package_service,
+            device,
+            &object_service,
+        )
+        .unwrap();
+        let replay = candidate.clone();
+
+        let installed = package_service
+            .publish_install_candidate(candidate.clone(), &mut object_service)
+            .unwrap();
+
+        assert_eq!(installed.transaction_id, candidate.transaction_id);
+        assert_eq!(installed.package_object_id, candidate.package_object_id);
+        assert_eq!(installed.package_revision, candidate.package_revision);
+        assert_eq!(installed.schema_object_id, candidate.schema_object_id);
+        assert_eq!(installed.schema_revision, candidate.schema_revision);
+        assert_eq!(installed.registry_generation, candidate.registry_generation);
+        assert_eq!(
+            installed.object_checkpoint_identity,
+            candidate.object_checkpoint_identity
+        );
+        assert_eq!(
+            PackageTransactionCommitV0::decode(
+                &installed.anchor_bytes,
+                candidate.registry_generation,
+                candidate.object_checkpoint_identity,
+            )
+            .unwrap(),
+            installed.anchor
+        );
+        assert_eq!(package_service.registry().package_count(), 1);
+        assert_eq!(package_service.registry().schema_count(), 1);
+        assert_eq!(
+            package_service
+                .registry()
+                .package_record(0)
+                .unwrap()
+                .package_object_id,
+            candidate.package_object_id
+        );
+        assert_eq!(
+            package_service
+                .registry()
+                .schema_record(0)
+                .unwrap()
+                .schema_object_id,
+            candidate.schema_object_id
+        );
+        assert_eq!(
+            object_service.checkpoint_identity().unwrap().generation,
+            candidate.object_checkpoint_identity.generation
+        );
+        assert_eq!(
+            object_service
+                .dynamic_object_for_test(ObjectId::new(candidate.package_object_id))
+                .unwrap()
+                .object_kind(),
+            ObjectKind::Package
+        );
+        assert_eq!(
+            object_service
+                .dynamic_object_for_test(ObjectId::new(candidate.schema_object_id))
+                .unwrap()
+                .object_kind(),
+            ObjectKind::SchemaDefinition
+        );
+        assert!(!package_service.locator_mirror_visible_for_test());
+        assert_eq!(
+            package_service.publish_install_candidate(replay, &mut object_service),
+            Err(PackageStatus::BadRequest)
+        );
+    }
+
+    #[test]
     fn package_recovery_reports_durable_unanchored_candidate_as_ignored_reclaimable() {
         let _guard = CHECKPOINT_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
@@ -1358,6 +1663,50 @@ mod tests {
         let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
 
         package_service.install_with_candidate_checkpoint(
+            device,
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            object_service,
+            artifact_buffer,
+        )
+    }
+
+    fn prepare_recovery_package_install_candidate(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &ObjectService,
+    ) -> Result<PackageInstallCandidate, PackageStatus> {
+        let artifact = build_schema_package_artifact();
+        let source_record = build_source_record(0, b"phase13-prepare.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_5052_4550, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
+
+        package_service.prepare_install_candidate(
             device,
             PackageInstallRequest {
                 caller,
