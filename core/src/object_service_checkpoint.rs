@@ -1403,15 +1403,13 @@ mod tests {
     use crate::block_device::BlockDeviceInfo;
     use crate::general_storage_persistence::GeneralStoragePersistenceError;
     use crate::object_relationships::{EXTERNAL_WORKSPACE_OBJECT_ID, SHELL_WORKSPACE_OBJECT_ID};
+    use crate::package_candidate_store::PACKAGE_CANDIDATE_STORAGE_TEST_LOCK;
     use crate::revision_history::RevisionRecord;
     use crate::service_identity::ServiceIdentityTable;
     use crate::shell_objects::{ObjectId, ObjectKind};
     use crate::tasks::TaskId;
     use crate::typed_object_format::{TypedObjectField, TypedObjectRecord};
     use pythos_shared::package_abi::{PACKAGE_CONTENT_BASE_SECTOR, PACKAGE_CONTENT_MAX_BLOCKS};
-    use std::sync::Mutex;
-
-    static TEST_LOCK: Mutex<()> = Mutex::new(());
 
     fn note(object_id: u64, text: &[u8]) -> TypedObjectRecord {
         let mut record = TypedObjectRecord::new(ObjectId::new(object_id), ObjectKind::Note, 1);
@@ -1624,7 +1622,7 @@ mod tests {
 
     #[test]
     fn package_candidate_checkpoint_is_durable_but_not_ordinary_recovery_eligible() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(512, 8);
         let ordinary = snapshot(1, 1042, SHELL_WORKSPACE_OBJECT_ID);
@@ -1652,7 +1650,7 @@ mod tests {
 
     #[test]
     fn package_candidate_checkpoint_root_mismatch_is_denied() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(512, 8);
         let candidate_world = snapshot(2, 2001, EXTERNAL_WORKSPACE_OBJECT_ID);
@@ -1669,7 +1667,7 @@ mod tests {
 
     #[test]
     fn package_candidate_checkpoint_writes_snapshot_generation() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(512, 8);
         let candidate_world = snapshot(41, 2001, EXTERNAL_WORKSPACE_OBJECT_ID);
@@ -1689,7 +1687,7 @@ mod tests {
 
     #[test]
     fn package_candidate_checkpoint_keeps_two_generation_selected_slots() {
-        let _guard = TEST_LOCK.lock().unwrap();
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
         reset_checkpoint_storage_for_test();
         let device = BlockDeviceInfo::new_for_test(512, 8);
         let anchored_world = snapshot(1, 1042, SHELL_WORKSPACE_OBJECT_ID);

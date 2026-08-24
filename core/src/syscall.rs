@@ -2895,6 +2895,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_log_requires_runtime_capability_and_readable_text() {
+        let _process_guard = process_context_test_lock();
         let runtime = pyth_runtime_process();
         let intruder = ActiveUserProcess::new(ServiceId::from_raw(0x99), 0xAA, 0xBB);
         reset_syscall_capabilities_for_test();
@@ -2934,6 +2935,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_exit_requires_runtime_result_pointer_and_valid_record() {
+        let _process_guard = process_context_test_lock();
         let runtime = pyth_runtime_process();
         let exit = GraphExitRecord {
             status: GRAPH_EXIT_OK,
@@ -2980,6 +2982,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_exit_accepts_active_native_graph_process_identity() {
+        let _process_guard = process_context_test_lock();
         let native = ActiveUserProcess::new(
             ServiceId::from_raw(0x5059_5447_5254_0002),
             crate::pyth_runtime_launch::HELLO_GRAPH_PRINCIPAL_ID,
@@ -3100,6 +3103,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_creates_with_schema_ref_and_inline_state() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _guard = retained_services::initialize_object_service_for_test(service);
         let _package_guard =
@@ -3162,6 +3166,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_registers_schema_retention_from_created_object() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _object_guard = retained_services::initialize_object_service_for_test(service);
         let mut package_service = PackageService::new_empty_for_test();
@@ -3214,6 +3219,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_denies_unretainable_schema_without_creation() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _object_guard = retained_services::initialize_object_service_for_test(service);
         let _package_guard = package_service::initialize_retained_package_service_for_phase13_test(
@@ -3246,6 +3252,7 @@ mod tests {
 
     #[test]
     fn package_launch_object_service_grant_reaches_package_defined_object_syscall() {
+        let _process_guard = process_context_test_lock();
         let mut object_service = ObjectService::new_for_test();
         let package_process = ActiveUserProcess::new(
             ServiceId::from_raw(0x5059_504B_4C47_5A01),
@@ -3336,6 +3343,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_denies_invalid_schema_revision_without_creation() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _guard = retained_services::initialize_object_service_for_test(service);
         let create = Box::new(package_defined_create_record(
@@ -3361,6 +3369,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_denies_nonzero_reserved_fields_without_creation() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _guard = retained_services::initialize_object_service_for_test(service);
         let mut create = Box::new(package_defined_create_record(
@@ -3387,6 +3396,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_denies_oversized_inline_state_without_creation() {
+        let _process_guard = process_context_test_lock();
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _guard = retained_services::initialize_object_service_for_test(service);
         let state = Box::new([0x5Au8; 17]);
@@ -3413,6 +3423,7 @@ mod tests {
 
     #[test]
     fn package_defined_object_syscall_preserves_legacy_note_create_behavior() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3447,6 +3458,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_unmapped_request_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3466,6 +3478,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_cross_mapping_request_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3490,6 +3503,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_kernel_request_pointer_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3516,6 +3530,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_overflowing_request_range_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3542,6 +3557,7 @@ mod tests {
 
     #[test]
     fn object_request_requires_writable_response_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3562,6 +3578,7 @@ mod tests {
 
     #[test]
     fn object_query_requires_writable_output_before_service_borrow() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3592,6 +3609,7 @@ mod tests {
 
     #[test]
     fn object_query_rejects_overflowing_output_range_before_writing_entries() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3617,6 +3635,7 @@ mod tests {
 
     #[test]
     fn object_revise_rejects_unmapped_input_without_mutating_object() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -3652,6 +3671,7 @@ mod tests {
 
     #[test]
     fn task_request_create_and_read_active_use_current_caller_authority() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let user_control = {
@@ -3695,6 +3715,7 @@ mod tests {
 
     #[test]
     fn task_request_appends_context_event_to_active_task() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let _guard = retained_services::initialize_object_service_for_test(service);
@@ -3743,6 +3764,7 @@ mod tests {
 
     #[test]
     fn task_request_lists_pending_proposals_to_output_buffer() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let _guard = retained_services::initialize_object_service_for_test(service);
@@ -3795,6 +3817,7 @@ mod tests {
 
     #[test]
     fn task_request_denies_steward_create_with_proposal_capability() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let steward = crate::task_service::steward_process();
         let steward_propose = {
@@ -4255,7 +4278,11 @@ mod tests {
     }
 
     fn package_context_syscall_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        EXPECTED_SYSCALL_TEST_LOCK
+        process_context_test_lock()
+    }
+
+    fn process_context_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::process_context::PROCESS_CONTEXT_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner())
     }

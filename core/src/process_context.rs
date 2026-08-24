@@ -200,6 +200,9 @@ unsafe impl Sync for ActiveProcessStorage {}
 
 static CURRENT_PROCESS: ActiveProcessStorage = ActiveProcessStorage(UnsafeCell::new(None));
 
+#[cfg(test)]
+pub(crate) static PROCESS_CONTEXT_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 pub fn bind_current_process(process: ActiveUserProcess) {
     // SAFETY:
     // 1. Invariant: ADR 0051 runs one active ring-3 process at a time on one CPU.
@@ -268,6 +271,9 @@ mod tests {
 
     #[test]
     fn caller_identity_comes_from_active_process_not_task_slot_constant() {
+        let _guard = PROCESS_CONTEXT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut identities = ServiceIdentityTable::new();
         let shell_service = identities.register_task(TaskId::new(180)).unwrap();
         let intruder_service = identities.register_task(TaskId::new(181)).unwrap();
