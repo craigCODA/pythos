@@ -218,6 +218,17 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
             .map_err(|_| ());
             launch_pyth_graph_runtime_with_deferred_import(launch, capability);
         }
+        pyth_runtime_launch::PythGraphBootMode::LaunchLatePayloadInitHello => {
+            let launch = match prepare_late_payload_init_launch(boot_info, physical_memory) {
+                Ok(launch) => launch,
+                Err(_) => {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            };
+            serial::write_line("PYTHOS:CORE:LATE_RUNTIME_PAYLOAD_INIT_READY");
+            launch_pyth_graph_runtime(&launch);
+        }
         pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
 
@@ -388,6 +399,17 @@ fn emit_service_package_admitted_marker(admission: ServicePackageAdmission) {
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]
 fn launch_pyth_graph_runtime(launch: &pyth_runtime_launch::PreparedPythRuntimeLaunch) -> ! {
     launch_pyth_graph_runtime_with_deferred_import(launch, Ok(PackedCapability::from_raw(0)))
+}
+
+#[cfg(all(not(test), feature = "pythtig-phase2-test"))]
+fn prepare_late_payload_init_launch(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+) -> Result<
+    pyth_runtime_launch::PreparedPythRuntimeLaunch,
+    pyth_runtime_launch::PythRuntimeLaunchError,
+> {
+    pyth_runtime_launch::prepare_pyth_runtime_launch(boot_info, physical_memory, &[])
 }
 
 #[cfg(all(not(test), feature = "pythtig-phase2-test"))]

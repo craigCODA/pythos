@@ -14,19 +14,22 @@ use crate::{
     block_device::{self, BlockDeviceInfo},
     memory::{
         physical::{PAGE_SIZE, PhysicalMemory},
-        r#virtual::{RetainedUserAddressSpace, UserAddressSpace, UserPayloadMapping},
+        r#virtual::{
+            RetainedUserAddressSpace, UserAddressSpace, UserPayloadMapping,
+            with_writable_physical_frame,
+        },
     },
     pyth_graph_loader, retained_services, runtime_loader, serial, syscall, user_elf, user_stacks,
 };
 use crate::{process_context::ActiveUserProcess, service_identity::ServiceId};
-use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(
     not(test),
     feature = "pythtig-phase2-test",
     not(feature = "verify"),
     not(feature = "hardware-probe")
 ))]
-use core::{mem::size_of, ptr};
+use core::mem::size_of;
+use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(
     not(test),
     feature = "pythtig-phase2-test",
@@ -104,6 +107,7 @@ pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_RESTORE: u16 = 15;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_KNOWN_DENIED: u16 = 16;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_OBJECT_FORGERY: u16 = 17;
 pub const PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_TASK_STEWARD: u16 = 18;
+pub const PYTH_GRAPH_CONTROL_LATE_PAYLOAD_INIT_HELLO: u16 = 19;
 
 static OBJECT_FLOW_COMPLETION_MARKER_ARMED: AtomicBool = AtomicBool::new(false);
 
@@ -173,6 +177,7 @@ pub enum PythGraphBootMode {
     LaunchNativeObjectKnownDenied,
     LaunchNativeObjectForgery,
     LaunchNativeTaskSteward,
+    LaunchLatePayloadInitHello,
 }
 
 #[cfg(all(
@@ -930,13 +935,13 @@ fn prepare_pyth_launch_with_executable(
         return Err(PythRuntimeLaunchError::PackageTooLarge);
     }
     let bootstrap_frame = physical_memory
-        .allocate_zeroed_page()
+        .allocate_unzeroed_page()
         .map_err(|_| PythRuntimeLaunchError::Memory)?;
     let package_frame = physical_memory
-        .allocate_zeroed_page()
+        .allocate_unzeroed_page()
         .map_err(|_| PythRuntimeLaunchError::Memory)?;
     let result_frame = physical_memory
-        .allocate_zeroed_page()
+        .allocate_unzeroed_page()
         .map_err(|_| PythRuntimeLaunchError::Memory)?;
 
     let stack_region = user_stacks::regions()[1];
@@ -1004,9 +1009,9 @@ fn prepare_pyth_launch_with_executable(
         bootstrap_binding,
     )?;
 
-    write_package_page(package_frame, package);
-    write_bootstrap_page(bootstrap_frame, &bootstrap);
-    zero_result_page(result_frame);
+    write_package_page(package_frame, package)?;
+    write_bootstrap_page(bootstrap_frame, &bootstrap)?;
+    zero_result_page(result_frame)?;
 
     let payloads = [
         UserPayloadMapping::read_only(PYTH_GRAPH_BOOTSTRAP_USER_PTR, bootstrap_frame, PAGE_SIZE),
@@ -1170,22 +1175,12 @@ pub fn emit_package_rejected_marker(code: PythGraphRejectCode) {
     not(feature = "verify"),
     not(feature = "hardware-probe")
 ))]
-fn write_package_page(package_frame: u64, package: &[u8]) {
-    // SAFETY:
-    // 1. Invariant: `package_frame` is a fresh zeroed physical page still
-    //    reachable through the current bootstrap mappings.
-    // 2. Established by: `PhysicalMemory::allocate_zeroed_page` succeeded
-    //    before the kernel CR3 switch and `package.len() <= PAGE_SIZE`.
-    // 3. Lifetime: the frame is retained for the graph runtime process.
-    // 4. Pointer ownership: PythCore exclusively initializes the page here.
-    // 5. Alignment: allocated pages are 4 KiB aligned; byte copy needs no
-    //    stricter alignment.
-    // 6. Mapped length: one page contains the complete Phase 2 package.
-    // 7. Concurrency: single-core normal init before graph runtime entry.
-    // 8. Violation: a bad frame faults before any ring-3 authority is given.
-    unsafe {
-        ptr::copy_nonoverlapping(package.as_ptr(), package_frame as *mut u8, package.len());
-    }
+fn write_package_page(package_frame: u64, package: &[u8]) -> Result<(), PythRuntimeLaunchError> {
+    with_writable_physical_frame(package_frame, |page| {
+        page.fill(0);
+        page[..package.len()].copy_from_slice(package);
+    })
+    .map_err(|_| PythRuntimeLaunchError::Memory)
 }
 
 #[cfg(all(
@@ -1194,21 +1189,28 @@ fn write_package_page(package_frame: u64, package: &[u8]) {
     not(feature = "verify"),
     not(feature = "hardware-probe")
 ))]
-fn write_bootstrap_page(bootstrap_frame: u64, bootstrap: &PythGraphBootstrapBlock) {
+fn write_bootstrap_page(
+    bootstrap_frame: u64,
+    bootstrap: &PythGraphBootstrapBlock,
+) -> Result<(), PythRuntimeLaunchError> {
     // SAFETY:
-    // 1. Invariant: `bootstrap_frame` is a fresh zeroed physical page large
+    // 1. Invariant: the mapped page is a fresh runtime bootstrap frame large
     //    enough for one `PythGraphBootstrapBlock`.
-    // 2. Established by: page allocation and the ABI layout test proving the
-    //    block is smaller than 4 KiB.
+    // 2. Established by: `with_writable_physical_frame` exposing exactly one
+    //    frame and the ABI layout test proving the block is smaller than 4 KiB.
     // 3. Lifetime: the frame is retained read-only in user space.
     // 4. Pointer ownership: PythCore writes the block before runtime entry.
-    // 5. Alignment: allocated pages satisfy the block's 8-byte alignment.
+    // 5. Alignment: page mappings satisfy the block's 8-byte alignment.
     // 6. Mapped length: one 4 KiB page contains the full block.
     // 7. Concurrency: single-core normal init with no user alias yet active.
     // 8. Violation: bad mapping faults before `RUNTIME_ENTER`.
-    unsafe {
-        (bootstrap_frame as *mut PythGraphBootstrapBlock).write(*bootstrap);
-    }
+    with_writable_physical_frame(bootstrap_frame, |page| unsafe {
+        page.fill(0);
+        page.as_mut_ptr()
+            .cast::<PythGraphBootstrapBlock>()
+            .write(*bootstrap);
+    })
+    .map_err(|_| PythRuntimeLaunchError::Memory)
 }
 
 #[cfg(all(
@@ -1217,20 +1219,9 @@ fn write_bootstrap_page(bootstrap_frame: u64, bootstrap: &PythGraphBootstrapBloc
     not(feature = "verify"),
     not(feature = "hardware-probe")
 ))]
-fn zero_result_page(result_frame: u64) {
-    // SAFETY:
-    // 1. Invariant: `result_frame` is a fresh zeroed physical page retained
-    //    as the graph runtime result page.
-    // 2. Established by: page allocation succeeds before this call.
-    // 3. Lifetime: the page is owned by the runtime launch for this boot.
-    // 4. Pointer ownership: PythCore initializes the page before user access.
-    // 5. Alignment: page allocation gives 4 KiB alignment.
-    // 6. Mapped length: exactly one page is zeroed.
-    // 7. Concurrency: single-core normal init.
-    // 8. Violation: bad frame faults during normal init.
-    unsafe {
-        ptr::write_bytes(result_frame as *mut u8, 0, PAGE_SIZE as usize);
-    }
+fn zero_result_page(result_frame: u64) -> Result<(), PythRuntimeLaunchError> {
+    with_writable_physical_frame(result_frame, |page| page.fill(0))
+        .map_err(|_| PythRuntimeLaunchError::Memory)
 }
 
 pub fn decode_and_clear_pyth_graph_control_sector(
@@ -1268,6 +1259,7 @@ pub fn decode_and_clear_pyth_graph_control_sector(
             PythGraphBootMode::LaunchNativeObjectForgery
         }
         PYTH_GRAPH_CONTROL_LAUNCH_NATIVE_TASK_STEWARD => PythGraphBootMode::LaunchNativeTaskSteward,
+        PYTH_GRAPH_CONTROL_LATE_PAYLOAD_INIT_HELLO => PythGraphBootMode::LaunchLatePayloadInitHello,
         PYTH_GRAPH_CONTROL_DEFAULT => PythGraphBootMode::DefaultShell,
         _ => PythGraphBootMode::DefaultShell,
     }
@@ -1856,6 +1848,19 @@ mod tests {
             );
             assert_eq!(sector, [0u8; crate::block_device::SECTOR_SIZE]);
         }
+    }
+
+    #[test]
+    fn pyth_graph_control_sector_selects_late_payload_init_smoke_mode() {
+        let mut sector = [0u8; SECTOR_SIZE];
+        sector[0..8].copy_from_slice(PYTH_GRAPH_CONTROL_MAGIC);
+        sector[8..10].copy_from_slice(&PYTH_GRAPH_CONTROL_LATE_PAYLOAD_INIT_HELLO.to_le_bytes());
+
+        assert_eq!(
+            decode_and_clear_pyth_graph_control_sector(&mut sector),
+            PythGraphBootMode::LaunchLatePayloadInitHello
+        );
+        assert_eq!(sector, [0u8; crate::block_device::SECTOR_SIZE]);
     }
 
     #[test]

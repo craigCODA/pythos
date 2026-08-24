@@ -12,6 +12,7 @@ use crate::{user_elf, user_mode, user_stacks};
 use core::arch::asm;
 use core::arch::global_asm;
 use core::mem;
+use core::sync::atomic::{AtomicBool, Ordering};
 use pythos_shared::boot_protocol::{PYTH_BOOT_MAGIC, PYTH_EVIDENCE_LOG_FLAG_PRESENT, PythBootInfo};
 
 const TWO_MIB: u64 = 2 * 1024 * 1024;
@@ -19,6 +20,7 @@ const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
 const MAX_USER_ELF_FRAMES: usize = 64;
+pub const LATE_FRAME_SCRATCH_VIRT: u64 = 0xFFFF_C000_3000_0000;
 
 const PTE_PRESENT: u64 = 1 << 0;
 const PTE_WRITE: u64 = 1 << 1;
@@ -33,6 +35,8 @@ const PTE_NO_EXECUTE: u64 = 1 << 63;
 const ADDR_MASK: u64 = 0x000F_FFFF_FFFF_F000;
 const OFFSET_4K_MASK: u64 = 0xFFF;
 const OFFSET_2M_MASK: u64 = TWO_MIB - 1;
+
+static LATE_FRAME_SCRATCH_IN_USE: AtomicBool = AtomicBool::new(false);
 
 unsafe extern "C" {
     static __pythcore_rodata_start: u8;
@@ -279,6 +283,7 @@ impl KernelAddressSpace {
         if let Some(frame) = shell_bootstrap_frame {
             tables.map_physical_range(frame, frame, PAGE_SIZE, PTE_WRITE | PTE_NO_EXECUTE)?;
         }
+        tables.reserve_late_frame_scratch_alias()?;
         tables.map_allocated_table_frames()?;
 
         Ok(Self {
@@ -424,6 +429,7 @@ impl UserAddressSpace {
         map_user_mode_proof_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
         map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
+        tables.reserve_late_frame_scratch_alias()?;
         tables.map_allocated_table_frames()?;
         let table_frames = tables.allocated_frames;
         let table_frame_count = tables.allocated_count;
@@ -562,6 +568,7 @@ impl UserAddressSpace {
             payload_index += 1;
         }
 
+        tables.reserve_late_frame_scratch_alias()?;
         tables.map_allocated_table_frames()?;
         let table_frames = tables.allocated_frames;
         let table_frame_count = tables.allocated_count;
@@ -740,7 +747,7 @@ struct PageTableBuilder<'a> {
 
 impl<'a> PageTableBuilder<'a> {
     fn new(allocator: &'a mut PhysicalMemory) -> Result<Self, VmError> {
-        let root = allocator.allocate_zeroed_page()?;
+        let root = allocate_zeroed_frame(allocator)?;
         let mut builder = Self {
             allocator,
             root_table_phys: root,
@@ -855,6 +862,16 @@ impl<'a> PageTableBuilder<'a> {
         Ok(())
     }
 
+    fn reserve_late_frame_scratch_alias(&mut self) -> Result<(), VmError> {
+        let pt = self.ensure_leaf_table(LATE_FRAME_SCRATCH_VIRT, 0)?;
+        let index = table_index(LATE_FRAME_SCRATCH_VIRT, 12);
+        if read_entry(pt, index)? & PTE_PRESENT != 0 {
+            return Err(VmError::DuplicateMapping);
+        }
+        write_entry(pt, index, 0)?;
+        Ok(())
+    }
+
     fn map_4k(&mut self, virt: u64, phys: u64, leaf_flags: u64) -> Result<(), VmError> {
         self.map_4k_with_table_flags(virt, phys, leaf_flags, 0, false)
     }
@@ -880,38 +897,42 @@ impl<'a> PageTableBuilder<'a> {
         {
             return Err(VmError::RangeOverflow);
         }
-        let pdpt = self.ensure_table(self.root_table_phys, table_index(virt, 39), table_flags)?;
-        let pd = self.ensure_table(pdpt, table_index(virt, 30), table_flags)?;
-        let pt = self.ensure_table(pd, table_index(virt, 21), table_flags)?;
+        let pt = self.ensure_leaf_table(virt, table_flags)?;
         let index = table_index(virt, 12);
-        if read_entry(pt, index) & PTE_PRESENT != 0 {
-            let existing = read_entry(pt, index);
+        if read_entry(pt, index)? & PTE_PRESENT != 0 {
+            let existing = read_entry(pt, index)?;
             if existing & ADDR_MASK == phys {
                 if update_existing_leaf {
-                    write_entry(pt, index, phys | leaf_flags | PTE_PRESENT);
+                    write_entry(pt, index, phys | leaf_flags | PTE_PRESENT)?;
                 }
                 return Ok(());
             }
             return Err(VmError::DuplicateMapping);
         }
-        write_entry(pt, index, phys | leaf_flags | PTE_PRESENT);
+        write_entry(pt, index, phys | leaf_flags | PTE_PRESENT)?;
         Ok(())
     }
 
+    fn ensure_leaf_table(&mut self, virt: u64, table_flags: u64) -> Result<u64, VmError> {
+        let pdpt = self.ensure_table(self.root_table_phys, table_index(virt, 39), table_flags)?;
+        let pd = self.ensure_table(pdpt, table_index(virt, 30), table_flags)?;
+        self.ensure_table(pd, table_index(virt, 21), table_flags)
+    }
+
     fn ensure_table(&mut self, table_phys: u64, index: usize, flags: u64) -> Result<u64, VmError> {
-        let entry = read_entry(table_phys, index);
+        let entry = read_entry(table_phys, index)?;
         if entry & PTE_PRESENT != 0 {
             if entry & PTE_HUGE != 0 {
                 return Err(VmError::DuplicateMapping);
             }
             if flags != 0 && entry & flags != flags {
-                write_entry(table_phys, index, entry | flags);
+                write_entry(table_phys, index, entry | flags)?;
             }
             return Ok(entry & ADDR_MASK);
         }
-        let frame = self.allocator.allocate_zeroed_page()?;
+        let frame = allocate_zeroed_frame(self.allocator)?;
         self.remember_frame(frame)?;
-        write_entry(table_phys, index, frame | PTE_PRESENT | PTE_WRITE | flags);
+        write_entry(table_phys, index, frame | PTE_PRESENT | PTE_WRITE | flags)?;
         Ok(frame)
     }
 
@@ -1066,7 +1087,7 @@ fn map_user_elf_segment(
     let page_len = segment.page_len();
     let mut page_offset = 0u64;
     while page_offset < page_len {
-        let physical = tables.allocator.allocate_zeroed_page()?;
+        let physical = allocate_zeroed_frame(tables.allocator)?;
         copy_user_elf_page(elf_bytes, segment, page_offset, physical)?;
         remember_user_payload_frame(physical, user_elf_frames, user_elf_frame_count)?;
 
@@ -1119,26 +1140,7 @@ fn copy_user_elf_page(
         .ok_or(VmError::RangeOverflow)?;
     let copy_start = max_u64(page_virtual_start, file_virtual_start);
     let copy_end = min_u64(page_virtual_end, file_virtual_end);
-
-    // SAFETY:
-    // 1. Invariant: `physical` is a freshly allocated, page-aligned frame
-    //    reachable through the loader identity map while user ELF address
-    //    spaces are built before the kernel `CR3` switch.
-    // 2. Established by: `PhysicalMemory::allocate_zeroed_page` returning
-    //    success during the pre-activation address-space construction phase.
-    // 3. Lifetime: the frame is owned by the new user address space after this
-    //    copy and is tracked in `user_elf_frames`.
-    // 4. Pointer ownership: PythCore has exclusive mutable ownership of the
-    //    freshly allocated frame.
-    // 5. Alignment: allocator returns 4 KiB-aligned page frames.
-    // 6. Mapped length: exactly one 4 KiB page is written.
-    // 7. Concurrency: single-core early boot before user program execution.
-    // 8. Violation: a bad frame pointer would corrupt memory or fault before
-    //    the Phase 9 marker can be emitted.
-    let destination =
-        unsafe { core::slice::from_raw_parts_mut(physical as *mut u8, PAGE_SIZE as usize) };
-    destination.fill(0);
-    if copy_start < copy_end {
+    let (source, dest_start) = if copy_start < copy_end {
         let source_start = segment
             .file_offset()
             .checked_add(
@@ -1164,15 +1166,23 @@ fn copy_user_elf_page(
         let source = elf_bytes
             .get(source_start..source_end)
             .ok_or(VmError::UnmappedSource)?;
-        let dest_end = dest_start
-            .checked_add(source.len())
-            .ok_or(VmError::RangeOverflow)?;
-        destination
-            .get_mut(dest_start..dest_end)
-            .ok_or(VmError::RangeOverflow)?
-            .copy_from_slice(source);
+        (source, dest_start)
+    } else {
+        (&[][..], 0)
+    };
+    let dest_end = dest_start
+        .checked_add(source.len())
+        .ok_or(VmError::RangeOverflow)?;
+    if dest_end > PAGE_SIZE as usize {
+        return Err(VmError::RangeOverflow);
     }
-    Ok(())
+
+    with_writable_physical_frame(physical, |destination| {
+        destination.fill(0);
+        if !source.is_empty() {
+            destination[dest_start..dest_end].copy_from_slice(source);
+        }
+    })
 }
 
 fn user_elf_page_flags(segment: &user_elf::LoadSegment) -> u64 {
@@ -1275,29 +1285,29 @@ fn smbios_entry_len(address: u64) -> Result<u64, VmError> {
 }
 
 fn translate_active(virt: u64) -> Result<u64, VmError> {
-    translate_from_root(read_cr3(), virt)
+    translate_from_active_root_direct(virt)
 }
 
 fn translate_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmError> {
-    let pml4e = read_entry(root_table_phys, table_index(virt, 39));
+    let pml4e = read_entry(root_table_phys, table_index(virt, 39))?;
     if pml4e & PTE_PRESENT == 0 {
         return Err(VmError::UnmappedSource);
     }
-    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30))?;
     if pdpte & PTE_PRESENT == 0 {
         return Err(VmError::UnmappedSource);
     }
     if pdpte & PTE_HUGE != 0 {
         return Ok((pdpte & ADDR_MASK) + (virt & 0x3FFF_FFFF));
     }
-    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21))?;
     if pde & PTE_PRESENT == 0 {
         return Err(VmError::UnmappedSource);
     }
     if pde & PTE_HUGE != 0 {
         return Ok((pde & ADDR_MASK) + (virt & OFFSET_2M_MASK));
     }
-    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
+    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12))?;
     if pte & PTE_PRESENT == 0 {
         return Err(VmError::UnmappedSource);
     }
@@ -1305,42 +1315,42 @@ fn translate_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmError> 
 }
 
 fn user_can_access_from_root(root_table_phys: u64, virt: u64) -> Result<bool, VmError> {
-    let pml4e = read_entry(root_table_phys, table_index(virt, 39));
+    let pml4e = read_entry(root_table_phys, table_index(virt, 39))?;
     if !present_user(pml4e) {
         return Ok(false);
     }
-    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30))?;
     if !present_user(pdpte) {
         return Ok(false);
     }
     if pdpte & PTE_HUGE != 0 {
         return Ok(true);
     }
-    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21))?;
     if !present_user(pde) {
         return Ok(false);
     }
     if pde & PTE_HUGE != 0 {
         return Ok(true);
     }
-    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
+    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12))?;
     Ok(present_user(pte))
 }
 
 fn user_leaf_entry_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmError> {
-    let pml4e = read_entry(root_table_phys, table_index(virt, 39));
+    let pml4e = read_entry(root_table_phys, table_index(virt, 39))?;
     if !present_user(pml4e) {
         return Err(VmError::UserAccessViolation);
     }
-    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    let pdpte = read_entry(pml4e & ADDR_MASK, table_index(virt, 30))?;
     if !present_user(pdpte) || pdpte & PTE_HUGE != 0 {
         return Err(VmError::UserAccessViolation);
     }
-    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    let pde = read_entry(pdpte & ADDR_MASK, table_index(virt, 21))?;
     if !present_user(pde) || pde & PTE_HUGE != 0 {
         return Err(VmError::UserAccessViolation);
     }
-    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12));
+    let pte = read_entry(pde & ADDR_MASK, table_index(virt, 12))?;
     if !present_user(pte) {
         return Err(VmError::UserAccessViolation);
     }
@@ -1349,6 +1359,135 @@ fn user_leaf_entry_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmE
 
 fn present_user(entry: u64) -> bool {
     entry & PTE_PRESENT != 0 && entry & PTE_USER != 0
+}
+
+fn allocate_zeroed_frame(allocator: &mut PhysicalMemory) -> Result<u64, VmError> {
+    let frame = allocator.allocate_unzeroed_page()?;
+    if let Err(error) = zero_physical_frame(frame) {
+        let _ = allocator.release_allocated_page(frame);
+        return Err(error);
+    }
+    Ok(frame)
+}
+
+fn zero_physical_frame(physical: u64) -> Result<(), VmError> {
+    with_writable_physical_frame(physical, |page| page.fill(0))
+}
+
+pub fn with_writable_physical_frame<R>(
+    physical: u64,
+    f: impl FnOnce(&mut [u8]) -> R,
+) -> Result<R, VmError> {
+    if !physical.is_multiple_of(PAGE_SIZE) || physical & !ADDR_MASK != 0 {
+        return Err(VmError::RangeOverflow);
+    }
+    if active_identity_mapping_is_writable(physical) {
+        // SAFETY:
+        // 1. Invariant: the active root translates `physical` to itself, so
+        //    this physical frame also has a valid writable kernel virtual
+        //    address equal to its frame number.
+        // 2. Established by: `active_identity_mapping_is_writable` succeeded
+        //    immediately above with an exact writable identity translation.
+        // 3. Lifetime: the caller owns the physical frame for the duration of
+        //    this synchronous initialization closure.
+        // 4. Pointer ownership: PythCore has exclusive mutable ownership of
+        //    the newly allocated frame or page-table frame being initialized.
+        // 5. Alignment: `physical` is page-aligned.
+        // 6. Mapped length: exactly one 4 KiB page is exposed.
+        // 7. Concurrency: single-core kernel execution; callers do not share
+        //    this frame with user mode until after initialization returns.
+        // 8. Violation: a stale identity translation would corrupt or fault.
+        let page =
+            unsafe { core::slice::from_raw_parts_mut(physical as *mut u8, PAGE_SIZE as usize) };
+        return Ok(f(page));
+    }
+    with_late_frame_scratch_mapping(physical, f)
+}
+
+fn with_late_frame_scratch_mapping<R>(
+    physical: u64,
+    f: impl FnOnce(&mut [u8]) -> R,
+) -> Result<R, VmError> {
+    if LATE_FRAME_SCRATCH_IN_USE
+        .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+        .is_err()
+    {
+        return Err(VmError::ActiveAddressSpace);
+    }
+    if let Err(error) = map_late_frame_scratch_alias(physical) {
+        LATE_FRAME_SCRATCH_IN_USE.store(false, Ordering::Release);
+        return Err(error);
+    }
+    // SAFETY:
+    // 1. Invariant: `LATE_FRAME_SCRATCH_VIRT` is a supervisor-only writable
+    //    alias of exactly `physical` in the active root.
+    // 2. Established by: `map_late_frame_scratch_alias` just installed the
+    //    leaf PTE and flushed this page's TLB entry.
+    // 3. Lifetime: the alias is removed before this function returns.
+    // 4. Pointer ownership: callers provide frames they own exclusively for
+    //    initialization or page-table mutation.
+    // 5. Alignment: the alias and physical frame are page-aligned.
+    // 6. Mapped length: exactly one 4 KiB page is exposed.
+    // 7. Concurrency: the scratch slot is guarded against reentry; the kernel
+    //    is single-core and no user PTE grants access to this alias.
+    // 8. Violation: a stale alias would expose the wrong frame to kernel code.
+    let page = unsafe {
+        core::slice::from_raw_parts_mut(LATE_FRAME_SCRATCH_VIRT as *mut u8, PAGE_SIZE as usize)
+    };
+    let result = f(page);
+    if let Err(error) = unmap_late_frame_scratch_alias() {
+        LATE_FRAME_SCRATCH_IN_USE.store(false, Ordering::Release);
+        return Err(error);
+    }
+    LATE_FRAME_SCRATCH_IN_USE.store(false, Ordering::Release);
+    Ok(result)
+}
+
+fn map_late_frame_scratch_alias(physical: u64) -> Result<(), VmError> {
+    let (pt, index) = active_scratch_leaf_table()?;
+    if read_mapped_entry(pt, index) & PTE_PRESENT != 0 {
+        return Err(VmError::DuplicateMapping);
+    }
+    write_mapped_entry(
+        pt,
+        index,
+        physical | PTE_PRESENT | PTE_WRITE | PTE_NO_EXECUTE,
+    );
+    flush_tlb_page(LATE_FRAME_SCRATCH_VIRT);
+    Ok(())
+}
+
+fn unmap_late_frame_scratch_alias() -> Result<(), VmError> {
+    let (pt, index) = active_scratch_leaf_table()?;
+    write_mapped_entry(pt, index, 0);
+    flush_tlb_page(LATE_FRAME_SCRATCH_VIRT);
+    Ok(())
+}
+
+fn active_scratch_leaf_table() -> Result<(u64, usize), VmError> {
+    let root_table_phys = read_cr3();
+    let pml4e = read_mapped_entry(root_table_phys, table_index(LATE_FRAME_SCRATCH_VIRT, 39));
+    if pml4e & PTE_PRESENT == 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    if pml4e & PTE_USER != 0 {
+        return Err(VmError::UserAccessViolation);
+    }
+    let pdpte = read_mapped_entry(pml4e & ADDR_MASK, table_index(LATE_FRAME_SCRATCH_VIRT, 30));
+    if pdpte & PTE_PRESENT == 0 || pdpte & PTE_HUGE != 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    if pdpte & PTE_USER != 0 {
+        return Err(VmError::UserAccessViolation);
+    }
+    let pde = read_mapped_entry(pdpte & ADDR_MASK, table_index(LATE_FRAME_SCRATCH_VIRT, 21));
+    if pde & PTE_PRESENT == 0 || pde & PTE_HUGE != 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    if pde & PTE_USER != 0 {
+        return Err(VmError::UserAccessViolation);
+    }
+    Ok((pde & ADDR_MASK, table_index(LATE_FRAME_SCRATCH_VIRT, 12)))
 }
 
 fn read_cr3() -> u64 {
@@ -1368,7 +1507,88 @@ fn read_cr3() -> u64 {
     cr3 & ADDR_MASK
 }
 
-fn read_entry(table_phys: u64, index: usize) -> u64 {
+fn translate_from_active_root_direct(virt: u64) -> Result<u64, VmError> {
+    translate_from_active_root_direct_with_leaf(virt).map(|(physical, _leaf)| physical)
+}
+
+fn translate_from_active_root_direct_with_leaf(virt: u64) -> Result<(u64, u64), VmError> {
+    let root_table_phys = read_cr3();
+    let pml4e = read_mapped_entry(root_table_phys, table_index(virt, 39));
+    if pml4e & PTE_PRESENT == 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    let pdpte = read_mapped_entry(pml4e & ADDR_MASK, table_index(virt, 30));
+    if pdpte & PTE_PRESENT == 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    if pdpte & PTE_HUGE != 0 {
+        return Ok(((pdpte & ADDR_MASK) + (virt & 0x3FFF_FFFF), pdpte));
+    }
+    let pde = read_mapped_entry(pdpte & ADDR_MASK, table_index(virt, 21));
+    if pde & PTE_PRESENT == 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    if pde & PTE_HUGE != 0 {
+        return Ok(((pde & ADDR_MASK) + (virt & OFFSET_2M_MASK), pde));
+    }
+    let pte = read_mapped_entry(pde & ADDR_MASK, table_index(virt, 12));
+    if pte & PTE_PRESENT == 0 {
+        return Err(VmError::UnmappedSource);
+    }
+    Ok(((pte & ADDR_MASK) + (virt & OFFSET_4K_MASK), pte))
+}
+
+fn active_identity_mapping_is_writable(virt: u64) -> bool {
+    translate_from_active_root_direct_with_leaf(virt)
+        .is_ok_and(|(physical, leaf)| physical == virt && leaf & PTE_WRITE != 0)
+}
+
+fn read_entry(table_phys: u64, index: usize) -> Result<u64, VmError> {
+    if translate_from_active_root_direct(table_phys).is_ok_and(|mapped| mapped == table_phys) {
+        return Ok(read_mapped_entry(table_phys, index));
+    }
+    let mut value = 0u64;
+    with_writable_physical_frame(table_phys, |page| {
+        let entry = page.as_ptr().cast::<u64>();
+        // SAFETY:
+        // 1. Invariant: `page` is a mapped 4 KiB page-table frame and `index`
+        //    is below 512.
+        // 2. Established by: `with_writable_physical_frame` mapped the frame
+        //    for one page and the caller only asks for page-table entries.
+        // 3. Lifetime: the alias stays valid for this synchronous closure.
+        // 4. Pointer ownership: PythCore owns the page-table frame.
+        // 5. Alignment: page-table frames are 4 KiB aligned.
+        // 6. Mapped length: one 4 KiB page contains all 512 entries.
+        // 7. Concurrency: guarded scratch alias, single-core execution.
+        // 8. Violation: a bad index would read outside the table frame.
+        value = unsafe { entry.add(index).read_volatile() };
+    })?;
+    Ok(value)
+}
+
+fn write_entry(table_phys: u64, index: usize, value: u64) -> Result<(), VmError> {
+    if active_identity_mapping_is_writable(table_phys) {
+        write_mapped_entry(table_phys, index, value);
+        return Ok(());
+    }
+    with_writable_physical_frame(table_phys, |page| {
+        let entry = page.as_mut_ptr().cast::<u64>();
+        // SAFETY:
+        // 1. Invariant: `page` is a mapped PythCore-owned 4 KiB page-table
+        //    frame and `index` is below 512.
+        // 2. Established by: `with_writable_physical_frame` mapped the frame
+        //    for one page and callers only write page-table entries.
+        // 3. Lifetime: the alias stays valid for this synchronous closure.
+        // 4. Pointer ownership: PythCore exclusively owns new page tables.
+        // 5. Alignment: page-table frames are 4 KiB aligned.
+        // 6. Mapped length: one 4 KiB page contains all 512 entries.
+        // 7. Concurrency: guarded scratch alias, single-core execution.
+        // 8. Violation: a bad index would corrupt memory outside the table.
+        unsafe { entry.add(index).write_volatile(value) };
+    })
+}
+
+fn read_mapped_entry(table_phys: u64, index: usize) -> u64 {
     debug_assert!(index < ENTRY_COUNT);
     // SAFETY:
     // 1. Invariant: `table_phys` names a mapped 4 KiB page-table frame and
@@ -1385,7 +1605,7 @@ fn read_entry(table_phys: u64, index: usize) -> u64 {
     unsafe { (table_phys as *const u64).add(index).read_volatile() }
 }
 
-fn write_entry(table_phys: u64, index: usize, value: u64) {
+fn write_mapped_entry(table_phys: u64, index: usize, value: u64) {
     debug_assert!(index < ENTRY_COUNT);
     // SAFETY:
     // 1. Invariant: `table_phys` names a mapped PythCore-owned 4 KiB
@@ -1398,6 +1618,23 @@ fn write_entry(table_phys: u64, index: usize, value: u64) {
     // 7. Concurrency: single-core execution with interrupts disabled.
     // 8. Violation: writing outside the frame would corrupt memory.
     unsafe { (table_phys as *mut u64).add(index).write_volatile(value) }
+}
+
+fn flush_tlb_page(virt: u64) {
+    // SAFETY:
+    // 1. Invariant: invalidating a single virtual address is valid in x86-64
+    //    ring 0 and does not dereference the address.
+    // 2. Established by: PythCore runs as the native kernel.
+    // 3. Lifetime: the instruction has no borrowed memory lifetime.
+    // 4. Pointer ownership: no pointer ownership is involved.
+    // 5. Alignment: `invlpg` accepts any address; callers pass a page-aligned
+    //    scratch alias.
+    // 6. Mapped length: not applicable.
+    // 7. Concurrency: single-core execution; no remote TLB shootdown needed.
+    // 8. Violation: skipping this can leave a stale scratch-frame alias.
+    unsafe {
+        asm!("invlpg [{addr}]", addr = in(reg) virt, options(nostack, preserves_flags));
+    }
 }
 
 fn read_u8(address: u64, offset: usize) -> u8 {
