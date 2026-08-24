@@ -1,16 +1,15 @@
 # PythOS Handover
 
-Current checked-in boundary: `main` is stopped at Phase 12 -> Phase 13. Phase
-12 `path-vs-graph-decision` is recorded through ADR 0069, which
-chooses a capability-scoped object locator namespace rather than POSIX paths,
-and through `docs/semantic-checkpoint-contract.md`, which defines the
-build-evidence comparison contract for future parallel lanes. Phase 12
+Current checked-in boundary: Phase 13 is complete and the tree is stopped at
+Phase 13 -> Phase 13.5. Phase 12 `path-vs-graph-decision` is recorded through
+ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12
 `path-resolution` is recorded through ADR 0070 and
 `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite
-loader read-bound increase required by the Slice 2 debug acceptance image.
+loader read-bound increase required by the Slice 2 debug acceptance image; and
 Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and
-`PYTHOS:CORE:PHASE_12_COMPLETE`. Do not begin Phase 13 package work without
-explicit owner re-invocation.
+`PYTHOS:CORE:PHASE_12_COMPLETE`. ADR 0073 records the Phase 13 package
+lifecycle and schema-extensibility ABI, and the final independent package QEMU
+proof reaches `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 Recent merged decisions and fixes:
 
@@ -36,6 +35,11 @@ Recent merged decisions and fixes:
   stale bindings, missing segments, missing traversal authority, missing final
   authority, name collisions, link confusion, and global-root fallback
   assumptions.
+- Phase 13 implemented local package format validation, install/restore,
+  launch through explicit retained-service capability validation,
+  disable/uninstall policy, real ring-3 PythTIG package launch,
+  `PackageDefinedObject` creation through `SYSCALL_OBJECT_REQUEST`, schema
+  reference retention, and the independently authored package lifecycle proof.
 - Phase 11 physical-hardware smoke-test findings remain recorded through ADR
   0046 and `docs/phase-11-real-hardware-findings.md`.
 
@@ -162,7 +166,7 @@ ADR 0065: Pyth Graph Package ABI
 This merge keeps the ADR 0063 evidence-terminal implementation baseline intact
 and records the full reconciliation in
 `docs/pyth-tig/PHASE-0-RECONCILIATION-REPORT.md`. Do not implement later
-PythTIG phases, hardware expansion, networking, package management, updates,
+PythTIG phases, hardware expansion, networking, later package work, updates,
 AI, or SMP by momentum; each still requires explicit owner invocation.
 
 ## SDHCI/eMMC PIO Backend (2026-08-01, branch `feature/sdhci-emmc-backend`)
@@ -433,10 +437,10 @@ boots the same image a second time to prove persisted object/general-storage
 state is restored over AHCI. The runner support is in `scripts/run-qemu.py` via
 `--ahci`, `--ahci-storage-image`, and `--no-virtio-blk`.
 
-Still out of scope: NVMe, interrupt-driven storage, MSI/MSI-X, Local
-APIC/IOAPIC, multi-bus PCI enumeration, filesystems, partition discovery,
-hotplug, IOMMU/DMA isolation, package management, networking, updates, SMP,
-and AI.
+Still out of scope for that backend slice: NVMe, interrupt-driven storage,
+MSI/MSI-X, Local APIC/IOAPIC, multi-bus PCI enumeration, filesystems, partition
+discovery, hotplug, IOMMU/DMA isolation, later package-distribution/session
+work, networking, updates, SMP, and AI.
 
 ## Real-Hardware Boot Status (2026-07-25)
 
@@ -533,8 +537,11 @@ Phase 12 path-vs-graph-decision recorded through ADR 0069
 Phase 12 path-resolution recorded through ADR 0070; loader bound through ADR 0071
 Phase 12 loader read-bound extension recorded through ADR 0071
 Phase 12 path-adversarial-suite recorded through ADR 0072
-Next allowed work: none by momentum. Phase 13 package work, later PythTIG
-phases, networking, updates, AI, SMP, or hardware expansion require explicit
+Phase 13 package lifecycle and schema extensibility recorded through ADR 0073
+Phase 13 independent package lifecycle proof reaches PYTHOS:CORE:PHASE_13_COMPLETE
+Next allowed work: none by momentum. Phase 13.5, persistent Pyth sessions,
+presentation/input bridges, WakeContext/Waking, Kai, later PythTIG phases,
+networking, updates, AI, SMP, or hardware expansion require explicit
 re-invocation and the corresponding roadmap or phase plan.
 ```
 
@@ -549,7 +556,7 @@ shared-memory proof. ADR 0032 records the Phase 8 process-termination proof.
 ADR 0033 records the Phase 8 memory-quota proof. ADR 0034 records the Phase 8
 CPU-quota proof. ADR 0035 records the Phase 8 crash-containment proof. ADR
 0036 records the Phase 8 capability-boundary proof. Do not start networking,
-AI, SMP, package management, updates, or hardware-expansion work before their
+AI, SMP, later package work, updates, or hardware-expansion work before their
 roadmap gates.
 
 ## Phase 6 Summary
@@ -1115,7 +1122,10 @@ user pointer copy-in/copy-out
 general-purpose hostile-code service isolation
 general-purpose userspace ABI
 SMP
-package management
+remote package registry, dependency solving, or package updates
+persistent package-session runtime
+presentation/input package bridges
+WakeContext, First Waking, or Kai
 Open Surface
 Patch
 ```
@@ -1137,9 +1147,11 @@ Phase 12 `path-vs-graph-decision` slice is recorded through ADR 0069 and
 recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`.
 ADR 0071 records the finite loader read-bound increase required by the Slice 2
 debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
-through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`.
-The current numbered-roadmap stop boundary is Phase 12 -> Phase 13. The current
-PythTIG stop boundary is Phase 7 -> later PythTIG phases.
+through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
+lifecycle and package-defined schema extensibility are recorded through
+ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
+The current numbered-roadmap stop boundary is Phase 13 -> Phase 13.5. The
+current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
@@ -1152,7 +1164,8 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin Phase 13 package work, networking, package-management details,
-updates, AI, SMP, hardware expansion, or later PythTIG work by momentum. Pick
-one later phase, write its detailed slice sequence and required artifacts, then
-start with a failing automated test where code is involved.
+Do not begin Phase 13.5, persistent Pyth sessions, presentation/input bridges,
+WakeContext/Waking, Kai, networking, updates, AI, SMP, hardware expansion, or
+later PythTIG work by momentum. Pick one later phase, write its detailed slice
+sequence and required artifacts, then start with a failing automated test where
+code is involved.

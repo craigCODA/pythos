@@ -40,9 +40,9 @@ for every cross-target claim, and physical evidence remains
 machine/controller-specific.
 
 Halt at the PythTIG Phase 7 boundary. Do not implement later PythTIG phases,
-hardware expansion, networking, package management, updates, AI, or SMP from
-this documentation by momentum; each later phase still requires explicit owner
-invocation.
+hardware expansion, networking, later package-session or package-distribution
+features, updates, AI, or SMP from this documentation by momentum; each later
+phase still requires explicit owner invocation.
 
 ## How To Read This File
 
@@ -1153,7 +1153,7 @@ Phase 9   general-purpose-process-model   (generalizes Phase 8)
 Phase 10  general-purpose-storage          (generalizes Phase 7)
 Phase 11  physical-hardware-boot-smoke-test (recorded, target-specific)
 Phase 12  general-purpose-object-locator-namespace (complete)
-Phase 13  applications-and-packaging       (needs 9 + 10 + 12)
+Phase 13  applications-and-packaging       (complete)
 Phase 14  networking
 Phase 15  hardware-driver-expansion
 Phase 16  updates-and-recovery-mode
@@ -1252,8 +1252,8 @@ grants is complete. ADR 0041 for process argv/environment launch data is
 complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
 for the process-model adversarial suite is complete. Phase 9 is complete;
 Phase 10 follows below as historical context. The active hard stop is now the
-Phase 12 -> Phase 13 boundary recorded in
-`docs/ROADMAP-LATER-PHASES.md`.
+Phase 13 -> Phase 13.5 boundary recorded by ADR 0073 and
+`PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 ---
 
@@ -1299,9 +1299,12 @@ physical-hardware smoke-test findings are recorded through ADR 0046 and
 `docs/phase-11-real-hardware-findings.md`. Phase 12
 `path-vs-graph-decision` is recorded through ADR 0069, `path-resolution` is
 recorded through ADR 0070, the loader bound is recorded through ADR 0071, and
-`path-adversarial-suite` is recorded through ADR 0072. Halt at the Phase 12 ->
-Phase 13 boundary; do not begin Phase 13 package work without explicit
-re-invocation.
+`path-adversarial-suite` is recorded through ADR 0072. Phase 13 package
+lifecycle and schema extensibility are recorded through ADR 0073 and
+`PYTHOS:CORE:PHASE_13_COMPLETE`. Halt at the Phase 13 -> Phase 13.5 boundary;
+do not begin persistent Pyth sessions, presentation/input bridges,
+WakeContext/Waking, Kai, networking, AI, updates, SMP, or hardware expansion
+without explicit re-invocation.
 
 ### Scope boundary
 
@@ -1383,7 +1386,15 @@ out during hardware expansion with drivers involved.
 
 ---
 
-## Historical Phase 12: Applications and Packaging (Current Phase 13)
+## Historical Phase 12: Applications and Packaging (Phase 13, Complete)
+
+Status: complete through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
+The completed Phase 13 proof is a local package lifecycle: package format
+validation, install/restore, capability-scoped launch, disable/uninstall,
+package-defined schema/object creation, schema retention after uninstall, and
+an independently authored package that installs, launches in the real ring-3
+Pyth runtime, creates a `PackageDefinedObject`, uninstalls its defining
+package, reboots, and preserves interpretable instance/schema state.
 
 ### Purpose
 
@@ -1403,7 +1414,7 @@ next — it isn't, until both of those exist.
    is filesystem-path-based or purely object-graph-based — this is the
    moment that decision can no longer be deferred.
 2. **`package-install`** — install from a local source (USB, local file —
-   not networked yet, that's Phase 13) into Phase 10's storage, capability-
+   not networked yet, that's Phase 14) into Phase 10's storage, capability-
    scoped so installation itself is a mediated, auditable operation.
 3. **`package-launch`** — launch an installed package as a Phase 9 process
    with a capability grant set derived from the package's declared needs,
@@ -1422,13 +1433,20 @@ by an automated test — not a manual demo.
 
 ### Scope boundary
 
-No package registry, no remote fetching, no dependency resolution between
-packages yet. Single local package, installed and run, is the whole bar.
+No remote fetching, no dependency resolution between packages, no persistent
+package-session runtime, no presentation/input bridge, no WakeContext/Waking,
+and no Kai. Single local package, installed and run, is the Phase 13 bar.
 
 ### Required artifacts
 
-ADR for the package format (item 1) — this is a durable, user-facing format
-the moment real packages exist against it.
+ADR 0073 records the package lifecycle and schema-extensibility ABI. The final
+QEMU evidence reaches:
+
+```text
+PYTHOS:CORE:INDEPENDENT_PACKAGE_READY
+PYTHOS:CORE:PACKAGE_SCHEMA_EXTENSIBILITY_READY
+PYTHOS:CORE:PHASE_13_COMPLETE
+```
 
 ---
 
@@ -1529,8 +1547,8 @@ Don't conflate the two.
 
 Current Phase 14 (networking, for update transport) and current Phase 15
 (enough hardware support that "the machine" means something beyond QEMU) both
-reasonably mature. Current Phase 13 (packaging) informs what "an update"
-actually updates.
+reasonably mature. Phase 13 packaging informs what "an update" actually
+updates.
 
 ### Locked slice sequence
 

@@ -8,15 +8,17 @@ persists typed objects across QEMU reboots, runs a capability-controlled ring-3
 object shell, and verifies storage through virtio, AHCI, and opt-in
 SDHCI/eMMC block backends in QEMU. `main` also contains the accepted PythTIG
 version 1 graph-package implementation through Phase 7 cutover/cross-target
-evidence, followed by the Phase 12 slice-1 decision that PythOS will use a
-capability-scoped object locator namespace rather than POSIX paths and the
-Phase 12 slice-2 and slice-3 implementation and adversarial validation of that
-resolver.
+evidence, followed by the Phase 12 capability-scoped object locator and the
+Phase 13 local package lifecycle, launch-authority, uninstall, and
+package-defined schema extensibility proofs.
 
-The current checked-in stop boundary is Phase 12 -> Phase 13: ADR 0069,
-`docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072, and
-`PYTHOS:CORE:PHASE_12_COMPLETE` are recorded. Phase 13 package work is not
-implemented or authorized by momentum. The SDHCI/eMMC backend has
+The current checked-in stop boundary is Phase 13 -> Phase 13.5: ADR 0069,
+`docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072,
+ADR 0073, `PYTHOS:CORE:PHASE_12_COMPLETE`, and
+`PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. Phase 13.5 package-session
+runtime, presentation/input bridges, WakeContext/Waking, Kai, networking, and
+AI work remain unimplemented and require explicit owner invocation. The
+SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro
 `1217:8620` target. ADR 0063's evidence terminal is implemented on `main` with
 QEMU acceptance through `scripts/test-evidence-terminal.py`. On 2026-08-08 the
@@ -48,7 +50,8 @@ and where the boundary of the work still is.
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
-| ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | Phase 13 package install or launch |
+| ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
+| ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
 
 ## What PythOS Is
 
@@ -73,13 +76,14 @@ Hardware
 ```
 
 The project has completed the roadmap's bounded architecture proofs through
-Phase 10, `general-purpose-storage`, in QEMU. `main` also contains the first
+Phase 13, `applications-and-packaging`, in QEMU. `main` also contains the first
 persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
-PythTIG Phase 1-7 acceptance implementation, and the Phase 12 slice-2
-object-locator resolver plus Slice 3 adversarial denial suite. Later
-implementation work such as package management, networking, updates, broad
-physical hardware expansion, SMP, semantic indexing, and optional AI remains
-intentionally unimplemented until explicitly invoked.
+PythTIG Phase 1-7 acceptance implementation, the Phase 12 object-locator
+resolver plus adversarial denial suite, and the Phase 13 local package
+lifecycle. Later implementation work such as Phase 13.5 persistent package
+sessions, networking, updates, broad physical hardware expansion, SMP, semantic
+indexing, and optional AI remains intentionally unimplemented until explicitly
+invoked.
 
 ## Development Method
 
@@ -331,6 +335,24 @@ authority, missing final authority, name collisions, link confusion, and
 global-root fallback assumptions. Phase 12 completes at
 `PYTHOS:CORE:PHASE_12_COMPLETE`.
 
+Phase 13 records ADR 0073 as the frozen local package lifecycle and schema
+extensibility ABI. It installs local package artifacts into retained package
+storage, persists package manifests, launchable exports, schema definitions,
+and declared capability requirements, and launches installed PythTIG exports
+only when explicit supplied capabilities satisfy those requirements. The QEMU
+acceptance suite proves package format validation, transactional install and
+restore, launch denial boundaries, disable/uninstall policy, live-process
+preservation, tombstone/reinstall identity behavior, package-defined object
+creation through the real ring-3 Pyth runtime and `SYSCALL_OBJECT_REQUEST`, and
+schema descriptor retention after uninstall. The independent package proof
+finishes at:
+
+```text
+PYTHOS:CORE:INDEPENDENT_PACKAGE_READY
+PYTHOS:CORE:PACKAGE_SCHEMA_EXTENSIBILITY_READY
+PYTHOS:CORE:PHASE_13_COMPLETE
+```
+
 ### Block Backends And Physical Evidence
 
 The original persistent-storage path uses legacy virtio-blk in QEMU. Later
@@ -406,7 +428,7 @@ implemented or not claimed:
 * conventional desktop-shell authority as the user model;
 * general-purpose filesystem allocation;
 * networking;
-* package management;
+* remote package registries, dependency solving, or package updates;
 * immutable A/B updates;
 * SMP;
 * broad physical hardware support;
@@ -414,7 +436,8 @@ implemented or not claimed:
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * POSIX paths as authoritative object identity;
-* package installation or launch;
+* persistent package-session runtime or presentation/input bridges;
+* WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;
@@ -422,11 +445,11 @@ implemented or not claimed:
 * AI inside the trusted core;
 * Patch, Open Surface, Causal Lens UI, or semantic indexing.
 
-The Phase 8 through Phase 10 proofs and the PythTIG Phase 1-7 work are real,
+The Phase 8 through Phase 13 proofs and the PythTIG Phase 1-7 work are real,
 but they are bounded. They prove the current ring-3/syscall/capability/storage
-and graph-package surfaces, not arbitrary third-party user programs, a mature
-application platform, ambient filesystem behavior, or broad hardware
-compatibility.
+and graph-package/package-lifecycle surfaces, not a mature application
+platform, ambient filesystem behavior, remote package distribution, or broad
+hardware compatibility.
 
 ## Why This Is Different From "It Boots"
 
@@ -453,7 +476,7 @@ make narrower but stronger claims:
 * PythTIG packages are verified before ring-3 entry and compared across
   interpreter/native/cross-target evidence with normalized semantic markers;
 * Phase 12 names the object-locator namespace and checkpoint contract before
-  package management can depend on path-like spelling.
+  package lifecycle state can depend on path-like spelling.
 
 The value of the project is the discipline around those claims. The repo does
 not ask the reader to believe a status document. It gives them marker contracts,

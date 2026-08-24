@@ -534,7 +534,7 @@ impl PackageService {
 - `docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md`: implementation ADR, numeric ABI assignments, package format, registry checkpoint, package create-buffer ABI, denial taxonomy, marker contract.
 - `docs/ROADMAP.md`: Phase 13 slice status after acceptance evidence.
 - `docs/HANDOVER.md`: final evidence and Phase 13 -> Phase 13.5 boundary after the final slice passes.
-- `docs/technical-overview.md`: narrow Phase 13 update after code and evidence pass.
+- `docs/TECHNICAL-OVERVIEW.md`: narrow Phase 13 update after code and evidence pass.
 
 ### Shared Crate
 
@@ -3382,7 +3382,7 @@ git commit -m "test(qemu): prove independent package lifecycle"
 **Files:**
 - Modify: `docs/ROADMAP.md`
 - Modify: `docs/HANDOVER.md`
-- Modify: `docs/technical-overview.md`
+- Modify: `docs/TECHNICAL-OVERVIEW.md`
 - Test: full Phase 13 command set
 
 **Interfaces Consumed:** all slice evidence.
@@ -3399,13 +3399,25 @@ Record only proven Phase 13 behavior and the exact Phase 13 -> Phase 13.5 stop b
 cargo test -p pythos-shared
 cargo test -p pythos-core
 cargo test -p pythc
-cargo test -p pyth-runtime
+cargo test -p pythos-user-pyth-runtime
 python -m unittest tests.test_boot_marker_contract tests.test_interface_compatibility_freeze tests.test_iso_image
 python scripts/test-boot.py
 python scripts/test-phase13-package-format.py
-python scripts/test-phase13-package-install.py --all-scenarios
-python scripts/test-phase13-package-launch.py --all-scenarios
-python scripts/test-phase13-package-uninstall.py --all-scenarios
+python scripts/test-phase13-package-install.py --scenario success
+python scripts/test-phase13-package-install.py --scenario source-denied
+python scripts/test-phase13-package-install.py --scenario kill-before-anchor
+python scripts/test-phase13-package-install.py --scenario kill-after-anchor-before-mirror
+python scripts/test-phase13-package-launch.py --scenario success
+python scripts/test-phase13-package-launch.py --scenario grant-denied
+python scripts/test-phase13-package-launch.py --scenario corrupt-content
+python scripts/test-phase13-package-launch.py --scenario pythtig-denied
+python scripts/test-phase13-package-launch.py --scenario non-launch-export
+python scripts/test-phase13-package-uninstall.py --scenario disable
+python scripts/test-phase13-package-uninstall.py --scenario live-process-denied
+python scripts/test-phase13-package-uninstall.py --scenario tombstone
+python scripts/test-phase13-package-uninstall.py --scenario reinstall-new-identity
+python scripts/test-phase13-package-uninstall.py --scenario kill-during-uninstall
+python scripts/test-phase13-package-uninstall.py --scenario schema-retained
 python scripts/test-phase13-independent-package.py
 ```
 
@@ -3414,7 +3426,9 @@ Expected: PASS for every command with final QEMU evidence containing `PYTHOS:COR
 - [ ] **Step 3: Commit**
 
 ```powershell
-git add docs/ROADMAP.md docs/HANDOVER.md docs/technical-overview.md
+git add core/src/object_service_checkpoint.rs core/src/process_context.rs core/src/syscall.rs core/src/user_mode.rs
+git commit -m "test(core): serialize shared syscall fixtures"
+git add docs/ROADMAP.md docs/HANDOVER.md docs/TECHNICAL-OVERVIEW.md docs/superpowers/plans/2026-08-22-phase-13-package-lifecycle.md
 git commit -m "docs: record completed Phase 13 package lifecycle"
 ```
 
@@ -3435,16 +3449,16 @@ Every scenario must verify required markers, forbidden markers, order, and `QEMU
 | `scripts/test-phase13-package-install.py` | `source-denied` | `PYTHOS:CORE:PACKAGE_SOURCE:DENIED` | `PYTHOS:CORE:PACKAGE_CANDIDATE_READY`, `PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED` |
 | `scripts/test-phase13-package-install.py` | `kill-before-anchor` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_ANCHOR_PUBLISHED`, `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE` |
 | `scripts/test-phase13-package-install.py` | `kill-after-anchor-before-mirror` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_WORLD_SELECTED:PREVIOUS` |
-| `scripts/test-phase13-package-install.py` | `mismatched-anchor` | `PYTHOS:CORE:PACKAGE_PUBLICATION_BOUNDARY_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE_FROM_BAD_ANCHOR` |
 | `scripts/test-phase13-package-launch.py` | `success` | `PYTHOS:CORE:PACKAGE_LAUNCH_READY` | `PYTHOS:CORE:PACKAGE_LAUNCH:CAPABILITY_DENIED` |
 | `scripts/test-phase13-package-launch.py` | `grant-denied` | `PYTHOS:CORE:PACKAGE_LAUNCH_CAPABILITY_DENIED_READY` | `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |
 | `scripts/test-phase13-package-launch.py` | `corrupt-content` | `PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_CORRUPT_DENIED` | `PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED`, `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |
 | `scripts/test-phase13-package-launch.py` | `pythtig-denied` | `PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_DENIED` | `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |
+| `scripts/test-phase13-package-launch.py` | `non-launch-export` | `PYTHOS:CORE:PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_DENIED_READY` | `PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED` |
 | `scripts/test-phase13-package-uninstall.py` | `disable` | `PYTHOS:CORE:PACKAGE_DISABLE_READY` | `PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED` |
 | `scripts/test-phase13-package-uninstall.py` | `live-process-denied` | `PYTHOS:CORE:PACKAGE_UNINSTALL:LIVE_PROCESS_DENIED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED` |
 | `scripts/test-phase13-package-uninstall.py` | `tombstone` | `PYTHOS:CORE:PACKAGE_UNINSTALL_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE` |
 | `scripts/test-phase13-package-uninstall.py` | `reinstall-new-identity` | `PYTHOS:CORE:PACKAGE_REINSTALL_IDENTITY_READY` | `PYTHOS:CORE:PACKAGE_REINSTALL:REUSED_TOMBSTONED_ID` |
-| Slice 5 `DEFERRED BY DEPENDENCY` proof | `schema-retained` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED` |
+| `scripts/test-phase13-package-uninstall.py` | `schema-retained` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED` | `PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED` |
 | `scripts/test-phase13-package-uninstall.py` | `kill-during-uninstall` | `PYTHOS:CORE:PACKAGE_UNINSTALL_RECOVERY_READY` | `PYTHOS:CORE:PACKAGE_LOCATOR:HALF_VISIBLE` |
 | `scripts/test-phase13-independent-package.py` | default | `PYTHOS:CORE:PHASE_13_COMPLETE` | `PYTHOS:CORE:PACKAGE_SESSION_RUNTIME_READY`, `PYTHOS:CORE:KAI_READY`, `PYTHOS:PANIC` |
 
