@@ -1,0 +1,8 @@
+program phase13_create_seed principal 0x5059504B4C41554E {
+    import workspace: capability<object.workspace, create>;
+    fn main() -> unit {
+        let seed_id: object_id = object.create(workspace, 2);
+        let seed: capability = object.created_capability();
+        return;
+    }
+}

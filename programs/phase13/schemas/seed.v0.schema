@@ -1,0 +1,3 @@
+schema phase13.seed.v0
+field schema_ref: core.package.schema_ref.v0
+field state: inline_bytes.v0
