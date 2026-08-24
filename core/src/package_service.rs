@@ -5,6 +5,7 @@ use crate::{
     object_relationships::{
         ObjectRelationship, PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID, PACKAGE_LOCATOR_ROOT_OBJECT_ID,
         PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
+        SHELL_WORKSPACE_OBJECT_ID,
     },
     object_service::{
         MAX_PACKAGE_SCHEMA_REFERENCES, ObjectCreateResult, ObjectService, ObjectServiceError,
@@ -26,8 +27,8 @@ use crate::{
     },
     package_registry::{
         PACKAGE_TRANSACTION_COMMIT_V0_LEN, PackageRegistry, PackageRegistryExportRecord,
-        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistrySchemaRecord,
-        PackageTransactionCommitV0,
+        PackageRegistryGeneration, PackageRegistryPackageRecord, PackageRegistryRequirementRecord,
+        PackageRegistrySchemaRecord, PackageTransactionCommitV0,
     },
     package_source::PackageSourceService,
     process_context::ActiveUserProcess,
@@ -46,6 +47,7 @@ use pythos_shared::{
         PackageStatus,
     },
     package_format::{ContentEntryV0, PackageArtifactV0, PackageFormatError},
+    pyth_tig::opcode::{RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE, RIGHTS_QUERY},
 };
 
 #[cfg_attr(not(test), allow(unused_imports))]
@@ -55,7 +57,10 @@ const FIRST_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const FIRST_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
 const INSTALL_OPERATION: u16 = 1;
 const MANIFEST_RECORD_PACKAGE_EXPORT: u16 = 2;
+const MANIFEST_RECORD_CAPABILITY_REQUIREMENT: u16 = 3;
 const MANIFEST_EXPORT_PAYLOAD_LEN: usize = 6;
+const MANIFEST_REQUIREMENT_PAYLOAD_LEN: usize = 16;
+const MANIFEST_REQUIREMENT_NAME_SEPARATOR: &[u8] = b".requirement.";
 
 #[cfg(test)]
 static TEST_CANDIDATE_SNAPSHOT_WRITE_OVERRIDE: std::sync::Mutex<Option<ObjectServiceSnapshot>> =
@@ -809,7 +814,7 @@ impl<'a> PackageService<'a> {
                 ))?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
-            add_manifest_exports_to_registry(
+            add_manifest_exports_and_requirements_to_registry(
                 artifact,
                 &mut self.staged_registry,
                 package.object_id.raw(),
@@ -1009,7 +1014,7 @@ impl<'a> PackageService<'a> {
                 ))?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
-            add_manifest_exports_to_registry(
+            add_manifest_exports_and_requirements_to_registry(
                 artifact,
                 &mut self.staged_registry,
                 package.object_id.raw(),
@@ -1590,6 +1595,7 @@ impl<'a> PackageService<'a> {
             request.supplied_grants,
             validator,
             export,
+            &self.registry,
             &self.launch_requirements[..self.launch_requirement_count],
         )?;
         self.record_runtime_context(request.caller, launch.export)?;
@@ -1650,6 +1656,16 @@ impl<'a> PackageService<'a> {
                     || record.requirement.graph_import_slot == requirement.graph_import_slot)
         }) {
             return Err(PackageStatus::DuplicateStableName);
+        }
+        let mut index = 0usize;
+        while let Some(record) = self.registry.requirement_record(index) {
+            if record.matches_export(export)
+                && (record.requirement_id == requirement.requirement_id
+                    || record.graph_import_slot == requirement.graph_import_slot)
+            {
+                return Err(PackageStatus::DuplicateStableName);
+            }
+            index += 1;
         }
 
         self.launch_requirements[self.launch_requirement_count] =
@@ -1924,6 +1940,7 @@ impl<'a> PackageService<'a> {
         self.prepared_live_object_checkpoint_identity = None;
         clear_restore_option(&mut self.prepared_content_store);
         clear_restore_option(&mut self.prepared_content);
+        self.clear_transient_launch_state();
         self.next_transaction_id = anchor.transaction_id.wrapping_add(1);
         self.next_package_object_id = next_package_object_id(&self.registry);
         self.next_schema_object_id = next_schema_object_id(&self.registry);
@@ -2239,6 +2256,13 @@ impl<'a> PackageService<'a> {
         self.previous_anchored_generation_available = false;
         self.locator_mirror_visible = false;
     }
+
+    fn clear_transient_launch_state(&mut self) {
+        self.launch_requirements.fill(None);
+        self.launch_requirement_count = 0;
+        self.runtime_contexts.fill(None);
+        self.runtime_context_count = 0;
+    }
 }
 
 fn copy_object_snapshot(target: &mut ObjectServiceSnapshot, source: &ObjectServiceSnapshot) {
@@ -2276,28 +2300,67 @@ fn validate_launch_authority(
     supplied_grants: &[PackageLaunchGrant],
     validator: &(impl PackageLaunchGrantValidator + ?Sized),
     export: PackageRegistryExportRecord,
+    registry: &PackageRegistry,
     launch_requirements: &[Option<PackageLaunchRequirementRecord>],
 ) -> Result<PackageLaunchResult, PackageStatus> {
     let mut launch = PackageLaunchResult::new(export);
+    let mut registry_index = 0usize;
+    while let Some(record) = registry.requirement_record(registry_index) {
+        if record.matches_export(export) {
+            validate_and_append_launch_requirement(
+                caller,
+                supplied_grants,
+                validator,
+                &mut launch,
+                PackageLaunchRequirement {
+                    requirement_id: record.requirement_id,
+                    graph_import_slot: record.graph_import_slot,
+                    resource: ResourceId::new(record.resource_id),
+                    rights: RightsMask::new(record.rights_mask),
+                },
+            )?;
+        }
+        registry_index += 1;
+    }
+
     let mut index = 0usize;
     while index < launch_requirements.len() {
         if let Some(record) = launch_requirements[index]
             && record.export == export
         {
-            let requirement = record.requirement;
-            let supplied = find_supplied_launch_grant(requirement, supplied_grants)
-                .ok_or(PackageStatus::RequiredGrantMissing)?;
-            validator.validate_launch_requirement_grant(caller, requirement, supplied)?;
-            launch.grants[launch.grant_count] = Some(PackageLaunchResolvedGrant {
-                supplied,
-                graph_import_slot: requirement.graph_import_slot,
-            });
-            launch.grant_count += 1;
+            validate_and_append_launch_requirement(
+                caller,
+                supplied_grants,
+                validator,
+                &mut launch,
+                record.requirement,
+            )?;
         }
         index += 1;
     }
 
     Ok(launch)
+}
+
+fn validate_and_append_launch_requirement(
+    caller: ActiveUserProcess,
+    supplied_grants: &[PackageLaunchGrant],
+    validator: &(impl PackageLaunchGrantValidator + ?Sized),
+    launch: &mut PackageLaunchResult,
+    requirement: PackageLaunchRequirement,
+) -> Result<(), PackageStatus> {
+    if launch.grant_count >= MAX_REQUIREMENT_RECORDS {
+        return Err(PackageStatus::QuotaDenied);
+    }
+    let supplied = find_supplied_launch_grant(requirement, supplied_grants)
+        .ok_or(PackageStatus::RequiredGrantMissing)?;
+    validator.validate_launch_requirement_grant(caller, requirement, supplied)?;
+    launch.grants[launch.grant_count] = Some(PackageLaunchResolvedGrant {
+        supplied,
+        graph_import_slot: requirement.graph_import_slot,
+    });
+    launch.grant_count += 1;
+    Ok(())
 }
 
 fn ensure_launchable_export(export: PackageRegistryExportRecord) -> Result<(), PackageStatus> {
@@ -2584,7 +2647,7 @@ fn create_schema_or_rollback<'a>(
     }
 }
 
-fn add_manifest_exports_to_registry(
+fn add_manifest_exports_and_requirements_to_registry(
     artifact: PackageArtifactV0<'_>,
     registry: &mut PackageRegistry,
     package_object_id: u64,
@@ -2630,6 +2693,39 @@ fn add_manifest_exports_to_registry(
         }
         index += 1;
     }
+
+    let mut requirement_index = 0u32;
+    while requirement_index < manifest.record_count() {
+        let record = manifest
+            .record(requirement_index)
+            .ok_or(PackageStatus::InvalidManifest)?;
+        if record.record_type() == MANIFEST_RECORD_CAPABILITY_REQUIREMENT {
+            let payload = record.payload();
+            if payload.len() != MANIFEST_REQUIREMENT_PAYLOAD_LEN || read_u16_le(payload, 6) != 0 {
+                return Err(PackageStatus::InvalidManifest);
+            }
+            let (package_locator, export_name) =
+                split_manifest_requirement_name(record.stable_name())?;
+            let (resource_id, rights_mask) =
+                manifest_requirement_authority(read_u16_le(payload, 4), read_u64_le(payload, 8))?;
+            let requirement = PackageRegistryRequirementRecord::new(
+                PACKAGE_LOCATOR_ROOT_OBJECT_ID,
+                package_locator,
+                export_name,
+                read_u16_le(payload, 0),
+                read_u16_le(payload, 2),
+                resource_id,
+                rights_mask,
+            )?;
+            registry
+                .add_requirement_record(requirement)
+                .map_err(|status| match status {
+                    PackageStatus::ExportMissing => PackageStatus::InvalidManifest,
+                    other => other,
+                })?;
+        }
+        requirement_index += 1;
+    }
     Ok(())
 }
 
@@ -2646,8 +2742,68 @@ fn split_manifest_export_name(stable_name: &[u8]) -> Result<(&[u8], &[u8]), Pack
     Ok((&stable_name[..separator], &stable_name[separator + 1..]))
 }
 
+fn split_manifest_requirement_name(stable_name: &[u8]) -> Result<(&[u8], &[u8]), PackageStatus> {
+    let Some(separator) = find_subslice(stable_name, MANIFEST_REQUIREMENT_NAME_SEPARATOR) else {
+        return Err(PackageStatus::InvalidManifest);
+    };
+    if separator == 0 || separator + MANIFEST_REQUIREMENT_NAME_SEPARATOR.len() == stable_name.len()
+    {
+        return Err(PackageStatus::InvalidManifest);
+    }
+    split_manifest_export_name(&stable_name[..separator])
+}
+
+fn manifest_requirement_authority(
+    graph_resource: u16,
+    graph_rights: u64,
+) -> Result<(u64, u32), PackageStatus> {
+    match graph_resource {
+        RESOURCE_OBJECT_WORKSPACE => {
+            if graph_rights == 0 || graph_rights & !(RIGHTS_CREATE | RIGHTS_QUERY) != 0 {
+                return Err(PackageStatus::InvalidManifest);
+            }
+            let mut capability_rights = 0u32;
+            if graph_rights & RIGHTS_CREATE != 0 {
+                capability_rights |= RightsMask::WRITE;
+            }
+            if graph_rights & RIGHTS_QUERY != 0 {
+                capability_rights |= RightsMask::READ;
+            }
+            Ok((SHELL_WORKSPACE_OBJECT_ID, capability_rights))
+        }
+        _ => Err(PackageStatus::InvalidManifest),
+    }
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > haystack.len() {
+        return None;
+    }
+    let mut index = 0usize;
+    while index + needle.len() <= haystack.len() {
+        if &haystack[index..index + needle.len()] == needle {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
 fn read_u16_le(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes([bytes[offset], bytes[offset + 1]])
+}
+
+fn read_u64_le(bytes: &[u8], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        bytes[offset],
+        bytes[offset + 1],
+        bytes[offset + 2],
+        bytes[offset + 3],
+        bytes[offset + 4],
+        bytes[offset + 5],
+        bytes[offset + 6],
+        bytes[offset + 7],
+    ])
 }
 
 fn map_format_error(error: PackageFormatError) -> PackageStatus {
@@ -2758,7 +2914,11 @@ mod tests {
             PACKAGE_SOURCE_RESOURCE_ID, PackageStatus,
         },
         package_format::{CONTENT_ENTRY_V0_LEN, PACKAGE_ARTIFACT_HEADER_LEN},
-        pyth_tig::{test_support, verify::verify_bytes},
+        pyth_tig::{
+            opcode::{RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE},
+            test_support,
+            verify::verify_bytes,
+        },
         sha256::{Sha256, sha256},
     };
     use std::vec::Vec;
@@ -2767,6 +2927,8 @@ mod tests {
     const CALLER_SERVICE: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5301);
     const TEST_LAUNCHABLE_EXPORT_KIND: u16 = 1;
     const TEST_NON_LAUNCH_EXPORT_KIND: u16 = 3;
+    const TEST_MANIFEST_REQUIREMENT_ID: u16 = 7;
+    const TEST_MANIFEST_REQUIREMENT_IMPORT_SLOT: u16 = 0;
     const SCHEMA_DESCRIPTOR: &[u8] = b"schema:seed.v0";
     const ADDITIONAL_CONTENT: &[u8] = b"payload:seed.v0";
     const ORPHAN_CONTENT: &[u8] = b"orphan";
@@ -3136,6 +3298,235 @@ mod tests {
         assert_eq!(launch.export, resolved);
         assert_eq!(launch.grant_count, 1);
         assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+    }
+
+    #[test]
+    fn installed_manifest_requirement_survives_restore_and_drives_launch_validation() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        let installed = install_launch_requirement_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        assert_eq!(boot_one_service.registry().requirement_count(), 1);
+        let persisted_registry =
+            read_candidate_registry_generation(device, installed.registry_generation).unwrap();
+        assert_eq!(persisted_registry.requirement_count(), 1);
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        let report = boot_two_service.restore_from_storage(device).unwrap();
+        assert!(report.published_world_selected);
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let resolved = boot_two_service
+            .resolve_export(root, "seed/launch")
+            .unwrap();
+        let restored_requirement = boot_two_service.registry().requirement_record(0).unwrap();
+
+        assert_eq!(resolved.package_object_id, installed.package_object_id);
+        assert_eq!(boot_two_service.registry().requirement_count(), 1);
+        assert!(restored_requirement.matches_export(resolved));
+        assert_eq!(
+            restored_requirement.requirement_id,
+            TEST_MANIFEST_REQUIREMENT_ID
+        );
+        assert_eq!(
+            restored_requirement.graph_import_slot,
+            TEST_MANIFEST_REQUIREMENT_IMPORT_SLOT
+        );
+        assert_eq!(restored_requirement.resource_id, SHELL_WORKSPACE_OBJECT_ID);
+        assert_eq!(restored_requirement.rights_mask, RightsMask::WRITE);
+
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5941, 0x13);
+        let missing_grants = [];
+        assert_eq!(
+            boot_two_service.launch_with_validator(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &missing_grants,
+                },
+                &boot_one_objects,
+            ),
+            Err(PackageStatus::RequiredGrantMissing)
+        );
+
+        let object_create_capability = boot_one_objects.grant_workspace_capability(caller).unwrap();
+        let supplied_grants = [PackageLaunchGrant::from_packed(
+            TEST_MANIFEST_REQUIREMENT_ID,
+            object_create_capability,
+        )];
+        let launch = boot_two_service
+            .launch_with_validator(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &boot_one_objects,
+            )
+            .unwrap();
+
+        assert_eq!(launch.export, resolved);
+        assert_eq!(launch.grant_count, 1);
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+    }
+
+    #[test]
+    fn installed_manifest_requirement_rejects_wrong_resource_or_right() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        install_launch_requirement_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        boot_two_service.restore_from_storage(device).unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5942, 0x13);
+
+        let mut wrong_rights = CapabilityTable::new();
+        let read_only_capability = wrong_rights
+            .grant(
+                caller.service_id(),
+                ResourceId::new(SHELL_WORKSPACE_OBJECT_ID),
+                RightsMask::new(RightsMask::READ),
+            )
+            .unwrap();
+        let wrong_right_grants = [PackageLaunchGrant::from_handle(
+            TEST_MANIFEST_REQUIREMENT_ID,
+            read_only_capability,
+        )];
+        assert_eq!(
+            boot_two_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &wrong_right_grants,
+                },
+                &wrong_rights,
+            ),
+            Err(PackageStatus::FinalCapabilityDenied)
+        );
+
+        let mut wrong_target = CapabilityTable::new();
+        let wrong_target_capability = wrong_target
+            .grant(
+                caller.service_id(),
+                ResourceId::new(SHELL_WORKSPACE_OBJECT_ID ^ 1),
+                RightsMask::new(RightsMask::WRITE),
+            )
+            .unwrap();
+        let wrong_target_grants = [PackageLaunchGrant::from_handle(
+            TEST_MANIFEST_REQUIREMENT_ID,
+            wrong_target_capability,
+        )];
+        assert_eq!(
+            boot_two_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &wrong_target_grants,
+                },
+                &wrong_target,
+            ),
+            Err(PackageStatus::FinalCapabilityDenied)
+        );
+    }
+
+    #[test]
+    fn package_without_manifest_requirement_preserves_existing_launch_behavior() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_service = PackageService::new_empty_for_test();
+        let mut boot_one_objects = ObjectService::new_for_test();
+        install_launch_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_service,
+            device,
+            &mut boot_one_objects,
+        )
+        .unwrap();
+
+        let mut boot_two_service = PackageService::new_empty_for_test();
+        boot_two_service.restore_from_storage(device).unwrap();
+        assert_eq!(boot_two_service.registry().requirement_count(), 0);
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5943, 0x13);
+        let empty_grants = [];
+        let launch = boot_two_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &empty_grants,
+                },
+                &CapabilityTable::new(),
+            )
+            .unwrap();
+
+        assert_eq!(launch.grant_count, 0);
+    }
+
+    #[test]
+    fn restore_from_storage_clears_transient_launch_requirements() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+        package_service
+            .record_launch_requirement(
+                root,
+                "seed/launch",
+                PackageLaunchRequirement {
+                    requirement_id: 31,
+                    graph_import_slot: 0,
+                    resource: ResourceId::new(SHELL_WORKSPACE_OBJECT_ID),
+                    rights: RightsMask::new(RightsMask::WRITE),
+                },
+            )
+            .unwrap();
+
+        package_service.restore_from_storage(device).unwrap();
+        assert_eq!(package_service.registry().requirement_count(), 0);
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5944, 0x13);
+        let empty_grants = [];
+        let launch = package_service
+            .launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: root,
+                    locator: "seed/launch",
+                    supplied_grants: &empty_grants,
+                },
+                &CapabilityTable::new(),
+            )
+            .unwrap();
+
+        assert_eq!(launch.grant_count, 0);
     }
 
     #[test]
@@ -5622,6 +6013,50 @@ mod tests {
         )
     }
 
+    fn install_launch_requirement_package_with_candidate_checkpoint_into(
+        package_service: &mut PackageService<'static>,
+        device: BlockDeviceInfo,
+        object_service: &mut ObjectService,
+    ) -> Result<PackageInstallResult, PackageStatus> {
+        let artifact = build_launch_requirement_package_artifact();
+        let source_record = build_source_record(0, b"phase13-launch-requirement.pkg", &artifact);
+        let bundle_bytes = build_bundle(&[(TYPE_PACKAGE_SOURCE, &source_record)]);
+        let init_bundle = init_bundle::validate(&bundle_bytes).unwrap();
+        let source_service = PackageSourceService::from_init_bundle(&init_bundle).unwrap();
+        let source_handle = source_service.handle_at(0).unwrap();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_5924, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let source_read_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_SOURCE_RESOURCE_ID),
+                RightsMask::new(PACKAGE_SOURCE_READ_RIGHT as u32),
+            )
+            .unwrap();
+        let install_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(PACKAGE_INSTALL_RESOURCE_ID),
+                RightsMask::new(PACKAGE_INSTALL_RIGHT as u32),
+            )
+            .unwrap();
+        let artifact_buffer = Box::leak(vec![0u8; MAX_PACKAGE_ARTIFACT_BYTES].into_boxed_slice());
+
+        package_service.install_with_candidate_checkpoint(
+            device,
+            PackageInstallRequest {
+                caller,
+                source_handle,
+                source_read_capability,
+                install_capability,
+            },
+            &source_service,
+            &capabilities,
+            object_service,
+            artifact_buffer,
+        )
+    }
+
     fn install_named_launch_export_package_with_candidate_checkpoint_into(
         package_service: &mut PackageService<'static>,
         device: BlockDeviceInfo,
@@ -6768,6 +7203,79 @@ mod tests {
         manifest.extend_from_slice(&2u32.to_le_bytes());
         push_manifest_record(&mut manifest, 1, b"seed.v0", &0u16.to_le_bytes());
         push_manifest_record(&mut manifest, 2, export_stable_name, &export_payload);
+
+        let mut content_table = vec![0u8; 2 * CONTENT_ENTRY_V0_LEN];
+        content_table[0..2].copy_from_slice(&0u16.to_le_bytes());
+        content_table[2..4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[4..6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[6..8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[8..16].copy_from_slice(&0u64.to_le_bytes());
+        content_table[16..24].copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[24..56].copy_from_slice(&sha256(SCHEMA_DESCRIPTOR));
+
+        let second = CONTENT_ENTRY_V0_LEN;
+        content_table[second..second + 2].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 2..second + 4].copy_from_slice(&2u16.to_le_bytes());
+        content_table[second + 4..second + 6].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 6..second + 8].copy_from_slice(&1u16.to_le_bytes());
+        content_table[second + 8..second + 16]
+            .copy_from_slice(&(SCHEMA_DESCRIPTOR.len() as u64).to_le_bytes());
+        content_table[second + 16..second + 24]
+            .copy_from_slice(&(ADDITIONAL_CONTENT.len() as u64).to_le_bytes());
+        content_table[second + 24..second + 56].copy_from_slice(&sha256(ADDITIONAL_CONTENT));
+        content_table[second + 58..second + 60].copy_from_slice(&0u16.to_le_bytes());
+
+        let manifest_offset = PACKAGE_ARTIFACT_HEADER_LEN;
+        let content_table_offset = manifest_offset + manifest.len();
+        let content_offset = content_table_offset + content_table.len();
+        let mut header = vec![0u8; PACKAGE_ARTIFACT_HEADER_LEN];
+        header[0..8].copy_from_slice(b"PYTHPKG0");
+        header[8..10].copy_from_slice(&0u16.to_le_bytes());
+        header[10..12].copy_from_slice(&1u16.to_le_bytes());
+        header[12..16].copy_from_slice(&(PACKAGE_ARTIFACT_HEADER_LEN as u32).to_le_bytes());
+        header[16..24].copy_from_slice(&(manifest_offset as u64).to_le_bytes());
+        header[24..32].copy_from_slice(&(manifest.len() as u64).to_le_bytes());
+        header[32..40].copy_from_slice(&(content_table_offset as u64).to_le_bytes());
+        header[40..48].copy_from_slice(&(content_table.len() as u64).to_le_bytes());
+        header[48..56].copy_from_slice(&(content_offset as u64).to_le_bytes());
+        header[56..64].copy_from_slice(
+            &((SCHEMA_DESCRIPTOR.len() + ADDITIONAL_CONTENT.len()) as u64).to_le_bytes(),
+        );
+        header[64..96].copy_from_slice(&sha256(&manifest));
+
+        let mut artifact = header;
+        artifact.extend_from_slice(&manifest);
+        artifact.extend_from_slice(&content_table);
+        artifact.extend_from_slice(SCHEMA_DESCRIPTOR);
+        artifact.extend_from_slice(ADDITIONAL_CONTENT);
+        let digest = artifact_digest(&artifact);
+        artifact[96..128].copy_from_slice(&digest);
+        artifact
+    }
+
+    fn build_launch_requirement_package_artifact() -> Vec<u8> {
+        let mut export_payload = Vec::new();
+        export_payload.extend_from_slice(&TEST_LAUNCHABLE_EXPORT_KIND.to_le_bytes());
+        export_payload.extend_from_slice(&1u16.to_le_bytes());
+        export_payload.extend_from_slice(&0u16.to_le_bytes());
+
+        let mut requirement_payload = Vec::new();
+        requirement_payload.extend_from_slice(&TEST_MANIFEST_REQUIREMENT_ID.to_le_bytes());
+        requirement_payload.extend_from_slice(&TEST_MANIFEST_REQUIREMENT_IMPORT_SLOT.to_le_bytes());
+        requirement_payload.extend_from_slice(&RESOURCE_OBJECT_WORKSPACE.to_le_bytes());
+        requirement_payload.extend_from_slice(&0u16.to_le_bytes());
+        requirement_payload.extend_from_slice(&RIGHTS_CREATE.to_le_bytes());
+
+        let mut manifest = b"PYTHMAN0".to_vec();
+        manifest.extend_from_slice(&3u32.to_le_bytes());
+        push_manifest_record(&mut manifest, 1, b"seed.v0", &0u16.to_le_bytes());
+        push_manifest_record(&mut manifest, 2, b"seed/launch", &export_payload);
+        push_manifest_record(
+            &mut manifest,
+            3,
+            b"seed/launch.requirement.object-create",
+            &requirement_payload,
+        );
 
         let mut content_table = vec![0u8; 2 * CONTENT_ENTRY_V0_LEN];
         content_table[0..2].copy_from_slice(&0u16.to_le_bytes());
