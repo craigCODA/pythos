@@ -6215,6 +6215,47 @@ mod tests {
     }
 
     #[test]
+    fn package_launch_create_requirement_rejects_capability_without_create_authority() {
+        let mut package_service = service_with_launch_export();
+        let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4306, 0x13);
+        let mut capabilities = CapabilityTable::new();
+        let read_only_capability = capabilities
+            .grant(
+                caller.service_id(),
+                ResourceId::new(0x5059_4F42_4A43_0001),
+                RightsMask::new(RightsMask::READ),
+            )
+            .unwrap();
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(0x5059_4F42_4A43_0001),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        package_service
+            .record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/launch",
+                requirement,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant::from_handle(7, read_only_capability)];
+
+        assert_eq!(
+            package_service.launch(
+                PackageLaunchRequest {
+                    caller,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            ),
+            Err(PackageStatus::FinalCapabilityDenied)
+        );
+    }
+
+    #[test]
     fn package_launch_capability_valid_explicit_grants_produce_request_with_only_supplied_grants() {
         let mut package_service = service_with_launch_export();
         let caller = ActiveUserProcess::new(CALLER_SERVICE, 0x504B_4C41_554E_4303, 0x13);

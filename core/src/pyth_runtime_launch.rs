@@ -172,6 +172,11 @@ pub struct PackageLaunchGraphImportGrant {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PythGraphPackageImportCapabilities {
+    imports: [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythGraphDeferredImport {
     None,
     ObjectWorkspace,
@@ -182,6 +187,7 @@ pub enum PythGraphDeferredImport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PythGraphBootstrapBinding {
     Complete(PythGraphImportCapabilities),
+    PackageLaunch(PythGraphPackageImportCapabilities),
     DeferredObjectWorkspace { system_log: PackedCapability },
     DeferredTaskSteward { system_log: PackedCapability },
     DeferredTestOnlyObjectCapability,
@@ -352,23 +358,21 @@ pub fn prepare_package_launch_runtime_bootstrap(
     graph_import_grants: &[PackageLaunchGraphImportGrant],
 ) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
     let import_capabilities = package_launch_import_capabilities(verified, graph_import_grants)?;
-    build_pyth_graph_bootstrap(
+    build_pyth_graph_bootstrap_with_binding(
         verified,
         PYTH_GRAPH_PACKAGE_USER_PTR,
         package_len,
         PYTH_GRAPH_RESULT_USER_PTR,
-        import_capabilities,
+        PythGraphBootstrapBinding::PackageLaunch(import_capabilities),
     )
 }
 
 fn package_launch_import_capabilities(
     verified: &VerifiedGraph<'_>,
     graph_import_grants: &[PackageLaunchGraphImportGrant],
-) -> Result<PythGraphImportCapabilities, PythRuntimeLaunchError> {
-    let mut capabilities = PythGraphImportCapabilities {
-        system_log: PackedCapability::from_raw(0),
-        object_workspace: PackedCapability::from_raw(0),
-        task_steward: PackedCapability::from_raw(0),
+) -> Result<PythGraphPackageImportCapabilities, PythRuntimeLaunchError> {
+    let mut capabilities = PythGraphPackageImportCapabilities {
+        imports: [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS],
     };
     let imports = verified.package().imports();
     let mut index = 0usize;
@@ -376,14 +380,18 @@ fn package_launch_import_capabilities(
         let import = imports
             .get(index)
             .ok_or(PythRuntimeLaunchError::MissingImport)?;
+        let slot = usize::from(import.import_slot);
+        if slot >= MAX_PYTH_GRAPH_IMPORTS {
+            return Err(PythRuntimeLaunchError::TooManyImports);
+        }
         let capability = package_launch_grant_for_import(import.import_slot, graph_import_grants)?;
         match (import.resource_kind, import.rights) {
-            (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.system_log = capability,
-            (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
-                capabilities.object_workspace = capability;
+            (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.imports[slot] = capability,
+            (RESOURCE_OBJECT_WORKSPACE, rights) if valid_object_workspace_rights(rights) => {
+                capabilities.imports[slot] = capability;
             }
             (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
-                capabilities.task_steward = capability;
+                capabilities.imports[slot] = capability;
             }
             _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
         }
@@ -478,7 +486,7 @@ fn bind_import_capability(
         PythGraphBootstrapBinding::Complete(capabilities) => {
             match (import.resource_kind, import.rights) {
                 (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => capabilities.system_log,
-                (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
+                (RESOURCE_OBJECT_WORKSPACE, rights) if valid_object_workspace_rights(rights) => {
                     capabilities.object_workspace
                 }
                 (RESOURCE_TASK, rights) if rights == (RIGHTS_READ | RIGHTS_CREATE) => {
@@ -490,10 +498,36 @@ fn bind_import_capability(
                 _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
             }
         }
+        PythGraphBootstrapBinding::PackageLaunch(capabilities) => {
+            match (import.resource_kind, import.rights) {
+                (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => {
+                    let slot = usize::from(import.import_slot);
+                    if slot >= MAX_PYTH_GRAPH_IMPORTS {
+                        return Err(PythRuntimeLaunchError::TooManyImports);
+                    }
+                    capabilities.imports[slot]
+                }
+                (RESOURCE_OBJECT_WORKSPACE, rights) if valid_object_workspace_rights(rights) => {
+                    let slot = usize::from(import.import_slot);
+                    if slot >= MAX_PYTH_GRAPH_IMPORTS {
+                        return Err(PythRuntimeLaunchError::TooManyImports);
+                    }
+                    capabilities.imports[slot]
+                }
+                (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
+                    let slot = usize::from(import.import_slot);
+                    if slot >= MAX_PYTH_GRAPH_IMPORTS {
+                        return Err(PythRuntimeLaunchError::TooManyImports);
+                    }
+                    capabilities.imports[slot]
+                }
+                _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
+            }
+        }
         PythGraphBootstrapBinding::DeferredObjectWorkspace { system_log } => {
             match (import.resource_kind, import.rights) {
                 (RESOURCE_SYSTEM_LOG, RIGHTS_READ) => system_log,
-                (RESOURCE_OBJECT_WORKSPACE, rights) if rights == (RIGHTS_CREATE | RIGHTS_QUERY) => {
+                (RESOURCE_OBJECT_WORKSPACE, rights) if valid_object_workspace_rights(rights) => {
                     PackedCapability::from_raw(0)
                 }
                 _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
@@ -526,6 +560,10 @@ fn bind_import_capability(
         return Err(PythRuntimeLaunchError::MissingImport);
     }
     Ok(capability)
+}
+
+fn valid_object_workspace_rights(rights: u64) -> bool {
+    rights == RIGHTS_CREATE || rights == RIGHTS_QUERY || rights == (RIGHTS_CREATE | RIGHTS_QUERY)
 }
 
 fn graph_imports_task_resource(verified: &VerifiedGraph<'_>) -> bool {
@@ -592,7 +630,12 @@ pub fn bind_deferred_import(
     let mut index = 0usize;
     while index < usize::from(bootstrap.import_count) {
         let binding = &mut bootstrap.imports[index];
-        if binding.resource_kind == resource_kind && binding.rights == rights {
+        let rights_match = if deferred_import == PythGraphDeferredImport::ObjectWorkspace {
+            valid_object_workspace_rights(binding.rights)
+        } else {
+            binding.rights == rights
+        };
+        if binding.resource_kind == resource_kind && rights_match {
             if binding.capability.raw() != 0 {
                 return Err(PythRuntimeLaunchError::UnauthorizedImport);
             }
@@ -1051,7 +1094,7 @@ fn prepare_pyth_launch_with_package(
     execution_kind: PythGraphExecutionKind,
     deferred_import: PythGraphDeferredImport,
     object_workspace_capability: Option<PackedCapability>,
-    package_import_capabilities: Option<PythGraphImportCapabilities>,
+    package_import_capabilities: Option<PythGraphPackageImportCapabilities>,
 ) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
     if package.is_empty() || package.len() > PAGE_SIZE as usize {
         return Err(PythRuntimeLaunchError::PackageTooLarge);
@@ -1092,51 +1135,75 @@ fn prepare_pyth_launch_with_package(
         ),
     }
     .map_err(|_| PythRuntimeLaunchError::AddressSpace)?;
-    let system_log_capability = if let Some(capabilities) = package_import_capabilities {
-        capabilities.system_log
-    } else {
-        syscall::grant_pyth_graph_system_log_capability(process)
-            .map_err(|_| PythRuntimeLaunchError::Capability)?
-    };
-    let object_workspace_capability = package_import_capabilities
-        .map(|capabilities| capabilities.object_workspace)
-        .or(object_workspace_capability);
-    let task_steward_capability = if let Some(capabilities) = package_import_capabilities {
-        capabilities.task_steward
+    let bootstrap_binding = if let Some(capabilities) = package_import_capabilities {
+        if deferred_import != PythGraphDeferredImport::None {
+            return Err(PythRuntimeLaunchError::UnauthorizedImport);
+        }
+        PythGraphBootstrapBinding::PackageLaunch(capabilities)
     } else if graph_imports_task_resource(verified)
         && deferred_import != PythGraphDeferredImport::TaskSteward
     {
-        #[cfg(any(test, all(not(test), not(feature = "verify"))))]
-        {
-            retained_services::with_task_service(|service| service.steward_proposal_capability())
-                .map_err(|_| PythRuntimeLaunchError::Capability)?
-        }
         #[cfg(not(any(test, all(not(test), not(feature = "verify")))))]
         {
             return Err(PythRuntimeLaunchError::Capability);
         }
-    } else {
-        PackedCapability::from_raw(0)
-    };
-    let bootstrap_binding = match deferred_import {
-        PythGraphDeferredImport::None => {
-            PythGraphBootstrapBinding::Complete(PythGraphImportCapabilities {
-                system_log: system_log_capability,
-                object_workspace: object_workspace_capability
-                    .unwrap_or(PackedCapability::from_raw(0)),
-                task_steward: task_steward_capability,
+        #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+        {
+            let system_log_capability = syscall::grant_pyth_graph_system_log_capability(process)
+                .map_err(|_| PythRuntimeLaunchError::Capability)?;
+            let task_steward_capability = retained_services::with_task_service(|service| {
+                service.steward_proposal_capability()
             })
-        }
-        PythGraphDeferredImport::ObjectWorkspace => {
-            PythGraphBootstrapBinding::DeferredObjectWorkspace {
-                system_log: system_log_capability,
+            .map_err(|_| PythRuntimeLaunchError::Capability)?;
+            match deferred_import {
+                PythGraphDeferredImport::None => {
+                    PythGraphBootstrapBinding::Complete(PythGraphImportCapabilities {
+                        system_log: system_log_capability,
+                        object_workspace: object_workspace_capability
+                            .unwrap_or(PackedCapability::from_raw(0)),
+                        task_steward: task_steward_capability,
+                    })
+                }
+                PythGraphDeferredImport::ObjectWorkspace => {
+                    PythGraphBootstrapBinding::DeferredObjectWorkspace {
+                        system_log: system_log_capability,
+                    }
+                }
+                PythGraphDeferredImport::TaskSteward => {
+                    PythGraphBootstrapBinding::DeferredTaskSteward {
+                        system_log: system_log_capability,
+                    }
+                }
+                PythGraphDeferredImport::TestOnlyObjectCapability => {
+                    PythGraphBootstrapBinding::DeferredTestOnlyObjectCapability
+                }
             }
         }
-        PythGraphDeferredImport::TaskSteward => PythGraphBootstrapBinding::DeferredTaskSteward {
-            system_log: system_log_capability,
-        },
-        PythGraphDeferredImport::TestOnlyObjectCapability => {
-            PythGraphBootstrapBinding::DeferredTestOnlyObjectCapability
+    } else {
+        let system_log_capability = syscall::grant_pyth_graph_system_log_capability(process)
+            .map_err(|_| PythRuntimeLaunchError::Capability)?;
+        match deferred_import {
+            PythGraphDeferredImport::None => {
+                PythGraphBootstrapBinding::Complete(PythGraphImportCapabilities {
+                    system_log: system_log_capability,
+                    object_workspace: object_workspace_capability
+                        .unwrap_or(PackedCapability::from_raw(0)),
+                    task_steward: PackedCapability::from_raw(0),
+                })
+            }
+            PythGraphDeferredImport::ObjectWorkspace => {
+                PythGraphBootstrapBinding::DeferredObjectWorkspace {
+                    system_log: system_log_capability,
+                }
+            }
+            PythGraphDeferredImport::TaskSteward => {
+                PythGraphBootstrapBinding::DeferredTaskSteward {
+                    system_log: system_log_capability,
+                }
+            }
+            PythGraphDeferredImport::TestOnlyObjectCapability => {
+                PythGraphBootstrapBinding::DeferredTestOnlyObjectCapability
+            }
         }
     };
     let bootstrap = build_pyth_graph_bootstrap_with_binding(
@@ -1536,6 +1603,214 @@ mod tests {
 
     mod package_launch_runtime {
         use super::*;
+        use pythos_shared::pyth_tig::{
+            format::{
+                BlockRecord, CapabilityImportRecord, NO_VALUE, NodeRecord, PYTH_TIG_MAGIC,
+                PYTH_TIG_MAJOR, PYTH_TIG_MINOR, PythGraphHeader,
+            },
+            opcode::Opcode,
+        };
+
+        fn bootstrap_for_object_workspace_rights(
+            package: &[u8],
+            rights: u64,
+        ) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
+            let mut package = package.to_vec();
+            test_support::set_first_import_rights(&mut package, rights);
+            let verified = verify_bytes(&package).unwrap();
+            let graph_import_grants = [PackageLaunchGraphImportGrant {
+                import_slot: 0,
+                capability: PackedCapability::from_parts(12, 3),
+            }];
+            prepare_package_launch_runtime_bootstrap(
+                &verified,
+                package.len() as u64,
+                &graph_import_grants,
+            )
+        }
+
+        fn dual_object_workspace_import_package() -> Vec<u8> {
+            const BLOCK_COUNT: usize = 1;
+            const NODE_COUNT: usize = 7;
+            const IMPORT_COUNT: usize = 2;
+            const STRING_TABLE: &[u8] = b"note";
+
+            let header_size = core::mem::size_of::<PythGraphHeader>();
+            let block_size = core::mem::size_of::<BlockRecord>();
+            let node_size = core::mem::size_of::<NodeRecord>();
+            let import_size = core::mem::size_of::<CapabilityImportRecord>();
+            let types_offset = header_size;
+            let blocks_offset = types_offset;
+            let nodes_offset = blocks_offset + BLOCK_COUNT * block_size;
+            let imports_offset = nodes_offset + NODE_COUNT * node_size;
+            let constant_pool_offset = imports_offset + IMPORT_COUNT * import_size;
+            let string_table_offset = constant_pool_offset;
+            let package_len = string_table_offset + STRING_TABLE.len();
+            let mut package = vec![0u8; package_len];
+
+            package[0..8].copy_from_slice(&PYTH_TIG_MAGIC);
+            write_u16(&mut package, 8, PYTH_TIG_MAJOR);
+            write_u16(&mut package, 10, PYTH_TIG_MINOR);
+            write_u64(&mut package, 16, 0x5059_5448_5449_4704);
+            write_u64(&mut package, 24, 0x5059_5448_5052_4E04);
+            write_u32(&mut package, 32, 0);
+            write_u32(&mut package, 36, 0);
+            write_u32(&mut package, 40, BLOCK_COUNT as u32);
+            write_u32(&mut package, 44, NODE_COUNT as u32);
+            write_u32(&mut package, 48, IMPORT_COUNT as u32);
+            write_u32(&mut package, 52, 0);
+            write_u32(&mut package, 56, STRING_TABLE.len() as u32);
+            write_u32(&mut package, 60, types_offset as u32);
+            write_u32(&mut package, 64, blocks_offset as u32);
+            write_u32(&mut package, 68, nodes_offset as u32);
+            write_u32(&mut package, 72, imports_offset as u32);
+            write_u32(&mut package, 76, constant_pool_offset as u32);
+            write_u32(&mut package, 80, string_table_offset as u32);
+
+            write_block_record(&mut package, blocks_offset, NODE_COUNT as u32);
+            write_node_record(
+                &mut package,
+                nodes_offset,
+                Opcode::EffectStart,
+                PythType::Effect,
+                [NO_VALUE; 4],
+                0,
+                0,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + node_size,
+                Opcode::BlockParam,
+                PythType::Capability,
+                [NO_VALUE; 4],
+                0,
+                0,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + 2 * node_size,
+                Opcode::BlockParam,
+                PythType::Capability,
+                [NO_VALUE; 4],
+                1,
+                0,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + 3 * node_size,
+                Opcode::ConstUtf8,
+                PythType::Utf8,
+                [NO_VALUE; 4],
+                0,
+                STRING_TABLE.len() as u32,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + 4 * node_size,
+                Opcode::ObjectCreate,
+                PythType::Effect,
+                [0, 1, 3, NO_VALUE],
+                0,
+                0,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + 5 * node_size,
+                Opcode::ObjectQuery,
+                PythType::Effect,
+                [4, 2, 3, NO_VALUE],
+                0,
+                0,
+            );
+            write_node_record(
+                &mut package,
+                nodes_offset + 6 * node_size,
+                Opcode::Return,
+                PythType::Unit,
+                [NO_VALUE; 4],
+                0,
+                0,
+            );
+
+            write_import_record(&mut package, imports_offset, RIGHTS_CREATE, 0);
+            write_import_record(&mut package, imports_offset + import_size, RIGHTS_QUERY, 1);
+            package[string_table_offset..string_table_offset + STRING_TABLE.len()]
+                .copy_from_slice(STRING_TABLE);
+            refresh_package_checksum(&mut package);
+            package
+        }
+
+        fn write_block_record(bytes: &mut [u8], offset: usize, node_count: u32) {
+            write_u32(bytes, offset, 0);
+            write_u32(bytes, offset + 4, 0);
+            write_u32(bytes, offset + 8, node_count);
+            write_u16(bytes, offset + 12, 0);
+            write_u16(bytes, offset + 14, 0);
+            write_u32(bytes, offset + 16, node_count - 1);
+            write_u32(bytes, offset + 20, 0);
+        }
+
+        fn write_node_record(
+            bytes: &mut [u8],
+            offset: usize,
+            opcode: Opcode,
+            result_type: PythType,
+            inputs: [u32; 4],
+            auxiliary0: u32,
+            auxiliary1: u32,
+        ) {
+            write_u16(bytes, offset, opcode.code());
+            write_u16(bytes, offset + 2, result_type.code());
+            write_u16(bytes, offset + 4, 0);
+            write_u16(bytes, offset + 6, 0);
+            write_u32(bytes, offset + 8, inputs[0]);
+            write_u32(bytes, offset + 12, inputs[1]);
+            write_u32(bytes, offset + 16, inputs[2]);
+            write_u32(bytes, offset + 20, inputs[3]);
+            write_u32(bytes, offset + 24, auxiliary0);
+            write_u32(bytes, offset + 28, auxiliary1);
+            write_u64(bytes, offset + 32, 0);
+        }
+
+        fn write_import_record(bytes: &mut [u8], offset: usize, rights: u64, import_slot: u16) {
+            write_u32(bytes, offset, 0);
+            write_u16(bytes, offset + 4, 4);
+            write_u16(bytes, offset + 6, RESOURCE_OBJECT_WORKSPACE);
+            write_u64(bytes, offset + 8, rights);
+            write_u16(bytes, offset + 16, PythType::Capability.code());
+            write_u16(bytes, offset + 18, import_slot);
+            write_u32(bytes, offset + 20, 0);
+        }
+
+        fn refresh_package_checksum(bytes: &mut [u8]) {
+            const CHECKSUM_OFFSET: usize = 84;
+            const CHECKSUM_END: usize = 92;
+
+            write_u64(bytes, CHECKSUM_OFFSET, 0);
+            let mut hash = 0xcbf2_9ce4_8422_2325u64;
+            for (index, &byte) in bytes.iter().enumerate() {
+                let byte = if (CHECKSUM_OFFSET..CHECKSUM_END).contains(&index) {
+                    0
+                } else {
+                    byte
+                };
+                hash ^= u64::from(byte);
+                hash = hash.wrapping_mul(0x0000_0100_0000_01B3);
+            }
+            write_u64(bytes, CHECKSUM_OFFSET, hash);
+        }
+
+        fn write_u16(bytes: &mut [u8], offset: usize, value: u16) {
+            bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u32(bytes: &mut [u8], offset: usize, value: u32) {
+            bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        }
+
+        fn write_u64(bytes: &mut [u8], offset: usize, value: u64) {
+            bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        }
 
         #[test]
         fn package_launch_uses_existing_graph_runtime_bootstrap_without_resizing_bootstrap() {
@@ -1572,6 +1847,122 @@ mod tests {
             assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE | RIGHTS_QUERY);
             assert_eq!(bootstrap.imports[0].capability, expected_import_capability);
             assert_eq!(bootstrap.imports[1].capability.raw(), 0);
+        }
+
+        #[test]
+        fn package_launch_bootstrap_preserves_object_workspace_grants_by_import_slot() {
+            let package = dual_object_workspace_import_package();
+            let verified = verify_bytes(&package).unwrap();
+            let create_capability = PackedCapability::from_parts(12, 3);
+            let query_capability = PackedCapability::from_parts(13, 4);
+            let graph_import_grants = [
+                PackageLaunchGraphImportGrant {
+                    import_slot: 1,
+                    capability: query_capability,
+                },
+                PackageLaunchGraphImportGrant {
+                    import_slot: 0,
+                    capability: create_capability,
+                },
+            ];
+
+            let bootstrap = prepare_package_launch_runtime_bootstrap(
+                &verified,
+                package.len() as u64,
+                &graph_import_grants,
+            )
+            .unwrap();
+
+            assert_eq!(bootstrap.import_count, 2);
+            assert_eq!(bootstrap.imports[0].import_slot, 0);
+            assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE);
+            assert_eq!(bootstrap.imports[0].capability, create_capability);
+            assert_eq!(bootstrap.imports[1].import_slot, 1);
+            assert_eq!(bootstrap.imports[1].rights, RIGHTS_QUERY);
+            assert_eq!(bootstrap.imports[1].capability, query_capability);
+        }
+
+        #[test]
+        fn package_launch_bootstrap_accepts_object_workspace_create_only_import() {
+            let package = test_support::object_create_host_result(PythType::ObjectId, 1);
+
+            let bootstrap = bootstrap_for_object_workspace_rights(&package, RIGHTS_CREATE).unwrap();
+
+            assert_eq!(bootstrap.import_count, 1);
+            assert_eq!(
+                bootstrap.imports[0].resource_kind,
+                RESOURCE_OBJECT_WORKSPACE
+            );
+            assert_eq!(bootstrap.imports[0].rights, RIGHTS_CREATE);
+            assert_eq!(
+                bootstrap.imports[0].capability,
+                PackedCapability::from_parts(12, 3)
+            );
+        }
+
+        #[test]
+        fn package_launch_bootstrap_accepts_object_workspace_query_only_import() {
+            let package = test_support::object_restore_package();
+
+            let bootstrap = bootstrap_for_object_workspace_rights(&package, RIGHTS_QUERY).unwrap();
+
+            assert_eq!(bootstrap.import_count, 1);
+            assert_eq!(
+                bootstrap.imports[0].resource_kind,
+                RESOURCE_OBJECT_WORKSPACE
+            );
+            assert_eq!(bootstrap.imports[0].rights, RIGHTS_QUERY);
+            assert_eq!(
+                bootstrap.imports[0].capability,
+                PackedCapability::from_parts(12, 3)
+            );
+        }
+
+        #[test]
+        fn package_launch_bootstrap_denies_object_workspace_unknown_rights() {
+            let package = test_support::object_note_flow_package();
+
+            assert_eq!(
+                bootstrap_for_object_workspace_rights(
+                    &package,
+                    RIGHTS_CREATE | RIGHTS_QUERY | RIGHTS_REVISE,
+                ),
+                Err(PythRuntimeLaunchError::UnauthorizedImport)
+            );
+        }
+
+        #[test]
+        fn object_workspace_zero_rights_are_rejected_before_runtime_launch() {
+            let mut package = test_support::object_create_host_result(PythType::ObjectId, 1);
+            test_support::set_first_import_rights(&mut package, 0);
+
+            assert!(!valid_object_workspace_rights(0));
+            assert!(matches!(
+                verify_bytes(&package),
+                Err(
+                    pythos_shared::pyth_tig::verify::VerifyError::ImportRightsInsufficient {
+                        import_slot: 0,
+                        ..
+                    }
+                )
+            ));
+        }
+
+        #[test]
+        fn package_launch_bootstrap_denies_create_import_without_supplied_capability() {
+            let mut package = test_support::object_create_host_result(PythType::ObjectId, 1);
+            test_support::set_first_import_rights(&mut package, RIGHTS_CREATE);
+            let verified = verify_bytes(&package).unwrap();
+            let graph_import_grants = [];
+
+            assert_eq!(
+                prepare_package_launch_runtime_bootstrap(
+                    &verified,
+                    package.len() as u64,
+                    &graph_import_grants,
+                ),
+                Err(PythRuntimeLaunchError::MissingImport)
+            );
         }
     }
 
