@@ -18,6 +18,8 @@ CORE_TARGET = ROOT / "target" / "phase13-package-uninstall-core"
 CORE_ELF = CORE_TARGET / "x86_64-unknown-none" / "debug" / "pythcore"
 PYTH_TIG_TARGET = ROOT / "target" / "pyth-tig"
 VALID_GRAPH = PYTH_TIG_TARGET / "hello.tig"
+SCHEMA_RETAINED_SOURCE = TARGET / "schema-retained.pyth"
+SCHEMA_RETAINED_GRAPH = PYTH_TIG_TARGET / "schema-retained.tig"
 
 PACKAGE_ARTIFACT_MAGIC = b"PYTHPKG0"
 PACKAGE_ARTIFACT_HEADER_LEN = 160
@@ -104,6 +106,33 @@ SCENARIOS = {
             "PYTHOS:CORE:PACKAGE_LOCATOR:HALF_VISIBLE",
         ),
         "kill_marker": "PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONE_ANCHOR_PUBLISHED",
+    },
+    "schema-retained": {
+        "label": b"phase13-uninstall-schema-retained.pkg",
+        "graph": SCHEMA_RETAINED_GRAPH,
+        "with_pythtig": True,
+        "serial_log": TARGET / "schema-retained.log",
+        "storage_image": TARGET / "schema-retained.img",
+        "success_marker": "PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED",
+        "required": (
+            "PYTHOS:CORE:PACKAGE_LAUNCH:INSTALLED_RESTORED",
+            "PYTHOS:CORE:PACKAGE_LAUNCH:EXPORT_RESOLVED",
+            "PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_VERIFIED",
+            "PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED",
+            "PYTHOS:CORE:PACKAGE_LAUNCH:GRANTS_VALIDATED",
+            "PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED",
+            "PYTHOS:PYTHTIG:RUNTIME_ENTER package:",
+            "PYTHOS:PYTHTIG:OBJECT_FLOW_ACCEPTANCE_COMPLETE",
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:",
+            "PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED",
+            "PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED",
+        ),
+        "forbidden": COMMON_FORBIDDEN
+        + (
+            "PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED",
+            "PYTHOS:CORE:PACKAGE_LOCATOR:VISIBLE",
+        ),
+        "kill_marker": "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:",
     },
 }
 
@@ -206,11 +235,54 @@ def build_pyth_graph_artifacts() -> None:
     run([sys.executable, "scripts/build-pyth-graph.py"])
 
 
+def build_schema_retained_graph() -> None:
+    TARGET.mkdir(parents=True, exist_ok=True)
+    SCHEMA_RETAINED_SOURCE.write_text(
+        """program package_schema_retention principal 0x5059504B4C415A01 {
+    import workspace: capability<object.workspace, create|query>;
+    fn main() -> unit {
+        let object_id: object_id = object.create(workspace, 2);
+        let object_capability: capability = object.created_capability();
+        return;
+    }
+}
+""",
+        encoding="utf-8",
+    )
+    run(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "pythc",
+            "--",
+            "build",
+            str(SCHEMA_RETAINED_SOURCE),
+            "-o",
+            str(SCHEMA_RETAINED_GRAPH),
+        ]
+    )
+    tool = ROOT / "target" / "debug" / (
+        "pyth-tig-tool.exe" if os.name == "nt" else "pyth-tig-tool"
+    )
+    run([str(tool), "verify", str(SCHEMA_RETAINED_GRAPH)])
+
+
+def build_pyth_runtime_artifacts() -> None:
+    run([sys.executable, "scripts/build-pyth-runtime.py"])
+    run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
+
+
 def build_boot_image(scenario: str) -> None:
     config = SCENARIOS[scenario]
     TARGET.mkdir(parents=True, exist_ok=True)
     build_pyth_graph_artifacts()
-    artifact = build_launch_fixture(VALID_GRAPH.read_bytes())
+    if config.get("with_pythtig"):
+        build_pyth_runtime_artifacts()
+    if config.get("graph") == SCHEMA_RETAINED_GRAPH:
+        build_schema_retained_graph()
+    graph_path: Path = config.get("graph", VALID_GRAPH)  # type: ignore[assignment]
+    artifact = build_launch_fixture(graph_path.read_bytes())
     fixture = TARGET / f"{scenario}.pkg"
     fixture.write_bytes(artifact)
     source_spec = f"{fixture.relative_to(ROOT).as_posix()}:{config['label'].decode('ascii')}"
@@ -231,16 +303,16 @@ def build_boot_image(scenario: str) -> None:
         ]
     )
     build_verified_user_shell()
-    run(
-        [
-            sys.executable,
-            "scripts/build-image.py",
-            "--kernel",
-            str(CORE_ELF),
-            "--phase13-package-source",
-            source_spec,
-        ]
-    )
+    build_image = [
+        sys.executable,
+        "scripts/build-image.py",
+        "--kernel",
+        str(CORE_ELF),
+    ]
+    if config.get("with_pythtig"):
+        build_image.append("--with-pythtig")
+    build_image.extend(["--phase13-package-source", source_spec])
+    run(build_image)
 
 
 def run_qemu(scenario: str) -> str:
@@ -355,7 +427,11 @@ def serial_lines(output: str) -> list[str]:
 def assert_ordered_markers(lines: list[str], markers: tuple[str, ...]) -> None:
     cursor = -1
     for marker in markers:
-        matches = [index for index, line in enumerate(lines) if line == marker]
+        matches = [
+            index
+            for index, line in enumerate(lines)
+            if line == marker or (marker.endswith(":") and line.startswith(marker))
+        ]
         if len(matches) != 1:
             raise AssertionError(f"expected one {marker!r}, saw {len(matches)}")
         if matches[0] <= cursor:

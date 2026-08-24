@@ -11,7 +11,10 @@ use pythos_shared::{
     package_format::PackageArtifactV0,
     pyth_runtime_abi::{GraphExitRecord, PythGraphBootstrapBlock},
     pyth_tig::{
-        opcode::{RESOURCE_SYSTEM_LOG, RIGHTS_READ},
+        opcode::{
+            RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RIGHTS_CREATE, RIGHTS_QUERY,
+            RIGHTS_READ,
+        },
         verify::{self, VerifyError},
     },
     sha256::sha256,
@@ -23,6 +26,7 @@ use crate::{
     memory,
     object_relationships::{
         PACKAGE_LOCATOR_ROOT_OBJECT_ID, PackageLocatorRelationshipStore, RelationshipKind,
+        SHELL_WORKSPACE_OBJECT_ID,
     },
     object_service::{ObjectService, ObjectServiceError},
     object_service_checkpoint::{
@@ -58,10 +62,11 @@ use crate::{
     user_copy::UserCopyAccess,
     user_stacks,
 };
-use core::mem::{MaybeUninit, size_of};
+use core::mem::{MaybeUninit, replace, size_of};
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(not(test))]
 use core::{arch::global_asm, cell::UnsafeCell};
+use pythos_shared::package_abi::{FIELD_PACKAGE_INLINE_STATE_V0, FIELD_PACKAGE_SCHEMA_REF_V0};
 
 const PACKAGE_SOURCE_MAGIC: &[u8; 8] = b"PYPKGS01";
 const PACKAGE_SOURCE_HEADER_LEN: usize = 64;
@@ -83,6 +88,7 @@ const PACKAGE_UNINSTALL_LIVE_DENIED_LABEL: &[u8] = b"phase13-uninstall-live-deni
 const PACKAGE_UNINSTALL_TOMBSTONE_LABEL: &[u8] = b"phase13-uninstall-tombstone.pkg";
 const PACKAGE_UNINSTALL_REINSTALL_LABEL: &[u8] = b"phase13-uninstall-reinstall.pkg";
 const PACKAGE_UNINSTALL_KILL_DURING_LABEL: &[u8] = b"phase13-uninstall-kill-during.pkg";
+const PACKAGE_UNINSTALL_SCHEMA_RETAINED_LABEL: &[u8] = b"phase13-uninstall-schema-retained.pkg";
 const PACKAGE_INSTALL_SERVICE_ID: ServiceId = ServiceId::from_raw(0x5059_504B_494E_5354);
 const PACKAGE_INSTALL_PRINCIPAL_ID: u64 = 0x5059_504B_494E_5354;
 const PACKAGE_INSTALL_PROGRAM_DIGEST: u64 = 0x5059_0013;
@@ -94,6 +100,7 @@ const PACKAGE_LAUNCH_CONTENT_INDEX: u16 = 1;
 const PACKAGE_LAUNCH_REQUIREMENT_ID: u16 = 7;
 const PACKAGE_LAUNCH_IMPORT_SLOT: u16 = 0;
 const PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID: u64 = 0x5059_5447_4C4F_4700;
+const PACKAGE_ACCEPTANCE_SCHEMA_DESCRIPTOR: &[u8] = b"schema:package-graph.v0";
 const RESTORE_SMOKE_TRANSACTION_ID: u64 = 1;
 const RESTORE_SMOKE_PACKAGE_OBJECT_ID: u64 = 0x5059_504B_474F_0001;
 const RESTORE_SMOKE_SCHEMA_OBJECT_ID: u64 = 0x5059_5343_484F_0001;
@@ -128,6 +135,8 @@ const PACKAGE_STACK_MODE_UNINSTALL_TOMBSTONE: u8 = 12;
 const PACKAGE_STACK_MODE_UNINSTALL_REINSTALL: u8 = 13;
 #[cfg(not(test))]
 const PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING: u8 = 14;
+#[cfg(not(test))]
+const PACKAGE_STACK_MODE_UNINSTALL_SCHEMA_RETAINED: u8 = 15;
 
 static mut PACKAGE_ACCEPTANCE_OBJECT_SERVICE: MaybeUninit<ObjectService> = MaybeUninit::uninit();
 static mut PACKAGE_ACCEPTANCE_PACKAGE_SERVICE: PackageService<'static> =
@@ -262,6 +271,7 @@ enum PackageUninstallAcceptanceScenario {
     Tombstone,
     ReinstallNewIdentity,
     KillDuringUninstall,
+    SchemaRetained,
 }
 
 struct PackageRestoreSmokeSeed {
@@ -381,6 +391,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageUninstallAcceptanceScenario::Disable,
+            None,
         );
     }
     if source.label == PACKAGE_UNINSTALL_LIVE_DENIED_LABEL {
@@ -388,6 +399,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageUninstallAcceptanceScenario::LiveProcessDenied,
+            None,
         );
     }
     if source.label == PACKAGE_UNINSTALL_TOMBSTONE_LABEL {
@@ -395,6 +407,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageUninstallAcceptanceScenario::Tombstone,
+            None,
         );
     }
     if source.label == PACKAGE_UNINSTALL_REINSTALL_LABEL {
@@ -402,6 +415,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageUninstallAcceptanceScenario::ReinstallNewIdentity,
+            None,
         );
     }
     if source.label == PACKAGE_UNINSTALL_KILL_DURING_LABEL {
@@ -409,6 +423,19 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageUninstallAcceptanceScenario::KillDuringUninstall,
+            None,
+        );
+    }
+    if source.label == PACKAGE_UNINSTALL_SCHEMA_RETAINED_LABEL {
+        return run_package_uninstall_acceptance(
+            block_device,
+            &bundle,
+            PackageUninstallAcceptanceScenario::SchemaRetained,
+            Some(PackageRuntimeLaunchTarget {
+                boot_info,
+                physical_memory,
+                supervisor_mappings,
+            }),
         );
     }
 
@@ -511,6 +538,7 @@ fn run_package_uninstall_acceptance(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
     scenario: PackageUninstallAcceptanceScenario,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
 ) -> Result<(), PackageAcceptanceError> {
     #[cfg(not(test))]
     {
@@ -526,13 +554,17 @@ fn run_package_uninstall_acceptance(
             PackageUninstallAcceptanceScenario::KillDuringUninstall => {
                 PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING
             }
+            PackageUninstallAcceptanceScenario::SchemaRetained => {
+                PACKAGE_STACK_MODE_UNINSTALL_SCHEMA_RETAINED
+            }
         };
-        return run_acceptance_on_static_stack(block_device, bundle, mode, None);
+        return run_acceptance_on_static_stack(block_device, bundle, mode, runtime_target);
     }
 
     #[cfg(test)]
     {
-        run_package_uninstall_acceptance_inner(block_device, bundle, scenario)
+        let _ = runtime_target;
+        run_package_uninstall_acceptance_inner(block_device, bundle, scenario, None)
     }
 }
 
@@ -709,27 +741,44 @@ extern "C" fn package_acceptance_stack_entry(context: *mut core::ffi::c_void) ->
             context.block_device,
             bundle,
             PackageUninstallAcceptanceScenario::Disable,
+            None,
         ),
         PACKAGE_STACK_MODE_UNINSTALL_LIVE_DENIED => run_package_uninstall_acceptance_inner(
             context.block_device,
             bundle,
             PackageUninstallAcceptanceScenario::LiveProcessDenied,
+            None,
         ),
         PACKAGE_STACK_MODE_UNINSTALL_TOMBSTONE => run_package_uninstall_acceptance_inner(
             context.block_device,
             bundle,
             PackageUninstallAcceptanceScenario::Tombstone,
+            None,
         ),
         PACKAGE_STACK_MODE_UNINSTALL_REINSTALL => run_package_uninstall_acceptance_inner(
             context.block_device,
             bundle,
             PackageUninstallAcceptanceScenario::ReinstallNewIdentity,
+            None,
         ),
         PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING => run_package_uninstall_acceptance_inner(
             context.block_device,
             bundle,
             PackageUninstallAcceptanceScenario::KillDuringUninstall,
+            None,
         ),
+        PACKAGE_STACK_MODE_UNINSTALL_SCHEMA_RETAINED => {
+            let runtime_target = match runtime_target_from_stack_context(context) {
+                Ok(target) => Some(target),
+                Err(error) => return stack_entry_result(Err(error)),
+            };
+            run_package_uninstall_acceptance_inner(
+                context.block_device,
+                bundle,
+                PackageUninstallAcceptanceScenario::SchemaRetained,
+                runtime_target,
+            )
+        }
         _ => Err(PackageAcceptanceError::UnexpectedScenario),
     };
     stack_entry_result(result)
@@ -1265,6 +1314,7 @@ fn run_package_uninstall_acceptance_inner(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
     scenario: PackageUninstallAcceptanceScenario,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
 ) -> Result<(), PackageAcceptanceError> {
     match scenario {
         PackageUninstallAcceptanceScenario::Disable => {
@@ -1281,6 +1331,9 @@ fn run_package_uninstall_acceptance_inner(
         }
         PackageUninstallAcceptanceScenario::KillDuringUninstall => {
             run_package_uninstall_recovery_acceptance(block_device, bundle)
+        }
+        PackageUninstallAcceptanceScenario::SchemaRetained => {
+            run_package_uninstall_schema_retained_acceptance(block_device, bundle, runtime_target)
         }
     }
 }
@@ -1515,6 +1568,249 @@ fn run_package_uninstall_recovery_acceptance(
     assert_locator_not_half_visible(restored_service, package.package_object_id)?;
     serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL_RECOVERY_READY");
     Ok(())
+}
+
+fn run_package_uninstall_schema_retained_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
+) -> Result<(), PackageAcceptanceError> {
+    if publication_anchor_exists(block_device)? {
+        return run_package_uninstall_schema_retained_recovery_acceptance(block_device);
+    }
+    let runtime_target = runtime_target.ok_or(PackageAcceptanceError::PackageOperation)?;
+    run_package_uninstall_schema_retained_runtime_creation_acceptance(
+        block_device,
+        bundle,
+        runtime_target,
+    )
+}
+
+fn run_package_uninstall_schema_retained_runtime_creation_acceptance(
+    block_device: BlockDeviceInfo,
+    bundle: &init_bundle::InitBundle<'_>,
+    runtime_target: PackageRuntimeLaunchTarget<'_>,
+) -> Result<(), PackageAcceptanceError> {
+    let object_service = object_service_for_acceptance(block_device)?;
+    let package_service = package_service_for_acceptance();
+    let installed = install_launch_fixture_into_service(
+        block_device,
+        bundle,
+        package_service,
+        object_service,
+        acceptance_artifact_buffer(),
+    )?;
+
+    let restored_service = restore_service_for_acceptance();
+    let report = restored_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected
+        || report.previous_published_world_selected
+        || report.selected_object_checkpoint().is_none()
+        || restored_service.registry().package_count() != 1
+        || restored_service.registry().schema_count() != 1
+        || restored_service.registry().content_count() < 2
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:INSTALLED_RESTORED");
+
+    let namespace_root = ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID);
+    let export = restored_service
+        .resolve_export(namespace_root, PACKAGE_LAUNCH_LOCATOR)
+        .map_err(map_package_status)?;
+    validate_launch_export(&installed, export)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:EXPORT_RESOLVED");
+
+    let content = read_launch_content(
+        restored_service,
+        export,
+        content_read_buffer_for_acceptance(),
+    )
+    .map_err(map_package_status)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:CONTENT_VERIFIED");
+
+    let verified =
+        verify::verify_bytes(content).map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED");
+
+    let requirement = object_workspace_launch_requirement();
+    restored_service
+        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, requirement)
+        .map_err(map_package_status)?;
+    let launch_process = package_runtime_process_for_acceptance(content.len())?;
+    let workspace_capability = object_service
+        .grant_workspace_capability(launch_process)
+        .map_err(map_object_error)?;
+    let supplied_grant =
+        PackageLaunchGrant::from_packed(requirement.requirement_id, workspace_capability);
+    let supplied_grants = [supplied_grant];
+    let launch = restored_service
+        .launch_with_validator(
+            PackageLaunchRequest {
+                caller: launch_process,
+                namespace_root,
+                locator: PACKAGE_LAUNCH_LOCATOR,
+                supplied_grants: &supplied_grants,
+            },
+            object_service,
+        )
+        .map_err(map_package_status)?;
+    if launch.export != export
+        || launch.grant_count != 1
+        || launch.grant(0) != Some(supplied_grants[0])
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let graph_import_grant = launch
+        .graph_import_grant(0)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if graph_import_grant.import_slot != PACKAGE_LAUNCH_IMPORT_SLOT
+        || graph_import_grant.capability != workspace_capability
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let binding = restored_service
+        .runtime_schema_binding(launch_process, 0)
+        .map_err(map_package_status)?;
+    if binding.package_object_id != export.package_object_id
+        || binding.package_revision != export.package_revision
+        || binding.schema_object_id != export.schema_object_id
+        || binding.schema_revision != export.schema_revision
+        || binding.schema_descriptor_sha256 != export.schema_descriptor_digest
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:GRANTS_VALIDATED");
+
+    let graph_import_grants = [graph_import_grant];
+    let bootstrap = pyth_runtime_launch::prepare_package_launch_runtime_bootstrap(
+        &verified,
+        content.len() as u64,
+        &graph_import_grants,
+    )
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    if bootstrap.import_count != 1
+        || bootstrap.imports[0].import_slot != PACKAGE_LAUNCH_IMPORT_SLOT
+        || bootstrap.imports[0].resource_kind != RESOURCE_OBJECT_WORKSPACE
+        || bootstrap.imports[0].rights != (RIGHTS_CREATE | RIGHTS_QUERY)
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+
+    initialize_retained_object_service_for_schema_acceptance(block_device, object_service)?;
+    initialize_retained_package_service_for_schema_acceptance(restored_service)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED");
+
+    #[cfg(not(test))]
+    {
+        pyth_runtime_launch::arm_object_flow_completion_marker();
+        let launch = pyth_runtime_launch::prepare_package_pyth_runtime_launch(
+            runtime_target.boot_info,
+            runtime_target.physical_memory,
+            runtime_target.supervisor_mappings,
+            &verified,
+            content,
+            launch_process,
+            &graph_import_grants,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_READY");
+        pyth_runtime_launch::enter_prepared_pyth_runtime_launch(&launch)
+    }
+    #[cfg(test)]
+    {
+        let _ = runtime_target;
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_READY");
+        Ok(())
+    }
+}
+
+fn run_package_uninstall_schema_retained_recovery_acceptance(
+    block_device: BlockDeviceInfo,
+) -> Result<(), PackageAcceptanceError> {
+    let restored_service = restore_service_for_acceptance();
+    let report = restored_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !report.published_world_selected
+        || report.previous_published_world_selected
+        || report.selected_object_checkpoint().is_none()
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let object_service = object_service_for_acceptance(block_device)?;
+    restored_service
+        .reconcile_schema_references_from_object_service(object_service)
+        .map_err(map_package_status)?;
+
+    let package = package_record_with_status(restored_service.registry(), PackageStatus::Ok as u16)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let schema = schema_record_for_package(restored_service.registry(), package.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    validate_package_defined_schema_instance(object_service, schema)?;
+    assert_schema_descriptor_retained(restored_service, package, schema)?;
+
+    restored_service
+        .uninstall(ObjectId::new(package.package_object_id))
+        .map_err(map_package_status)?;
+    validate_schema_retained_tombstone_state(restored_service, package, schema)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:TOMBSTONED");
+    assert_locator_not_visible(restored_service, package.package_object_id)?;
+
+    let fresh_service = package_service_for_acceptance();
+    *fresh_service = PackageService::new_empty_for_test();
+    let fresh_report = fresh_service
+        .restore_from_storage(block_device)
+        .map_err(map_package_status)?;
+    if !fresh_report.published_world_selected
+        || fresh_report.previous_published_world_selected
+        || fresh_report.selected_object_checkpoint().is_none()
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let fresh_object_service = object_service_for_acceptance(block_device)?;
+    fresh_service
+        .reconcile_schema_references_from_object_service(fresh_object_service)
+        .map_err(map_package_status)?;
+    validate_schema_retained_tombstone_state(fresh_service, package, schema)?;
+    validate_package_defined_schema_instance(fresh_object_service, schema)?;
+    serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_RETAINED");
+    Ok(())
+}
+
+#[cfg(not(test))]
+fn initialize_retained_object_service_for_schema_acceptance(
+    block_device: BlockDeviceInfo,
+    object_service: &ObjectService,
+) -> Result<(), PackageAcceptanceError> {
+    crate::retained_services::initialize_object_service_from_device(block_device)
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    crate::retained_services::with_object_service(|retained| {
+        *retained = *object_service;
+    })
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    Ok(())
+}
+
+#[cfg(test)]
+fn initialize_retained_object_service_for_schema_acceptance(
+    _block_device: BlockDeviceInfo,
+    _object_service: &ObjectService,
+) -> Result<(), PackageAcceptanceError> {
+    Ok(())
+}
+
+fn initialize_retained_package_service_for_schema_acceptance(
+    service: &mut PackageService<'static>,
+) -> Result<(), PackageAcceptanceError> {
+    let retained = replace(service, PackageService::new_empty_for_test());
+    if crate::package_service::initialize_retained_package_service_for_phase13(retained) {
+        Ok(())
+    } else {
+        Err(PackageAcceptanceError::PackageOperation)
+    }
 }
 
 fn install_launch_fixture_into_service(
@@ -1847,6 +2143,45 @@ fn assert_content_readable(
     Ok(())
 }
 
+fn assert_schema_descriptor_retained(
+    service: &PackageService<'_>,
+    package: PackageRegistryPackageRecord,
+    schema: PackageRegistrySchemaRecord,
+) -> Result<(), PackageAcceptanceError> {
+    let content_id = ContentId::new(
+        package.package_object_id,
+        package.release_digest,
+        schema.descriptor_content_index,
+    );
+    let content = match content_record_for_id(service.registry(), content_id) {
+        Some(content) => content,
+        None => {
+            serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED");
+            return Err(PackageAcceptanceError::PackageOperation);
+        }
+    };
+    if content.digest != schema.descriptor_digest
+        || content.digest != sha256(PACKAGE_ACCEPTANCE_SCHEMA_DESCRIPTOR)
+        || content.retention_count == 0
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let out = content_read_buffer_for_acceptance();
+    let read_len = service
+        .content_store()
+        .read_published(content_id, out)
+        .map_err(|_| {
+            serial::write_line("PYTHOS:CORE:PACKAGE_UNINSTALL:SCHEMA_DESCRIPTOR_RECLAIMED");
+            PackageAcceptanceError::PackageOperation
+        })?;
+    if read_len != PACKAGE_ACCEPTANCE_SCHEMA_DESCRIPTOR.len()
+        || &out[..read_len] != PACKAGE_ACCEPTANCE_SCHEMA_DESCRIPTOR
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
 fn assert_locator_not_visible(
     service: &mut PackageService<'_>,
     package_object_id: u64,
@@ -2040,12 +2375,128 @@ fn package_record_with_status(
     None
 }
 
+fn validate_schema_retained_tombstone_state(
+    service: &PackageService<'_>,
+    package: PackageRegistryPackageRecord,
+    schema: PackageRegistrySchemaRecord,
+) -> Result<(), PackageAcceptanceError> {
+    let tombstoned = package_record_for_object(service.registry(), package.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let retained_schema = schema_record_for_package(service.registry(), package.package_object_id)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    if tombstoned.status != PackageStatus::PackageTombstoned as u16
+        || tombstoned.installed_revision != package.installed_revision
+        || tombstoned.release_digest != package.release_digest
+        || retained_schema != schema
+        || service.registry().content_count() != 1
+        || content_record_for_id(
+            service.registry(),
+            ContentId::new(
+                package.package_object_id,
+                package.release_digest,
+                PACKAGE_LAUNCH_CONTENT_INDEX,
+            ),
+        )
+        .is_some()
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    assert_schema_descriptor_retained(service, package, schema)
+}
+
+fn validate_package_defined_schema_instance(
+    object_service: &mut ObjectService,
+    schema: PackageRegistrySchemaRecord,
+) -> Result<(), PackageAcceptanceError> {
+    let caller = ActiveUserProcess::new(
+        PACKAGE_LAUNCH_SERVICE_ID,
+        PACKAGE_LAUNCH_PRINCIPAL_ID,
+        PACKAGE_LAUNCH_PROGRAM_DIGEST,
+    );
+    let workspace = object_service
+        .grant_workspace_capability(caller)
+        .map_err(map_object_error)?;
+    let objects = object_service
+        .query_objects(caller, workspace, ObjectKind::PackageDefinedObject)
+        .map_err(map_object_error)?;
+    let mut count = 0usize;
+    let mut entry = None;
+    let mut index = 0usize;
+    while index < objects.len() {
+        if objects[index].object_id != 0 {
+            count += 1;
+            entry = Some(objects[index]);
+        }
+        index += 1;
+    }
+    if count != 1 {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let entry = entry.ok_or(PackageAcceptanceError::PackageOperation)?;
+    let inspection = object_service
+        .inspect_object(caller, entry.capability, ObjectId::new(entry.object_id))
+        .map_err(map_object_error)?;
+    let schema_ref = inspection
+        .field_bytes(FIELD_PACKAGE_SCHEMA_REF_V0)
+        .ok_or(PackageAcceptanceError::PackageOperation)?;
+    let expected_schema_id = schema.schema_object_id.to_le_bytes();
+    let expected_schema_revision = schema.schema_revision.to_le_bytes();
+    if inspection.object.object_kind() != ObjectKind::PackageDefinedObject
+        || inspection.revision != 1
+        || inspection.object.field_count() != 1
+        || inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0) != Some(16)
+        || inspection
+            .field_value_len(FIELD_PACKAGE_INLINE_STATE_V0)
+            .is_some()
+        || &schema_ref[..8] != &expected_schema_id
+        || &schema_ref[8..16] != &expected_schema_revision
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    if object_service
+        .history(caller, entry.capability, ObjectId::new(entry.object_id))
+        .map_err(map_object_error)?
+        != 1
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    let snapshot = object_service.encode_snapshot().map_err(map_object_error)?;
+    if !snapshot_contains_current_object(
+        &snapshot,
+        schema.schema_object_id,
+        schema.schema_revision,
+        ObjectKind::SchemaDefinition,
+    ) || !snapshot_contains_current_object(
+        &snapshot,
+        entry.object_id,
+        1,
+        ObjectKind::PackageDefinedObject,
+    ) || !snapshot.current_revisions.iter().flatten().any(|record| {
+        record.object_id() == ObjectId::new(entry.object_id)
+            && record.revision() == 1
+            && record.writer() == PACKAGE_LAUNCH_SERVICE_ID
+            && record.object().object_kind() == ObjectKind::PackageDefinedObject
+    }) {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    Ok(())
+}
+
 fn launch_requirement() -> PackageLaunchRequirement {
     PackageLaunchRequirement {
         requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
         graph_import_slot: PACKAGE_LAUNCH_IMPORT_SLOT,
         resource: ResourceId::new(PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID),
         rights: RightsMask::new(RightsMask::LOG),
+    }
+}
+
+fn object_workspace_launch_requirement() -> PackageLaunchRequirement {
+    PackageLaunchRequirement {
+        requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
+        graph_import_slot: PACKAGE_LAUNCH_IMPORT_SLOT,
+        resource: ResourceId::new(SHELL_WORKSPACE_OBJECT_ID),
+        rights: RightsMask::new(RightsMask::WRITE),
     }
 }
 
@@ -2525,14 +2976,18 @@ fn object_service_for_acceptance(
     block_device: BlockDeviceInfo,
 ) -> Result<&'static mut ObjectService, PackageAcceptanceError> {
     // SAFETY:
-    // 1. Invariant: this Phase 13 acceptance path runs once on one boot CPU and
-    //    exits QEMU after emitting its terminal marker.
+    // 1. Invariant: each call owns the acceptance ObjectService slot until the
+    //    returned borrow's last use. Some recovery scenarios call this helper
+    //    again only after the prior borrow is dead, to model a fresh restore
+    //    from normal object persistence after another package-service action.
     // 2. Established by: `phase13-package-test` is a verify-only feature and
     //    `main.rs` calls this module from the single-threaded verify path.
     // 3. Lifetime: the static `MaybeUninit<ObjectService>` slot lives for the
-    //    remainder of the boot and is not exposed outside package acceptance.
-    // 4. Pointer ownership: no other mutable or shared reference is created for
-    //    this slot while the acceptance scenario is running.
+    //    remainder of the boot and is not exposed outside package acceptance;
+    //    reloads overwrite the slot only after the previous borrow is no longer
+    //    used.
+    // 4. Pointer ownership: no other live mutable or shared reference exists
+    //    for this slot when a reload is requested.
     // 5. Alignment: `MaybeUninit<ObjectService>` provides correct alignment.
     // 6. Mapped length: exactly one `ObjectService` value is initialized.
     // 7. Concurrency: no SMP or concurrent acceptance runner exists.
