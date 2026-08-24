@@ -20,6 +20,7 @@ use pythos_shared::{
 use crate::{
     block_device::{BlockDeviceInfo, SECTOR_SIZE},
     capabilities::{CapabilityHandle, CapabilityTable, ResourceId, RightsMask},
+    memory,
     object_relationships::{
         PACKAGE_LOCATOR_ROOT_OBJECT_ID, PackageLocatorRelationshipStore, RelationshipKind,
     },
@@ -53,6 +54,7 @@ use crate::{
     pyth_runtime_launch, serial,
     service_identity::ServiceId,
     shell_objects::{ObjectId, ObjectKind},
+    syscall,
     user_copy::UserCopyAccess,
     user_stacks,
 };
@@ -186,7 +188,17 @@ static PACKAGE_ACCEPTANCE_STACK: PackageAcceptanceStackStorage = PackageAcceptan
 struct PackageStackAcceptanceContext {
     block_device: BlockDeviceInfo,
     bundle: *const init_bundle::InitBundle<'static>,
+    boot_info: *const PythBootInfo,
+    physical_memory: *mut memory::physical::PhysicalMemory,
+    supervisor_mappings: *const Option<(u64, u64, u64)>,
+    supervisor_mapping_count: usize,
     mode: u8,
+}
+
+struct PackageRuntimeLaunchTarget<'a> {
+    boot_info: &'static PythBootInfo,
+    physical_memory: &'a mut memory::physical::PhysicalMemory,
+    supervisor_mappings: &'a [Option<(u64, u64, u64)>],
 }
 
 #[cfg(not(test))]
@@ -287,8 +299,10 @@ impl PackageRestoreSmokeSeed {
 }
 
 pub fn run_package_format_acceptance(
-    boot_info: &PythBootInfo,
+    boot_info: &'static PythBootInfo,
     block_device: BlockDeviceInfo,
+    physical_memory: &mut memory::physical::PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
 ) -> Result<(), PackageAcceptanceError> {
     let bytes = init_pak_bytes(boot_info)?;
     let payload = init_pak_payload(bytes)?;
@@ -323,6 +337,11 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageLaunchAcceptanceScenario::Success,
+            Some(PackageRuntimeLaunchTarget {
+                boot_info,
+                physical_memory,
+                supervisor_mappings,
+            }),
         );
     }
     if source.label == PACKAGE_LAUNCH_GRANT_DENIED_LABEL {
@@ -330,6 +349,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageLaunchAcceptanceScenario::GrantDenied,
+            None,
         );
     }
     if source.label == PACKAGE_LAUNCH_CORRUPT_CONTENT_LABEL {
@@ -337,6 +357,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageLaunchAcceptanceScenario::CorruptContent,
+            None,
         );
     }
     if source.label == PACKAGE_LAUNCH_PYTHTIG_DENIED_LABEL {
@@ -344,6 +365,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageLaunchAcceptanceScenario::PythTigDenied,
+            None,
         );
     }
     if source.label == PACKAGE_LAUNCH_NON_LAUNCH_EXPORT_LABEL {
@@ -351,6 +373,7 @@ pub fn run_package_format_acceptance(
             block_device,
             &bundle,
             PackageLaunchAcceptanceScenario::NonLaunchExport,
+            None,
         );
     }
     if source.label == PACKAGE_UNINSTALL_DISABLE_LABEL {
@@ -444,7 +467,7 @@ fn run_publication_boundary_acceptance(
         } else {
             PACKAGE_STACK_MODE_PUBLICATION_BEFORE_ANCHOR
         };
-        return run_acceptance_on_static_stack(block_device, bundle, mode);
+        return run_acceptance_on_static_stack(block_device, bundle, mode, None);
     }
 
     #[cfg(test)]
@@ -457,6 +480,7 @@ fn run_package_launch_acceptance(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
     scenario: PackageLaunchAcceptanceScenario,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
 ) -> Result<(), PackageAcceptanceError> {
     #[cfg(not(test))]
     {
@@ -473,12 +497,13 @@ fn run_package_launch_acceptance(
                 PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT
             }
         };
-        return run_acceptance_on_static_stack(block_device, bundle, mode);
+        return run_acceptance_on_static_stack(block_device, bundle, mode, runtime_target);
     }
 
     #[cfg(test)]
     {
-        run_package_launch_acceptance_inner(block_device, bundle, scenario)
+        let _ = runtime_target;
+        run_package_launch_acceptance_inner(block_device, bundle, scenario, None)
     }
 }
 
@@ -502,7 +527,7 @@ fn run_package_uninstall_acceptance(
                 PACKAGE_STACK_MODE_UNINSTALL_KILL_DURING
             }
         };
-        return run_acceptance_on_static_stack(block_device, bundle, mode);
+        return run_acceptance_on_static_stack(block_device, bundle, mode, None);
     }
 
     #[cfg(test)]
@@ -516,6 +541,7 @@ fn run_acceptance_on_static_stack(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
     mode: u8,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
 ) -> Result<(), PackageAcceptanceError> {
     // SAFETY:
     // 1. Invariant: package-source records in `bundle` point into the
@@ -530,13 +556,29 @@ fn run_acceptance_on_static_stack(
     // 8. Violation: stale bundle bytes would fail package-source validation or
     //    fault before any publication marker is emitted.
     let static_bundle: &init_bundle::InitBundle<'static> = unsafe { core::mem::transmute(bundle) };
+    let (boot_info, physical_memory, supervisor_mappings, supervisor_mapping_count) =
+        match runtime_target {
+            Some(target) => (
+                target.boot_info as *const PythBootInfo,
+                target.physical_memory as *mut memory::physical::PhysicalMemory,
+                target.supervisor_mappings.as_ptr(),
+                target.supervisor_mappings.len(),
+            ),
+            None => (
+                core::ptr::null::<PythBootInfo>(),
+                core::ptr::null_mut::<memory::physical::PhysicalMemory>(),
+                core::ptr::null::<Option<(u64, u64, u64)>>(),
+                0,
+            ),
+        };
     // SAFETY:
     // 1. Invariant: the context static is written for exactly one synchronous
     //    static-stack call and is not read afterward.
     // 2. Established by: `phase13-package-test` runs one scenario per boot and
     //    exits or waits for harness power cut.
-    // 3. Lifetime: the context slot is static and the referenced bundle is
-    //    loader-retained for the whole boot.
+    // 3. Lifetime: the context slot is static; the referenced bundle and boot
+    //    info are loader-retained, and the optional allocator/mapping borrows
+    //    remain valid for this synchronous call.
     // 4. Pointer ownership: this helper creates the only mutable context
     //    reference before passing it to the trampoline.
     // 5. Alignment: `MaybeUninit<PackageStackAcceptanceContext>`
@@ -549,6 +591,10 @@ fn run_acceptance_on_static_stack(
     let context = context_slot.write(PackageStackAcceptanceContext {
         block_device,
         bundle: static_bundle as *const init_bundle::InitBundle<'static>,
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        supervisor_mapping_count,
         mode,
     });
     // SAFETY:
@@ -623,30 +669,41 @@ extern "C" fn package_acceptance_stack_entry(context: *mut core::ffi::c_void) ->
         PACKAGE_STACK_MODE_PUBLICATION_AFTER_ANCHOR => {
             run_publication_boundary_acceptance_inner(context.block_device, bundle, true)
         }
-        PACKAGE_STACK_MODE_LAUNCH_SUCCESS => run_package_launch_acceptance_inner(
-            context.block_device,
-            bundle,
-            PackageLaunchAcceptanceScenario::Success,
-        ),
+        PACKAGE_STACK_MODE_LAUNCH_SUCCESS => {
+            let runtime_target = match runtime_target_from_stack_context(context) {
+                Ok(target) => Some(target),
+                Err(error) => return stack_entry_result(Err(error)),
+            };
+            run_package_launch_acceptance_inner(
+                context.block_device,
+                bundle,
+                PackageLaunchAcceptanceScenario::Success,
+                runtime_target,
+            )
+        }
         PACKAGE_STACK_MODE_LAUNCH_GRANT_DENIED => run_package_launch_acceptance_inner(
             context.block_device,
             bundle,
             PackageLaunchAcceptanceScenario::GrantDenied,
+            None,
         ),
         PACKAGE_STACK_MODE_LAUNCH_CORRUPT_CONTENT => run_package_launch_acceptance_inner(
             context.block_device,
             bundle,
             PackageLaunchAcceptanceScenario::CorruptContent,
+            None,
         ),
         PACKAGE_STACK_MODE_LAUNCH_PYTHTIG_DENIED => run_package_launch_acceptance_inner(
             context.block_device,
             bundle,
             PackageLaunchAcceptanceScenario::PythTigDenied,
+            None,
         ),
         PACKAGE_STACK_MODE_LAUNCH_NON_LAUNCH_EXPORT => run_package_launch_acceptance_inner(
             context.block_device,
             bundle,
             PackageLaunchAcceptanceScenario::NonLaunchExport,
+            None,
         ),
         PACKAGE_STACK_MODE_UNINSTALL_DISABLE => run_package_uninstall_acceptance_inner(
             context.block_device,
@@ -675,6 +732,73 @@ extern "C" fn package_acceptance_stack_entry(context: *mut core::ffi::c_void) ->
         ),
         _ => Err(PackageAcceptanceError::UnexpectedScenario),
     };
+    stack_entry_result(result)
+}
+
+#[cfg(not(test))]
+fn runtime_target_from_stack_context<'a>(
+    context: &'a PackageStackAcceptanceContext,
+) -> Result<PackageRuntimeLaunchTarget<'a>, PackageAcceptanceError> {
+    if context.boot_info.is_null()
+        || context.physical_memory.is_null()
+        || (context.supervisor_mapping_count != 0 && context.supervisor_mappings.is_null())
+    {
+        return Err(PackageAcceptanceError::PackageOperation);
+    }
+    // SAFETY:
+    // 1. Invariant: `boot_info` points to the loader-retained boot info passed
+    //    to `run_package_format_acceptance`.
+    // 2. Established by: `run_acceptance_on_static_stack` writes this field
+    //    from the live acceptance entry argument only for runtime scenarios.
+    // 3. Lifetime: boot info is retained for the full kernel boot.
+    // 4. Pointer ownership: this helper creates a shared read-only reference.
+    // 5. Alignment: the pointer came from a Rust reference.
+    // 6. Mapped length: one `PythBootInfo` is readable.
+    // 7. Concurrency: single-core acceptance path.
+    // 8. Violation: an invalid boot-info pointer faults before runtime entry.
+    let boot_info = unsafe { &*context.boot_info };
+    // SAFETY:
+    // 1. Invariant: `physical_memory` points to the live allocator borrowed by
+    //    the outer verify path for this synchronous acceptance call.
+    // 2. Established by: `run_acceptance_on_static_stack` stores the raw
+    //    pointer from its exclusive `&mut PhysicalMemory` target.
+    // 3. Lifetime: the borrow remains active until the trampoline returns or
+    //    the launched runtime exits QEMU.
+    // 4. Pointer ownership: only this success path reconstructs the mutable
+    //    reference, and no second launch target is created.
+    // 5. Alignment: the pointer came from a Rust mutable reference.
+    // 6. Mapped length: one allocator object is writable.
+    // 7. Concurrency: no SMP or parallel acceptance launch exists.
+    // 8. Violation: aliasing would corrupt allocator state before ring-3
+    //    authority is granted.
+    let physical_memory = unsafe { &mut *context.physical_memory };
+    // SAFETY:
+    // 1. Invariant: `supervisor_mappings` points to the caller-owned mapping
+    //    slice for this synchronous acceptance call.
+    // 2. Established by: `run_acceptance_on_static_stack` stores `.as_ptr()`
+    //    and `.len()` from a live slice.
+    // 3. Lifetime: the slice remains valid until the trampoline returns or
+    //    the launched runtime exits QEMU.
+    // 4. Pointer ownership: this helper creates a read-only slice reference.
+    // 5. Alignment: the pointer came from a Rust slice.
+    // 6. Mapped length: exactly `supervisor_mapping_count` entries are read.
+    // 7. Concurrency: single-core acceptance path.
+    // 8. Violation: a bad slice faults before runtime entry.
+    let supervisor_mappings = unsafe {
+        core::slice::from_raw_parts(
+            context.supervisor_mappings,
+            context.supervisor_mapping_count,
+        )
+    };
+    Ok(PackageRuntimeLaunchTarget {
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+    })
+}
+
+#[cfg(not(test))]
+fn stack_entry_result(result: Result<(), PackageAcceptanceError>) -> u64 {
     match result {
         Ok(()) => 0,
         Err(_) => 1,
@@ -987,6 +1111,7 @@ fn run_package_launch_acceptance_inner(
     block_device: BlockDeviceInfo,
     bundle: &init_bundle::InitBundle<'_>,
     scenario: PackageLaunchAcceptanceScenario,
+    runtime_target: Option<PackageRuntimeLaunchTarget<'_>>,
 ) -> Result<(), PackageAcceptanceError> {
     let installed = install_and_restore_launch_fixture(block_device, bundle)?;
     let restored_service = restore_service_for_acceptance();
@@ -1048,33 +1173,35 @@ fn run_package_launch_acceptance_inner(
     }
     serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED");
 
+    let requirement = launch_requirement();
     restored_service
-        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, launch_requirement())
+        .record_launch_requirement(namespace_root, PACKAGE_LAUNCH_LOCATOR, requirement)
         .map_err(map_package_status)?;
     let launch_process = package_runtime_process_for_acceptance(content.len())?;
-    let capabilities = capabilities_for_acceptance();
-    let capability = capabilities
-        .grant(
-            launch_process.service_id(),
-            ResourceId::new(PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID),
-            RightsMask::new(RightsMask::READ),
-        )
-        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
-    let supplied_grants = [PackageLaunchGrant {
-        requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
-        capability,
-    }];
-    let launch = restored_service
-        .launch(
-            PackageLaunchRequest {
-                caller: launch_process,
-                namespace_root,
-                locator: PACKAGE_LAUNCH_LOCATOR,
-                supplied_grants: &supplied_grants,
-            },
-            capabilities,
-        )
-        .map_err(map_package_status)?;
+    let launch_result = syscall::with_pyth_graph_system_log_launch_capability(
+        launch_process,
+        |capability, capabilities| {
+            let supplied_grant = PackageLaunchGrant {
+                requirement_id: requirement.requirement_id,
+                capability,
+            };
+            let supplied_grants = [supplied_grant];
+            restored_service
+                .launch(
+                    PackageLaunchRequest {
+                        caller: launch_process,
+                        namespace_root,
+                        locator: PACKAGE_LAUNCH_LOCATOR,
+                        supplied_grants: &supplied_grants,
+                    },
+                    capabilities,
+                )
+                .map(|launch| (supplied_grant, launch))
+        },
+    )
+    .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+    let (supplied_grant, launch) = launch_result.map_err(map_package_status)?;
+    let supplied_grants = [supplied_grant];
     if launch.export != export
         || launch.grant_count != 1
         || launch.grant(0) != Some(supplied_grants[0])
@@ -1115,6 +1242,23 @@ fn run_package_launch_acceptance_inner(
         return Err(PackageAcceptanceError::PackageOperation);
     }
     serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED");
+    #[cfg(test)]
+    let _ = runtime_target;
+    #[cfg(not(test))]
+    if let Some(runtime_target) = runtime_target {
+        let launch = pyth_runtime_launch::prepare_package_pyth_runtime_launch(
+            runtime_target.boot_info,
+            runtime_target.physical_memory,
+            runtime_target.supervisor_mappings,
+            &verified,
+            content,
+            launch_process,
+            &graph_import_grants,
+        )
+        .map_err(|_| PackageAcceptanceError::PackageOperation)?;
+        serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_READY");
+        pyth_runtime_launch::enter_prepared_pyth_runtime_launch(&launch);
+    }
     serial::write_line("PYTHOS:CORE:PACKAGE_LAUNCH_READY");
     Ok(())
 }
@@ -1903,7 +2047,7 @@ fn launch_requirement() -> PackageLaunchRequirement {
         requirement_id: PACKAGE_LAUNCH_REQUIREMENT_ID,
         graph_import_slot: PACKAGE_LAUNCH_IMPORT_SLOT,
         resource: ResourceId::new(PYTH_GRAPH_SYSTEM_LOG_RESOURCE_ID),
-        rights: RightsMask::new(RightsMask::READ),
+        rights: RightsMask::new(RightsMask::LOG),
     }
 }
 
@@ -2001,6 +2145,7 @@ fn run_install_success_acceptance(
             block_device,
             bundle,
             PACKAGE_STACK_MODE_INSTALL_SUCCESS,
+            None,
         );
     }
 
@@ -2244,6 +2389,7 @@ fn run_install_source_denied_acceptance(
             block_device,
             bundle,
             PACKAGE_STACK_MODE_INSTALL_SOURCE_DENIED,
+            None,
         );
     }
 

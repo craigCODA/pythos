@@ -2,6 +2,13 @@
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
 use crate::block_device::SECTOR_SIZE;
+#[cfg(all(
+    not(test),
+    not(feature = "verify"),
+    not(feature = "hardware-probe"),
+    any(feature = "pythtig-phase2-test", feature = "phase13-package-test")
+))]
+use crate::retained_services;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service;
 #[cfg(all(
@@ -12,6 +19,17 @@ use crate::task_service;
 ))]
 use crate::{
     block_device::{self, BlockDeviceInfo},
+    pyth_graph_loader,
+};
+#[cfg(all(
+    not(test),
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
+))]
+use crate::{
     memory::{
         physical::{PAGE_SIZE, PhysicalMemory},
         r#virtual::{
@@ -19,22 +37,35 @@ use crate::{
             with_writable_physical_frame,
         },
     },
-    pyth_graph_loader, retained_services, runtime_loader, serial, syscall, user_elf, user_stacks,
+    qemu_exit, runtime_loader, serial, syscall, user_elf, user_mode, user_stacks,
 };
 use crate::{process_context::ActiveUserProcess, service_identity::ServiceId};
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 use core::mem::size_of;
 use core::sync::atomic::{AtomicBool, Ordering};
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
+))]
+use pythos_shared::pyth_graph_manifest::digest64;
+#[cfg(all(
+    not(test),
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 use pythos_shared::{boot_protocol::PythBootInfo, pyth_runtime_abi::GraphExitRecord};
 use pythos_shared::{
@@ -182,9 +213,11 @@ pub enum PythGraphBootMode {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PythGraphExecutionKind {
@@ -235,9 +268,11 @@ impl PythGraphRejectCode {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 pub struct PreparedPythRuntimeLaunch {
     pub address_space: RetainedUserAddressSpace,
@@ -256,9 +291,11 @@ pub struct PreparedPythRuntimeLaunch {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 impl PreparedPythRuntimeLaunch {
     pub const fn user_stack_top(&self) -> u64 {
@@ -930,7 +967,92 @@ fn prepare_pyth_launch_with_executable(
     deferred_import: PythGraphDeferredImport,
     object_workspace_capability: Option<PackedCapability>,
 ) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
-    let package = graph.manifest.package();
+    prepare_pyth_launch_with_package(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        &graph.verified,
+        graph.manifest.package(),
+        graph.manifest.package_digest(),
+        graph.manifest.principal_id(),
+        executable_image,
+        executable_elf,
+        process_identity,
+        execution_kind,
+        deferred_import,
+        object_workspace_capability,
+        None,
+    )
+}
+
+#[cfg(all(
+    not(test),
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
+))]
+pub fn prepare_package_pyth_runtime_launch(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    verified: &VerifiedGraph<'_>,
+    package: &[u8],
+    process_identity: ActiveUserProcess,
+    graph_import_grants: &[PackageLaunchGraphImportGrant],
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
+    let runtime_manifest =
+        runtime_loader::load_named_user_program(boot_info, PYTH_RUNTIME_PROGRAM_NAME)
+            .map_err(|_| PythRuntimeLaunchError::RuntimeProgram)?;
+    if runtime_manifest.principal_id() != PYTH_RUNTIME_PRINCIPAL_ID {
+        return Err(PythRuntimeLaunchError::RuntimeProgram);
+    }
+    let runtime_image = user_elf::validate(runtime_manifest.elf())
+        .map_err(|_| PythRuntimeLaunchError::RuntimeProgram)?;
+    let import_capabilities = package_launch_import_capabilities(verified, graph_import_grants)?;
+    prepare_pyth_launch_with_package(
+        boot_info,
+        physical_memory,
+        supervisor_mappings,
+        verified,
+        package,
+        digest64(package),
+        process_identity.principal_id(),
+        &runtime_image,
+        runtime_manifest.elf(),
+        process_identity,
+        PythGraphExecutionKind::Interpreter,
+        PythGraphDeferredImport::None,
+        None,
+        Some(import_capabilities),
+    )
+}
+
+#[cfg(all(
+    not(test),
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
+))]
+fn prepare_pyth_launch_with_package(
+    boot_info: &'static PythBootInfo,
+    physical_memory: &mut PhysicalMemory,
+    supervisor_mappings: &[Option<(u64, u64, u64)>],
+    verified: &VerifiedGraph<'_>,
+    package: &[u8],
+    package_digest: u64,
+    graph_principal_id: u64,
+    executable_image: &user_elf::UserElfImage,
+    executable_elf: &[u8],
+    process_identity: ActiveUserProcess,
+    execution_kind: PythGraphExecutionKind,
+    deferred_import: PythGraphDeferredImport,
+    object_workspace_capability: Option<PackedCapability>,
+    package_import_capabilities: Option<PythGraphImportCapabilities>,
+) -> Result<PreparedPythRuntimeLaunch, PythRuntimeLaunchError> {
     if package.is_empty() || package.len() > PAGE_SIZE as usize {
         return Err(PythRuntimeLaunchError::PackageTooLarge);
     }
@@ -970,13 +1092,29 @@ fn prepare_pyth_launch_with_executable(
         ),
     }
     .map_err(|_| PythRuntimeLaunchError::AddressSpace)?;
-    let system_log_capability = syscall::grant_pyth_graph_system_log_capability(process)
-        .map_err(|_| PythRuntimeLaunchError::Capability)?;
-    let task_steward_capability = if graph_imports_task_resource(&graph.verified)
+    let system_log_capability = if let Some(capabilities) = package_import_capabilities {
+        capabilities.system_log
+    } else {
+        syscall::grant_pyth_graph_system_log_capability(process)
+            .map_err(|_| PythRuntimeLaunchError::Capability)?
+    };
+    let object_workspace_capability = package_import_capabilities
+        .map(|capabilities| capabilities.object_workspace)
+        .or(object_workspace_capability);
+    let task_steward_capability = if let Some(capabilities) = package_import_capabilities {
+        capabilities.task_steward
+    } else if graph_imports_task_resource(verified)
         && deferred_import != PythGraphDeferredImport::TaskSteward
     {
-        retained_services::with_task_service(|service| service.steward_proposal_capability())
-            .map_err(|_| PythRuntimeLaunchError::Capability)?
+        #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+        {
+            retained_services::with_task_service(|service| service.steward_proposal_capability())
+                .map_err(|_| PythRuntimeLaunchError::Capability)?
+        }
+        #[cfg(not(any(test, all(not(test), not(feature = "verify")))))]
+        {
+            return Err(PythRuntimeLaunchError::Capability);
+        }
     } else {
         PackedCapability::from_raw(0)
     };
@@ -1002,7 +1140,7 @@ fn prepare_pyth_launch_with_executable(
         }
     };
     let bootstrap = build_pyth_graph_bootstrap_with_binding(
-        &graph.verified,
+        verified,
         PYTH_GRAPH_PACKAGE_USER_PTR,
         package.len() as u64,
         PYTH_GRAPH_RESULT_USER_PTR,
@@ -1064,12 +1202,12 @@ fn prepare_pyth_launch_with_executable(
         process,
         entry: executable_image.entry(),
         bootstrap_user_ptr: PYTH_GRAPH_BOOTSTRAP_USER_PTR,
-        package_digest: graph.manifest.package_digest(),
+        package_digest,
         execution_kind,
-        graph_principal_id: graph.manifest.principal_id(),
+        graph_principal_id,
         import_count: bootstrap.import_count,
-        node_count: graph.verified.package().header().node_count,
-        block_count: graph.verified.package().header().block_count,
+        node_count: verified.package().header().node_count,
+        block_count: verified.package().header().block_count,
         deferred_import,
         stack_region,
     })
@@ -1114,9 +1252,72 @@ pub fn read_and_clear_pyth_graph_control_sector(
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
+))]
+pub fn enter_prepared_pyth_runtime_launch(launch: &PreparedPythRuntimeLaunch) -> ! {
+    // SAFETY:
+    // 1. Invariant: the retained Pyth runtime address space maps the validated
+    //    runtime ELF, guarded stack, read-only bootstrap/package pages,
+    //    writable result page, a supervisor-only bootstrap alias, and kernel
+    //    syscall/fault paths.
+    // 2. Established by: `prepare_pyth_launch_with_package` builds and
+    //    validates this root before returning a retained launch record.
+    // 3. Lifetime: the root and payload frames are retained for this one-shot
+    //    runtime invocation.
+    // 4. Pointer ownership: the CPU borrows the graph page-table root.
+    // 5. Alignment: the root was allocated as a 4 KiB page-table frame.
+    // 6. Mapped length: one complete hierarchy covers runtime ELF, stack,
+    //    bootstrap, package, result, trap stack, syscall path, and the
+    //    supervisor-only bootstrap alias.
+    // 7. Concurrency: Phase 13 acceptance launches one runtime process on one
+    //    CPU after package authority has already been validated.
+    // 8. Violation: incomplete mappings fault through user containment.
+    unsafe {
+        launch.address_space.activate();
+    }
+    if launch
+        .bind_deferred_import_after_activation(PackedCapability::from_raw(0))
+        .is_err()
+    {
+        serial::write_line("PYTHOS:PANIC");
+        qemu_exit::panic();
+    }
+    emit_native_elf_valid_marker(launch);
+    emit_package_valid_marker(launch);
+    emit_bootstrap_bound_marker(launch);
+    match launch.execution_kind {
+        PythGraphExecutionKind::Interpreter => {
+            user_mode::enter_pyth_graph_runtime(
+                launch.process,
+                launch.entry,
+                launch.user_stack_top(),
+                launch.bootstrap_user_ptr,
+                launch.package_digest,
+            );
+        }
+        PythGraphExecutionKind::Native => {
+            user_mode::enter_pyth_native_graph(
+                launch.process,
+                launch.entry,
+                launch.user_stack_top(),
+                launch.bootstrap_user_ptr,
+                launch.package_digest,
+            );
+        }
+    }
+}
+
+#[cfg(all(
+    not(test),
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 pub fn emit_package_valid_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("PYTHOS:PYTHTIG:PACKAGE_VALID package:");
@@ -1130,9 +1331,11 @@ pub fn emit_package_valid_marker(launch: &PreparedPythRuntimeLaunch) {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
     serial::write_str("PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:");
@@ -1144,9 +1347,11 @@ pub fn emit_bootstrap_bound_marker(launch: &PreparedPythRuntimeLaunch) {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 pub fn emit_native_elf_valid_marker(launch: &PreparedPythRuntimeLaunch) {
     if launch.execution_kind != PythGraphExecutionKind::Native {
@@ -1171,9 +1376,11 @@ pub fn emit_package_rejected_marker(code: PythGraphRejectCode) {
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 fn write_package_page(package_frame: u64, package: &[u8]) -> Result<(), PythRuntimeLaunchError> {
     with_writable_physical_frame(package_frame, |page| {
@@ -1185,9 +1392,11 @@ fn write_package_page(package_frame: u64, package: &[u8]) -> Result<(), PythRunt
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 fn write_bootstrap_page(
     bootstrap_frame: u64,
@@ -1215,9 +1424,11 @@ fn write_bootstrap_page(
 
 #[cfg(all(
     not(test),
-    feature = "pythtig-phase2-test",
-    not(feature = "verify"),
-    not(feature = "hardware-probe")
+    not(feature = "hardware-probe"),
+    any(
+        all(feature = "pythtig-phase2-test", not(feature = "verify")),
+        feature = "phase13-package-test"
+    )
 ))]
 fn zero_result_page(result_frame: u64) -> Result<(), PythRuntimeLaunchError> {
     with_writable_physical_frame(result_frame, |page| page.fill(0))

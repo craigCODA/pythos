@@ -14,7 +14,6 @@ REAL_OBJECT_CFG = (
 VERIFY_ONLY_STUB_CFG = (
     'all(not(test), feature = "verify", not(feature = "phase13-package-test"))'
 )
-VERIFY_STUB_CFG = 'all(not(test), feature = "verify")'
 
 
 def source() -> str:
@@ -139,14 +138,14 @@ class Phase13ObjectSyscallAcceptanceWiringTests(unittest.TestCase):
             compact(cfg_before("fn emit_pythtig_object_denial_marker(")),
         )
 
-    def test_other_verify_stubbed_syscalls_are_not_widened_by_this_task(self):
-        """Break caught: Task 5.3.y accidentally broadens unrelated verify-stubbed syscalls."""
+    def test_other_verify_stubbed_syscalls_are_not_widened_by_object_syscall_task(self):
+        """Break caught: object-syscall wiring accidentally broadens unrelated verify syscalls."""
         self.assertIn(
-            compact(VERIFY_STUB_CFG),
+            compact(VERIFY_ONLY_STUB_CFG),
             compact(cfg_before("fn dispatch_pyth_graph_log(_args")),
         )
         self.assertIn(
-            compact(VERIFY_STUB_CFG),
+            compact(VERIFY_ONLY_STUB_CFG),
             compact(cfg_before("fn dispatch_pyth_graph_exit(_args")),
         )
         self.assertNotIn(

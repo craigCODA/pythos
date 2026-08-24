@@ -119,7 +119,13 @@ use pythos_shared::package_abi::{
 use pythos_shared::package_abi::{
     PackageRuntimeSchemaBindingV0, PackageStatus, SYSCALL_PACKAGE_CONTEXT,
 };
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use pythos_shared::pyth_runtime_abi::{
     GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR, GRAPH_MAX_LOG_BYTES,
     GRAPH_RESULT_UNIT, GraphExitRecord,
@@ -157,7 +163,13 @@ const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
 const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
 const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00);
 const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const PYTH_GRAPH_SYSTEM_LOG_RESOURCE: ResourceId = ResourceId::new(0x5059_5447_4C4F_4700);
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 const MAX_TASK_INPUT_BYTES: u64 = 64;
@@ -704,7 +716,13 @@ pub fn grant_system_control_capability(
     Ok(pack_syscall_capability(handle))
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 pub fn grant_pyth_graph_system_log_capability(
     process: ActiveUserProcess,
 ) -> Result<PackedCapability, SyscallError> {
@@ -716,6 +734,23 @@ pub fn grant_pyth_graph_system_log_capability(
         )
     })?;
     Ok(pack_syscall_capability(handle))
+}
+
+#[cfg(any(test, all(not(test), feature = "phase13-package-test")))]
+/// Issues the Phase 13 package-launch graph-log grant and exposes the same
+/// table for immediate `PackageService::launch` validation.
+pub fn with_pyth_graph_system_log_launch_capability<R>(
+    process: ActiveUserProcess,
+    f: impl FnOnce(CapabilityHandle, &CapabilityTable) -> R,
+) -> Result<R, SyscallError> {
+    with_syscall_capabilities(|table| {
+        let handle = table.grant(
+            process.service_id(),
+            PYTH_GRAPH_SYSTEM_LOG_RESOURCE,
+            RightsMask::new(RightsMask::LOG),
+        )?;
+        Ok(f(handle, table))
+    })
 }
 
 fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
@@ -1612,7 +1647,13 @@ fn dispatch_system_reboot_for_caller(
     Ok(SYSCALL_OK)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_pyth_graph_log(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg2 == 0 || args.arg2 > GRAPH_MAX_LOG_BYTES || args.arg3 != 0 || args.arg4 != 0 {
         return Err(SyscallError::BadResult);
@@ -1646,12 +1687,18 @@ fn dispatch_pyth_graph_log(args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(SYSCALL_OK)
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_pyth_graph_log(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg0 != crate::pyth_runtime_launch::PYTH_GRAPH_RESULT_USER_PTR
         || args.arg1 != size_of::<GraphExitRecord>() as u64
@@ -1690,7 +1737,13 @@ fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
     finalize_pyth_graph_exit(caller, exit)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn finalize_pyth_graph_exit(
     caller: ActiveUserProcess,
     exit: GraphExitRecord,
@@ -1708,7 +1761,7 @@ fn finalize_pyth_graph_exit(
     }
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_pyth_graph_exit(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
@@ -1797,7 +1850,13 @@ fn package_runtime_schema_binding(
     Err(PackageStatus::Denied)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError> {
     if exit.result_type != GRAPH_RESULT_UNIT || exit.reserved0 != 0 || exit.reserved1 != 0 {
         return Err(SyscallError::BadResult);
@@ -1809,7 +1868,10 @@ fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError>
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_graph_exit_marker(exit: GraphExitRecord) {
     if exit.status == GRAPH_EXIT_BUDGET_EXHAUSTED {
         serial::write_str("PYTHOS:PYTHTIG:BUDGET_EXHAUSTED node:");
@@ -2190,7 +2252,13 @@ fn validate_syscall_capability(
     Ok(())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn pack_syscall_capability(handle: CapabilityHandle) -> PackedCapability {
     PackedCapability::from_parts(handle.slot(), handle.generation())
 }

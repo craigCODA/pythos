@@ -1647,7 +1647,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(feature = "phase13-package-test")]
         {
-            if package_acceptance::run_package_format_acceptance(boot_info, _block_device).is_err()
+            let phase13_supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
+            if package_acceptance::run_package_format_acceptance(
+                boot_info,
+                _block_device,
+                &mut physical_memory,
+                &phase13_supervisor_mappings,
+            )
+            .is_err()
             {
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();

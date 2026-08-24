@@ -61,7 +61,7 @@ SCENARIOS = {
         "export_kind": PACKAGE_EXPORT_KIND_TOOL,
         "serial_log": ROOT / "target" / "phase13-package-launch-success.log",
         "storage_image": ROOT / "target" / "phase13-package-launch-success.img",
-        "success_marker": "PYTHOS:CORE:PACKAGE_LAUNCH_READY",
+        "success_marker": "PYTHOS:PYTHTIG:RUNTIME_TERMINATED",
         "required": (
             "PYTHOS:CORE:PACKAGE_LAUNCH:INSTALLED_RESTORED",
             "PYTHOS:CORE:PACKAGE_LAUNCH:EXPORT_RESOLVED",
@@ -69,7 +69,12 @@ SCENARIOS = {
             "PYTHOS:CORE:PACKAGE_LAUNCH:PYTHTIG_VERIFIED",
             "PYTHOS:CORE:PACKAGE_LAUNCH:GRANTS_VALIDATED",
             "PYTHOS:CORE:PACKAGE_LAUNCH:PROCESS_CREATED",
-            "PYTHOS:CORE:PACKAGE_LAUNCH_READY",
+            "PYTHOS:PYTHTIG:PACKAGE_VALID package:",
+            "PYTHOS:PYTHTIG:BOOTSTRAP_BOUND principal:",
+            "PYTHOS:PYTHTIG:RUNTIME_ENTER package:",
+            "PYTHOS:PYTHTIG:PROGRAM_LOG",
+            "PYTHOS:PYTHTIG:RUNTIME_EXIT status:0",
+            "PYTHOS:PYTHTIG:RUNTIME_TERMINATED principal:",
         ),
         "forbidden": COMMON_FORBIDDEN
         + PACKAGE_LAUNCH_DENIAL_MARKERS
@@ -286,6 +291,8 @@ def build_verified_user_shell() -> None:
 
 
 def build_pyth_graph_artifacts() -> None:
+    run([sys.executable, "scripts/build-pyth-runtime.py"])
+    run([sys.executable, "scripts/verify-pyth-runtime-elf.py"])
     run([sys.executable, "scripts/build-pyth-graph.py"])
 
 
@@ -324,6 +331,7 @@ def build_boot_image(scenario: str) -> None:
             "scripts/build-image.py",
             "--kernel",
             str(CORE_ELF),
+            "--with-pythtig",
             "--phase13-package-source",
             source_spec,
         ]
@@ -362,7 +370,11 @@ def serial_lines(output: str) -> list[str]:
 def assert_ordered_markers(lines: list[str], markers: tuple[str, ...]) -> None:
     cursor = -1
     for marker in markers:
-        matches = [index for index, line in enumerate(lines) if line == marker]
+        matches = [
+            index
+            for index, line in enumerate(lines)
+            if line == marker or line.startswith(marker)
+        ]
         if len(matches) != 1:
             raise AssertionError(f"expected one {marker!r}, saw {len(matches)}")
         if matches[0] <= cursor:
