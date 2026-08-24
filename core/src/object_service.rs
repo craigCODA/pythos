@@ -472,6 +472,16 @@ impl ObjectService {
         )?))
     }
 
+    pub fn validate_package_launch_grant(
+        &self,
+        caller: ActiveUserProcess,
+        capability: PackedCapability,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> Result<(), ObjectServiceError> {
+        self.validate_capability_resource(caller, capability, resource, rights)
+    }
+
     pub(crate) fn create_task_service_object(
         &mut self,
         caller: ActiveUserProcess,
@@ -851,14 +861,7 @@ impl ObjectService {
         capability: PackedCapability,
         rights: RightsMask,
     ) -> Result<(), ObjectServiceError> {
-        self.capabilities
-            .validate(
-                caller.service_id(),
-                unpack_capability(capability),
-                self.shell_workspace,
-                rights,
-            )
-            .map_err(|_| ObjectServiceError::Denied)
+        self.validate_capability_resource(caller, capability, self.shell_workspace, rights)
     }
 
     fn validate_object(
@@ -868,11 +871,26 @@ impl ObjectService {
         object_id: ObjectId,
         rights: RightsMask,
     ) -> Result<(), ObjectServiceError> {
+        self.validate_capability_resource(
+            caller,
+            capability,
+            ResourceId::new(object_id.raw()),
+            rights,
+        )
+    }
+
+    fn validate_capability_resource(
+        &self,
+        caller: ActiveUserProcess,
+        capability: PackedCapability,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> Result<(), ObjectServiceError> {
         self.capabilities
             .validate(
                 caller.service_id(),
                 unpack_capability(capability),
-                ResourceId::new(object_id.raw()),
+                resource,
                 rights,
             )
             .map_err(|_| ObjectServiceError::Denied)
@@ -1033,6 +1051,15 @@ impl ObjectService {
     pub fn revoke_object_capability_for_test(
         &mut self,
         _caller: ActiveUserProcess,
+        capability: PackedCapability,
+    ) -> Result<(), ObjectServiceError> {
+        self.capabilities
+            .revoke(unpack_capability(capability))
+            .map_err(|_| ObjectServiceError::Denied)
+    }
+
+    pub fn revoke_package_launch_capability_for_test(
+        &mut self,
         capability: PackedCapability,
     ) -> Result<(), ObjectServiceError> {
         self.capabilities

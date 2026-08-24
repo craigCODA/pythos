@@ -1181,10 +1181,8 @@ fn run_package_launch_acceptance_inner(
     let launch_result = syscall::with_pyth_graph_system_log_launch_capability(
         launch_process,
         |capability, capabilities| {
-            let supplied_grant = PackageLaunchGrant {
-                requirement_id: requirement.requirement_id,
-                capability,
-            };
+            let supplied_grant =
+                PackageLaunchGrant::from_handle(requirement.requirement_id, capability);
             let supplied_grants = [supplied_grant];
             restored_service
                 .launch(
@@ -1655,10 +1653,10 @@ fn launch_package_for_acceptance(
             requirement.rights,
         )
         .map_err(|_| PackageAcceptanceError::PackageOperation)?;
-    let supplied_grants = [PackageLaunchGrant {
-        requirement_id: requirement.requirement_id,
+    let supplied_grants = [PackageLaunchGrant::from_handle(
+        requirement.requirement_id,
         capability,
-    }];
+    )];
     let launch = restored_service
         .launch(
             PackageLaunchRequest {
@@ -1708,10 +1706,10 @@ fn launch_package_request_for_process(
             requirement.rights,
         )
         .map_err(|_| PackageStatus::Denied)?;
-    let supplied_grants = [PackageLaunchGrant {
-        requirement_id: requirement.requirement_id,
+    let supplied_grants = [PackageLaunchGrant::from_handle(
+        requirement.requirement_id,
         capability,
-    }];
+    )];
     restored_service.launch(
         PackageLaunchRequest {
             caller: process,

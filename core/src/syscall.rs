@@ -2566,9 +2566,11 @@ fn write_msr(msr: u32, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object_relationships::PACKAGE_LOCATOR_ROOT_OBJECT_ID;
+    use crate::object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, SHELL_WORKSPACE_OBJECT_ID};
     use crate::object_service::ObjectService;
-    use crate::package_service::PackageLaunchRequest;
+    use crate::package_service::{
+        PackageLaunchGrant, PackageLaunchRequest, PackageLaunchRequirement,
+    };
     use crate::shell_objects::ObjectId;
     use crate::shell_objects::ObjectKind;
     use crate::user_copy::{UserCopyError, UserCopyMap};
@@ -3089,6 +3091,94 @@ mod tests {
             assert_eq!(&inline_state[..state.len()], &state[..]);
         })
         .unwrap();
+    }
+
+    #[test]
+    fn package_launch_object_service_grant_reaches_package_defined_object_syscall() {
+        let mut object_service = ObjectService::new_for_test();
+        let package_process = ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4C47_5A01),
+            0x504B_5A01,
+            0x13,
+        );
+        let workspace = object_service
+            .grant_workspace_capability(package_process)
+            .unwrap();
+        let schema = object_service
+            .create_schema_definition_object(
+                package_process,
+                ObjectId::new(0x5059_5343_484F_5A11),
+                ObjectId::new(0x5059_504B_474F_5A11),
+                [0x5A; 32],
+            )
+            .unwrap();
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_launch_export_for_test(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                b"seed",
+                b"object-create",
+                0x5059_504B_474F_5A11,
+                1,
+                [0xA5; 32],
+                schema.object_id.raw(),
+                schema.revision,
+                [0x5A; 32],
+            )
+            .unwrap();
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(SHELL_WORKSPACE_OBJECT_ID),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        package_service
+            .record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/object-create",
+                requirement,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant::from_packed(
+            requirement.requirement_id,
+            workspace,
+        )];
+        let launch = package_service
+            .launch_with_validator(
+                PackageLaunchRequest {
+                    caller: package_process,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/object-create",
+                    supplied_grants: &supplied_grants,
+                },
+                &object_service,
+            )
+            .unwrap();
+        let graph_grant = launch.graph_import_grant(0).unwrap();
+        let _guard = retained_services::initialize_object_service_for_test(object_service);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(
+            graph_grant.capability,
+            &create,
+        ));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(package_process, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+        assert_eq!(graph_grant.capability, workspace);
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_ne!(response.object_id, 0);
     }
 
     #[test]
