@@ -126,6 +126,14 @@ pub struct PackageDefinedCreateInput<'a> {
     pub initial_state: &'a [u8],
 }
 
+pub const MAX_PACKAGE_SCHEMA_REFERENCES: usize = MAX_DYNAMIC_OBJECTS;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageSchemaReference {
+    pub schema_object_id: ObjectId,
+    pub schema_revision: u64,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ObjectInspection {
     pub object: TypedObjectRecord,
@@ -605,6 +613,26 @@ impl ObjectService {
         })
     }
 
+    pub fn package_defined_schema_references(
+        &self,
+    ) -> Result<[Option<PackageSchemaReference>; MAX_PACKAGE_SCHEMA_REFERENCES], ObjectServiceError>
+    {
+        let mut references = [None; MAX_PACKAGE_SCHEMA_REFERENCES];
+        let mut reference_count = 0usize;
+        let records = self.objects.object_records();
+        let mut index = 0usize;
+        while index < MAX_DYNAMIC_OBJECTS {
+            if let Some(record) = records[index]
+                && let Some(reference) = package_schema_reference_for_object(record.object)?
+            {
+                references[reference_count] = Some(reference);
+                reference_count += 1;
+            }
+            index += 1;
+        }
+        Ok(references)
+    }
+
     pub(crate) fn revise_task_service_object(
         &mut self,
         caller: ActiveUserProcess,
@@ -971,6 +999,45 @@ impl ObjectService {
         self.next_timestamp_ticks = self.next_timestamp_ticks.wrapping_add(1);
         ticks
     }
+}
+
+fn package_schema_reference_for_object(
+    object: TypedObjectRecord,
+) -> Result<Option<PackageSchemaReference>, ObjectServiceError> {
+    if object.object_kind() != ObjectKind::PackageDefinedObject {
+        return Ok(None);
+    }
+    let mut found = None;
+    let mut index = 0usize;
+    while index < object.field_count() {
+        if let Some(field) = object.field(index)
+            && field.field_id() == FIELD_PACKAGE_SCHEMA_REF_V0
+        {
+            if field.value_len() != 16 || found.is_some() {
+                return Err(ObjectServiceError::BadSnapshot);
+            }
+            let value = field.value();
+            found = Some(PackageSchemaReference {
+                schema_object_id: ObjectId::new(read_schema_ref_u64(&value, 0)),
+                schema_revision: read_schema_ref_u64(&value, 8),
+            });
+        }
+        index += 1;
+    }
+    found.ok_or(ObjectServiceError::BadSnapshot).map(Some)
+}
+
+fn read_schema_ref_u64(value: &[u8; 16], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        value[offset],
+        value[offset + 1],
+        value[offset + 2],
+        value[offset + 3],
+        value[offset + 4],
+        value[offset + 5],
+        value[offset + 6],
+        value[offset + 7],
+    ])
 }
 
 #[cfg(test)]

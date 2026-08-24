@@ -522,6 +522,20 @@ impl PackageRegistry {
         self.adjust_schema_descriptor_retention(schema_object_id, schema_revision, -1)
     }
 
+    pub fn clear_schema_descriptor_retention_counts(&mut self) {
+        let mut index = 0usize;
+        while index < self.schema_count as usize {
+            if let Some(schema) = self.schema_records[index]
+                && let Some(content_index) = self.content_index_for_schema_descriptor(schema)
+                && let Some(mut record) = self.content_records[content_index]
+            {
+                record.retention_count = 0;
+                self.content_records[content_index] = Some(record);
+            }
+            index += 1;
+        }
+    }
+
     pub fn reclaim_tombstoned_package_content(
         &mut self,
         package_object_id: ObjectId,

@@ -891,17 +891,7 @@ fn dispatch_object_request_with_raw_buffers(
     let mut query_marker_entry = None;
     let response = if let Some(input) = package_defined_create_input {
         retained_services::with_object_service(|service| {
-            match service.create_package_defined_object(caller, request.authority, input) {
-                Ok(created) => ObjectShellResponse {
-                    status: STATUS_OK,
-                    object_kind: request.object_kind,
-                    object_id: created.object_id.raw(),
-                    revision: created.revision,
-                    capability: created.object_capability,
-                    ..empty_response()
-                },
-                Err(error) => object_error_response(caller, request, error),
-            }
+            dispatch_package_defined_create_to_service(service, caller, request, input)
         })
         .map_err(SyscallError::from)?
     } else if request.operation == OP_QUERY_OBJECTS {
@@ -938,6 +928,22 @@ fn dispatch_object_request_with_raw_buffers(
     emit_pythtig_object_success_marker(caller, request.operation, response, query_marker_entry);
 
     Ok(response)
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn reconcile_package_schema_references_from_object_service(
+    object_service: &ObjectService,
+) -> Result<(), PackageStatus> {
+    package_service::with_retained_package_service_for_phase13(|package_service| {
+        package_service.reconcile_schema_references_from_object_service(object_service)
+    })
+    .unwrap_or(Err(PackageStatus::Denied))
 }
 
 #[cfg(any(
@@ -1902,6 +1908,41 @@ fn emit_graph_exit_marker(_exit: GraphExitRecord) {}
         any(not(feature = "verify"), feature = "phase13-package-test")
     )
 ))]
+fn dispatch_package_defined_create_to_service(
+    service: &mut ObjectService,
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    input: PackageDefinedCreateInput<'_>,
+) -> ObjectShellResponse {
+    let mut staged_service = *service;
+    match staged_service.create_package_defined_object(caller, request.authority, input) {
+        Ok(created) => {
+            if let Err(status) =
+                reconcile_package_schema_references_from_object_service(&staged_service)
+            {
+                return package_retention_error_response(caller, request, status);
+            }
+            *service = staged_service;
+            ObjectShellResponse {
+                status: STATUS_OK,
+                object_kind: request.object_kind,
+                object_id: created.object_id.raw(),
+                revision: created.revision,
+                capability: created.object_capability,
+                ..empty_response()
+            }
+        }
+        Err(error) => object_error_response(caller, request, error),
+    }
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request_to_service(
     service: &mut ObjectService,
     caller: ActiveUserProcess,
@@ -2060,6 +2101,30 @@ fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
     ObjectShellResponse {
         status,
         ..empty_response()
+    }
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn package_retention_error_response(
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    status: PackageStatus,
+) -> ObjectShellResponse {
+    match status {
+        PackageStatus::Denied => object_error_response(caller, request, ObjectServiceError::Denied),
+        PackageStatus::NotFound => {
+            object_error_response(caller, request, ObjectServiceError::NotFound)
+        }
+        PackageStatus::QuotaDenied => {
+            object_error_response(caller, request, ObjectServiceError::Denied)
+        }
+        _ => bad_request_response(),
     }
 }
 
@@ -3037,6 +3102,8 @@ mod tests {
     fn package_defined_object_syscall_creates_with_schema_ref_and_inline_state() {
         let (service, shell, workspace, schema) = package_defined_schema_fixture();
         let _guard = retained_services::initialize_object_service_for_test(service);
+        let _package_guard =
+            retained_package_service_with_schema(schema.object_id, schema.revision);
         let state = Box::new(*b"seed-state");
         let create = Box::new(package_defined_create_record(
             schema.object_id,
@@ -3091,6 +3158,90 @@ mod tests {
             assert_eq!(&inline_state[..state.len()], &state[..]);
         })
         .unwrap();
+    }
+
+    #[test]
+    fn package_defined_object_syscall_registers_schema_retention_from_created_object() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _object_guard = retained_services::initialize_object_service_for_test(service);
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_schema_descriptor_content_for_test(
+                7000,
+                1,
+                [0xA5; 32],
+                schema.object_id.raw(),
+                schema.revision,
+                [7; 32],
+            )
+            .unwrap();
+        let _package_guard =
+            package_service::initialize_retained_package_service_for_phase13_test(package_service);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            package_service::with_retained_package_service_for_phase13(|service| {
+                service
+                    .schema_descriptor_retention_count_for_test(schema.object_id, schema.revision)
+            }),
+            Some(Some(0))
+        );
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, STATUS_OK);
+        assert_ne!(response.object_id, 0);
+
+        assert_eq!(
+            package_service::with_retained_package_service_for_phase13(|service| {
+                service
+                    .schema_descriptor_retention_count_for_test(schema.object_id, schema.revision)
+            }),
+            Some(Some(1))
+        );
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_unretainable_schema_without_creation() {
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _object_guard = retained_services::initialize_object_service_for_test(service);
+        let _package_guard = package_service::initialize_retained_package_service_for_phase13_test(
+            PackageService::new_empty_for_test(),
+        );
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_NOT_FOUND);
+        assert_eq!(response.object_id, 0);
+        let references = retained_services::with_object_service(|service| {
+            service.package_defined_schema_references().unwrap()
+        })
+        .unwrap();
+        assert!(references.iter().all(Option::is_none));
     }
 
     #[test]
@@ -3156,6 +3307,8 @@ mod tests {
             .unwrap();
         let graph_grant = launch.graph_import_grant(0).unwrap();
         let _guard = retained_services::initialize_object_service_for_test(object_service);
+        let _package_guard =
+            retained_package_service_with_schema(schema.object_id, schema.revision);
         let create = Box::new(package_defined_create_record(
             schema.object_id,
             schema.revision,
@@ -3747,6 +3900,24 @@ mod tests {
             )
             .unwrap();
         (service, shell, workspace, schema)
+    }
+
+    fn retained_package_service_with_schema(
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> package_service::RetainedPackageServicePhase13TestGuard {
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_schema_descriptor_content_for_test(
+                7000,
+                1,
+                [0xA5; 32],
+                schema_object_id.raw(),
+                schema_revision,
+                [7; 32],
+            )
+            .unwrap();
+        package_service::initialize_retained_package_service_for_phase13_test(package_service)
     }
 
     const fn package_defined_create_record(

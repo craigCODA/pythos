@@ -6,7 +6,10 @@ use crate::{
         ObjectRelationship, PACKAGE_LOCATOR_BINDING_BASE_OBJECT_ID, PACKAGE_LOCATOR_ROOT_OBJECT_ID,
         PackageLocatorRelationshipStore, RelationshipError, RelationshipKind,
     },
-    object_service::{ObjectCreateResult, ObjectService, ObjectServiceError},
+    object_service::{
+        MAX_PACKAGE_SCHEMA_REFERENCES, ObjectCreateResult, ObjectService, ObjectServiceError,
+        PackageSchemaReference,
+    },
     object_service_checkpoint::{
         ObjectCheckpointIdentity, ObjectServiceSnapshot, object_candidate_checkpoint_identity,
         read_object_service_candidate_checkpoint, read_object_service_candidate_checkpoint_into,
@@ -174,7 +177,15 @@ fn restore_retained_package_service_from_device(
     with_retained_package_service_for_phase13(|service| {
         service.restore_from_storage(device).map(|_| ())
     })
-    .ok_or(PackageStatus::BadRequest)?
+    .ok_or(PackageStatus::BadRequest)??;
+    let reconciled = crate::retained_services::with_object_service(|object_service| {
+        with_retained_package_service_for_phase13(|package_service| {
+            package_service.reconcile_schema_references_from_object_service(object_service)
+        })
+        .ok_or(PackageStatus::BadRequest)?
+    })
+    .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
+    reconciled
 }
 
 #[cfg(test)]
@@ -1398,6 +1409,37 @@ impl<'a> PackageService<'a> {
             .release_schema_reference(schema_object_id, schema_revision)
     }
 
+    pub fn reconcile_schema_references_from_object_service(
+        &mut self,
+        object_service: &ObjectService,
+    ) -> Result<(), PackageStatus> {
+        let references = object_service
+            .package_defined_schema_references()
+            .map_err(map_object_error)?;
+        self.reconcile_schema_references(&references)
+    }
+
+    fn reconcile_schema_references(
+        &mut self,
+        references: &[Option<PackageSchemaReference>; MAX_PACKAGE_SCHEMA_REFERENCES],
+    ) -> Result<(), PackageStatus> {
+        let mut reconciled_registry = self.registry.clone();
+        reconciled_registry.clear_schema_descriptor_retention_counts();
+        let mut index = 0usize;
+        while index < references.len() {
+            if let Some(reference) = references[index] {
+                reconciled_registry.retain_schema_reference(
+                    reference.schema_object_id,
+                    reference.schema_revision,
+                )?;
+            }
+            index += 1;
+        }
+        self.registry = reconciled_registry;
+        self.staged_registry.copy_from_committed(&self.registry);
+        Ok(())
+    }
+
     #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub fn seed_launch_export_for_test(
@@ -1443,6 +1485,78 @@ impl<'a> PackageService<'a> {
         )?;
         self.registry.add_export_record(export)?;
         Ok(export)
+    }
+
+    #[cfg(test)]
+    pub fn seed_schema_descriptor_content_for_test(
+        &mut self,
+        package_object_id: u64,
+        package_revision: u64,
+        release_digest: [u8; 32],
+        schema_object_id: u64,
+        schema_revision: u64,
+        schema_descriptor_digest: [u8; 32],
+    ) -> Result<(), PackageStatus> {
+        let mut extents = [crate::package_content_store::PackageExtent::EMPTY;
+            pythos_shared::package_abi::MAX_CONTENT_EXTENTS_PER_RECORD];
+        extents[0] = crate::package_content_store::PackageExtent::new(0, 1);
+        self.registry
+            .add_package_record(PackageRegistryPackageRecord::new(
+                package_object_id,
+                package_revision,
+                release_digest,
+                PackageStatus::Ok as u16,
+            ))?;
+        self.registry
+            .add_schema_record(PackageRegistrySchemaRecord::new(
+                schema_object_id,
+                schema_revision,
+                package_object_id,
+                0,
+                schema_descriptor_digest,
+            ))?;
+        self.registry
+            .add_content_record(crate::package_registry::PackageRegistryContentRecord {
+                package_object_id,
+                release_digest,
+                content_index: 0,
+                role: 2,
+                format: 1,
+                digest: schema_descriptor_digest,
+                byte_len: 16,
+                extents,
+                extent_count: 1,
+                retention_count: 0,
+                flags: 0,
+            })
+    }
+
+    #[cfg(test)]
+    pub fn schema_descriptor_retention_count_for_test(
+        &self,
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> Option<u16> {
+        let mut index = 0usize;
+        while let Some(schema) = self.registry.schema_record(index) {
+            if schema.schema_object_id == schema_object_id.raw()
+                && schema.schema_revision == schema_revision
+            {
+                let mut content_index = 0usize;
+                while let Some(content) = self.registry.content_record(content_index) {
+                    if content.package_object_id == schema.package_object_id
+                        && content.content_index == schema.descriptor_content_index
+                        && content.digest == schema.descriptor_digest
+                    {
+                        return Some(content.retention_count);
+                    }
+                    content_index += 1;
+                }
+                return None;
+            }
+            index += 1;
+        }
+        None
     }
 
     pub fn resolve_export(
@@ -1622,14 +1736,21 @@ impl<'a> PackageService<'a> {
     }
 
     pub fn recover(&mut self) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
-        self.recover_inner(None)
+        self.recover_inner(None, None)
+    }
+
+    pub fn recover_with_object_service(
+        &mut self,
+        object_service: &ObjectService,
+    ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
+        self.recover_inner(None, Some(object_service))
     }
 
     pub fn recover_with_candidate_checkpoint(
         &mut self,
         device: BlockDeviceInfo,
     ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
-        self.recover_inner(Some(device))
+        self.recover_inner(Some(device), None)
     }
 
     pub fn restore_from_storage(
@@ -1827,6 +1948,7 @@ impl<'a> PackageService<'a> {
     fn recover_inner(
         &mut self,
         candidate_device: Option<BlockDeviceInfo>,
+        authoritative_object_service: Option<&ObjectService>,
     ) -> Result<PackageRecoveryReport<'_>, PackageStatus> {
         let current_valid = self.anchored_generation_available
             && PackageTransactionCommitV0::decode(
@@ -1945,6 +2067,15 @@ impl<'a> PackageService<'a> {
                 false
             }
         };
+        if let Some(object_service) = authoritative_object_service {
+            self.reconcile_schema_references_from_object_service(object_service)?;
+        } else if selected_object_snapshot_available {
+            if let Some(snapshot) = self.restored_object_snapshot {
+                let selected_object_service =
+                    ObjectService::from_snapshot(&snapshot).map_err(map_object_error)?;
+                self.reconcile_schema_references_from_object_service(&selected_object_service)?;
+            }
+        }
         Ok(PackageRecoveryReport {
             published_world_selected: true,
             previous_published_world_selected: selected_previous,
@@ -3572,6 +3703,299 @@ mod tests {
             Ok(SCHEMA_DESCRIPTOR.len())
         );
         assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_retains_created_package_defined_object_schema() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let tool_content_id =
+            ContentId::new(installed.package_object_id, installed.release_digest, 1);
+        let caller = object_service.test_shell_caller();
+        let workspace = object_service.test_shell_workspace_capability();
+
+        object_service
+            .create_package_defined_object(
+                caller,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: ObjectId::new(installed.schema_object_id),
+                    schema_revision: installed.schema_revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+
+        package_service
+            .reconcile_schema_references_from_object_service(&object_service)
+            .unwrap();
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            1
+        );
+
+        package_service
+            .uninstall(ObjectId::new(installed.package_object_id))
+            .unwrap();
+
+        assert_eq!(package_service.registry().content_count(), 1);
+        let retained = package_service.registry().content_record(0).unwrap();
+        assert_eq!(retained.content_index, descriptor_content_id.content_index);
+        assert_eq!(retained.digest, sha256(SCHEMA_DESCRIPTOR));
+        assert_eq!(retained.retention_count, 1);
+        let mut descriptor_bytes = [0u8; SCHEMA_DESCRIPTOR.len()];
+        let mut tool_bytes = [0u8; ADDITIONAL_CONTENT.len()];
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(descriptor_content_id, &mut descriptor_bytes),
+            Ok(SCHEMA_DESCRIPTOR.len())
+        );
+        assert_eq!(&descriptor_bytes, SCHEMA_DESCRIPTOR);
+        assert_eq!(
+            package_service
+                .content_store()
+                .read_published(tool_content_id, &mut tool_bytes),
+            Err(PackageStatus::NotFound)
+        );
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_ignores_failed_object_creation() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let caller = object_service.test_shell_caller();
+        let workspace = object_service.test_shell_workspace_capability();
+
+        assert_eq!(
+            object_service.create_package_defined_object(
+                caller,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: ObjectId::new(installed.schema_object_id),
+                    schema_revision: installed.schema_revision + 1,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            ),
+            Err(ObjectServiceError::NotFound)
+        );
+
+        package_service
+            .reconcile_schema_references_from_object_service(&object_service)
+            .unwrap();
+
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            0
+        );
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_restores_missing_retention_after_reboot() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut boot_one_package_service = PackageService::new_empty_for_test();
+        let mut boot_one_object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut boot_one_package_service,
+            device,
+            &mut boot_one_object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let caller = boot_one_object_service.test_shell_caller();
+        let workspace = boot_one_object_service.test_shell_workspace_capability();
+
+        boot_one_object_service
+            .create_package_defined_object(
+                caller,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: ObjectId::new(installed.schema_object_id),
+                    schema_revision: installed.schema_revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+        crate::object_service_checkpoint::write_object_service_checkpoint(
+            device,
+            &boot_one_object_service.encode_snapshot_for_test().unwrap(),
+        )
+        .unwrap();
+
+        let boot_two_object_service = ObjectService::restore_or_initialize(device).unwrap();
+        let mut boot_two_package_service = PackageService::new_empty_for_test();
+        boot_two_package_service
+            .restore_from_storage(device)
+            .unwrap();
+        assert_eq!(
+            content_record_by_id(boot_two_package_service.registry(), descriptor_content_id)
+                .retention_count,
+            0
+        );
+
+        boot_two_package_service
+            .reconcile_schema_references_from_object_service(&boot_two_object_service)
+            .unwrap();
+
+        assert_eq!(
+            content_record_by_id(boot_two_package_service.registry(), descriptor_content_id)
+                .retention_count,
+            1
+        );
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_survives_recovery_with_authoritative_objects() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let caller = object_service.test_shell_caller();
+        let workspace = object_service.test_shell_workspace_capability();
+
+        object_service
+            .create_package_defined_object(
+                caller,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: ObjectId::new(installed.schema_object_id),
+                    schema_revision: installed.schema_revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+        package_service
+            .reconcile_schema_references_from_object_service(&object_service)
+            .unwrap();
+
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            1
+        );
+
+        let report = package_service
+            .recover_with_object_service(&object_service)
+            .unwrap();
+
+        assert!(report.published_world_selected);
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            1
+        );
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_does_not_fabricate_without_package_defined_object() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+
+        package_service
+            .reconcile_schema_references_from_object_service(&object_service)
+            .unwrap();
+
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            0
+        );
+    }
+
+    #[test]
+    fn package_schema_reference_reconciliation_keeps_existing_counts_on_missing_schema_error() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_persistence_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let mut package_service = PackageService::new_empty_for_test();
+        let mut object_service = ObjectService::new_for_test();
+        let installed = install_launch_export_package_with_candidate_checkpoint_into(
+            &mut package_service,
+            device,
+            &mut object_service,
+        )
+        .unwrap();
+        let descriptor_content_id = installed.schema_descriptor_content_id;
+        let caller = object_service.test_shell_caller();
+        let workspace = object_service.test_shell_workspace_capability();
+        let missing_schema_object_id = ObjectId::new(0x5153_0001);
+        object_service
+            .create_schema_definition_object(
+                caller,
+                missing_schema_object_id,
+                ObjectId::new(0x5150_0001),
+                [0x51; 32],
+            )
+            .unwrap();
+        object_service
+            .create_package_defined_object(
+                caller,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: missing_schema_object_id,
+                    schema_revision: 1,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+        package_service
+            .retain_schema_reference(
+                ObjectId::new(installed.schema_object_id),
+                installed.schema_revision,
+            )
+            .unwrap();
+
+        assert_eq!(
+            package_service.reconcile_schema_references_from_object_service(&object_service),
+            Err(PackageStatus::NotFound)
+        );
+
+        assert_eq!(
+            content_record_by_id(package_service.registry(), descriptor_content_id).retention_count,
+            1
+        );
     }
 
     #[test]
