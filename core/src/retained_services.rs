@@ -10,7 +10,9 @@ use crate::block_device::BlockDeviceInfo;
 #[cfg(not(test))]
 use crate::general_storage_persistence::GeneralStoragePersistenceError;
 use crate::object_service::{ObjectService, ObjectServiceError};
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::process_context::ActiveUserProcess;
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service::{TaskAuthorityState, TaskService, TaskServiceError};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -18,6 +20,7 @@ pub enum RetainedServiceError {
     ObjectServiceAlreadyInitialized,
     ObjectServiceUnavailable,
     ObjectService(ObjectServiceError),
+    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
     TaskService(TaskServiceError),
     #[cfg(not(test))]
     Persistence(GeneralStoragePersistenceError),
@@ -32,13 +35,15 @@ pub enum RetainedServiceError {
 }
 
 struct RetainedObjectServiceStorage(UnsafeCell<MaybeUninit<ObjectService>>);
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 struct RetainedTaskAuthorityStorage(UnsafeCell<MaybeUninit<TaskAuthorityState>>);
 
 // SAFETY:
 // 1. Invariant: object service storage is initialized exactly once before
-//    shell launch and syscall dispatch.
+//    shell launch or Phase 13 package-runtime object syscall dispatch.
 // 2. Established by: normal_boot calls initialize_object_service before
-//    enter_persistent_user_process, and verify boot does not use this path.
+//    enter_persistent_user_process; Phase 13 acceptance initializes the
+//    retained object service before entering the package runtime.
 // 3. Lifetime: storage is static and lives for the whole boot.
 // 4. Pointer ownership: with_object_service grants one mutable borrow for the
 //    duration of one syscall dispatch closure.
@@ -49,6 +54,7 @@ struct RetainedTaskAuthorityStorage(UnsafeCell<MaybeUninit<TaskAuthorityState>>)
 // 8. Violation: concurrent access could corrupt object state or grant authority
 //    to the wrong caller.
 unsafe impl Sync for RetainedObjectServiceStorage {}
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 // SAFETY:
 // 1. Invariant: task authority storage is initialized with the retained object
 //    service and then accessed only during one syscall/task-service borrow.
@@ -68,6 +74,7 @@ unsafe impl Sync for RetainedTaskAuthorityStorage {}
 
 static OBJECT_SERVICE: RetainedObjectServiceStorage =
     RetainedObjectServiceStorage(UnsafeCell::new(MaybeUninit::uninit()));
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 static TASK_AUTHORITY: RetainedTaskAuthorityStorage =
     RetainedTaskAuthorityStorage(UnsafeCell::new(MaybeUninit::uninit()));
 static OBJECT_SERVICE_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -96,7 +103,9 @@ unsafe impl Sync for RetainedDeviceStorage {}
 static OBJECT_SERVICE_DEVICE: RetainedDeviceStorage =
     RetainedDeviceStorage(UnsafeCell::new(MaybeUninit::uninit()));
 
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedServiceError> {
+    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
     let task_authority = TaskAuthorityState::new(service.shell_caller());
     if OBJECT_SERVICE_INITIALIZED
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
@@ -118,6 +127,7 @@ pub fn initialize_object_service(service: ObjectService) -> Result<(), RetainedS
     // 8. Violation: a second writer would overwrite retained service state.
     unsafe {
         (*OBJECT_SERVICE.0.get()).write(service);
+        #[cfg(any(test, all(not(test), not(feature = "verify"))))]
         (*TASK_AUTHORITY.0.get()).write(task_authority);
     }
     Ok(())
@@ -153,14 +163,17 @@ pub fn initialize_object_service_from_device(
         OBJECT_SERVICE_INITIALIZED.store(false, Ordering::SeqCst);
         return Err(RetainedServiceError::ObjectService(error));
     }
-    // SAFETY: ObjectService restoration succeeded above, so the retained slot
-    // now contains one initialized service from which the shell caller can be
-    // copied to seed task authority.
-    let shell_caller = unsafe { (*OBJECT_SERVICE.0.get()).assume_init_ref().shell_caller() };
-    // SAFETY: this is the one task-authority initialization paired with the
-    // retained object service for this boot.
-    unsafe {
-        (*TASK_AUTHORITY.0.get()).write(TaskAuthorityState::new(shell_caller));
+    #[cfg(not(feature = "verify"))]
+    {
+        // SAFETY: ObjectService restoration succeeded above, so the retained
+        // slot now contains one initialized service from which the shell
+        // caller can be copied to seed task authority.
+        let shell_caller = unsafe { (*OBJECT_SERVICE.0.get()).assume_init_ref().shell_caller() };
+        // SAFETY: this is the one task-authority initialization paired with the
+        // retained object service for this boot.
+        unsafe {
+            (*TASK_AUTHORITY.0.get()).write(TaskAuthorityState::new(shell_caller));
+        }
     }
     // SAFETY: matches RetainedDeviceStorage's own invariant above - this is
     // the one write, performed before any caller can observe
@@ -244,6 +257,7 @@ pub fn with_object_service<R>(
     Ok(f(unsafe { (*OBJECT_SERVICE.0.get()).assume_init_mut() }))
 }
 
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 pub fn with_task_service<R>(
     f: impl FnOnce(&mut TaskService<'_>) -> R,
 ) -> Result<R, RetainedServiceError> {
@@ -258,6 +272,7 @@ pub fn with_task_service<R>(
     result
 }
 
+#[cfg(any(test, all(not(test), not(feature = "verify"))))]
 pub fn bind_shell_process(shell_caller: ActiveUserProcess) -> Result<(), RetainedServiceError> {
     with_object_service(|service| service.bind_shell_caller(shell_caller))?
         .map_err(RetainedServiceError::ObjectService)?;

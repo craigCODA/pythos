@@ -28,6 +28,10 @@ sdhci-emmc-backend = []
 # Acceptance-only one-shot PythTIG launch control. Normal production builds do
 # not compile sector-96 test selection or prepare graph runtime address spaces.
 pythtig-phase2-test = []
+# Acceptance-only Phase 13 package-format check. This validates INIT.PAK
+# package-source records and package artifact parsing without installing,
+# launching, or mutating package/object state.
+phase13-package-test = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

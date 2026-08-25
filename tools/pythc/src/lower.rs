@@ -585,6 +585,7 @@ impl<'a> Lowerer<'a> {
         };
         let kind = match text.parse::<u64>() {
             Ok(1) => b"note".as_slice(),
+            Ok(2) => b"package-defined".as_slice(),
             _ => return Err(compiler_rejected(*span)),
         };
         let (offset, len) = self.builder.intern_string(kind)?;

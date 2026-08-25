@@ -131,7 +131,17 @@ impl DynamicObjectStore {
         records
     }
 
-    pub const fn allocator_bitmap(self) -> u64 {
+    pub fn object_record_at(&self, index: usize) -> Option<DynamicObjectRecord> {
+        if index >= MAX_DYNAMIC_OBJECTS {
+            return None;
+        }
+        self.objects[index].map(|slot| DynamicObjectRecord {
+            object: slot.object,
+            extent: slot.extent,
+        })
+    }
+
+    pub const fn allocator_bitmap(&self) -> u64 {
         self.allocator.committed_bitmap()
     }
 

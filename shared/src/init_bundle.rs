@@ -13,6 +13,9 @@ pub const TYPE_PYTH_GRAPH_PACKAGE: u32 = 0x0000_0004;
 /// named graph package digest to one named native ELF digest before either is
 /// eligible for future native launch handling.
 pub const TYPE_PYTH_NATIVE_BINDING: u32 = 0x0000_0005;
+/// Phase 13 local package ingress. The record locates bounded package source
+/// bytes; a separate capability authorizes reading or installing them.
+pub const TYPE_PACKAGE_SOURCE: u32 = 0x0000_0006;
 const HEADER_RESERVED_OFFSET: usize = 26;
 const HEADER_RESERVED_LEN: usize = 6;
 const RECORD_FLAGS_OFFSET: usize = 4;
@@ -27,6 +30,7 @@ pub enum RecordType {
     NamedUserElf,
     PythGraphPackage,
     PythNativeBinding,
+    PackageSource,
 }
 
 impl RecordType {
@@ -37,6 +41,7 @@ impl RecordType {
             TYPE_NAMED_USER_ELF => Some(Self::NamedUserElf),
             TYPE_PYTH_GRAPH_PACKAGE => Some(Self::PythGraphPackage),
             TYPE_PYTH_NATIVE_BINDING => Some(Self::PythNativeBinding),
+            TYPE_PACKAGE_SOURCE => Some(Self::PackageSource),
             _ => None,
         }
     }
@@ -357,6 +362,31 @@ mod tests {
     }
 
     #[test]
+    fn package_source_record_is_addressable_alongside_existing_types() {
+        let bundle = build_bundle(&[
+            (TYPE_RUNTIME_PAYLOAD, b"runtime"),
+            (TYPE_NAMED_USER_ELF, b"shell"),
+            (TYPE_PACKAGE_SOURCE, b"phase13-package-source"),
+        ]);
+
+        let parsed = validate(&bundle).unwrap();
+
+        assert_eq!(TYPE_PACKAGE_SOURCE, 0x0000_0006);
+        assert_eq!(
+            parsed.record(RecordType::PackageSource).unwrap().bytes(),
+            b"phase13-package-source"
+        );
+        assert_eq!(
+            parsed.record(RecordType::NamedUserElf).unwrap().bytes(),
+            b"shell"
+        );
+        assert_eq!(
+            parsed.record(RecordType::RuntimePayload).unwrap().bytes(),
+            b"runtime"
+        );
+    }
+
+    #[test]
     fn duplicate_user_elf_records_are_addressable_by_ordinal() {
         let bundle = build_bundle(&[
             (TYPE_RUNTIME_PAYLOAD, b"runtime"),
@@ -406,6 +436,14 @@ mod tests {
             parsed.record_at(RecordType::UserElf, 3).unwrap().bytes(),
             b"fault-hardware"
         );
+    }
+
+    #[test]
+    fn seventeenth_total_record_is_rejected() {
+        let records = [(TYPE_USER_ELF, b"x".as_slice()); MAX_RECORDS + 1];
+        let bundle = build_bundle(&records);
+
+        assert_eq!(validate(&bundle), Err(InitBundleError::BadRecordTable));
     }
 
     #[test]

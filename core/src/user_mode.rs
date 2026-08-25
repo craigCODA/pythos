@@ -749,6 +749,9 @@ mod tests {
 
     #[test]
     fn persistent_user_fault_transitions_to_safe_idle() {
+        let _process_guard = crate::process_context::PROCESS_CONTEXT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut identities = crate::service_identity::ServiceIdentityTable::new();
         let shell_service = identities
             .register_task(crate::tasks::TaskId::new(180))
@@ -775,6 +778,9 @@ mod tests {
 
     #[test]
     fn persistent_pyth_graph_fault_transitions_to_safe_idle() {
+        let _process_guard = crate::process_context::PROCESS_CONTEXT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         let mut identities = crate::service_identity::ServiceIdentityTable::new();
         let graph_service = identities
             .register_task(crate::tasks::TaskId::new(190))

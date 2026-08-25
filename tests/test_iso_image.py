@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import tempfile
 import unittest
@@ -114,6 +115,15 @@ def build_init_pak_without_phase2_programs(module) -> bytes:
         return module.build_default_init_pak()
 
 
+def build_init_pak_with_phase13_package_fixture(module) -> bytes:
+    with tempfile.TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        shell = temp_path / "pythos-user-shell"
+        shell.write_bytes(b"\x7fELFshell")
+        module.SHELL_ELF = shell
+        return module.build_default_init_pak(include_phase13_package_format_fixture=True)
+
+
 def native_elf_fixture() -> bytes:
     text_offset = 0x1000
     data_offset = 0x2000
@@ -155,6 +165,20 @@ def load_native_elf_verifier():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def init_bundle_records(module, init_pak: bytes) -> list[tuple[int, bytes]]:
+    payload = init_pak[module.INIT_PAK_HEADER_LEN :]
+    record_count = int.from_bytes(payload[24:26], "little")
+    table_start = module.INIT_BUNDLE_HEADER_LEN
+    records = []
+    for index in range(record_count):
+        entry = table_start + index * module.INIT_BUNDLE_RECORD_LEN
+        record_type = int.from_bytes(payload[entry : entry + 4], "little")
+        start = int.from_bytes(payload[entry + 8 : entry + 16], "little")
+        length = int.from_bytes(payload[entry + 16 : entry + 24], "little")
+        records.append((record_type, payload[start : start + length]))
+    return records
 
 
 class IsoImageTest(unittest.TestCase):
@@ -337,6 +361,57 @@ class IsoImageTest(unittest.TestCase):
                 ],
             )
             self.assertNotIn(module.INIT_BUNDLE_PYTH_GRAPH_TYPE, record_types)
+
+    def test_default_build_image_init_pak_excludes_package_source_records(self) -> None:
+        module = load_build_image_module()
+        init_pak = build_init_pak_without_phase2_programs(module)
+
+        record_types = [record_type for record_type, _ in init_bundle_records(module, init_pak)]
+
+        self.assertNotIn(module.INIT_BUNDLE_PACKAGE_SOURCE_TYPE, record_types)
+
+    def test_phase13_package_source_fixture_is_opt_in(self) -> None:
+        module = load_build_image_module()
+        init_pak = build_init_pak_with_phase13_package_fixture(module)
+
+        package_sources = [
+            record
+            for record_type, record in init_bundle_records(module, init_pak)
+            if record_type == module.INIT_BUNDLE_PACKAGE_SOURCE_TYPE
+        ]
+
+        self.assertEqual(len(package_sources), 1)
+        source = package_sources[0]
+        self.assertEqual(source[:8], module.PHASE13_PACKAGE_SOURCE_MAGIC)
+        self.assertEqual(int.from_bytes(source[8:10], "little"), 0)
+        label_len = int.from_bytes(source[10:12], "little")
+        artifact_offset = int.from_bytes(source[16:24], "little")
+        artifact_len = int.from_bytes(source[24:32], "little")
+        artifact_sha256 = source[32:64]
+        label = source[
+            module.PHASE13_PACKAGE_SOURCE_HEADER_LEN : module.PHASE13_PACKAGE_SOURCE_HEADER_LEN
+            + label_len
+        ]
+        artifact = source[artifact_offset : artifact_offset + artifact_len]
+
+        self.assertLessEqual(label_len, module.MAX_PACKAGE_SOURCE_LABEL_BYTES)
+        self.assertEqual(label, b"phase13-format-fixture.pkg")
+        self.assertEqual(artifact_offset, module.PHASE13_PACKAGE_SOURCE_HEADER_LEN + label_len)
+        self.assertEqual(artifact_sha256, hashlib.sha256(artifact).digest())
+        self.assertEqual(artifact[:8], b"PYTHPKG0")
+
+    def test_phase13_rejects_nine_package_sources(self) -> None:
+        module = load_build_image_module()
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            sources = []
+            for index in range(9):
+                source = temp_path / f"pkg{index}.pkg"
+                source.write_bytes(bytes([index]))
+                sources.append((source, f"pkg{index}".encode("ascii")))
+
+            with self.assertRaisesRegex(SystemExit, "too many Phase 13 package sources"):
+                module.build_phase13_package_source_records(sources)
 
     def test_phase2_opt_in_requires_runtime_artifact(self) -> None:
         for module in (load_build_image_module(), load_build_iso_module()):

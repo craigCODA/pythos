@@ -81,7 +81,7 @@ universal-device work.
 
 ## Active Milestone
 
-The current checked-in stop boundary is Phase 12 -> Phase 13 on
+The current checked-in stop boundary is Phase 13 -> Phase 13.5 on
 `main`. Milestone 1.5 and Phases 2 through 10 are complete through
 `PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11 physical-hardware smoke-test findings
 are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`.
@@ -90,8 +90,10 @@ Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and
 through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071
 records the finite loader read-bound increase required for the Slice 2 debug
 acceptance image. Phase 12 `path-adversarial-suite` is recorded through ADR
-0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. No implementation milestone is
-active until the owner explicitly invokes Phase 13. Treat the older
+0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package lifecycle and schema
+extensibility are recorded through ADR 0073 and
+`PYTHOS:CORE:PHASE_13_COMPLETE`. No implementation milestone is active until
+the owner explicitly invokes Phase 13.5 or another later phase. Treat the older
 `milestone/phase8-real-hardware-isolation` and
 `milestone/phase11-real-hardware-boot` branch names as historical context, not
 the current branch target.
@@ -447,7 +449,7 @@ The Phase 12 `path-resolution` slice records ADR 0070, adds the internal `object
 
 The Phase 12 `path-adversarial-suite` slice records ADR 0072, reuses the ADR 0070 resolver ABI and denial identities, proves denied empty segments, stale bindings, missing segments, missing traversal authority, missing final authority, name collisions, link confusion, and global-root fallback assumptions, emits `PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY`, and completes Phase 12 with `PYTHOS:CORE:PHASE_12_COMPLETE`.
 
-Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, and Phase 12 are complete through `PYTHOS:CORE:PHASE_12_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12 `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite loader read-bound increase required by the Slice 2 debug acceptance image; Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Halt at the Phase 12 -> Phase 13 boundary; do not begin package-management, networking, updates, AI, hardware-expansion, SMP, or later PythTIG work without explicit re-invocation.
+Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 12, and Phase 13 are complete through `PYTHOS:CORE:PHASE_13_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12 `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite loader read-bound increase required by the Slice 2 debug acceptance image; Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`; Phase 13 package lifecycle and schema extensibility are recorded through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`. Halt at the Phase 13 -> Phase 13.5 boundary; do not begin persistent Pyth sessions, Kai/Waking, networking, updates, AI, hardware-expansion, SMP, or later PythTIG work without explicit re-invocation.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 

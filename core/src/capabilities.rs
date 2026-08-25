@@ -84,6 +84,10 @@ impl CapabilityTable {
         }
     }
 
+    pub fn clear(&mut self) {
+        self.entries = [None; CAPABILITY_TABLE_SLOTS];
+    }
+
     pub fn grant(
         &mut self,
         holder: ServiceId,

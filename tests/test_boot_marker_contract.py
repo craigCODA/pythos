@@ -29,6 +29,23 @@ PHASE_10_COMPLETE = "PYTHOS:CORE:PHASE_10_COMPLETE"
 OBJECT_LOCATOR_RESOLUTION_READY = "PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY"
 PATH_ADVERSARIAL_SUITE_READY = "PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY"
 PHASE_12_COMPLETE = "PYTHOS:CORE:PHASE_12_COMPLETE"
+PACKAGE_FORMAT_READY = "PYTHOS:CORE:PACKAGE_FORMAT_READY"
+PACKAGE_INSTALL_READY = "PYTHOS:CORE:PACKAGE_INSTALL_READY"
+PACKAGE_LAUNCH_READY = "PYTHOS:CORE:PACKAGE_LAUNCH_READY"
+PACKAGE_UNINSTALL_READY = "PYTHOS:CORE:PACKAGE_UNINSTALL_READY"
+INDEPENDENT_PACKAGE_READY = "PYTHOS:CORE:INDEPENDENT_PACKAGE_READY"
+PACKAGE_SCHEMA_EXTENSIBILITY_READY = "PYTHOS:CORE:PACKAGE_SCHEMA_EXTENSIBILITY_READY"
+PHASE_13_COMPLETE = "PYTHOS:CORE:PHASE_13_COMPLETE"
+
+PHASE13_MARKERS = [
+    PACKAGE_FORMAT_READY,
+    PACKAGE_INSTALL_READY,
+    PACKAGE_LAUNCH_READY,
+    PACKAGE_UNINSTALL_READY,
+    INDEPENDENT_PACKAGE_READY,
+    PACKAGE_SCHEMA_EXTENSIBILITY_READY,
+    PHASE_13_COMPLETE,
+]
 
 
 def load_test_boot_module():
@@ -294,6 +311,21 @@ class BootMarkerContractTest(unittest.TestCase):
             milestone_markers.index(PHASE_12_COMPLETE),
             milestone_markers.index(FRAMEBUFFER_READY),
         )
+
+    def test_phase13_package_lifecycle_has_dedicated_marker_contract(self) -> None:
+        test_boot = load_test_boot_module()
+
+        phase13_markers = test_boot.SLICE_MARKERS["phase13-package-lifecycle"]
+        milestone_markers = test_boot.SLICE_MARKERS["milestone-1"]
+
+        self.assertLess(
+            phase13_markers.index(PHASE_12_COMPLETE),
+            phase13_markers.index(PACKAGE_FORMAT_READY),
+        )
+        for left, right in zip(PHASE13_MARKERS, PHASE13_MARKERS[1:]):
+            self.assertLess(phase13_markers.index(left), phase13_markers.index(right))
+        for marker in PHASE13_MARKERS:
+            self.assertNotIn(marker, milestone_markers)
 
 
 def load_tests(loader, tests, pattern):

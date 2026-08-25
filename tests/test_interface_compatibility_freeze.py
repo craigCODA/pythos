@@ -590,6 +590,117 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
         for path in self.fixture["taxonomy"]["presentation_paths"]:
             self.assertIn(path, presentation)
 
+    def test_phase13_package_abi_surface_is_frozen(self) -> None:
+        phase13 = self.fixture["phase13_package_abi"]
+        package_abi = source("shared/src/package_abi.rs")
+        init_bundle = source("shared/src/init_bundle.rs")
+        shared_lib = source("shared/src/lib.rs")
+        object_shell = source("shared/src/object_shell_abi.rs")
+        runtime_abi = source("shared/src/pyth_runtime_abi.rs")
+
+        for symbol, ty, value in (
+            (
+                "OBJECT_KIND_PACKAGE",
+                "u16",
+                str(phase13["object_kind_package"]),
+            ),
+            (
+                "OBJECT_KIND_SCHEMA_DEFINITION",
+                "u16",
+                str(phase13["object_kind_schema_definition"]),
+            ),
+            (
+                "OBJECT_KIND_PACKAGE_DEFINED_OBJECT",
+                "u16",
+                str(phase13["object_kind_package_defined_object"]),
+            ),
+            (
+                "SYSCALL_PACKAGE_CONTEXT",
+                "u64",
+                "0x5059_0300",
+            ),
+            (
+                "OP_PACKAGE_CONTEXT_SCHEMA",
+                "u16",
+                "1",
+            ),
+            (
+                "PACKAGE_SOURCE_HANDLE_MAGIC",
+                "u32",
+                "0x5059_504B",
+            ),
+            (
+                "PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR",
+                "u16",
+                "0",
+            ),
+            (
+                "PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR",
+                "u16",
+                "1",
+            ),
+            (
+                "PACKAGE_DEFINED_STATE_FORMAT_EMPTY",
+                "u16",
+                "0",
+            ),
+            (
+                "PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0",
+                "u16",
+                "1",
+            ),
+            (
+                "PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES",
+                "u64",
+                "16",
+            ),
+            (
+                "FIELD_PACKAGE_SCHEMA_REF_V0",
+                "u16",
+                "0x1301",
+            ),
+            (
+                "FIELD_PACKAGE_INLINE_STATE_V0",
+                "u16",
+                "0x1302",
+            ),
+        ):
+            self.assert_const_decl(package_abi, symbol, ty, value, "Phase 13 package ABI")
+
+        self.assert_const_decl(
+            init_bundle,
+            "TYPE_PACKAGE_SOURCE",
+            "u32",
+            "0x0000_0006",
+            "Phase 13 INIT.PAK package source",
+        )
+        self.assertIn("PackageSource", init_bundle)
+        self.assertIn("pub mod package_abi;", shared_lib)
+        for pattern in (
+            r"core::mem::size_of::<PackageDefinedObjectCreateV0>\(\)\s*,\s*64",
+            r"core::mem::size_of::<PackageRuntimeSchemaBindingV0>\(\)\s*,\s*88",
+            r"core::mem::offset_of!\(PackageDefinedObjectCreateV0,\s*initial_state_ptr\)\s*,\s*24",
+            r"core::mem::offset_of!\(PackageRuntimeSchemaBindingV0,\s*schema_descriptor_sha256\)\s*,\s*40",
+        ):
+            self.assertRegex(package_abi, pattern, "Phase 13 package ABI layout tests")
+        self.assertIn(
+            "PackageStatus::PythTigVerificationFailed as u16, 302",
+            package_abi,
+        )
+
+        self.assertIn(
+            "core::mem::size_of::<ObjectShellRequest>(), 80",
+            object_shell,
+        )
+        self.assertIn(
+            "core::mem::size_of::<ObjectShellResponse>(), 64",
+            object_shell,
+        )
+        self.assertIn(
+            "core::mem::size_of::<PythGraphBootstrapBlock>(), 816",
+            runtime_abi,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

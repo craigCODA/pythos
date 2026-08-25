@@ -14,7 +14,8 @@ use crate::{
         RelationshipError, RelationshipKind, SHELL_WORKSPACE_OBJECT_ID,
     },
     object_service_checkpoint::{
-        ObjectExtentRecord, ObjectServiceSnapshot, WorkspaceRelationshipRecord,
+        ObjectCheckpointIdentity, ObjectExtentRecord, ObjectServiceSnapshot,
+        WorkspaceRelationshipRecord, object_checkpoint_identity,
     },
     process_context::ActiveUserProcess,
     revision_history::{ObjectServiceRevisionHistory, RevisionHistoryError},
@@ -23,12 +24,19 @@ use crate::{
     storage_allocator::BlockExtent,
     storage_quotas::{StorageQuotaError, StorageQuotaTable},
     tasks::TaskId,
-    typed_object_format::{ObjectFormatError, TypedObjectField, TypedObjectRecord},
+    typed_object_format::{
+        ObjectFormatError, TypedObjectField, TypedObjectRecord, package_schema_ref_value,
+    },
 };
 #[cfg(not(test))]
 use core::mem::MaybeUninit;
 use pythos_shared::{
     object_shell_abi::{MAX_QUERY_RESULTS, ObjectListEntry, PackedCapability},
+    package_abi::{
+        FIELD_PACKAGE_INLINE_STATE_V0, FIELD_PACKAGE_SCHEMA_REF_V0,
+        PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES, PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+        PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+    },
     user_program_manifest::{INTRUDER_PRINCIPAL_ID, SHELL_PRINCIPAL_ID},
 };
 
@@ -108,6 +116,22 @@ pub struct ObjectCreateResult {
     pub object_id: ObjectId,
     pub revision: u64,
     pub object_capability: PackedCapability,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageDefinedCreateInput<'a> {
+    pub schema_object_id: ObjectId,
+    pub schema_revision: u64,
+    pub state_format: u16,
+    pub initial_state: &'a [u8],
+}
+
+pub const MAX_PACKAGE_SCHEMA_REFERENCES: usize = MAX_DYNAMIC_OBJECTS;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageSchemaReference {
+    pub schema_object_id: ObjectId,
+    pub schema_revision: u64,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -258,7 +282,7 @@ impl ObjectService {
     #[cfg(test)]
     pub fn restore_or_initialize(device: BlockDeviceInfo) -> Result<Self, ObjectServiceError> {
         match read_object_service_checkpoint(device).map_err(|_| ObjectServiceError::BadSnapshot)? {
-            Some(snapshot) => Self::decode_snapshot(&snapshot),
+            Some(snapshot) => Self::from_snapshot(&snapshot),
             None => Self::new_seeded(),
         }
     }
@@ -456,6 +480,16 @@ impl ObjectService {
         )?))
     }
 
+    pub fn validate_package_launch_grant(
+        &self,
+        caller: ActiveUserProcess,
+        capability: PackedCapability,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> Result<(), ObjectServiceError> {
+        self.validate_capability_resource(caller, capability, resource, rights)
+    }
+
     pub(crate) fn create_task_service_object(
         &mut self,
         caller: ActiveUserProcess,
@@ -485,6 +519,118 @@ impl ObjectService {
         self.revisions
             .create_object(object, timestamp, caller.service_id())?;
         Ok(())
+    }
+
+    pub(crate) fn create_package_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object_id: ObjectId,
+        _release_digest: [u8; 32],
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.create_internal_object(
+            caller,
+            TypedObjectRecord::new(object_id, ObjectKind::Package, 1),
+        )
+    }
+
+    pub(crate) fn create_schema_definition_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object_id: ObjectId,
+        _package_object_id: ObjectId,
+        _descriptor_digest: [u8; 32],
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.create_internal_object(
+            caller,
+            TypedObjectRecord::new(object_id, ObjectKind::SchemaDefinition, 1),
+        )
+    }
+
+    pub fn create_package_defined_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        authority: PackedCapability,
+        input: PackageDefinedCreateInput<'_>,
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        self.validate_workspace(caller, authority, RightsMask::new(RightsMask::WRITE))?;
+        if !self.schema_definition_revision_exists(input.schema_object_id, input.schema_revision) {
+            return Err(ObjectServiceError::NotFound);
+        }
+        if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_EMPTY {
+            if !input.initial_state.is_empty() {
+                return Err(ObjectServiceError::UnsupportedKind);
+            }
+        } else if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 {
+            if input.initial_state.is_empty()
+                || input.initial_state.len() as u64 > PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES
+            {
+                return Err(ObjectServiceError::ObjectFormat(
+                    ObjectFormatError::FieldValueTooLarge,
+                ));
+            }
+        } else {
+            return Err(ObjectServiceError::UnsupportedKind);
+        }
+
+        let mut staged = *self;
+        staged.ensure_storage_quota(caller.service_id())?;
+        staged.quotas.charge_blocks(caller.service_id(), 1)?;
+        let object_id = ObjectId::new(staged.next_shell_note_id);
+        staged.next_shell_note_id = staged.next_shell_note_id.wrapping_add(1);
+        let mut object = TypedObjectRecord::new(object_id, ObjectKind::PackageDefinedObject, 1);
+        let schema_ref = package_schema_ref_value(input.schema_object_id, input.schema_revision);
+        object.push_field(TypedObjectField::new(
+            FIELD_PACKAGE_SCHEMA_REF_V0,
+            1,
+            &schema_ref,
+        )?)?;
+        if input.state_format == PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 {
+            object.push_field(TypedObjectField::new(
+                FIELD_PACKAGE_INLINE_STATE_V0,
+                1,
+                input.initial_state,
+            )?)?;
+        }
+        staged.objects.create_object(object)?;
+        staged.relationships.insert_object(object)?;
+        staged
+            .relationships
+            .add_relationship(ObjectRelationship::new(
+                object_id,
+                RelationshipKind::BelongsTo,
+                ObjectId::new(SHELL_WORKSPACE_OBJECT_ID),
+            ))?;
+        let timestamp = staged.take_timestamp();
+        staged
+            .revisions
+            .create_object(object, timestamp, caller.service_id())?;
+        let object_capability = staged.grant_object_capability(caller, object_id)?;
+        *self = staged;
+        Ok(ObjectCreateResult {
+            object_id,
+            revision: 1,
+            object_capability,
+        })
+    }
+
+    pub fn package_defined_schema_references(
+        &self,
+    ) -> Result<[Option<PackageSchemaReference>; MAX_PACKAGE_SCHEMA_REFERENCES], ObjectServiceError>
+    {
+        let mut references = [None; MAX_PACKAGE_SCHEMA_REFERENCES];
+        let mut reference_count = 0usize;
+        let records = self.objects.object_records();
+        let mut index = 0usize;
+        while index < MAX_DYNAMIC_OBJECTS {
+            if let Some(record) = records[index]
+                && let Some(reference) = package_schema_reference_for_object(record.object)?
+            {
+                references[reference_count] = Some(reference);
+                reference_count += 1;
+            }
+            index += 1;
+        }
+        Ok(references)
     }
 
     pub(crate) fn revise_task_service_object(
@@ -579,28 +725,82 @@ impl ObjectService {
         Ok(())
     }
 
-    fn decode_snapshot(snapshot: &ObjectServiceSnapshot) -> Result<Self, ObjectServiceError> {
+    pub(crate) fn from_snapshot(
+        snapshot: &ObjectServiceSnapshot,
+    ) -> Result<Self, ObjectServiceError> {
         let mut service = Self::new_seeded()?;
-        service.objects = restore_dynamic_objects(snapshot)?;
-        service.relationships = restore_relationships(snapshot)?;
-        service.revisions = ObjectServiceRevisionHistory::restore_from_records(
-            snapshot.current_revisions,
-            snapshot.prior_revisions,
-        )?;
-        service.generation = snapshot.generation;
-        service.next_shell_note_id = next_shell_note_id(snapshot);
+        service.apply_snapshot_preserving_runtime_authority(snapshot)?;
         Ok(service)
     }
 
+    pub(crate) fn apply_snapshot_preserving_runtime_authority(
+        &mut self,
+        snapshot: &ObjectServiceSnapshot,
+    ) -> Result<(), ObjectServiceError> {
+        self.objects = restore_dynamic_objects(snapshot)?;
+        self.relationships = restore_relationships(snapshot)?;
+        self.revisions = ObjectServiceRevisionHistory::restore_from_records(
+            snapshot.current_revisions,
+            snapshot.prior_revisions,
+        )?;
+        self.generation = snapshot.generation;
+        self.next_shell_note_id = next_shell_note_id(snapshot);
+        Ok(())
+    }
+
     pub fn encode_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
-        let object_records = self.objects.object_records();
-        let mut objects = [None; crate::object_service_checkpoint::OBJECT_SERVICE_OBJECT_CAPACITY];
-        let mut relationships = [None;
-            crate::object_service_checkpoint::OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY];
+        let mut snapshot = ObjectServiceSnapshot::empty();
+        self.encode_snapshot_into(&mut snapshot)?;
+        Ok(snapshot)
+    }
+
+    pub fn encode_candidate_snapshot(&self) -> Result<ObjectServiceSnapshot, ObjectServiceError> {
+        let mut snapshot = self.encode_snapshot()?;
+        snapshot.generation = self.generation.wrapping_add(1);
+        Ok(snapshot)
+    }
+
+    pub(crate) fn publish_candidate_generation(&mut self, generation: u64) {
+        self.generation = generation;
+    }
+
+    pub fn encode_snapshot_into(
+        &self,
+        snapshot: &mut ObjectServiceSnapshot,
+    ) -> Result<(), ObjectServiceError> {
+        snapshot.generation = self.generation;
+        snapshot.allocated_bitmap = self.objects.allocator_bitmap();
+
         let mut index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_OBJECT_CAPACITY {
+            snapshot.objects[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index
+            < crate::object_service_checkpoint::OBJECT_SERVICE_WORKSPACE_RELATIONSHIP_CAPACITY
+        {
+            snapshot.workspace_relationships[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_CURRENT_REVISION_CAPACITY {
+            snapshot.current_revisions[index] = None;
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_PRIOR_REVISION_CAPACITY {
+            snapshot.prior_revisions[index] = None;
+            index += 1;
+        }
+
+        index = 0;
         while index < MAX_DYNAMIC_OBJECTS {
-            if let Some(record) = object_records[index] {
-                objects[index] = Some(ObjectExtentRecord {
+            if let Some(record) = self.objects.object_record_at(index) {
+                snapshot.objects[index] = Some(ObjectExtentRecord {
                     extent_start: u64::from(record.extent.start_block()),
                     extent_len: record.extent.block_count(),
                     object: record.object,
@@ -609,7 +809,7 @@ impl ObjectService {
                     .relationships
                     .query_first(record.object.object_id(), RelationshipKind::BelongsTo)
                 {
-                    relationships[index] = Some(WorkspaceRelationshipRecord {
+                    snapshot.workspace_relationships[index] = Some(WorkspaceRelationshipRecord {
                         object_id: relationship.source(),
                         workspace_id: relationship.target(),
                     });
@@ -617,14 +817,36 @@ impl ObjectService {
             }
             index += 1;
         }
-        Ok(ObjectServiceSnapshot {
-            generation: self.generation,
-            allocated_bitmap: self.objects.allocator_bitmap(),
-            objects,
-            workspace_relationships: relationships,
-            current_revisions: self.revisions.current_records(),
-            prior_revisions: self.revisions.prior_records(),
-        })
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_CURRENT_REVISION_CAPACITY {
+            snapshot.current_revisions[index] = self.revisions.current_record_at(index);
+            index += 1;
+        }
+
+        index = 0;
+        while index < crate::object_service_checkpoint::OBJECT_SERVICE_PRIOR_REVISION_CAPACITY {
+            snapshot.prior_revisions[index] = self.revisions.prior_record_at(index);
+            index += 1;
+        }
+
+        Ok(())
+    }
+
+    pub fn checkpoint_identity(&self) -> Result<ObjectCheckpointIdentity, ObjectServiceError> {
+        #[cfg(test)]
+        {
+            let snapshot = self.encode_snapshot()?;
+            Ok(object_checkpoint_identity(&snapshot))
+        }
+
+        #[cfg(not(test))]
+        {
+            crate::object_service_checkpoint::with_object_identity_snapshot_scratch(|snapshot| {
+                self.encode_snapshot_into(snapshot)?;
+                Ok(object_checkpoint_identity(snapshot))
+            })
+        }
     }
 
     fn seed_workspace_roots(&mut self) -> Result<(), ObjectServiceError> {
@@ -667,14 +889,7 @@ impl ObjectService {
         capability: PackedCapability,
         rights: RightsMask,
     ) -> Result<(), ObjectServiceError> {
-        self.capabilities
-            .validate(
-                caller.service_id(),
-                unpack_capability(capability),
-                self.shell_workspace,
-                rights,
-            )
-            .map_err(|_| ObjectServiceError::Denied)
+        self.validate_capability_resource(caller, capability, self.shell_workspace, rights)
     }
 
     fn validate_object(
@@ -684,11 +899,26 @@ impl ObjectService {
         object_id: ObjectId,
         rights: RightsMask,
     ) -> Result<(), ObjectServiceError> {
+        self.validate_capability_resource(
+            caller,
+            capability,
+            ResourceId::new(object_id.raw()),
+            rights,
+        )
+    }
+
+    fn validate_capability_resource(
+        &self,
+        caller: ActiveUserProcess,
+        capability: PackedCapability,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> Result<(), ObjectServiceError> {
         self.capabilities
             .validate(
                 caller.service_id(),
                 unpack_capability(capability),
-                ResourceId::new(object_id.raw()),
+                resource,
                 rights,
             )
             .map_err(|_| ObjectServiceError::Denied)
@@ -704,6 +934,29 @@ impl ObjectService {
             ResourceId::new(object_id.raw()),
             OBJECT_RIGHTS,
         )?))
+    }
+
+    fn create_internal_object(
+        &mut self,
+        caller: ActiveUserProcess,
+        object: TypedObjectRecord,
+    ) -> Result<ObjectCreateResult, ObjectServiceError> {
+        let mut staged = *self;
+        staged.ensure_storage_quota(caller.service_id())?;
+        staged.quotas.charge_blocks(caller.service_id(), 1)?;
+        staged.objects.create_object(object)?;
+        staged.relationships.insert_object(object)?;
+        let timestamp = staged.take_timestamp();
+        staged
+            .revisions
+            .create_object(object, timestamp, caller.service_id())?;
+        let object_capability = staged.grant_object_capability(caller, object.object_id())?;
+        *self = staged;
+        Ok(ObjectCreateResult {
+            object_id: object.object_id(),
+            revision: 1,
+            object_capability,
+        })
     }
 
     fn ensure_storage_quota(&mut self, service_id: ServiceId) -> Result<(), ObjectServiceError> {
@@ -726,11 +979,65 @@ impl ObjectService {
             .is_some_and(|relationship| relationship.target() == workspace_id)
     }
 
+    fn schema_definition_revision_exists(&self, object_id: ObjectId, revision: u64) -> bool {
+        if let Some(record) = self.revisions.current_revision(object_id)
+            && record.revision() == revision
+            && record.object().object_kind() == ObjectKind::SchemaDefinition
+        {
+            return true;
+        }
+        if let Some(record) = self.revisions.prior_revision(object_id, revision)
+            && record.object().object_kind() == ObjectKind::SchemaDefinition
+        {
+            return true;
+        }
+        false
+    }
+
     fn take_timestamp(&mut self) -> u64 {
         let ticks = self.next_timestamp_ticks;
         self.next_timestamp_ticks = self.next_timestamp_ticks.wrapping_add(1);
         ticks
     }
+}
+
+fn package_schema_reference_for_object(
+    object: TypedObjectRecord,
+) -> Result<Option<PackageSchemaReference>, ObjectServiceError> {
+    if object.object_kind() != ObjectKind::PackageDefinedObject {
+        return Ok(None);
+    }
+    let mut found = None;
+    let mut index = 0usize;
+    while index < object.field_count() {
+        if let Some(field) = object.field(index)
+            && field.field_id() == FIELD_PACKAGE_SCHEMA_REF_V0
+        {
+            if field.value_len() != 16 || found.is_some() {
+                return Err(ObjectServiceError::BadSnapshot);
+            }
+            let value = field.value();
+            found = Some(PackageSchemaReference {
+                schema_object_id: ObjectId::new(read_schema_ref_u64(&value, 0)),
+                schema_revision: read_schema_ref_u64(&value, 8),
+            });
+        }
+        index += 1;
+    }
+    found.ok_or(ObjectServiceError::BadSnapshot).map(Some)
+}
+
+fn read_schema_ref_u64(value: &[u8; 16], offset: usize) -> u64 {
+    u64::from_le_bytes([
+        value[offset],
+        value[offset + 1],
+        value[offset + 2],
+        value[offset + 3],
+        value[offset + 4],
+        value[offset + 5],
+        value[offset + 6],
+        value[offset + 7],
+    ])
 }
 
 #[cfg(test)]
@@ -797,7 +1104,7 @@ impl ObjectService {
     pub fn decode_snapshot_for_test(
         snapshot: ObjectServiceSnapshot,
     ) -> Result<Self, ObjectServiceError> {
-        Self::decode_snapshot(&snapshot)
+        Self::from_snapshot(&snapshot)
     }
 
     pub fn object_capability_for_test(
@@ -811,6 +1118,15 @@ impl ObjectService {
     pub fn revoke_object_capability_for_test(
         &mut self,
         _caller: ActiveUserProcess,
+        capability: PackedCapability,
+    ) -> Result<(), ObjectServiceError> {
+        self.capabilities
+            .revoke(unpack_capability(capability))
+            .map_err(|_| ObjectServiceError::Denied)
+    }
+
+    pub fn revoke_package_launch_capability_for_test(
+        &mut self,
         capability: PackedCapability,
     ) -> Result<(), ObjectServiceError> {
         self.capabilities
@@ -1143,6 +1459,185 @@ mod tests {
     }
 
     #[test]
+    fn package_schema_object_creation_public_create_denies_package_kind() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::Package),
+            Err(ObjectServiceError::UnsupportedKind)
+        );
+        assert_eq!(
+            service.create_object(shell, workspace, ObjectKind::PackageDefinedObject),
+            Err(ObjectServiceError::UnsupportedKind)
+        );
+    }
+
+    #[test]
+    fn package_schema_object_creation_internal_helpers_create_objects_with_revisions() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+
+        let package = service
+            .create_package_object(shell, ObjectId::new(7000), digest(1))
+            .unwrap();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                package.object_id,
+                digest(2),
+            )
+            .unwrap();
+
+        let package_inspection = service
+            .inspect_object(shell, package.object_capability, package.object_id)
+            .unwrap();
+        let schema_inspection = service
+            .inspect_object(shell, schema.object_capability, schema.object_id)
+            .unwrap();
+
+        assert_eq!(package.revision, 1);
+        assert_eq!(schema.revision, 1);
+        assert_eq!(package_inspection.object.object_kind(), ObjectKind::Package);
+        assert_eq!(
+            schema_inspection.object.object_kind(),
+            ObjectKind::SchemaDefinition
+        );
+        assert_eq!(package_inspection.revision, 1);
+        assert_eq!(schema_inspection.revision, 1);
+    }
+
+    #[test]
+    fn package_defined_object_creation_records_schema_ref_and_inline_state() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        let created = service
+            .create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+                    initial_state: b"abc",
+                },
+            )
+            .unwrap();
+
+        let inspection = service
+            .inspect_object(shell, created.object_capability, created.object_id)
+            .unwrap();
+        let schema_ref = inspection
+            .field_bytes(FIELD_PACKAGE_SCHEMA_REF_V0)
+            .expect("schema ref");
+        let inline_state = inspection
+            .field_bytes(FIELD_PACKAGE_INLINE_STATE_V0)
+            .expect("inline state");
+
+        assert_eq!(created.revision, 1);
+        assert_eq!(
+            inspection.object.object_kind(),
+            ObjectKind::PackageDefinedObject
+        );
+        assert_eq!(inspection.object.field_count(), 2);
+        assert_eq!(&schema_ref[..8], &schema.object_id.raw().to_le_bytes());
+        assert_eq!(&schema_ref[8..16], &schema.revision.to_le_bytes());
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+            Some(16)
+        );
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+            Some(3)
+        );
+        assert_eq!(&inline_state[..3], b"abc");
+    }
+
+    #[test]
+    fn package_defined_object_creation_denies_invalid_schema_revision_without_allocating() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        assert_eq!(
+            service.create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision + 1,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            ),
+            Err(ObjectServiceError::NotFound)
+        );
+        assert!(!service.object_exists_for_test(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_creation_empty_state_omits_inline_state_field() {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                digest(2),
+            )
+            .unwrap();
+
+        let created = service
+            .create_package_defined_object(
+                shell,
+                workspace,
+                PackageDefinedCreateInput {
+                    schema_object_id: schema.object_id,
+                    schema_revision: schema.revision,
+                    state_format: PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+                    initial_state: &[],
+                },
+            )
+            .unwrap();
+
+        let inspection = service
+            .inspect_object(shell, created.object_capability, created.object_id)
+            .unwrap();
+
+        assert_eq!(inspection.object.field_count(), 1);
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+            Some(16)
+        );
+        assert_eq!(
+            inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+            None
+        );
+    }
+
+    #[test]
     fn repeated_queries_reuse_existing_object_capabilities() {
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
@@ -1208,5 +1703,9 @@ mod tests {
 
         let after = service.dynamic_object_for_test(created.object_id).unwrap();
         assert_eq!(after, before);
+    }
+
+    fn digest(seed: u8) -> [u8; 32] {
+        [seed; 32]
     }
 }

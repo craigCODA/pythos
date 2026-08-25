@@ -1120,6 +1120,15 @@ OBJECT_LOCATOR_ADVERSARIAL_MARKERS = [
     "PYTHOS:CORE:PATH_ADVERSARIAL_SUITE_READY",
     "PYTHOS:CORE:PHASE_12_COMPLETE",
 ]
+PHASE13_MARKERS = [
+    "PYTHOS:CORE:PACKAGE_FORMAT_READY",
+    "PYTHOS:CORE:PACKAGE_INSTALL_READY",
+    "PYTHOS:CORE:PACKAGE_LAUNCH_READY",
+    "PYTHOS:CORE:PACKAGE_UNINSTALL_READY",
+    "PYTHOS:CORE:INDEPENDENT_PACKAGE_READY",
+    "PYTHOS:CORE:PACKAGE_SCHEMA_EXTENSIBILITY_READY",
+    "PYTHOS:CORE:PHASE_13_COMPLETE",
+]
 AUDIO_DEVICE_ABSENT_MARKERS = [
     "PYTHOS:CORE:AUDIO:DEVICE_ABSENT",
     "PYTHOS:CORE:AUDIO_DEVICE_SELECTION_READY",
@@ -1623,6 +1632,9 @@ SLICE_MARKERS["path-resolution"] = (
 SLICE_MARKERS["path-adversarial-suite"] = (
     SLICE_MARKERS["path-resolution"] + OBJECT_LOCATOR_ADVERSARIAL_MARKERS
 )
+SLICE_MARKERS["phase13-package-lifecycle"] = (
+    SLICE_MARKERS["path-adversarial-suite"] + PHASE13_MARKERS
+)
 SLICE_MARKERS["milestone-1"] = insert_before(
     SLICE_MARKERS["milestone-1"],
     "PYTHOS:CORE:FRAMEBUFFER_READY",
@@ -1663,6 +1675,8 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     OBJECT_LOCATOR_ADVERSARIAL_MARKERS,
 )
+# Phase 13 package lifecycle markers are proven by dedicated package acceptance
+# fixtures. Ordinary verify boot remains the normal milestone-1 path.
 SLICE_MARKERS["graceful-audio-fallback"] = (
     SLICE_MARKERS["phase-5-complete"]
     + AUDIO_DEVICE_ABSENT_MARKERS

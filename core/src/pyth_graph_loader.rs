@@ -1,6 +1,21 @@
 #![cfg_attr(test, allow(dead_code))]
 #![cfg_attr(any(feature = "verify", feature = "hardware-probe"), allow(dead_code))]
 
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+use crate::{
+    package_content_store::{ContentId, PackageContentStore},
+    package_registry::PackageRegistryExportRecord,
+};
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+use pythos_shared::package_abi::PackageStatus;
 use pythos_shared::{
     boot_protocol::PythBootInfo,
     init_bundle, init_pak, pyth_graph_manifest,
@@ -29,6 +44,50 @@ pub enum PythGraphLoadError {
 pub struct LoadedPythGraph<'a> {
     pub manifest: pyth_graph_manifest::NamedPythGraphManifest<'a>,
     pub verified: VerifiedGraph<'a>,
+}
+
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct LoadedPackageExportGraph<'a> {
+    pub content_id: ContentId,
+    pub byte_len: usize,
+    pub verified: VerifiedGraph<'a>,
+}
+
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PackageExportGraphValidationError {
+    pub status: PackageStatus,
+    pub verifier: Option<VerifyError>,
+}
+
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+impl PackageExportGraphValidationError {
+    pub const fn from_status(status: PackageStatus) -> Self {
+        Self {
+            status,
+            verifier: None,
+        }
+    }
+
+    pub const fn from_verifier(verifier: VerifyError) -> Self {
+        Self {
+            status: PackageStatus::PythTigVerificationFailed,
+            verifier: Some(verifier),
+        }
+    }
 }
 
 #[cfg_attr(not(test), allow(dead_code))]
@@ -61,6 +120,39 @@ pub fn validate_named_pyth_graph_payload_bytes_for_admission<'a>(
     name: &[u8],
 ) -> Result<LoadedPythGraph<'a>, PythGraphLoadError> {
     validate_named_pyth_graph_payload_bytes_with_profile(bytes, name, false)
+}
+
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+pub fn validate_package_export_graph<'a>(
+    content_store: &PackageContentStore<'_>,
+    export: PackageRegistryExportRecord,
+    package_buffer: &'a mut [u8],
+) -> Result<LoadedPackageExportGraph<'a>, PackageExportGraphValidationError> {
+    let content_id = ContentId::new(
+        export.package_object_id,
+        export.release_digest,
+        export.content_index,
+    );
+    let byte_len = content_store
+        .read_published(content_id, package_buffer)
+        .map_err(PackageExportGraphValidationError::from_status)?;
+    let package_bytes =
+        package_buffer
+            .get(..byte_len)
+            .ok_or(PackageExportGraphValidationError::from_status(
+                PackageStatus::ContentCorrupt,
+            ))?;
+    let verified = verify::verify_bytes(package_bytes)
+        .map_err(PackageExportGraphValidationError::from_verifier)?;
+    Ok(LoadedPackageExportGraph {
+        content_id,
+        byte_len,
+        verified,
+    })
 }
 
 fn validate_named_pyth_graph_payload_bytes_with_profile<'a>(
@@ -263,13 +355,28 @@ fn init_bundle_bytes(boot_info: &PythBootInfo) -> Result<&[u8], PythGraphLoadErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        block_device::{BlockDeviceInfo, SECTOR_SIZE},
+        package_candidate_store::{
+            PACKAGE_CANDIDATE_STORAGE_TEST_LOCK, reset_package_candidate_storage_for_test,
+            write_package_candidate_sector,
+        },
+        package_content_store::{ContentId, PackageContentStore, PackageContentTransaction},
+        package_registry::{PackageRegistry, PackageRegistryExportRecord},
+        package_service::validate_package_export_graph as validate_package_export_graph_from_package_service,
+    };
     use pythos_shared::{
-        init_bundle, pyth_graph_manifest,
+        init_bundle,
+        package_abi::{PACKAGE_CONTENT_BASE_SECTOR, PackageStatus},
+        pyth_graph_manifest,
         pyth_tig::{opcode::Opcode, test_support, verify, verify::VerifyError},
+        sha256::sha256,
     };
     use std::vec::Vec;
 
     const HELLO_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_4752_0001;
+    const PACKAGE_GRAPH_OBJECT_ID: u64 = 0x5059_504B_4752_0001;
+    const PACKAGE_GRAPH_SCHEMA_ID: u64 = 0x5059_5343_4852_0001;
 
     fn build_init_pak(payload: &[u8]) -> Vec<u8> {
         let mut bytes = vec![0u8; pythos_shared::init_pak::INIT_PAK_HEADER_LEN as usize];
@@ -332,6 +439,139 @@ mod tests {
             init_bundle::TYPE_PYTH_GRAPH_PACKAGE,
             graph.as_slice(),
         )]))
+    }
+
+    fn commit_package_export_content<'a>(
+        package_object_id: u64,
+        release_digest: [u8; 32],
+        bytes: &'a [u8],
+    ) -> (PackageContentStore<'a>, ContentId) {
+        let mut store = PackageContentStore::empty();
+        let mut transaction = PackageContentTransaction::new(package_object_id, release_digest);
+        let content_id = store
+            .stage_content(&mut transaction, 1, 1, bytes, sha256(bytes))
+            .unwrap();
+        store.commit(&mut transaction).unwrap();
+        (store, content_id)
+    }
+
+    fn package_export_record(content_id: ContentId) -> PackageRegistryExportRecord {
+        PackageRegistryExportRecord::new(
+            0x5059_504B_4E53_0001,
+            b"seed",
+            b"launch",
+            content_id.package_object_id,
+            1,
+            content_id.release_digest,
+            1,
+            content_id.content_index,
+            0,
+            PACKAGE_GRAPH_SCHEMA_ID,
+            1,
+            sha256(b"schema:package-graph.v0"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn package_pythtig_verification_accepts_valid_published_export_content() {
+        let package = test_support::system_log_with_import_capability();
+        let package_bytes: &[u8] = &package;
+        let release_digest = sha256(b"release:package-graph-valid");
+        let (store, content_id) =
+            commit_package_export_content(PACKAGE_GRAPH_OBJECT_ID, release_digest, package_bytes);
+        let export = package_export_record(content_id);
+        let mut package_buffer = vec![0u8; package_bytes.len()];
+
+        let loaded_byte_len = {
+            let loaded = validate_package_export_graph_from_package_service(
+                &store,
+                export,
+                &mut package_buffer,
+            )
+            .unwrap();
+
+            assert_eq!(loaded.content_id, content_id);
+            assert_eq!(loaded.byte_len, package_bytes.len());
+            assert_eq!(loaded.verified.package().header().node_count, 5);
+            loaded.byte_len
+        };
+        assert_eq!(&package_buffer[..loaded_byte_len], package_bytes);
+    }
+
+    #[test]
+    fn package_pythtig_verification_returns_content_corrupt_before_verifier() {
+        let _guard = PACKAGE_CANDIDATE_STORAGE_TEST_LOCK.lock().unwrap();
+        reset_package_candidate_storage_for_test();
+        let device = BlockDeviceInfo::new_for_test(9000, 8);
+        let package = test_support::system_log_with_import_capability();
+        let package_bytes: &[u8] = &package;
+        let release_digest = sha256(b"release:package-graph-corrupt");
+        let mut source_store = PackageContentStore::empty();
+        let mut transaction =
+            PackageContentTransaction::new(PACKAGE_GRAPH_OBJECT_ID + 1, release_digest);
+        let content_id = source_store
+            .stage_content(&mut transaction, 1, 1, package_bytes, sha256(package_bytes))
+            .unwrap();
+        let mut registry = PackageRegistry::empty();
+        source_store
+            .add_staged_records_to_registry(&transaction, &mut registry)
+            .unwrap();
+        let record = registry.content_record(0).unwrap();
+        let commit = source_store
+            .write_candidate_content(device, &transaction)
+            .unwrap();
+        let restored =
+            PackageContentStore::restore_from_validated_registry(device, &registry, commit)
+                .unwrap();
+        let mut corrupt_sector = [0xA5u8; SECTOR_SIZE];
+        corrupt_sector[0] = 0x5A;
+        write_package_candidate_sector(
+            device,
+            PACKAGE_CONTENT_BASE_SECTOR + u64::from(record.extents[0].start_block),
+            &corrupt_sector,
+        )
+        .unwrap();
+        let export = package_export_record(content_id);
+        let mut package_buffer = vec![0u8; package_bytes.len()];
+
+        let error = validate_package_export_graph_from_package_service(
+            &restored,
+            export,
+            &mut package_buffer,
+        )
+        .expect_err("corrupt package content must be denied before PythTIG verification");
+
+        assert_eq!(error.status, PackageStatus::ContentCorrupt);
+        assert_eq!(error.verifier, None);
+    }
+
+    #[test]
+    fn package_pythtig_verification_preserves_nested_verifier_identity() {
+        let package = test_support::package_with_effect_fork();
+        let package_bytes: &[u8] = &package;
+        assert_eq!(
+            verify::verify_bytes(package_bytes),
+            Err(VerifyError::EffectFork { producer: 0 })
+        );
+        let release_digest = sha256(b"release:package-graph-invalid-pythtig");
+        let (store, content_id) = commit_package_export_content(
+            PACKAGE_GRAPH_OBJECT_ID + 2,
+            release_digest,
+            package_bytes,
+        );
+        let export = package_export_record(content_id);
+        let mut package_buffer = vec![0u8; package_bytes.len()];
+
+        let error =
+            validate_package_export_graph_from_package_service(&store, export, &mut package_buffer)
+                .expect_err("package-layer status must wrap the verifier identity");
+
+        assert_eq!(error.status, PackageStatus::PythTigVerificationFailed);
+        assert_eq!(
+            error.verifier,
+            Some(VerifyError::EffectFork { producer: 0 })
+        );
     }
 
     #[test]

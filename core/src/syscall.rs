@@ -10,16 +10,42 @@ use crate::capabilities::{
     CapabilityError, CapabilityHandle, CapabilityTable, ResourceId, RightsMask,
 };
 use crate::ipc_channels::{IpcChannel, IpcError, IpcMessage};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
-use crate::object_service::{ObjectService, ObjectServiceError};
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+use crate::object_service::{ObjectService, ObjectServiceError, PackageDefinedCreateInput};
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+use crate::package_service;
+#[cfg(test)]
+use crate::package_service::PackageService;
 use crate::permission_validation::{self, PermissionError};
 use crate::process_context::{self, ActiveUserProcess, ProcessContextError};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use crate::retained_services::{self, RetainedServiceError};
 #[cfg(not(test))]
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use crate::shell_objects::{ObjectId, ObjectKind};
 use crate::system_api::{SystemApiError, SystemApiHost};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
@@ -28,19 +54,39 @@ use crate::task_context::TaskContextEvent;
 use crate::task_service::{self, TaskServiceError};
 use crate::tasks::TaskId;
 use crate::user_copy::UserCopyError;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 use crate::user_copy::{UserCopyAccess, UserCopyMap};
 use crate::user_mode;
 use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 #[cfg(not(test))]
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 use core::mem::{align_of, size_of};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use pythos_shared::object_shell_abi::{
     FIELD_TEXT, MAX_QUERY_RESULTS, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR,
     OBJECT_SHELL_ABI_MINOR, OP_CREATE_OBJECT, OP_GET_HISTORY, OP_INSPECT_OBJECT, OP_QUERY_OBJECTS,
@@ -51,7 +97,39 @@ use pythos_shared::object_shell_abi::{
     NO_BYTE, PackedCapability, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE,
     SYSCALL_OBJECT_REQUEST, SYSCALL_OK, SYSCALL_SYSTEM_REBOOT,
 };
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
+use pythos_shared::package_abi::OP_PACKAGE_CONTEXT_SCHEMA;
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
+use pythos_shared::package_abi::PackageRuntimeSchemaBindingV0;
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+use pythos_shared::package_abi::{
+    OBJECT_KIND_PACKAGE_DEFINED_OBJECT, PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES,
+    PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+    PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+    PackageDefinedObjectCreateV0,
+};
+use pythos_shared::package_abi::{PackageStatus, SYSCALL_PACKAGE_CONTEXT};
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 use pythos_shared::pyth_runtime_abi::{
     GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR, GRAPH_MAX_LOG_BYTES,
     GRAPH_RESULT_UNIT, GraphExitRecord,
@@ -89,7 +167,13 @@ const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
 const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
 const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00);
 const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const PYTH_GRAPH_SYSTEM_LOG_RESOURCE: ResourceId = ResourceId::new(0x5059_5447_4C4F_4700);
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 const MAX_TASK_INPUT_BYTES: u64 = 64;
@@ -158,9 +242,21 @@ pub enum SyscallError {
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
     UserCopy(UserCopyError),
-    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    #[cfg(any(
+        test,
+        all(
+            not(test),
+            any(not(feature = "verify"), feature = "phase13-package-test")
+        )
+    ))]
     ObjectService(ObjectServiceError),
-    #[cfg(any(test, all(not(test), not(feature = "verify"))))]
+    #[cfg(any(
+        test,
+        all(
+            not(test),
+            any(not(feature = "verify"), feature = "phase13-package-test")
+        )
+    ))]
     RetainedService(RetainedServiceError),
     System(SystemApiError),
     UnexpectedSyscall,
@@ -195,6 +291,7 @@ enum SyscallDispatchKind {
     TaskRequest,
     PythGraphLog,
     PythGraphExit,
+    PackageContext,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -288,6 +385,14 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::PythGraphExit,
     },
+    SyscallEntry {
+        number: SYSCALL_PACKAGE_CONTEXT,
+        name: "SYSCALL_PACKAGE_CONTEXT",
+        introduced_major: 1,
+        introduced_minor: 0,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::PackageContext,
+    },
 ];
 
 impl From<CapabilityError> for SyscallError {
@@ -320,14 +425,26 @@ impl From<UserCopyError> for SyscallError {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 impl From<ObjectServiceError> for SyscallError {
     fn from(error: ObjectServiceError) -> Self {
         Self::ObjectService(error)
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 impl From<RetainedServiceError> for SyscallError {
     fn from(error: RetainedServiceError) -> Self {
         Self::RetainedService(error)
@@ -521,6 +638,7 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::TaskRequest => dispatch_task_request(args),
         SyscallDispatchKind::PythGraphLog => dispatch_pyth_graph_log(args),
         SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
+        SyscallDispatchKind::PackageContext => dispatch_package_context(args),
     }
 }
 
@@ -602,7 +720,13 @@ pub fn grant_system_control_capability(
     Ok(pack_syscall_capability(handle))
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 pub fn grant_pyth_graph_system_log_capability(
     process: ActiveUserProcess,
 ) -> Result<PackedCapability, SyscallError> {
@@ -614,6 +738,23 @@ pub fn grant_pyth_graph_system_log_capability(
         )
     })?;
     Ok(pack_syscall_capability(handle))
+}
+
+#[cfg(any(test, all(not(test), feature = "phase13-package-test")))]
+/// Issues the Phase 13 package-launch graph-log grant and exposes the same
+/// table for immediate `PackageService::launch` validation.
+pub fn with_pyth_graph_system_log_launch_capability<R>(
+    process: ActiveUserProcess,
+    f: impl FnOnce(CapabilityHandle, &CapabilityTable) -> R,
+) -> Result<R, SyscallError> {
+    with_syscall_capabilities(|table| {
+        let handle = table.grant(
+            process.service_id(),
+            PYTH_GRAPH_SYSTEM_LOG_RESOURCE,
+            RightsMask::new(RightsMask::LOG),
+        )?;
+        Ok(f(handle, table))
+    })
 }
 
 fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
@@ -658,7 +799,13 @@ fn dispatch_console_write_for_caller(
     Ok(SYSCALL_OK)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
     let caller = process_context::current_caller()?;
     if args.arg1 != size_of::<ObjectShellRequest>() as u64
@@ -710,12 +857,18 @@ fn dispatch_object_request(args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(SYSCALL_OK)
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_object_request(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request_with_raw_buffers(
     caller: ActiveUserProcess,
     copy_map: &UserCopyMap,
@@ -724,13 +877,28 @@ fn dispatch_object_request_with_raw_buffers(
     if !valid_object_request_header(&request) {
         return Ok(bad_request_response());
     }
+    let package_defined_create_input = if request.operation == OP_CREATE_OBJECT
+        && request.object_kind == OBJECT_KIND_PACKAGE_DEFINED_OBJECT
+    {
+        match checked_package_defined_create_input(copy_map, &request)? {
+            Some(input) => Some(input),
+            None => return Ok(bad_request_response()),
+        }
+    } else {
+        None
+    };
     let input = if request.operation == OP_REVISE_FIELD {
         checked_request_input(copy_map, &request)?
     } else {
         &[]
     };
     let mut query_marker_entry = None;
-    let response = if request.operation == OP_QUERY_OBJECTS {
+    let response = if let Some(input) = package_defined_create_input {
+        retained_services::with_object_service(|service| {
+            dispatch_package_defined_create_to_service(service, caller, request, input)
+        })
+        .map_err(SyscallError::from)?
+    } else if request.operation == OP_QUERY_OBJECTS {
         if request.output_len < size_of::<[ObjectListEntry; MAX_QUERY_RESULTS]>() as u64 {
             return Ok(buffer_too_small_response());
         }
@@ -766,7 +934,29 @@ fn dispatch_object_request_with_raw_buffers(
     Ok(response)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn reconcile_package_schema_references_from_object_service(
+    object_service: &ObjectService,
+) -> Result<(), PackageStatus> {
+    package_service::with_retained_package_service_for_phase13(|package_service| {
+        package_service.reconcile_schema_references_from_object_service(object_service)
+    })
+    .unwrap_or(Err(PackageStatus::Denied))
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn object_operation_mutates(operation: u16) -> bool {
     matches!(operation, OP_CREATE_OBJECT | OP_REVISE_FIELD)
 }
@@ -1255,7 +1445,11 @@ fn task_operation_mutates(operation: u16) -> bool {
     )
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 fn validate_user_buffer(
     copy_map: &UserCopyMap,
     ptr: u64,
@@ -1270,7 +1464,106 @@ fn validate_user_buffer(
     Ok(())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn checked_package_defined_create_input<'a>(
+    copy_map: &UserCopyMap,
+    request: &ObjectShellRequest,
+) -> Result<Option<PackageDefinedCreateInput<'a>>, SyscallError> {
+    if request.input_len != size_of::<PackageDefinedObjectCreateV0>() as u64 {
+        return Ok(None);
+    }
+    validate_user_buffer(
+        copy_map,
+        request.input_ptr,
+        request.input_len,
+        align_of::<PackageDefinedObjectCreateV0>(),
+        UserCopyAccess::Read,
+    )?;
+    let create_ptr = request.input_ptr as *const PackageDefinedObjectCreateV0;
+    // SAFETY:
+    // 1. Invariant: `create_ptr` names one readable
+    //    PackageDefinedObjectCreateV0 in the active caller's user copy map.
+    // 2. Established by: exact input_len check, repr(C) alignment check, and
+    //    UserCopyMap readable-range validation above.
+    // 3. Lifetime: the record is copied by value and not retained.
+    // 4. Pointer ownership: user space owns the buffer; PythCore only reads it.
+    // 5. Alignment: checked against PackageDefinedObjectCreateV0 alignment.
+    // 6. Mapped length: UserCopyMap validated the full ABI record size.
+    // 7. Concurrency: object-shell syscalls are handled one at a time here.
+    // 8. Violation: stale copy-map state could read unrelated user memory.
+    let create = unsafe { create_ptr.read() };
+    if create.abi_major != PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR
+        || create.abi_minor != PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR
+        || create.flags != 0
+        || create.reserved0 != 0
+        || create.reserved1 != 0
+        || create.reserved2 != 0
+    {
+        return Ok(None);
+    }
+    let initial_state = match create.state_format {
+        PACKAGE_DEFINED_STATE_FORMAT_EMPTY => {
+            if create.initial_state_ptr != 0 || create.initial_state_len != 0 {
+                return Ok(None);
+            }
+            &[]
+        }
+        PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0 => {
+            if create.initial_state_ptr == 0
+                || create.initial_state_len == 0
+                || create.initial_state_len > PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES
+            {
+                return Ok(None);
+            }
+            copy_map.validate_range(
+                create.initial_state_ptr,
+                create.initial_state_len,
+                UserCopyAccess::Read,
+            )?;
+            // SAFETY:
+            // 1. Invariant: non-empty inline package-defined state names at
+            //    most PACKAGE_DEFINED_MAX_INITIAL_STATE_BYTES readable bytes
+            //    in the active caller's user copy map.
+            // 2. Established by: nonzero pointer/length checks, bounded length
+            //    check, and UserCopyMap readable-range validation above.
+            // 3. Lifetime: the slice is consumed synchronously while creating
+            //    the object and is not retained.
+            // 4. Pointer ownership: user space owns the bytes; PythCore copies
+            //    them into an object-owned typed field.
+            // 5. Alignment: byte slices require no stricter alignment than 1.
+            // 6. Mapped length: UserCopyMap validated the exact state range.
+            // 7. Concurrency: object-shell syscalls are handled one at a time.
+            // 8. Violation: stale copy-map state could read unrelated memory.
+            unsafe {
+                slice::from_raw_parts(
+                    create.initial_state_ptr as *const u8,
+                    create.initial_state_len as usize,
+                )
+            }
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(PackageDefinedCreateInput {
+        schema_object_id: ObjectId::new(create.schema_object_id),
+        schema_revision: create.schema_revision,
+        state_format: create.state_format,
+        initial_state,
+    }))
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn checked_query_output<'a>(
     copy_map: &UserCopyMap,
     request: &ObjectShellRequest,
@@ -1301,7 +1594,13 @@ fn checked_query_output<'a>(
     Ok(unsafe { slice::from_raw_parts_mut(output_ptr, MAX_QUERY_RESULTS) })
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn checked_request_input<'a>(
     copy_map: &UserCopyMap,
     request: &ObjectShellRequest,
@@ -1358,7 +1657,13 @@ fn dispatch_system_reboot_for_caller(
     Ok(SYSCALL_OK)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_pyth_graph_log(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg2 == 0 || args.arg2 > GRAPH_MAX_LOG_BYTES || args.arg3 != 0 || args.arg4 != 0 {
         return Err(SyscallError::BadResult);
@@ -1392,12 +1697,18 @@ fn dispatch_pyth_graph_log(args: SyscallArgs) -> Result<u64, SyscallError> {
     Ok(SYSCALL_OK)
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_pyth_graph_log(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
     if args.arg0 != crate::pyth_runtime_launch::PYTH_GRAPH_RESULT_USER_PTR
         || args.arg1 != size_of::<GraphExitRecord>() as u64
@@ -1436,7 +1747,13 @@ fn dispatch_pyth_graph_exit(args: SyscallArgs) -> Result<u64, SyscallError> {
     finalize_pyth_graph_exit(caller, exit)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn finalize_pyth_graph_exit(
     caller: ActiveUserProcess,
     exit: GraphExitRecord,
@@ -1454,12 +1771,100 @@ fn finalize_pyth_graph_exit(
     }
 }
 
-#[cfg(all(not(test), feature = "verify"))]
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
 fn dispatch_pyth_graph_exit(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
+fn dispatch_package_context(args: SyscallArgs) -> Result<u64, SyscallError> {
+    if args.arg0 != u64::from(OP_PACKAGE_CONTEXT_SCHEMA) || args.arg4 != 0 {
+        return Ok(u64::from(PackageStatus::BadRequest as u16));
+    }
+    if args.arg1 > u64::from(u16::MAX) {
+        return Ok(u64::from(PackageStatus::BadRequest as u16));
+    }
+    if args.arg3 != size_of::<PackageRuntimeSchemaBindingV0>() as u64 {
+        return Ok(u64::from(PackageStatus::BufferTooSmall as u16));
+    }
+
+    let caller = process_context::current_caller()?;
+    let copy_map = caller.copy_map();
+    validate_user_buffer(
+        &copy_map,
+        args.arg2,
+        args.arg3,
+        align_of::<PackageRuntimeSchemaBindingV0>(),
+        UserCopyAccess::Write,
+    )?;
+    let binding = match package_runtime_schema_binding(caller, args.arg1 as u16) {
+        Ok(binding) => binding,
+        Err(status) => return Ok(u64::from(status as u16)),
+    };
+    let output_ptr = args.arg2 as *mut PackageRuntimeSchemaBindingV0;
+    // SAFETY:
+    // 1. Invariant: `output_ptr` names one writable
+    //    PackageRuntimeSchemaBindingV0 in the active caller's user copy map.
+    // 2. Established by: exact output length, natural alignment, and
+    //    UserCopyMap writable-range validation above.
+    // 3. Lifetime: the pointer is consumed only for this syscall copy-out.
+    // 4. Pointer ownership: user space owns the output buffer; PythCore writes
+    //    exactly one ABI record and retains no reference.
+    // 5. Alignment: checked against PackageRuntimeSchemaBindingV0 alignment.
+    // 6. Mapped length: UserCopyMap validated the exact ABI record size.
+    // 7. Concurrency: one package-context syscall is handled at a time in this
+    //    Phase 13 slice.
+    // 8. Violation: stale copy-map state could corrupt user memory or fault.
+    unsafe {
+        output_ptr.write(binding);
+    }
+    Ok(u64::from(PackageStatus::Ok as u16))
+}
+
+#[cfg(all(not(test), feature = "verify", not(feature = "phase13-package-test")))]
+fn dispatch_package_context(_args: SyscallArgs) -> Result<u64, SyscallError> {
+    Ok(u64::from(PackageStatus::Denied as u16))
+}
+
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+fn package_runtime_schema_binding(
+    caller: ActiveUserProcess,
+    schema_slot: u16,
+) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
+    package_service::with_retained_package_service_for_phase13(|service| {
+        service.runtime_schema_binding(caller, schema_slot)
+    })
+    .unwrap_or(Err(PackageStatus::Denied))
+}
+
+#[cfg(all(
+    not(test),
+    not(feature = "verify"),
+    feature = "hardware-probe",
+    not(feature = "phase13-package-test")
+))]
+fn package_runtime_schema_binding(
+    _caller: ActiveUserProcess,
+    _schema_slot: u16,
+) -> Result<PackageRuntimeSchemaBindingV0, PackageStatus> {
+    Err(PackageStatus::Denied)
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError> {
     if exit.result_type != GRAPH_RESULT_UNIT || exit.reserved0 != 0 || exit.reserved1 != 0 {
         return Err(SyscallError::BadResult);
@@ -1471,7 +1876,10 @@ fn validate_graph_exit_record(exit: GraphExitRecord) -> Result<(), SyscallError>
     }
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_graph_exit_marker(exit: GraphExitRecord) {
     if exit.status == GRAPH_EXIT_BUDGET_EXHAUSTED {
         serial::write_str("PYTHOS:PYTHTIG:BUDGET_EXHAUSTED node:");
@@ -1495,7 +1903,48 @@ fn emit_graph_exit_marker(exit: GraphExitRecord) {
 #[cfg(test)]
 fn emit_graph_exit_marker(_exit: GraphExitRecord) {}
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn dispatch_package_defined_create_to_service(
+    service: &mut ObjectService,
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    input: PackageDefinedCreateInput<'_>,
+) -> ObjectShellResponse {
+    let mut staged_service = *service;
+    match staged_service.create_package_defined_object(caller, request.authority, input) {
+        Ok(created) => {
+            if let Err(status) =
+                reconcile_package_schema_references_from_object_service(&staged_service)
+            {
+                return package_retention_error_response(caller, request, status);
+            }
+            *service = staged_service;
+            ObjectShellResponse {
+                status: STATUS_OK,
+                object_kind: request.object_kind,
+                object_id: created.object_id.raw(),
+                revision: created.revision,
+                capability: created.object_capability,
+                ..empty_response()
+            }
+        }
+        Err(error) => object_error_response(caller, request, error),
+    }
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn dispatch_object_request_to_service(
     service: &mut ObjectService,
     caller: ActiveUserProcess,
@@ -1604,7 +2053,13 @@ fn dispatch_object_request_to_service(
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn valid_object_request_header(request: &ObjectShellRequest) -> bool {
     request.abi_major == OBJECT_SHELL_ABI_MAJOR
         && request.abi_minor == OBJECT_SHELL_ABI_MINOR
@@ -1613,7 +2068,13 @@ fn valid_object_request_header(request: &ObjectShellRequest) -> bool {
         && request.reserved2 == 0
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn request_object_kind(kind: u16) -> Result<ObjectKind, ObjectServiceError> {
     if kind == OBJECT_KIND_NOTE {
         Ok(ObjectKind::Note)
@@ -1622,7 +2083,13 @@ fn request_object_kind(kind: u16) -> Result<ObjectKind, ObjectServiceError> {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
     let status = match error {
         ObjectServiceError::Denied => {
@@ -1639,7 +2106,37 @@ fn error_response(error: ObjectServiceError) -> ObjectShellResponse {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
+fn package_retention_error_response(
+    caller: ActiveUserProcess,
+    request: ObjectShellRequest,
+    status: PackageStatus,
+) -> ObjectShellResponse {
+    match status {
+        PackageStatus::Denied => object_error_response(caller, request, ObjectServiceError::Denied),
+        PackageStatus::NotFound => {
+            object_error_response(caller, request, ObjectServiceError::NotFound)
+        }
+        PackageStatus::QuotaDenied => {
+            object_error_response(caller, request, ObjectServiceError::Denied)
+        }
+        _ => bad_request_response(),
+    }
+}
+
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 fn object_error_response(
     caller: ActiveUserProcess,
     request: ObjectShellRequest,
@@ -1649,7 +2146,10 @@ fn object_error_response(
     error_response(error)
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_pythtig_object_success_marker(
     caller: ActiveUserProcess,
     operation: u16,
@@ -1715,7 +2215,10 @@ fn emit_pythtig_object_success_marker(
 ) {
 }
 
-#[cfg(all(not(test), not(feature = "verify")))]
+#[cfg(all(
+    not(test),
+    any(not(feature = "verify"), feature = "phase13-package-test")
+))]
 fn emit_pythtig_object_denial_marker(
     caller: ActiveUserProcess,
     request: ObjectShellRequest,
@@ -1744,7 +2247,13 @@ fn emit_pythtig_object_denial_marker(
 ) {
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn empty_response() -> ObjectShellResponse {
     ObjectShellResponse {
         status: STATUS_BAD_REQUEST,
@@ -1760,12 +2269,24 @@ const fn empty_response() -> ObjectShellResponse {
     }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn bad_request_response() -> ObjectShellResponse {
     empty_response()
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn buffer_too_small_response() -> ObjectShellResponse {
     ObjectShellResponse {
         status: STATUS_BUFFER_TOO_SMALL,
@@ -1798,7 +2319,13 @@ fn validate_syscall_capability(
     Ok(())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(
+        not(test),
+        any(not(feature = "verify"), feature = "phase13-package-test")
+    )
+))]
 const fn pack_syscall_capability(handle: CapabilityHandle) -> PackedCapability {
     PackedCapability::from_parts(handle.slot(), handle.generation())
 }
@@ -1807,7 +2334,11 @@ const fn unpack_syscall_capability(capability: PackedCapability) -> CapabilityHa
     CapabilityHandle::from_parts(capability.slot(), capability.generation())
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
 const fn is_aligned(ptr: u64, alignment: usize) -> bool {
     ptr != 0 && ptr.is_multiple_of(alignment as u64)
 }
@@ -2102,13 +2633,26 @@ fn write_msr(msr: u32, value: u64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::object_relationships::{PACKAGE_LOCATOR_ROOT_OBJECT_ID, SHELL_WORKSPACE_OBJECT_ID};
     use crate::object_service::ObjectService;
+    use crate::package_service::{
+        PackageLaunchGrant, PackageLaunchRequest, PackageLaunchRequirement,
+    };
+    use crate::shell_objects::ObjectId;
     use crate::shell_objects::ObjectKind;
     use crate::user_copy::{UserCopyError, UserCopyMap};
     use pythos_shared::object_shell_abi::{
         FIELD_TEXT, OBJECT_KIND_NOTE, OBJECT_SHELL_ABI_MAJOR, OBJECT_SHELL_ABI_MINOR,
         OP_CREATE_OBJECT, OP_QUERY_OBJECTS, OP_REVISE_FIELD, ObjectListEntry, ObjectShellRequest,
-        ObjectShellResponse, STATUS_DENIED, STATUS_OK,
+        ObjectShellResponse, STATUS_BAD_REQUEST, STATUS_DENIED, STATUS_NOT_FOUND, STATUS_OK,
+    };
+    use pythos_shared::package_abi::{
+        FIELD_PACKAGE_INLINE_STATE_V0, FIELD_PACKAGE_SCHEMA_REF_V0,
+        OBJECT_KIND_PACKAGE_DEFINED_OBJECT, OP_PACKAGE_CONTEXT_SCHEMA,
+        PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR, PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+        PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+        PackageDefinedObjectCreateV0, PackageRuntimeSchemaBindingV0, PackageStatus,
+        SYSCALL_PACKAGE_CONTEXT,
     };
     use pythos_shared::task_abi::{
         MAX_TASK_PROPOSAL_RESULTS, OP_APPEND_TASK_EVENT, OP_CREATE_PROPOSAL, OP_CREATE_TASK,
@@ -2173,6 +2717,128 @@ mod tests {
     }
 
     #[test]
+    fn package_context_syscall_denies_non_package_process() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let non_package_process = package_context_intruder_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let original_output = *output;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(non_package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Denied as u16))
+        );
+        assert_eq!(*output, original_output);
+    }
+
+    #[test]
+    fn package_context_syscall_copies_schema_slot_zero_binding() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+        assert_eq!(output.abi_major, 0);
+        assert_eq!(output.abi_minor, 1);
+        assert_eq!(output.schema_slot, 0);
+        assert_eq!(output.reserved0, 0);
+        assert_eq!(output.package_object_id, PACKAGE_CONTEXT_PACKAGE_ID);
+        assert_eq!(output.package_revision, PACKAGE_CONTEXT_PACKAGE_REVISION);
+        assert_eq!(output.schema_object_id, PACKAGE_CONTEXT_SCHEMA_ID);
+        assert_eq!(output.schema_revision, PACKAGE_CONTEXT_SCHEMA_REVISION);
+        assert_eq!(
+            output.schema_descriptor_sha256,
+            PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST
+        );
+        assert_eq!(output.reserved1, [0; 16]);
+    }
+
+    #[test]
+    fn package_context_syscall_uses_phase13_retained_package_service() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+        assert_eq!(output.package_object_id, PACKAGE_CONTEXT_PACKAGE_ID);
+        assert_eq!(output.schema_object_id, PACKAGE_CONTEXT_SCHEMA_ID);
+        assert_eq!(
+            output.schema_descriptor_sha256,
+            PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST
+        );
+    }
+
+    #[test]
+    fn package_context_syscall_rejects_wrong_output_length_without_writing() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let original_output = *output;
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(
+                0,
+                &mut output,
+                package_binding_len() - 1
+            )),
+            Ok(u64::from(PackageStatus::BufferTooSmall as u16))
+        );
+        assert_eq!(*output, original_output);
+    }
+
+    #[test]
+    fn package_context_syscall_does_not_mutate_package_state() {
+        let _guard = package_context_syscall_test_lock();
+        let package_process = package_context_process();
+        let service = package_context_service_with_launch_context(package_process);
+        let _service_guard =
+            crate::package_service::initialize_retained_package_service_for_phase13_test(service);
+        let before = package_context_state_snapshot();
+        let mut output = Box::new(empty_package_schema_binding_output());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(package_process.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch(package_context_args(0, &mut output, package_binding_len())),
+            Ok(u64::from(PackageStatus::Ok as u16))
+        );
+
+        let after = package_context_state_snapshot();
+        assert_eq!(after, before);
+    }
+
+    #[test]
     fn abi_info_dispatch_does_not_require_proof_expectation() {
         let _guard = EXPECTED_SYSCALL_TEST_LOCK.lock().unwrap();
         EXPECTED_SYSCALL.store(false, Ordering::SeqCst);
@@ -2231,6 +2897,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_log_requires_runtime_capability_and_readable_text() {
+        let _process_guard = process_context_test_lock();
         let runtime = pyth_runtime_process();
         let intruder = ActiveUserProcess::new(ServiceId::from_raw(0x99), 0xAA, 0xBB);
         reset_syscall_capabilities_for_test();
@@ -2270,6 +2937,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_exit_requires_runtime_result_pointer_and_valid_record() {
+        let _process_guard = process_context_test_lock();
         let runtime = pyth_runtime_process();
         let exit = GraphExitRecord {
             status: GRAPH_EXIT_OK,
@@ -2316,6 +2984,7 @@ mod tests {
 
     #[test]
     fn pyth_graph_exit_accepts_active_native_graph_process_identity() {
+        let _process_guard = process_context_test_lock();
         let native = ActiveUserProcess::new(
             ServiceId::from_raw(0x5059_5447_5254_0002),
             crate::pyth_runtime_launch::HELLO_GRAPH_PRINCIPAL_ID,
@@ -2435,7 +3104,363 @@ mod tests {
     }
 
     #[test]
+    fn package_defined_object_syscall_creates_with_schema_ref_and_inline_state() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let _package_guard =
+            retained_package_service_with_schema(schema.object_id, schema.revision);
+        let state = Box::new(*b"seed-state");
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+            state.as_ptr() as u64,
+            state.len() as u64,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, Some(&state[..]));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_eq!(response.revision, 1);
+        assert_ne!(response.object_id, 0);
+        assert_ne!(response.capability.raw(), 0);
+
+        retained_services::with_object_service(|service| {
+            let inspection = service
+                .inspect_object(
+                    shell,
+                    response.capability,
+                    ObjectId::new(response.object_id),
+                )
+                .unwrap();
+            let schema_ref = inspection
+                .field_bytes(FIELD_PACKAGE_SCHEMA_REF_V0)
+                .expect("schema ref field");
+            let inline_state = inspection
+                .field_bytes(FIELD_PACKAGE_INLINE_STATE_V0)
+                .expect("inline state field");
+            assert_eq!(
+                inspection.object.object_kind(),
+                ObjectKind::PackageDefinedObject
+            );
+            assert_eq!(inspection.revision, 1);
+            assert_eq!(&schema_ref[..8], &schema.object_id.raw().to_le_bytes());
+            assert_eq!(&schema_ref[8..16], &schema.revision.to_le_bytes());
+            assert_eq!(
+                inspection.field_value_len(FIELD_PACKAGE_SCHEMA_REF_V0),
+                Some(16)
+            );
+            assert_eq!(
+                inspection.field_value_len(FIELD_PACKAGE_INLINE_STATE_V0),
+                Some(state.len() as u16)
+            );
+            assert_eq!(&inline_state[..state.len()], &state[..]);
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn package_defined_object_syscall_registers_schema_retention_from_created_object() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _object_guard = retained_services::initialize_object_service_for_test(service);
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_schema_descriptor_content_for_test(
+                7000,
+                1,
+                [0xA5; 32],
+                schema.object_id.raw(),
+                schema.revision,
+                [7; 32],
+            )
+            .unwrap();
+        let _package_guard =
+            package_service::initialize_retained_package_service_for_phase13_test(package_service);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            package_service::with_retained_package_service_for_phase13(|service| {
+                service
+                    .schema_descriptor_retention_count_for_test(schema.object_id, schema.revision)
+            }),
+            Some(Some(0))
+        );
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, STATUS_OK);
+        assert_ne!(response.object_id, 0);
+
+        assert_eq!(
+            package_service::with_retained_package_service_for_phase13(|service| {
+                service
+                    .schema_descriptor_retention_count_for_test(schema.object_id, schema.revision)
+            }),
+            Some(Some(1))
+        );
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_unretainable_schema_without_creation() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _object_guard = retained_services::initialize_object_service_for_test(service);
+        let _package_guard = package_service::initialize_retained_package_service_for_phase13_test(
+            PackageService::new_empty_for_test(),
+        );
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_NOT_FOUND);
+        assert_eq!(response.object_id, 0);
+        let references = retained_services::with_object_service(|service| {
+            service.package_defined_schema_references().unwrap()
+        })
+        .unwrap();
+        assert!(references.iter().all(Option::is_none));
+    }
+
+    #[test]
+    fn package_launch_object_service_grant_reaches_package_defined_object_syscall() {
+        let _process_guard = process_context_test_lock();
+        let mut object_service = ObjectService::new_for_test();
+        let package_process = ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4C47_5A01),
+            0x504B_5A01,
+            0x13,
+        );
+        let workspace = object_service
+            .grant_workspace_capability(package_process)
+            .unwrap();
+        let schema = object_service
+            .create_schema_definition_object(
+                package_process,
+                ObjectId::new(0x5059_5343_484F_5A11),
+                ObjectId::new(0x5059_504B_474F_5A11),
+                [0x5A; 32],
+            )
+            .unwrap();
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_launch_export_for_test(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                b"seed",
+                b"object-create",
+                0x5059_504B_474F_5A11,
+                1,
+                [0xA5; 32],
+                schema.object_id.raw(),
+                schema.revision,
+                [0x5A; 32],
+            )
+            .unwrap();
+        let requirement = PackageLaunchRequirement {
+            requirement_id: 7,
+            graph_import_slot: 0,
+            resource: ResourceId::new(SHELL_WORKSPACE_OBJECT_ID),
+            rights: RightsMask::new(RightsMask::WRITE),
+        };
+        package_service
+            .record_launch_requirement(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                "seed/object-create",
+                requirement,
+            )
+            .unwrap();
+        let supplied_grants = [PackageLaunchGrant::from_packed(
+            requirement.requirement_id,
+            workspace,
+        )];
+        let launch = package_service
+            .launch_with_validator(
+                PackageLaunchRequest {
+                    caller: package_process,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/object-create",
+                    supplied_grants: &supplied_grants,
+                },
+                &object_service,
+            )
+            .unwrap();
+        let graph_grant = launch.graph_import_grant(0).unwrap();
+        let _guard = retained_services::initialize_object_service_for_test(object_service);
+        let _package_guard =
+            retained_package_service_with_schema(schema.object_id, schema.revision);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(
+            graph_grant.capability,
+            &create,
+        ));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(package_process, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(launch.grant(0), Some(supplied_grants[0]));
+        assert_eq!(graph_grant.capability, workspace);
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_PACKAGE_DEFINED_OBJECT);
+        assert_ne!(response.object_id, 0);
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_invalid_schema_revision_without_creation() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision + 1,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_NOT_FOUND);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_nonzero_reserved_fields_without_creation() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let mut create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_EMPTY,
+            0,
+            0,
+        ));
+        create.reserved0 = 1;
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, None);
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_BAD_REQUEST);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_denies_oversized_inline_state_without_creation() {
+        let _process_guard = process_context_test_lock();
+        let (service, shell, workspace, schema) = package_defined_schema_fixture();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let state = Box::new([0x5Au8; 17]);
+        let create = Box::new(package_defined_create_record(
+            schema.object_id,
+            schema.revision,
+            PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
+            state.as_ptr() as u64,
+            state.len() as u64,
+        ));
+        let request = Box::new(package_defined_create_request(workspace, &create));
+        let mut response = Box::new(empty_test_response());
+        bind_package_defined_copy_map(shell, &request, &response, &create, Some(&state[..]));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_BAD_REQUEST);
+        assert_eq!(response.object_id, 0);
+        assert!(!retained_object_exists(ObjectId::new(1042)));
+    }
+
+    #[test]
+    fn package_defined_object_syscall_preserves_legacy_note_create_behavior() {
+        let _process_guard = process_context_test_lock();
+        let service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let _guard = retained_services::initialize_object_service_for_test(service);
+        let request = Box::new(object_request(OP_CREATE_OBJECT, workspace));
+        let mut response = Box::new(empty_test_response());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*request, true, false);
+        map_value(&mut copy_map, &*response, true, true);
+        process_context::bind_current_process(shell.with_copy_map(copy_map));
+
+        assert_eq!(
+            dispatch_object_request(object_args(&request, &mut response)),
+            Ok(SYSCALL_OK)
+        );
+
+        assert_eq!(response.status, STATUS_OK);
+        assert_eq!(response.object_kind, OBJECT_KIND_NOTE);
+        assert_eq!(response.revision, 1);
+        retained_services::with_object_service(|service| {
+            let inspection = service
+                .inspect_object(
+                    shell,
+                    response.capability,
+                    ObjectId::new(response.object_id),
+                )
+                .unwrap();
+            assert_eq!(inspection.object.object_kind(), ObjectKind::Note);
+        })
+        .unwrap();
+    }
+
+    #[test]
     fn object_request_rejects_unmapped_request_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2455,6 +3480,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_cross_mapping_request_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2479,6 +3505,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_kernel_request_pointer_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2505,6 +3532,7 @@ mod tests {
 
     #[test]
     fn object_request_rejects_overflowing_request_range_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2531,6 +3559,7 @@ mod tests {
 
     #[test]
     fn object_request_requires_writable_response_before_service_mutation() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2551,6 +3580,7 @@ mod tests {
 
     #[test]
     fn object_query_requires_writable_output_before_service_borrow() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2581,6 +3611,7 @@ mod tests {
 
     #[test]
     fn object_query_rejects_overflowing_output_range_before_writing_entries() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2606,6 +3637,7 @@ mod tests {
 
     #[test]
     fn object_revise_rejects_unmapped_input_without_mutating_object() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let workspace = service.test_shell_workspace_capability();
@@ -2641,6 +3673,7 @@ mod tests {
 
     #[test]
     fn task_request_create_and_read_active_use_current_caller_authority() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let user_control = {
@@ -2684,6 +3717,7 @@ mod tests {
 
     #[test]
     fn task_request_appends_context_event_to_active_task() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let _guard = retained_services::initialize_object_service_for_test(service);
@@ -2732,6 +3766,7 @@ mod tests {
 
     #[test]
     fn task_request_lists_pending_proposals_to_output_buffer() {
+        let _process_guard = process_context_test_lock();
         let service = ObjectService::new_for_test();
         let shell = service.test_shell_caller();
         let _guard = retained_services::initialize_object_service_for_test(service);
@@ -2784,6 +3819,7 @@ mod tests {
 
     #[test]
     fn task_request_denies_steward_create_with_proposal_capability() {
+        let _process_guard = process_context_test_lock();
         let mut service = ObjectService::new_for_test();
         let steward = crate::task_service::steward_process();
         let steward_propose = {
@@ -2871,6 +3907,99 @@ mod tests {
         }
     }
 
+    fn package_defined_schema_fixture() -> (
+        ObjectService,
+        ActiveUserProcess,
+        PackedCapability,
+        crate::object_service::ObjectCreateResult,
+    ) {
+        let mut service = ObjectService::new_for_test();
+        let shell = service.test_shell_caller();
+        let workspace = service.test_shell_workspace_capability();
+        let schema = service
+            .create_schema_definition_object(
+                shell,
+                ObjectId::new(7001),
+                ObjectId::new(7000),
+                [7; 32],
+            )
+            .unwrap();
+        (service, shell, workspace, schema)
+    }
+
+    fn retained_package_service_with_schema(
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+    ) -> package_service::RetainedPackageServicePhase13TestGuard {
+        let mut package_service = PackageService::new_empty_for_test();
+        package_service
+            .seed_schema_descriptor_content_for_test(
+                7000,
+                1,
+                [0xA5; 32],
+                schema_object_id.raw(),
+                schema_revision,
+                [7; 32],
+            )
+            .unwrap();
+        package_service::initialize_retained_package_service_for_phase13_test(package_service)
+    }
+
+    const fn package_defined_create_record(
+        schema_object_id: ObjectId,
+        schema_revision: u64,
+        state_format: u16,
+        initial_state_ptr: u64,
+        initial_state_len: u64,
+    ) -> PackageDefinedObjectCreateV0 {
+        PackageDefinedObjectCreateV0 {
+            abi_major: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MAJOR,
+            abi_minor: PACKAGE_DEFINED_OBJECT_CREATE_ABI_MINOR,
+            state_format,
+            flags: 0,
+            schema_object_id: schema_object_id.raw(),
+            schema_revision,
+            initial_state_ptr,
+            initial_state_len,
+            reserved0: 0,
+            reserved1: 0,
+            reserved2: 0,
+        }
+    }
+
+    fn package_defined_create_request(
+        authority: PackedCapability,
+        create: &PackageDefinedObjectCreateV0,
+    ) -> ObjectShellRequest {
+        let mut request = object_request(OP_CREATE_OBJECT, authority);
+        request.object_kind = OBJECT_KIND_PACKAGE_DEFINED_OBJECT;
+        request.input_ptr = create as *const PackageDefinedObjectCreateV0 as u64;
+        request.input_len = size_of::<PackageDefinedObjectCreateV0>() as u64;
+        request
+    }
+
+    fn bind_package_defined_copy_map(
+        caller: ActiveUserProcess,
+        request: &ObjectShellRequest,
+        response: &ObjectShellResponse,
+        create: &PackageDefinedObjectCreateV0,
+        state: Option<&[u8]>,
+    ) {
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, request, true, false);
+        map_value(&mut copy_map, response, true, true);
+        map_value(&mut copy_map, create, true, false);
+        if let Some(state) = state {
+            map_slice(&mut copy_map, state, true, false);
+        }
+        process_context::bind_current_process(caller.with_copy_map(copy_map));
+    }
+
+    fn retained_object_exists(object_id: ObjectId) -> bool {
+        retained_services::with_object_service(|service| service.object_exists_for_test(object_id))
+            .unwrap()
+    }
+
     const fn empty_test_response() -> ObjectShellResponse {
         ObjectShellResponse {
             status: STATUS_BAD_REQUEST,
@@ -2955,6 +4084,119 @@ mod tests {
         }; MAX_TASK_PROPOSAL_RESULTS]
     }
 
+    const PACKAGE_CONTEXT_PACKAGE_ID: u64 = 0x5059_504B_474F_1305;
+    const PACKAGE_CONTEXT_PACKAGE_REVISION: u64 = 9;
+    const PACKAGE_CONTEXT_SCHEMA_ID: u64 = 0x5059_5343_484F_1305;
+    const PACKAGE_CONTEXT_SCHEMA_REVISION: u64 = 4;
+    const PACKAGE_CONTEXT_RELEASE_DIGEST: [u8; 32] = [
+        0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0xA6, 0xA7, 0xA8, 0xA9, 0xAA, 0xAB, 0xAC, 0xAD, 0xAE,
+        0xAF, 0xB0, 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB, 0xBC, 0xBD,
+        0xBE, 0xBF,
+    ];
+    const PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST: [u8; 32] = [
+        0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0xD8, 0xD9, 0xDA, 0xDB, 0xDC, 0xDD, 0xDE,
+        0xDF, 0xE0, 0xE1, 0xE2, 0xE3, 0xE4, 0xE5, 0xE6, 0xE7, 0xE8, 0xE9, 0xEA, 0xEB, 0xEC, 0xED,
+        0xEE, 0xEF,
+    ];
+
+    fn package_context_service_with_launch_context(
+        process: ActiveUserProcess,
+    ) -> PackageService<'static> {
+        let mut service = PackageService::new_empty_for_test();
+        service
+            .seed_launch_export_for_test(
+                ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                b"seed",
+                b"launch",
+                PACKAGE_CONTEXT_PACKAGE_ID,
+                PACKAGE_CONTEXT_PACKAGE_REVISION,
+                PACKAGE_CONTEXT_RELEASE_DIGEST,
+                PACKAGE_CONTEXT_SCHEMA_ID,
+                PACKAGE_CONTEXT_SCHEMA_REVISION,
+                PACKAGE_CONTEXT_SCHEMA_DESCRIPTOR_DIGEST,
+            )
+            .unwrap();
+        let supplied_grants = [];
+        let capabilities = CapabilityTable::new();
+        service
+            .launch(
+                PackageLaunchRequest {
+                    caller: process,
+                    namespace_root: ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID),
+                    locator: "seed/launch",
+                    supplied_grants: &supplied_grants,
+                },
+                &capabilities,
+            )
+            .unwrap();
+        service
+    }
+
+    const fn empty_package_schema_binding_output() -> PackageRuntimeSchemaBindingV0 {
+        PackageRuntimeSchemaBindingV0 {
+            abi_major: 0xFFFF,
+            abi_minor: 0xFFFF,
+            schema_slot: 0xFFFF,
+            reserved0: 0xFFFF,
+            package_object_id: u64::MAX,
+            package_revision: u64::MAX,
+            schema_object_id: u64::MAX,
+            schema_revision: u64::MAX,
+            schema_descriptor_sha256: [0xCC; 32],
+            reserved1: [0xCC; 16],
+        }
+    }
+
+    const fn package_binding_len() -> u64 {
+        size_of::<PackageRuntimeSchemaBindingV0>() as u64
+    }
+
+    fn package_context_args(
+        schema_slot: u16,
+        output: &mut PackageRuntimeSchemaBindingV0,
+        output_len: u64,
+    ) -> SyscallArgs {
+        SyscallArgs {
+            number: SYSCALL_PACKAGE_CONTEXT,
+            arg0: u64::from(OP_PACKAGE_CONTEXT_SCHEMA),
+            arg1: u64::from(schema_slot),
+            arg2: output as *mut PackageRuntimeSchemaBindingV0 as u64,
+            arg3: output_len,
+            arg4: 0,
+        }
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    struct PackageContextStateSnapshot {
+        package_count: usize,
+        schema_count: usize,
+        runtime_context_count: usize,
+        package_object_id: u64,
+        package_revision: u64,
+        schema_object_id: u64,
+        schema_revision: u64,
+        schema_descriptor_digest: [u8; 32],
+    }
+
+    fn package_context_state_snapshot() -> PackageContextStateSnapshot {
+        crate::package_service::with_retained_package_service_for_phase13(|service| {
+            let export = service
+                .resolve_export(ObjectId::new(PACKAGE_LOCATOR_ROOT_OBJECT_ID), "seed/launch")
+                .unwrap();
+            PackageContextStateSnapshot {
+                package_count: service.registry().package_count(),
+                schema_count: service.registry().schema_count(),
+                runtime_context_count: service.runtime_context_count_for_test(),
+                package_object_id: export.package_object_id,
+                package_revision: export.package_revision,
+                schema_object_id: export.schema_object_id,
+                schema_revision: export.schema_revision,
+                schema_descriptor_digest: export.schema_descriptor_digest,
+            }
+        })
+        .expect("service")
+    }
+
     fn task_event_input_bytes(input: &TaskEventInput) -> &[u8] {
         let ptr = input as *const TaskEventInput as *const u8;
         // SAFETY:
@@ -3019,6 +4261,32 @@ mod tests {
             crate::pyth_runtime_launch::PYTH_RUNTIME_PRINCIPAL_ID,
             0x1234,
         )
+    }
+
+    fn package_context_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4354_5801),
+            0x5059_504B_5254_5801,
+            0x1305,
+        )
+    }
+
+    fn package_context_intruder_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(
+            ServiceId::from_raw(0x5059_504B_4354_58FF),
+            0x5059_504B_5254_58FF,
+            0xFFFF,
+        )
+    }
+
+    fn package_context_syscall_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        process_context_test_lock()
+    }
+
+    fn process_context_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::process_context::PROCESS_CONTEXT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 
     fn graph_log_args(capability: PackedCapability, ptr: u64, len: u64) -> SyscallArgs {

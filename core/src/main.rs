@@ -9,6 +9,8 @@
 compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "pyth-tig-default", feature = "legacy-shell"))]
 compile_error!("features `pyth-tig-default` and `legacy-shell` are mutually exclusive");
+#[cfg(all(feature = "phase13-package-test", not(feature = "verify")))]
+compile_error!("feature `phase13-package-test` requires `verify`");
 
 mod architecture;
 mod audio;
@@ -50,10 +52,50 @@ mod normal_init;
 mod object_browser;
 mod object_locator;
 mod object_relationships;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
 mod object_service;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
 mod object_service_checkpoint;
+#[cfg(any(test, feature = "phase13-package-test"))]
+mod package_acceptance;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod package_candidate_store;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod package_content_store;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod package_registry;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod package_service;
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod package_source;
 mod permission_validation;
 mod persistent_objects;
 mod process;
@@ -70,7 +112,11 @@ mod pyth_runtime_launch;
 mod pyth_service_supervisor;
 mod qemu_exit;
 mod resource_quotas;
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"))
+))]
 mod retained_services;
 mod revision_history;
 mod runtime_loader;
@@ -1599,35 +1645,61 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             qemu_exit::panic();
         }
 
-        #[cfg(feature = "sdhci-emmc-backend")]
-        if storage_backend_screen::render(&boot_info.framebuffer, _block_device).is_err() {
-            serial::write_line("PYTHOS:PANIC");
-            qemu_exit::panic();
-        }
-        serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
-        serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
-        #[cfg(feature = "evidence-terminal")]
+        #[cfg(feature = "phase13-package-test")]
         {
-            let snapshot = match evidence_log::snapshot() {
-                Ok(snapshot) => snapshot,
-                Err(_) => {
-                    serial::write_line("PYTHOS:PANIC");
-                    qemu_exit::panic();
-                }
-            };
-            if evidence_terminal::render(&snapshot, &boot_info.framebuffer).is_err() {
+            let phase13_supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
+            if package_acceptance::run_package_format_acceptance(
+                boot_info,
+                _block_device,
+                &mut physical_memory,
+                &phase13_supervisor_mappings,
+            )
+            .is_err()
+            {
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
-            if snapshot.header.dropped == 0 {
-                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_READY");
-                evidence_terminal::dwell_after_ready_marker();
-            } else {
-                serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED");
+            if package_acceptance::restore_stack_smoke_requested()
+                && package_acceptance::run_restore_stack_smoke(_block_device).is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
+            qemu_exit::success();
         }
-        qemu_exit::success();
+
+        #[cfg(not(feature = "phase13-package-test"))]
+        {
+            #[cfg(feature = "sdhci-emmc-backend")]
+            if storage_backend_screen::render(&boot_info.framebuffer, _block_device).is_err() {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            serial::write_line("PYTHOS:CORE:FRAMEBUFFER_READY");
+            serial::write_line("PYTHOS:CORE:MILESTONE_1_COMPLETE");
+            #[cfg(feature = "evidence-terminal")]
+            {
+                let snapshot = match evidence_log::snapshot() {
+                    Ok(snapshot) => snapshot,
+                    Err(_) => {
+                        serial::write_line("PYTHOS:PANIC");
+                        qemu_exit::panic();
+                    }
+                };
+                if evidence_terminal::render(&snapshot, &boot_info.framebuffer).is_err() {
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+                if snapshot.header.dropped == 0 {
+                    serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_READY");
+                    evidence_terminal::dwell_after_ready_marker();
+                } else {
+                    serial::write_line("PYTHOS:CORE:EVIDENCE_TERMINAL_DROPPED");
+                    qemu_exit::panic();
+                }
+            }
+            qemu_exit::success();
+        }
     }
 
     // ADR 0052: normal boot skips the verification proof sequence above

@@ -213,7 +213,31 @@ pub fn initialize(boot_info: &PythBootInfo) -> Result<PhysicalMemory, MemoryErro
 
 #[cfg(not(test))]
 impl PhysicalMemory {
+    #[cfg_attr(feature = "verify", allow(dead_code))]
     pub fn allocate_zeroed_page(&mut self) -> Result<u64, MemoryError> {
+        let physical = self.allocate_unzeroed_page()?;
+        // SAFETY:
+        // 1. Invariant: `physical` is a free conventional page above the low
+        //    guard and currently reachable through the loader's temporary
+        //    identity mapping.
+        // 2. Established by: `allocate_unzeroed_page` selecting the frame from
+        //    the allocator bitmap during early pre-activation initialization.
+        // 3. Lifetime: this function initializes the page before handing
+        //    exclusive ownership to its caller.
+        // 4. Pointer ownership: ownership transfers from the free bitmap to the
+        //    caller, and no other owner can access the page.
+        // 5. Alignment: pages are 4 KiB aligned by construction.
+        // 6. Mapped length: exactly one 4 KiB page is written.
+        // 7. Concurrency: single-core execution with interrupts disabled.
+        // 8. Violation: calling this after broad identity removal would fault;
+        //    late callers must use a VM-provided mapping before initializing.
+        unsafe {
+            ptr::write_bytes(physical as *mut u8, 0, PAGE_SIZE as usize);
+        }
+        Ok(physical)
+    }
+
+    pub fn allocate_unzeroed_page(&mut self) -> Result<u64, MemoryError> {
         // SAFETY:
         // 1. Invariant: the global bitmap is only mutably accessed by early
         //    PythCore initialization while interrupts remain disabled.
@@ -241,24 +265,6 @@ impl PhysicalMemory {
                 let physical = (page as u64)
                     .checked_mul(PAGE_SIZE)
                     .ok_or(MemoryError::RangeOverflow)?;
-                // SAFETY:
-                // 1. Invariant: `physical` is a free conventional page above
-                //    the low guard and currently reachable through the
-                //    loader's temporary identity mapping.
-                // 2. Established by: bitmap construction from the UEFI memory
-                //    map and `MIN_ALLOCATABLE_PHYSICAL`.
-                // 3. Lifetime: this function initializes the page before
-                //    handing exclusive ownership to its caller.
-                // 4. Pointer ownership: ownership transfers from the free
-                //    bitmap to the caller.
-                // 5. Alignment: pages are 4 KiB aligned by construction.
-                // 6. Mapped length: exactly one 4 KiB page is written.
-                // 7. Concurrency: single-core execution with interrupts
-                //    disabled.
-                // 8. Violation: a stale free bit would corrupt live memory.
-                unsafe {
-                    ptr::write_bytes(physical as *mut u8, 0, PAGE_SIZE as usize);
-                }
                 return Ok(physical);
             }
         }
