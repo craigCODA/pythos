@@ -32,10 +32,10 @@ Phase 12 slice 3 recorded   path-adversarial-suite
                               marker: PYTHOS:CORE:PHASE_12_COMPLETE
 ```
 
-Next unallocated ADR number: **0073**. Hard stop is the Phase 12 -> Phase 13
-boundary, already recorded in `AGENTS.md`. Phase 13 package work is not
+Next unallocated ADR number: **0074**. Hard stop is the Phase 13 -> Phase 13.5
+boundary, already recorded in `AGENTS.md`. Phase 13.5 and later work are not
 authorized to start without explicit re-invocation, same as every phase before
-it.
+them.
 
 ---
 

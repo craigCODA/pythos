@@ -24,15 +24,15 @@
     <main>
       <section class="hero">
         <div class="hero-inner">
-          <p class="kicker">Current checked-in boundary: Phase 12 -> Phase 13</p>
+          <p class="kicker">Current checked-in boundary: Phase 13 -> Phase 13.5</p>
           <h1>PythOS</h1>
           <p>
             A from-scratch, verification-driven x86-64 operating system that boots
             through UEFI, runs a capability-controlled ring-3 object shell, and
             persists typed/versioned objects across verified storage backends.
             Current <code>main</code> records the Phase 12 object-locator
-            decision, resolver, adversarial suite, and the accepted PythTIG
-            Phase 7 cutover/cross-target line.
+            decision and resolver, Phase 13 local package lifecycle, and the
+            accepted PythTIG Phase 7 cutover/cross-target line.
           </p>
           <div class="actions">
             <a class="button primary" href="status/">Read current status</a>
@@ -51,8 +51,8 @@
               recorded through ADR 0046. PythTIG Phase 1 through Phase 7 are
               merged to <code>main</code>. Phase 12 is complete through ADR
               0069, ADR 0070, ADR 0072, and
-              <code>PYTHOS:CORE:PHASE_12_COMPLETE</code>; Phase 13 package work
-              has not started.
+              <code>PYTHOS:CORE:PHASE_12_COMPLETE</code>. Phase 13 is complete
+              through ADR 0073 and <code>PYTHOS:CORE:PHASE_13_COMPLETE</code>.
             </p>
             <div class="fact-list">
               <p class="fact"><strong>Kernel path</strong> UEFI loader to PythCore native executive to ring-3 shell and object persistence.</p>
@@ -106,7 +106,7 @@
           <div class="grid">
             <article class="tile">
               <h3>Current Boundary</h3>
-              <p>ADR 0069 records the object-locator decision, ADR 0070 records the resolver, and ADR 0072 records the adversarial suite. Phase 13 package work remains gated.</p>
+              <p>ADR 0073 records the local package lifecycle and schema extensibility proof. Phase 13.5, persistent Pyth sessions, Kai/Waking, networking, and later phases remain gated.</p>
               <p><a href="status/">Open status page</a></p>
             </article>
             <article class="tile">
