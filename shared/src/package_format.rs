@@ -287,7 +287,7 @@ struct Range {
 }
 
 impl Range {
-    pub fn slice<'a>(self, bytes: &'a [u8]) -> &'a [u8] {
+    pub fn slice(self, bytes: &[u8]) -> &[u8] {
         &bytes[self.start..self.end]
     }
 }
@@ -421,7 +421,7 @@ fn compare_bytes(left: &[u8], right: &[u8]) -> KeyOrder {
 }
 
 fn validate_content_table(table: &[u8], content_payload: &[u8]) -> Result<(), PackageFormatError> {
-    if table.len() % CONTENT_ENTRY_V0_LEN != 0 {
+    if !table.len().is_multiple_of(CONTENT_ENTRY_V0_LEN) {
         return Err(PackageFormatError::BoundsExceeded);
     }
     let count = table.len() / CONTENT_ENTRY_V0_LEN;
@@ -458,10 +458,10 @@ fn read_content_entry(bytes: &[u8], offset: usize) -> ContentEntryV0 {
     }
 }
 
-fn content_slice<'a>(
-    content_payload: &'a [u8],
+fn content_slice(
+    content_payload: &[u8],
     entry: ContentEntryV0,
-) -> Result<&'a [u8], PackageFormatError> {
+) -> Result<&[u8], PackageFormatError> {
     let start = usize::try_from(entry.offset).map_err(|_| PackageFormatError::BoundsExceeded)?;
     let len = usize::try_from(entry.length).map_err(|_| PackageFormatError::BoundsExceeded)?;
     let end = start

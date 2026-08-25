@@ -245,6 +245,7 @@ pub fn run_self_test() -> Result<(), ObjectFormatError> {
     Ok(())
 }
 
+#[cfg_attr(all(not(test), feature = "verify"), allow(dead_code))]
 pub fn package_schema_ref_value(
     schema_object_id: ObjectId,
     schema_revision: u64,

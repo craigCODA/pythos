@@ -105,6 +105,12 @@ use pythos_shared::object_shell_abi::{
 use pythos_shared::package_abi::OP_PACKAGE_CONTEXT_SCHEMA;
 #[cfg(any(
     test,
+    all(not(test), not(feature = "verify")),
+    all(not(test), feature = "phase13-package-test")
+))]
+use pythos_shared::package_abi::PackageRuntimeSchemaBindingV0;
+#[cfg(any(
+    test,
     all(
         not(test),
         any(not(feature = "verify"), feature = "phase13-package-test")
@@ -116,9 +122,7 @@ use pythos_shared::package_abi::{
     PACKAGE_DEFINED_STATE_FORMAT_EMPTY, PACKAGE_DEFINED_STATE_FORMAT_INLINE_BYTES_V0,
     PackageDefinedObjectCreateV0,
 };
-use pythos_shared::package_abi::{
-    PackageRuntimeSchemaBindingV0, PackageStatus, SYSCALL_PACKAGE_CONTEXT,
-};
+use pythos_shared::package_abi::{PackageStatus, SYSCALL_PACKAGE_CONTEXT};
 #[cfg(any(
     test,
     all(
@@ -1841,13 +1845,11 @@ fn package_runtime_schema_binding(
     .unwrap_or(Err(PackageStatus::Denied))
 }
 
-#[cfg(any(
-    all(not(test), feature = "verify", not(feature = "phase13-package-test")),
-    all(
-        not(test),
-        feature = "hardware-probe",
-        not(feature = "phase13-package-test")
-    )
+#[cfg(all(
+    not(test),
+    not(feature = "verify"),
+    feature = "hardware-probe",
+    not(feature = "phase13-package-test")
 ))]
 fn package_runtime_schema_binding(
     _caller: ActiveUserProcess,

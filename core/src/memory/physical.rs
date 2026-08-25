@@ -213,6 +213,7 @@ pub fn initialize(boot_info: &PythBootInfo) -> Result<PhysicalMemory, MemoryErro
 
 #[cfg(not(test))]
 impl PhysicalMemory {
+    #[cfg_attr(feature = "verify", allow(dead_code))]
     pub fn allocate_zeroed_page(&mut self) -> Result<u64, MemoryError> {
         let physical = self.allocate_unzeroed_page()?;
         // SAFETY:

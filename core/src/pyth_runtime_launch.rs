@@ -185,6 +185,9 @@ pub enum PythGraphDeferredImport {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+// Package launch carries a bounded import table inline; this bootstrap path
+// stays allocator-free and `Copy`.
+#[allow(clippy::large_enum_variant)]
 enum PythGraphBootstrapBinding {
     Complete(PythGraphImportCapabilities),
     PackageLaunch(PythGraphPackageImportCapabilities),
