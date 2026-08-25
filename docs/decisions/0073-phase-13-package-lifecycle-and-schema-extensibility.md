@@ -484,7 +484,7 @@ from ordinary recovery selection until selected by a valid
 
 ### Marker Order
 
-The high-level Phase 13 marker tail is frozen as:
+The high-level Phase 13 package-acceptance marker tail is frozen as:
 
 ```text
 PYTHOS:CORE:PHASE_12_COMPLETE
@@ -495,12 +495,12 @@ PYTHOS:CORE:PACKAGE_UNINSTALL_READY
 PYTHOS:CORE:INDEPENDENT_PACKAGE_READY
 PYTHOS:CORE:PACKAGE_SCHEMA_EXTENSIBILITY_READY
 PYTHOS:CORE:PHASE_13_COMPLETE
-PYTHOS:CORE:FRAMEBUFFER_READY
-PYTHOS:CORE:MILESTONE_1_COMPLETE
 ```
 
 Detailed slice scripts may require additional markers between these high-level
-markers. Forbidden-marker checks remain part of each QEMU scenario.
+markers. Forbidden-marker checks remain part of each QEMU scenario. Ordinary
+verify milestone boot remains a normal non-package boot path and does not emit
+Phase 13 package-acceptance completion markers.
 
 ## Consequences
 
@@ -529,11 +529,12 @@ Phase 13 is accepted only when:
 
 - compatibility tests freeze the new ABI values and preserve existing frozen
   ABI sizes;
-- marker-contract tests prove Phase 13 marker order before framebuffer tail
-  markers;
+- marker-contract tests prove Phase 13 marker order in the dedicated package
+  acceptance contract;
 - package format, install, launch, uninstall, and independent package QEMU
   scripts verify required markers, forbidden markers, order, and
   `QEMU_OUTCOME success`;
-- final boot evidence reaches `PYTHOS:CORE:PHASE_13_COMPLETE`;
+- final package-acceptance boot evidence reaches
+  `PYTHOS:CORE:PHASE_13_COMPLETE`;
 - no Phase 13.5, Waking, Kai, networking, AI, SMP, or update/recovery markers
   are emitted.

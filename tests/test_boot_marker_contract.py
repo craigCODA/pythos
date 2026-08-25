@@ -312,7 +312,7 @@ class BootMarkerContractTest(unittest.TestCase):
             milestone_markers.index(FRAMEBUFFER_READY),
         )
 
-    def test_phase13_package_lifecycle_extends_phase_12_before_framebuffer(self) -> None:
+    def test_phase13_package_lifecycle_has_dedicated_marker_contract(self) -> None:
         test_boot = load_test_boot_module()
 
         phase13_markers = test_boot.SLICE_MARKERS["phase13-package-lifecycle"]
@@ -324,11 +324,8 @@ class BootMarkerContractTest(unittest.TestCase):
         )
         for left, right in zip(PHASE13_MARKERS, PHASE13_MARKERS[1:]):
             self.assertLess(phase13_markers.index(left), phase13_markers.index(right))
-            self.assertLess(milestone_markers.index(left), milestone_markers.index(right))
-        self.assertLess(
-            milestone_markers.index(PHASE_13_COMPLETE),
-            milestone_markers.index(FRAMEBUFFER_READY),
-        )
+        for marker in PHASE13_MARKERS:
+            self.assertNotIn(marker, milestone_markers)
 
 
 def load_tests(loader, tests, pattern):

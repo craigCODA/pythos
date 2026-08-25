@@ -1675,11 +1675,8 @@ SLICE_MARKERS["milestone-1"] = insert_before(
     "PYTHOS:CORE:FRAMEBUFFER_READY",
     OBJECT_LOCATOR_ADVERSARIAL_MARKERS,
 )
-SLICE_MARKERS["milestone-1"] = insert_before(
-    SLICE_MARKERS["milestone-1"],
-    "PYTHOS:CORE:FRAMEBUFFER_READY",
-    PHASE13_MARKERS,
-)
+# Phase 13 package lifecycle markers are proven by dedicated package acceptance
+# fixtures. Ordinary verify boot remains the normal milestone-1 path.
 SLICE_MARKERS["graceful-audio-fallback"] = (
     SLICE_MARKERS["phase-5-complete"]
     + AUDIO_DEVICE_ABSENT_MARKERS
@@ -1727,7 +1724,6 @@ SLICE_MARKERS["graceful-audio-fallback"] = (
     + STORAGE_ADVERSARIAL_MARKERS
     + OBJECT_LOCATOR_MARKERS
     + OBJECT_LOCATOR_ADVERSARIAL_MARKERS
-    + PHASE13_MARKERS
     + ["PYTHOS:CORE:FRAMEBUFFER_READY", "PYTHOS:CORE:MILESTONE_1_COMPLETE"]
 )
 
