@@ -4,6 +4,8 @@
 use crate::architecture::x86_64::interrupts;
 use core::arch::asm;
 use core::sync::atomic::{AtomicU64, Ordering};
+#[cfg(test)]
+use std::sync::{Mutex, MutexGuard};
 
 const PIT_CHANNEL0: u16 = 0x40;
 const PIT_COMMAND: u16 = 0x43;
@@ -14,6 +16,8 @@ const PIT_COMMAND_RATE_GENERATOR: u8 = 0x34;
 const FIRST_TICK_SPIN_LIMIT: usize = 20_000_000;
 
 static TICKS: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+static TEST_TICKS_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn initialize() -> Result<(), ()> {
     let start = ticks();
@@ -30,6 +34,19 @@ pub fn ticks() -> u64 {
 
 pub fn handle_timer_interrupt() {
     TICKS.fetch_add(1, Ordering::SeqCst);
+}
+
+#[cfg(test)]
+pub(crate) fn test_ticks_guard() -> MutexGuard<'static, ()> {
+    match TEST_TICKS_LOCK.lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn reset_ticks_for_test() {
+    TICKS.store(0, Ordering::SeqCst);
 }
 
 fn wait_for_next_tick(start: u64) -> Result<(), ()> {
@@ -94,6 +111,9 @@ mod tests {
 
     #[test]
     fn timer_interrupt_advances_tick_counter() {
+        let _guard = test_ticks_guard();
+        reset_ticks_for_test();
+
         let before = ticks();
         handle_timer_interrupt();
         assert_eq!(ticks(), before + 1);

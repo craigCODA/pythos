@@ -40,6 +40,10 @@ mod tests {
 
     #[test]
     fn initialized_clock_requires_observed_timer_tick() {
+        let _guard = timer::test_ticks_guard();
+        timer::reset_ticks_for_test();
+
+        assert_eq!(initialize(), Err(()));
         timer::handle_timer_interrupt();
         assert_eq!(initialize(), Ok(()));
     }
