@@ -33,6 +33,13 @@ diagnostic accepted `wake` plus Enter from the physical keyboard. This proves
 only that diagnostic polling path on that machine, not USB HID, trackpad input,
 IRQ-driven input, shell keyboard control, or generic PC input support.
 
+ADR 0075 adds the next opt-in QEMU-accepted physical input event diagnostic.
+`scripts/test-physical-input-event-diagnostic.py` injects `space space
+backspace backspace wake enter`, requires raw-byte logs plus normalized key
+markers, and accepts only that fixed sequence. Physical acceptance for this
+wider event diagnostic is still pending; no new hardware claim is made until
+the image is booted and the sequence is reported on the target machine.
+
 Start with [docs/TECHNICAL-OVERVIEW.md](docs/TECHNICAL-OVERVIEW.md) for the
 current external-facing account of what the repository proves, how those claims
 are verified, and what is not yet claimed.
@@ -47,6 +54,7 @@ Current-state references:
 - [ADR 0072: path adversarial suite](docs/decisions/0072-phase-12-path-adversarial-suite.md)
 - [ADR 0073: package lifecycle and schema extensibility](docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md)
 - [ADR 0074: physical wake diagnostic gate](docs/decisions/0074-physical-wake-diagnostic.md)
+- [ADR 0075: physical input event diagnostic](docs/decisions/0075-physical-input-event-diagnostic.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)
 

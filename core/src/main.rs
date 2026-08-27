@@ -13,6 +13,8 @@ compile_error!("features `pyth-tig-default` and `legacy-shell` are mutually excl
 compile_error!("feature `phase13-package-test` requires `verify`");
 #[cfg(all(feature = "physical-wake-diagnostic", not(feature = "verify")))]
 compile_error!("feature `physical-wake-diagnostic` requires `verify`");
+#[cfg(all(feature = "physical-input-event-diagnostic", not(feature = "verify")))]
+compile_error!("feature `physical-input-event-diagnostic` requires `verify`");
 
 mod architecture;
 mod audio;
@@ -100,6 +102,8 @@ mod package_service;
 mod package_source;
 mod permission_validation;
 mod persistent_objects;
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+mod physical_input_diagnostic;
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
 mod physical_wake;
 mod process;
@@ -764,6 +768,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         serial::write_line("PYTHOS:CORE:AUDIO_VISUAL_SYNC_READY");
         #[cfg(feature = "physical-wake-diagnostic")]
         physical_wake::run(&boot_info.framebuffer);
+        #[cfg(feature = "physical-input-event-diagnostic")]
+        physical_input_diagnostic::run(&boot_info.framebuffer);
         if audio::complete_graceful_fallback(audio_device).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();

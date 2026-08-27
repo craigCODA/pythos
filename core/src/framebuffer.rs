@@ -6,6 +6,8 @@
 //! pitch, and bounds-checks every pixel against the validated metadata.
 
 use crate::font;
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+use crate::input_drivers::KeyCode;
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
     PythFramebufferInfo,
@@ -407,6 +409,27 @@ impl PhysicalWakeStatus {
     }
 }
 
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalInputStatus {
+    Ready,
+    Rejected,
+    Accepted,
+    Ps2InitFailed,
+}
+
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+impl PhysicalInputStatus {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Rejected => "retry",
+            Self::Accepted => "accepted",
+            Self::Ps2InitFailed => "ps2 init failed",
+        }
+    }
+}
+
 /// Overlay the physical wake diagnostic panel on the settled cinematic frame.
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
 pub(crate) fn render_physical_wake_diagnostic(
@@ -427,10 +450,48 @@ pub(crate) fn render_physical_wake_diagnostic(
     surface.draw_text(32, y0 + 72, 2, input_line, PROBE_PANEL_BODY)?;
 
     let mut raw_line = [0u8; 64];
-    let raw_line = format_physical_wake_raw_line(raw, &mut raw_line)?;
+    let raw_line = format_physical_diagnostic_raw_line(raw, &mut raw_line)?;
     surface.draw_text(32, y0 + 100, 2, raw_line, PROBE_PANEL_BODY)?;
 
     surface.draw_text(32, y0 + 128, 2, status.text(), PROBE_PANEL_BODY)?;
+    Ok(())
+}
+
+/// Overlay the physical input event diagnostic panel on the settled cinematic frame.
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+pub(crate) fn render_physical_input_diagnostic(
+    framebuffer: &PythFramebufferInfo,
+    text: &[u8],
+    keys: &[KeyCode],
+    raw: &[u8],
+    status: PhysicalInputStatus,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    let panel_height = surface.height.min(192);
+    let y0 = surface.height.saturating_sub(panel_height);
+    surface.fill_rect(0, y0, surface.width, panel_height, PROBE_PANEL_BACKGROUND);
+    surface.draw_text(32, y0 + 16, 2, "physical input", PROBE_PANEL_TITLE)?;
+    surface.draw_text(
+        32,
+        y0 + 44,
+        2,
+        "space space bs bs wake enter",
+        PROBE_PANEL_BODY,
+    )?;
+
+    let mut text_line = [0u8; 32];
+    let text_line = format_physical_input_text_line(text, &mut text_line)?;
+    surface.draw_text(32, y0 + 72, 2, text_line, PROBE_PANEL_BODY)?;
+
+    let mut keys_line = [0u8; 64];
+    let keys_line = format_physical_input_keys_line(keys, &mut keys_line)?;
+    surface.draw_text(32, y0 + 100, 2, keys_line, PROBE_PANEL_BODY)?;
+
+    let mut raw_line = [0u8; 64];
+    let raw_line = format_physical_diagnostic_raw_line(raw, &mut raw_line)?;
+    surface.draw_text(32, y0 + 128, 2, raw_line, PROBE_PANEL_BODY)?;
+
+    surface.draw_text(32, y0 + 156, 2, status.text(), PROBE_PANEL_BODY)?;
     Ok(())
 }
 
@@ -443,8 +504,46 @@ fn format_physical_wake_input_line<'a>(input: &[u8], out: &'a mut [u8]) -> Resul
     core::str::from_utf8(&out[..len]).map_err(|_| ())
 }
 
-#[cfg(any(test, feature = "physical-wake-diagnostic"))]
-fn format_physical_wake_raw_line<'a>(raw: &[u8], out: &'a mut [u8]) -> Result<&'a str, ()> {
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+fn format_physical_input_text_line<'a>(text: &[u8], out: &'a mut [u8]) -> Result<&'a str, ()> {
+    let mut len = 0;
+    push_ascii(out, &mut len, b"text ")?;
+    push_ascii(out, &mut len, text)?;
+    push_ascii(out, &mut len, b"_")?;
+    core::str::from_utf8(&out[..len]).map_err(|_| ())
+}
+
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+fn format_physical_input_keys_line<'a>(keys: &[KeyCode], out: &'a mut [u8]) -> Result<&'a str, ()> {
+    let mut len = 0;
+    push_ascii(out, &mut len, b"keys")?;
+    for key in keys {
+        push_ascii(out, &mut len, b" ")?;
+        push_ascii(out, &mut len, key_label(*key).as_bytes())?;
+    }
+    core::str::from_utf8(&out[..len]).map_err(|_| ())
+}
+
+#[cfg(any(test, feature = "physical-input-event-diagnostic"))]
+fn key_label(key: KeyCode) -> &'static str {
+    match key {
+        KeyCode::W => "w",
+        KeyCode::A => "a",
+        KeyCode::K => "k",
+        KeyCode::E => "e",
+        KeyCode::Enter => "ent",
+        KeyCode::Backspace => "bs",
+        KeyCode::Space => "sp",
+        _ => "?",
+    }
+}
+
+#[cfg(any(
+    test,
+    feature = "physical-wake-diagnostic",
+    feature = "physical-input-event-diagnostic"
+))]
+fn format_physical_diagnostic_raw_line<'a>(raw: &[u8], out: &'a mut [u8]) -> Result<&'a str, ()> {
     let mut len = 0;
     push_ascii(out, &mut len, b"raw ")?;
     for (index, byte) in raw.iter().copied().enumerate() {
@@ -456,7 +555,11 @@ fn format_physical_wake_raw_line<'a>(raw: &[u8], out: &'a mut [u8]) -> Result<&'
     core::str::from_utf8(&out[..len]).map_err(|_| ())
 }
 
-#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+#[cfg(any(
+    test,
+    feature = "physical-wake-diagnostic",
+    feature = "physical-input-event-diagnostic"
+))]
 fn push_hex_byte(out: &mut [u8], len: &mut usize, byte: u8) -> Result<(), ()> {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     push_ascii(
@@ -466,7 +569,11 @@ fn push_hex_byte(out: &mut [u8], len: &mut usize, byte: u8) -> Result<(), ()> {
     )
 }
 
-#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+#[cfg(any(
+    test,
+    feature = "physical-wake-diagnostic",
+    feature = "physical-input-event-diagnostic"
+))]
 fn push_ascii(out: &mut [u8], len: &mut usize, bytes: &[u8]) -> Result<(), ()> {
     if out.len().saturating_sub(*len) < bytes.len() {
         return Err(());
@@ -1044,9 +1151,9 @@ mod tests {
     }
 
     #[test]
-    fn physical_wake_raw_line_formats_recent_bytes_as_hex() {
+    fn physical_diagnostic_raw_line_formats_recent_bytes_as_hex() {
         let mut buffer = [0u8; 32];
-        let line = format_physical_wake_raw_line(&[0x11, 0x1E, 0xA5], &mut buffer).unwrap();
+        let line = format_physical_diagnostic_raw_line(&[0x11, 0x1E, 0xA5], &mut buffer).unwrap();
 
         assert_eq!(line, "raw 11 1E A5");
     }
@@ -1057,6 +1164,63 @@ mod tests {
         let line = format_physical_wake_input_line(b"wa", &mut buffer).unwrap();
 
         assert_eq!(line, "input wa_");
+    }
+
+    #[test]
+    fn physical_input_text_line_keeps_cursor_marker() {
+        let mut buffer = [0u8; 32];
+        let line = format_physical_input_text_line(b"wake", &mut buffer).unwrap();
+
+        assert_eq!(line, "text wake_");
+    }
+
+    #[test]
+    fn physical_input_keys_line_formats_recent_key_events() {
+        use crate::input_drivers::KeyCode;
+
+        let mut buffer = [0u8; 48];
+        let line = format_physical_input_keys_line(
+            &[KeyCode::Space, KeyCode::Backspace, KeyCode::W],
+            &mut buffer,
+        )
+        .unwrap();
+
+        assert_eq!(line, "keys sp bs w");
+    }
+
+    #[test]
+    fn physical_input_status_texts_use_boot_font_subset() {
+        assert_eq!(PhysicalInputStatus::Ready.text(), "ready");
+        assert_eq!(PhysicalInputStatus::Rejected.text(), "retry");
+        assert_eq!(PhysicalInputStatus::Accepted.text(), "accepted");
+        assert_eq!(PhysicalInputStatus::Ps2InitFailed.text(), "ps2 init failed");
+    }
+
+    #[test]
+    fn render_physical_input_diagnostic_draws_panel() {
+        use crate::input_drivers::KeyCode;
+
+        let (buffer, info) = test_framebuffer(800, 600);
+        render_physical_input_diagnostic(
+            &info,
+            b"wake",
+            &[
+                KeyCode::Space,
+                KeyCode::Space,
+                KeyCode::Backspace,
+                KeyCode::Backspace,
+                KeyCode::W,
+                KeyCode::A,
+                KeyCode::K,
+                KeyCode::E,
+                KeyCode::Enter,
+            ],
+            &[0x39, 0x39, 0x0E, 0x0E, 0x11, 0x1E, 0x25, 0x12, 0x1C],
+            PhysicalInputStatus::Accepted,
+        )
+        .unwrap();
+
+        assert!(buffer.iter().any(|&pixel| pixel != 0));
     }
 
     #[test]

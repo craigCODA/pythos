@@ -118,7 +118,7 @@ pub fn initialize() -> Result<(), Ps2Error> {
     Ok(())
 }
 
-/// Bring up only the first PS/2 port for the opt-in physical wake diagnostic.
+/// Bring up only the first PS/2 port for the opt-in physical input diagnostics.
 ///
 /// This path deliberately does not enable mouse streaming or unmask IRQ1. It
 /// polls the controller output buffer from normal context and logs raw bytes on
@@ -126,7 +126,10 @@ pub fn initialize() -> Result<(), Ps2Error> {
 /// keyboard path exists at all. The controller translation bit is enabled to
 /// favor scancode-set-1 bytes, while the diagnostic recognizer still tolerates
 /// the exact set-2 `wake` sequence if a controller ignores translation.
-#[cfg(feature = "physical-wake-diagnostic")]
+#[cfg(any(
+    feature = "physical-wake-diagnostic",
+    feature = "physical-input-event-diagnostic"
+))]
 pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
     write_command(CMD_DISABLE_PORT1)?;
     write_command(CMD_DISABLE_PORT2)?;
@@ -157,7 +160,10 @@ pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
 }
 
 /// Read one pending raw byte from the PS/2 output buffer without blocking.
-#[cfg(feature = "physical-wake-diagnostic")]
+#[cfg(any(
+    feature = "physical-wake-diagnostic",
+    feature = "physical-input-event-diagnostic"
+))]
 pub fn poll_raw_output_byte() -> Option<u8> {
     if inb(PS2_STATUS_COMMAND_PORT) & STATUS_OUTPUT_FULL == 0 {
         return None;

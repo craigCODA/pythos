@@ -149,6 +149,17 @@ def type_wake(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
     press_qcode_keys(["w", "a", "k", "e", "ret"], qmp_port=qmp_port, timeout=timeout)
 
 
+def type_physical_input_event_sequence(
+    qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Type the physical input diagnostic sequence over QMP."""
+    press_qcode_keys(
+        ["spc", "spc", "backspace", "backspace", "w", "a", "k", "e", "ret"],
+        qmp_port=qmp_port,
+        timeout=timeout,
+    )
+
+
 def click_launcher_tile(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
     """Move the emulated PS/2 mouse into the launcher tile and click it.
 
