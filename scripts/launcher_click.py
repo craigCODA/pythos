@@ -95,6 +95,60 @@ def press_a_key(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
         )
 
 
+def press_qcode_keys(
+    qcodes: list[str], qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Press and release a sequence of QEMU qcodes over QMP."""
+    with socket.create_connection(("127.0.0.1", qmp_port), timeout=timeout) as sock:
+        sock_file = sock.makefile("r", encoding="utf-8", newline="\n")
+        sock_file.readline()  # greeting
+        _qmp_send(sock_file, sock, {"execute": "qmp_capabilities"})
+        for qcode in qcodes:
+            _qmp_send(
+                sock_file,
+                sock,
+                {
+                    "execute": "input-send-event",
+                    "arguments": {
+                        "events": [
+                            {
+                                "type": "key",
+                                "data": {
+                                    "down": True,
+                                    "key": {"type": "qcode", "data": qcode},
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+            time.sleep(0.05)
+            _qmp_send(
+                sock_file,
+                sock,
+                {
+                    "execute": "input-send-event",
+                    "arguments": {
+                        "events": [
+                            {
+                                "type": "key",
+                                "data": {
+                                    "down": False,
+                                    "key": {"type": "qcode", "data": qcode},
+                                },
+                            }
+                        ]
+                    },
+                },
+            )
+            time.sleep(0.05)
+
+
+def type_wake(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
+    """Type `wake` followed by Enter over QMP."""
+    press_qcode_keys(["w", "a", "k", "e", "ret"], qmp_port=qmp_port, timeout=timeout)
+
+
 def click_launcher_tile(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
     """Move the emulated PS/2 mouse into the launcher tile and click it.
 
