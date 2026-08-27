@@ -38,6 +38,13 @@ reported physical acceptance after typing `wake` plus Enter on the current boot
 machine. That proves only this diagnostic polling path on that machine, not
 generic USB HID, trackpad input, IRQ-driven input, or shell keyboard control.
 
+ADR 0075 adds the follow-up physical input event diagnostic. Its QEMU harness,
+`scripts/test-physical-input-event-diagnostic.py`, injects `space space
+backspace backspace wake enter`, requires raw-byte logs plus normalized key
+markers, and accepts only that fixed sequence. Physical acceptance for ADR 0075
+is pending until the diagnostic image is booted and accepted on the target
+machine.
+
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
 and where the boundary of the work still is.
@@ -59,6 +66,7 @@ and where the boundary of the work still is.
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic keyboard, USB HID, trackpad, IRQ-driven input, or shell keyboard control |
+| ADR 0075 physical input event diagnostic QEMU-accepted for a fixed space/backspace/wake sequence | Physical acceptance of the wider event diagnostic, shell input, or generic keyboard support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -219,6 +227,11 @@ diagnostic initializes only the first PS/2 controller port for polling, leaves
 IRQ1 masked, does not enable mouse streaming, overlays the typed wake buffer and
 recent raw bytes on the framebuffer, and accepts only exact `wake` plus Enter.
 It is a bring-up diagnostic, not a login gate or a general input service.
+
+ADR 0075 keeps the same verify-only polling boundary but changes the accepted
+sequence to `space space backspace backspace wake enter`. It records recent raw
+bytes, compact normalized key events, and the resulting text buffer on both the
+framebuffer and COM1. The QEMU harness proves only that fixed event path.
 
 Phase 7 adds persistent object storage. It includes a block-device target,
 capability-gated storage service, append-only journal, checksums and commit
@@ -426,6 +439,7 @@ python scripts\test-sdhci-emmc-block-device.py
 python scripts\test-object-shell.py --backend sdhci-emmc
 python scripts\test-evidence-terminal.py
 python scripts\test-physical-wake-diagnostic.py
+python scripts\test-physical-input-event-diagnostic.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -457,6 +471,7 @@ implemented or not claimed:
 * persistent package-session runtime or presentation/input bridges;
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
+* physical acceptance of ADR 0075's wider input event diagnostic;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;
@@ -493,6 +508,9 @@ make narrower but stronger claims:
 * ADR 0074's opt-in physical wake diagnostic is QEMU-accepted and has one
   operator-reported physical acceptance of `wake` plus Enter on the current USB
   boot machine;
+* ADR 0075's opt-in physical input event diagnostic is QEMU-accepted for the
+  fixed `space space backspace backspace wake enter` sequence, with physical
+  acceptance still pending;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate;
 * PythTIG packages are verified before ring-3 entry and compared across
@@ -546,6 +564,7 @@ docs/decisions/0071-loader-kernel-file-bound-extension.md
 docs/decisions/0072-phase-12-path-adversarial-suite.md
 docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md
 docs/decisions/0074-physical-wake-diagnostic.md
+docs/decisions/0075-physical-input-event-diagnostic.md
 ```
 
 Verification entry points:
@@ -559,6 +578,7 @@ scripts/test-ahci-block-device.py
 scripts/test-sdhci-emmc-block-device.py
 scripts/test-evidence-terminal.py
 scripts/test-physical-wake-diagnostic.py
+scripts/test-physical-input-event-diagnostic.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py

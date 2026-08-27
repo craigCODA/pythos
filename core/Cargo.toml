@@ -36,6 +36,10 @@ phase13-package-test = []
 # wake gate into the verify boot after the Phase 6 cinematic frame; it is not
 # enabled by default and is not a general input-service implementation.
 physical-wake-diagnostic = []
+# Opt-in physical input event diagnostic. This samples keyboard bytes after the
+# Phase 6 cinematic frame, normalizes a fixed key set, and reports events; it is
+# not enabled by default and is not shell keyboard control.
+physical-input-event-diagnostic = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }
