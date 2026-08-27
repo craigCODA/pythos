@@ -275,7 +275,10 @@ mod tests {
             assert_eq!(input.feed_raw_byte(*byte), WakeResult::Waiting);
         }
 
-        assert_eq!(input.feed_raw_byte(bytes[bytes.len() - 1]), WakeResult::Accepted);
+        assert_eq!(
+            input.feed_raw_byte(bytes[bytes.len() - 1]),
+            WakeResult::Accepted
+        );
         assert_eq!(input.input_bytes(), WAKE_WORD);
         assert_eq!(input.last_result(), WakeResult::Accepted);
     }
@@ -288,7 +291,10 @@ mod tests {
             assert_eq!(input.feed_raw_byte(*byte), WakeResult::Waiting);
         }
 
-        assert_eq!(input.feed_raw_byte(bytes[bytes.len() - 1]), WakeResult::Accepted);
+        assert_eq!(
+            input.feed_raw_byte(bytes[bytes.len() - 1]),
+            WakeResult::Accepted
+        );
         assert_eq!(input.input_bytes(), WAKE_WORD);
     }
 
@@ -300,7 +306,10 @@ mod tests {
             assert_eq!(input.feed_raw_byte(*byte), WakeResult::Waiting);
         }
 
-        assert_eq!(input.feed_raw_byte(bytes[bytes.len() - 1]), WakeResult::Accepted);
+        assert_eq!(
+            input.feed_raw_byte(bytes[bytes.len() - 1]),
+            WakeResult::Accepted
+        );
         assert_eq!(input.input_bytes(), WAKE_WORD);
     }
 
@@ -326,6 +335,9 @@ mod tests {
             let _ = input.feed_raw_byte(byte);
         }
 
-        assert_eq!(input.raw_bytes(), &[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+        assert_eq!(
+            input.raw_bytes(),
+            &[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        );
     }
 }
