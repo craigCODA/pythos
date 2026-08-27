@@ -31,13 +31,49 @@
             through UEFI, runs a capability-controlled ring-3 object shell, and
             persists typed/versioned objects across verified storage backends.
             Current <code>main</code> records the Phase 12 object-locator
-            decision and resolver, Phase 13 local package lifecycle, and the
-            accepted PythTIG Phase 7 cutover/cross-target line.
+            decision and resolver, Phase 13 local package lifecycle, the accepted
+            PythTIG Phase 7 cutover/cross-target line, and an opt-in physical wake
+            diagnostic verified on the target laptop.
           </p>
           <div class="actions">
             <a class="button primary" href="status/">Read current status</a>
-            <a class="button secondary" href="architecture/">Read architecture</a>
+            <a class="button secondary" href="evidence/#physical-wake">See physical wake evidence</a>
           </div>
+        </div>
+      </section>
+
+      <section class="band" id="physical-wake">
+        <div class="content split">
+          <div>
+            <p class="kicker">2026-08-26 physical acceptance</p>
+            <h2>Built-In Keyboard Reaches WAKE ACCEPTED</h2>
+            <p class="lede">
+              A physical boot on the target laptop reached the PythOS wake
+              diagnostic, accepted input from the built-in keyboard, decoded the
+              exact <code>wake</code> plus Enter sequence, and displayed
+              <code>accepted</code> on the framebuffer.
+            </p>
+            <div class="evidence-stats" aria-label="Physical wake acceptance summary">
+              <span><strong>boot</strong> physical laptop</span>
+              <span><strong>input</strong> built-in keyboard</span>
+              <span><strong>command</strong> wake + Enter</span>
+              <span><strong>result</strong> accepted</span>
+            </div>
+            <p class="fact"><strong>Observed raw Set-1 bytes</strong> <code>11 91 1E 9E 25 A5 12 92 1C</code></p>
+            <p class="boundary-note">
+              This proves the post-firmware keyboard byte path and wake recognizer
+              on this physical machine. It does not claim generic PC input, USB HID,
+              trackpad support, interrupt-driven keyboard input, or a general login/shell surface.
+            </p>
+            <div class="actions">
+              <a class="button primary" href="evidence/#physical-wake">Open evidence record</a>
+              <a class="button" href="decisions/0074-physical-wake-diagnostic.md">Read ADR 0074</a>
+            </div>
+          </div>
+          <figure>
+            <img class="evidence-img" src="evidence/2026-08-26-physical-wake-accepted.jpg" alt="PythOS physical wake diagnostic showing wake input, raw keyboard bytes, and accepted result on the target laptop">
+            <figcaption class="caption">Physical target: <code>wake</code> + Enter accepted from the built-in keyboard.</figcaption>
+          </figure>
         </div>
       </section>
 
@@ -104,6 +140,11 @@
         <div class="content">
           <h2>Evidence Map</h2>
           <div class="grid">
+            <article class="tile">
+              <h3>Physical Wake</h3>
+              <p>The target laptop reaches the opt-in wake diagnostic, receives built-in keyboard bytes, and accepts <code>wake</code> + Enter.</p>
+              <p><a href="evidence/#physical-wake">Open physical wake evidence</a></p>
+            </article>
             <article class="tile">
               <h3>Current Boundary</h3>
               <p>ADR 0073 records the local package lifecycle and schema extensibility proof. Phase 13.5, persistent Pyth sessions, Kai/Waking, networking, and later phases remain gated.</p>

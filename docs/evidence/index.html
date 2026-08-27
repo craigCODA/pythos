@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical evidence terminal, SDHCI/eMMC Phase 10 frames, and QEMU evidence for the current milestone.">
+    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC Phase 10 frames, and QEMU evidence for the current milestone.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -26,12 +26,51 @@
           <p class="kicker">Artifacts and markers</p>
           <h1>Evidence</h1>
           <p class="lede">
-            The raw physical artifacts belong with the milestone release. Screen
-            frames and stable artifact hashes are kept with the public record so
-            the evidence remains citable without storing the large raw video in git.
+            Physical artifacts, stable hashes, and acceptance frames are kept with
+            the public record so each hardware claim remains scoped and citable.
+            Large raw videos are identified by hash rather than stored directly in git.
           </p>
         </div>
       </section>
+
+      <section class="band" id="physical-wake">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-08-26 physical wake acceptance</p>
+              <h2>WAKE Accepted From the Built-In Keyboard</h2>
+            </div>
+            <p class="lede">
+              On the physical target laptop, PythOS reached the opt-in physical wake
+              diagnostic after firmware exit, received the built-in keyboard byte
+              stream, decoded <code>wake</code> plus Enter, and displayed
+              <code>accepted</code> on the framebuffer.
+            </p>
+            <div class="evidence-stats" aria-label="Physical wake evidence summary">
+              <span><strong>target</strong> physical laptop</span>
+              <span><strong>input</strong> built-in keyboard</span>
+              <span><strong>command</strong> wake + Enter</span>
+              <span><strong>result</strong> accepted</span>
+            </div>
+            <p class="fact"><strong>Observed raw Set-1 sequence</strong> <code>11 91 1E 9E 25 A5 12 92 1C</code></p>
+            <p class="fact"><strong>Raw clip duration</strong> <code>40.638811 s</code></p>
+            <p class="fact"><strong>Raw clip size</strong> <code>366801558 bytes</code></p>
+            <p class="fact"><strong>Raw clip SHA-256</strong> <code>8deabe1c4dc3f8b659c81d7ab4bde149b58f8e75c61b4c9de08062a645d02dd9</code></p>
+            <p class="boundary-note">
+              This evidence proves the post-firmware keyboard byte path and wake
+              recognizer on this specific physical machine. It does not claim USB HID,
+              trackpad support, generic PC keyboard support, interrupt-driven physical
+              input, authentication, or general shell control from the keyboard.
+            </p>
+            <p><a href="../decisions/0074-physical-wake-diagnostic.md">ADR 0074 defines the diagnostic gate and its claim boundary</a>.</p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-08-26-physical-wake-accepted.jpg" alt="PythOS physical wake diagnostic showing input wake, raw keyboard bytes, and accepted on the target laptop">
+            <figcaption class="caption">Acceptance frame extracted from the raw 40.64-second physical boot clip.</figcaption>
+          </figure>
+        </div>
+      </section>
+
       <section class="band" id="evidence-terminal">
         <div class="content">
           <div class="section-head">
@@ -108,6 +147,10 @@
         <div class="content">
           <h2>Release Assets</h2>
           <div class="grid">
+            <article class="tile">
+              <h3>2026-08-26 physical wake clip</h3>
+              <p>Raw video is retained outside git and identified above by exact byte size, duration, and SHA-256. The acceptance frame is stored in-repo for Pages.</p>
+            </article>
             <article class="tile">
               <h3>2026-08-08 terminal photos</h3>
               <p>Five original physical page photos are hashed in the <a href="2026-08-08-physical-evidence-terminal.md">validation record</a> and are intended for the Milestone 1 release asset set.</p>
