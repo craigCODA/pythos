@@ -435,10 +435,7 @@ pub(crate) fn render_physical_wake_diagnostic(
 }
 
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
-fn format_physical_wake_input_line<'a>(
-    input: &[u8],
-    out: &'a mut [u8],
-) -> Result<&'a str, ()> {
+fn format_physical_wake_input_line<'a>(input: &[u8], out: &'a mut [u8]) -> Result<&'a str, ()> {
     let mut len = 0;
     push_ascii(out, &mut len, b"input ")?;
     push_ascii(out, &mut len, input)?;
@@ -462,7 +459,11 @@ fn format_physical_wake_raw_line<'a>(raw: &[u8], out: &'a mut [u8]) -> Result<&'
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
 fn push_hex_byte(out: &mut [u8], len: &mut usize, byte: u8) -> Result<(), ()> {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    push_ascii(out, len, &[HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]])
+    push_ascii(
+        out,
+        len,
+        &[HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]],
+    )
 }
 
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
