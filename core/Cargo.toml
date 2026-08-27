@@ -32,6 +32,10 @@ pythtig-phase2-test = []
 # package-source records and package artifact parsing without installing,
 # launching, or mutating package/object state.
 phase13-package-test = []
+# Opt-in physical keyboard bring-up diagnostic. This inserts a keyboard-only
+# wake gate into the verify boot after the Phase 6 cinematic frame; it is not
+# enabled by default and is not a general input-service implementation.
+physical-wake-diagnostic = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

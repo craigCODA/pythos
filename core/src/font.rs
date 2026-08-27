@@ -674,6 +674,13 @@ mod tests {
     }
 
     #[test]
+    fn physical_wake_diagnostic_has_fixed_boot_glyphs() {
+        for byte in b"PythOSphysical waketype enterinput rawreadyacceptedretryps2 init failed0123456789ABCDEF _" {
+            assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
+        }
+    }
+
+    #[test]
     fn terminal_glyphs_cover_marker_charset() {
         for byte in b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-/ >" {
             assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);

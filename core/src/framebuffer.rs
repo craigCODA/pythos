@@ -386,6 +386,96 @@ pub fn render_hardware_probe_lines(
     Ok(())
 }
 
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PhysicalWakeStatus {
+    Ready,
+    Rejected,
+    Accepted,
+    Ps2InitFailed,
+}
+
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+impl PhysicalWakeStatus {
+    fn text(self) -> &'static str {
+        match self {
+            Self::Ready => "ready",
+            Self::Rejected => "retry",
+            Self::Accepted => "accepted",
+            Self::Ps2InitFailed => "ps2 init failed",
+        }
+    }
+}
+
+/// Overlay the physical wake diagnostic panel on the settled cinematic frame.
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+pub(crate) fn render_physical_wake_diagnostic(
+    framebuffer: &PythFramebufferInfo,
+    input: &[u8],
+    raw: &[u8],
+    status: PhysicalWakeStatus,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    let panel_height = surface.height.min(164);
+    let y0 = surface.height.saturating_sub(panel_height);
+    surface.fill_rect(0, y0, surface.width, panel_height, PROBE_PANEL_BACKGROUND);
+    surface.draw_text(32, y0 + 16, 2, "physical wake", PROBE_PANEL_TITLE)?;
+    surface.draw_text(32, y0 + 44, 2, "type wake enter", PROBE_PANEL_BODY)?;
+
+    let mut input_line = [0u8; 32];
+    let input_line = format_physical_wake_input_line(input, &mut input_line)?;
+    surface.draw_text(32, y0 + 72, 2, input_line, PROBE_PANEL_BODY)?;
+
+    let mut raw_line = [0u8; 64];
+    let raw_line = format_physical_wake_raw_line(raw, &mut raw_line)?;
+    surface.draw_text(32, y0 + 100, 2, raw_line, PROBE_PANEL_BODY)?;
+
+    surface.draw_text(32, y0 + 128, 2, status.text(), PROBE_PANEL_BODY)?;
+    Ok(())
+}
+
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+fn format_physical_wake_input_line<'a>(
+    input: &[u8],
+    out: &'a mut [u8],
+) -> Result<&'a str, ()> {
+    let mut len = 0;
+    push_ascii(out, &mut len, b"input ")?;
+    push_ascii(out, &mut len, input)?;
+    push_ascii(out, &mut len, b"_")?;
+    core::str::from_utf8(&out[..len]).map_err(|_| ())
+}
+
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+fn format_physical_wake_raw_line<'a>(raw: &[u8], out: &'a mut [u8]) -> Result<&'a str, ()> {
+    let mut len = 0;
+    push_ascii(out, &mut len, b"raw ")?;
+    for (index, byte) in raw.iter().copied().enumerate() {
+        if index > 0 {
+            push_ascii(out, &mut len, b" ")?;
+        }
+        push_hex_byte(out, &mut len, byte)?;
+    }
+    core::str::from_utf8(&out[..len]).map_err(|_| ())
+}
+
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+fn push_hex_byte(out: &mut [u8], len: &mut usize, byte: u8) -> Result<(), ()> {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    push_ascii(out, len, &[HEX[(byte >> 4) as usize], HEX[(byte & 0x0F) as usize]])
+}
+
+#[cfg(any(test, feature = "physical-wake-diagnostic"))]
+fn push_ascii(out: &mut [u8], len: &mut usize, bytes: &[u8]) -> Result<(), ()> {
+    if out.len().saturating_sub(*len) < bytes.len() {
+        return Err(());
+    }
+    let end = *len + bytes.len();
+    out[*len..end].copy_from_slice(bytes);
+    *len = end;
+    Ok(())
+}
+
 /// Render one animation frame of the cinematic at normalized progress `p`
 /// (0.0 at the start, 1.0 at the end). The serpent forms in over the first
 /// half, holds, then the "PythOS / We Are Woken" title resolves near the end —
@@ -948,6 +1038,44 @@ mod tests {
     fn render_hardware_probe_lines_draws_title_and_detail_text() {
         let (buffer, info) = test_framebuffer(800, 600);
         render_hardware_probe_lines(&info, &["PythOS", "sdhci emmc"]).unwrap();
+
+        assert!(buffer.iter().any(|&pixel| pixel != 0));
+    }
+
+    #[test]
+    fn physical_wake_raw_line_formats_recent_bytes_as_hex() {
+        let mut buffer = [0u8; 32];
+        let line = format_physical_wake_raw_line(&[0x11, 0x1E, 0xA5], &mut buffer).unwrap();
+
+        assert_eq!(line, "raw 11 1E A5");
+    }
+
+    #[test]
+    fn physical_wake_input_line_keeps_cursor_marker() {
+        let mut buffer = [0u8; 32];
+        let line = format_physical_wake_input_line(b"wa", &mut buffer).unwrap();
+
+        assert_eq!(line, "input wa_");
+    }
+
+    #[test]
+    fn physical_wake_status_texts_use_boot_font_subset() {
+        assert_eq!(PhysicalWakeStatus::Ready.text(), "ready");
+        assert_eq!(PhysicalWakeStatus::Rejected.text(), "retry");
+        assert_eq!(PhysicalWakeStatus::Accepted.text(), "accepted");
+        assert_eq!(PhysicalWakeStatus::Ps2InitFailed.text(), "ps2 init failed");
+    }
+
+    #[test]
+    fn render_physical_wake_diagnostic_draws_panel() {
+        let (buffer, info) = test_framebuffer(800, 600);
+        render_physical_wake_diagnostic(
+            &info,
+            b"wake",
+            &[0x11, 0x1E, 0x25, 0x12, 0x1C],
+            PhysicalWakeStatus::Accepted,
+        )
+        .unwrap();
 
         assert!(buffer.iter().any(|&pixel| pixel != 0));
     }

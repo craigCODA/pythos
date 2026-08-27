@@ -118,6 +118,53 @@ pub fn initialize() -> Result<(), Ps2Error> {
     Ok(())
 }
 
+/// Bring up only the first PS/2 port for the opt-in physical wake diagnostic.
+///
+/// This path deliberately does not enable mouse streaming or unmask IRQ1. It
+/// polls the controller output buffer from normal context and logs raw bytes on
+/// the framebuffer so serial-less hardware can reveal whether an i8042-style
+/// keyboard path exists at all. The controller translation bit is enabled to
+/// favor scancode-set-1 bytes, while the diagnostic recognizer still tolerates
+/// the exact set-2 `wake` sequence if a controller ignores translation.
+#[cfg(feature = "physical-wake-diagnostic")]
+pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
+    write_command(CMD_DISABLE_PORT1)?;
+    write_command(CMD_DISABLE_PORT2)?;
+    flush_output_buffer();
+
+    write_command(CMD_READ_CONFIG)?;
+    let mut config = read_data_blocking()?;
+    config &= !(CONFIG_PORT1_IRQ_ENABLE | CONFIG_PORT2_IRQ_ENABLE);
+    config |= CONFIG_PORT1_TRANSLATION;
+    write_command(CMD_WRITE_CONFIG)?;
+    write_data_blocking(config)?;
+
+    write_command(CMD_TEST_CONTROLLER)?;
+    if read_data_blocking()? != CONTROLLER_SELF_TEST_PASS {
+        return Err(Ps2Error::ControllerSelfTestFailed);
+    }
+
+    write_command(CMD_READ_CONFIG)?;
+    let mut config = read_data_blocking()?;
+    config &= !(CONFIG_PORT1_IRQ_ENABLE | CONFIG_PORT2_IRQ_ENABLE);
+    config |= CONFIG_PORT1_TRANSLATION;
+    write_command(CMD_WRITE_CONFIG)?;
+    write_data_blocking(config)?;
+
+    write_command(CMD_ENABLE_PORT1)?;
+    flush_output_buffer();
+    Ok(())
+}
+
+/// Read one pending raw byte from the PS/2 output buffer without blocking.
+#[cfg(feature = "physical-wake-diagnostic")]
+pub fn poll_raw_output_byte() -> Option<u8> {
+    if inb(PS2_STATUS_COMMAND_PORT) & STATUS_OUTPUT_FULL == 0 {
+        return None;
+    }
+    Some(inb(PS2_DATA_PORT))
+}
+
 /// IRQ1 top half: read the pending scancode from the data port and, if it
 /// decodes to a known key, enqueue a `KeyPressed` event. Unknown scancodes
 /// (e.g. key-release bytes, which set the high bit in scancode set 1 — this
