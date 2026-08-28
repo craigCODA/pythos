@@ -64,9 +64,12 @@ Default builds are unchanged. ADR 0074's wake-only diagnostic remains
 available and unchanged.
 
 This diagnostic proves the QEMU path from raw keyboard bytes to typed key-event
-markers for the fixed sequence. It does not yet prove that the current physical
-boot machine accepts this wider event sequence; that requires a separate USB
-image copy and operator boot report. Even after a physical acceptance report,
-the claim remains scoped to this polling diagnostic on that machine, not USB
+markers for the fixed sequence. On 2026-08-27 the same feature image was copied
+to the current USB boot target and the operator reported physical acceptance:
+the framebuffer showed `space space bs bs wake enter`, normalized keys
+`sp sp bs bs w a k e ent`, raw bytes ending in `... 12 92 1C`, and final
+`accepted`.
+
+The claim remains scoped to this polling diagnostic on that machine, not USB
 HID, trackpad input, IRQ-driven input, shell keyboard control, or generic
 hardware support.

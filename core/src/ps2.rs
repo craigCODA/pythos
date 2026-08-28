@@ -128,7 +128,8 @@ pub fn initialize() -> Result<(), Ps2Error> {
 /// the exact set-2 `wake` sequence if a controller ignores translation.
 #[cfg(any(
     feature = "physical-wake-diagnostic",
-    feature = "physical-input-event-diagnostic"
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console"
 ))]
 pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
     write_command(CMD_DISABLE_PORT1)?;
@@ -162,7 +163,8 @@ pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
 /// Read one pending raw byte from the PS/2 output buffer without blocking.
 #[cfg(any(
     feature = "physical-wake-diagnostic",
-    feature = "physical-input-event-diagnostic"
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console"
 ))]
 pub fn poll_raw_output_byte() -> Option<u8> {
     if inb(PS2_STATUS_COMMAND_PORT) & STATUS_OUTPUT_FULL == 0 {

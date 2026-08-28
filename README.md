@@ -36,9 +36,18 @@ IRQ-driven input, shell keyboard control, or generic PC input support.
 ADR 0075 adds the next opt-in QEMU-accepted physical input event diagnostic.
 `scripts/test-physical-input-event-diagnostic.py` injects `space space
 backspace backspace wake enter`, requires raw-byte logs plus normalized key
-markers, and accepts only that fixed sequence. Physical acceptance for this
-wider event diagnostic is still pending; no new hardware claim is made until
-the image is booted and the sequence is reported on the target machine.
+markers, and accepts only that fixed sequence. The same sequence is now
+operator-accepted on the current USB boot target with framebuffer photo
+evidence. This remains a diagnostic claim, not USB HID, trackpad input,
+IRQ-driven input, shell keyboard control, or generic PC input support.
+
+ADR 0076 adds opt-in QEMU-accepted physical keyboard ingress into the existing
+ring-3 object-shell console syscall. With `physical-keyboard-console`, normal
+boot keeps COM2 as the primary shell transport, then falls back to bounded
+i8042 keyboard polling for letters, digits, Space, Enter, and Backspace. The
+QEMU harness `scripts/test-physical-keyboard-console.py` types `help` through
+QMP keyboard events and verifies the shell response over COM2. Physical shell
+input on hardware is still pending.
 
 Start with [docs/TECHNICAL-OVERVIEW.md](docs/TECHNICAL-OVERVIEW.md) for the
 current external-facing account of what the repository proves, how those claims
@@ -55,6 +64,7 @@ Current-state references:
 - [ADR 0073: package lifecycle and schema extensibility](docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md)
 - [ADR 0074: physical wake diagnostic gate](docs/decisions/0074-physical-wake-diagnostic.md)
 - [ADR 0075: physical input event diagnostic](docs/decisions/0075-physical-input-event-diagnostic.md)
+- [ADR 0076: physical keyboard console ingress](docs/decisions/0076-physical-keyboard-console-ingress.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)
 
@@ -63,6 +73,7 @@ Physical evidence records:
 - [Phase 10 physical SDHCI/eMMC backend](docs/milestones/2026-08-01-physical-emmc-phase10.md)
 - [Milestone 1 physical evidence terminal validation](docs/evidence/2026-08-08-physical-evidence-terminal.md)
 - [ADR 0074 physical wake diagnostic gate](docs/decisions/0074-physical-wake-diagnostic.md)
+- [ADR 0075 physical input event diagnostic](docs/decisions/0075-physical-input-event-diagnostic.md)
 
 Public milestone site:
 [https://craigcoda.github.io/pythos/](https://craigcoda.github.io/pythos/)

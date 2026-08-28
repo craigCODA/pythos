@@ -41,9 +41,18 @@ generic USB HID, trackpad input, IRQ-driven input, or shell keyboard control.
 ADR 0075 adds the follow-up physical input event diagnostic. Its QEMU harness,
 `scripts/test-physical-input-event-diagnostic.py`, injects `space space
 backspace backspace wake enter`, requires raw-byte logs plus normalized key
-markers, and accepts only that fixed sequence. Physical acceptance for ADR 0075
-is pending until the diagnostic image is booted and accepted on the target
-machine.
+markers, and accepts only that fixed sequence. On 2026-08-27 the same image was
+accepted on the current USB boot target, with framebuffer photo evidence
+showing the expected sequence, normalized keys, raw bytes, and final
+`accepted`.
+
+ADR 0076 adds opt-in QEMU-accepted physical keyboard ingress into the existing
+ring-3 object-shell console syscall. With `physical-keyboard-console`, PythCore
+keeps i8042 port reads in kernel mode, preserves COM2 priority, then falls back
+to bounded keyboard bytes for letters, digits, Space, Enter, and Backspace.
+`scripts/test-physical-keyboard-console.py` types `help` through QMP keyboard
+events and verifies the object-shell help output over COM2. Physical shell
+input on hardware remains pending.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -65,8 +74,9 @@ and where the boundary of the work still is.
 | Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
-| ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic keyboard, USB HID, trackpad, IRQ-driven input, or shell keyboard control |
-| ADR 0075 physical input event diagnostic QEMU-accepted for a fixed space/backspace/wake sequence | Physical acceptance of the wider event diagnostic, shell input, or generic keyboard support |
+| ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic USB HID, trackpad, IRQ-driven input, or broad keyboard support |
+| ADR 0075 physical input event diagnostic QEMU-accepted and operator-accepted for a fixed space/backspace/wake sequence | Shell input, framebuffer terminal, or generic keyboard support |
+| ADR 0076 physical keyboard console ingress QEMU-accepted for `help` through the existing shell syscall | Physical acceptance of shell input, punctuation/modifier layout, USB HID, trackpad, or IRQ-driven input |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -440,6 +450,7 @@ python scripts\test-object-shell.py --backend sdhci-emmc
 python scripts\test-evidence-terminal.py
 python scripts\test-physical-wake-diagnostic.py
 python scripts\test-physical-input-event-diagnostic.py
+python scripts\test-physical-keyboard-console.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -471,9 +482,9 @@ implemented or not claimed:
 * persistent package-session runtime or presentation/input bridges;
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
-* physical acceptance of ADR 0075's wider input event diagnostic;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
 * physical interactive object-shell use through built-in keyboard or trackpad;
+* punctuation/modifier keyboard layout or framebuffer terminal input;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;
 * CRC-32 as collision-proof proof of transcript identity;
 * AI inside the trusted core;
@@ -509,8 +520,10 @@ make narrower but stronger claims:
   operator-reported physical acceptance of `wake` plus Enter on the current USB
   boot machine;
 * ADR 0075's opt-in physical input event diagnostic is QEMU-accepted for the
-  fixed `space space backspace backspace wake enter` sequence, with physical
-  acceptance still pending;
+  fixed `space space backspace backspace wake enter` sequence and has one
+  operator-reported physical acceptance on the current USB boot target;
+* ADR 0076's opt-in physical keyboard console ingress is QEMU-accepted for
+  typing `help` through the existing object-shell console syscall;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate;
 * PythTIG packages are verified before ring-3 entry and compared across
@@ -565,6 +578,7 @@ docs/decisions/0072-phase-12-path-adversarial-suite.md
 docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md
 docs/decisions/0074-physical-wake-diagnostic.md
 docs/decisions/0075-physical-input-event-diagnostic.md
+docs/decisions/0076-physical-keyboard-console-ingress.md
 ```
 
 Verification entry points:
@@ -579,6 +593,7 @@ scripts/test-sdhci-emmc-block-device.py
 scripts/test-evidence-terminal.py
 scripts/test-physical-wake-diagnostic.py
 scripts/test-physical-input-event-diagnostic.py
+scripts/test-physical-keyboard-console.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py

@@ -73,7 +73,7 @@ jobs:
           cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 
       - name: Phase 7 script import checks
-        run: python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py
+        run: python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py
 
       - name: Python harness tests
         run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze
@@ -88,6 +88,7 @@ jobs:
           python scripts/test-pyth-default-boot.py
           python scripts/test-object-shell.py
           python scripts/test-normal-fast-boot.py
+          python scripts/test-physical-keyboard-console.py
           python scripts/test-boot.py --slice phase-6-complete --timeout 60
           python scripts/test-boot.py --slice graceful-audio-fallback --no-audio-device --timeout 60
           python scripts/test-boot.py --slice milestone-1 --timeout 60
