@@ -767,12 +767,32 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     )?;
     #[cfg(not(test))]
     {
-        Ok(serial::try_read_byte_com2().map_or(NO_BYTE, u64::from))
+        let com2 = serial::try_read_byte_com2();
+        Ok(console_read_result(com2, || {
+            #[cfg(feature = "physical-keyboard-console")]
+            {
+                crate::physical_keyboard_console::poll_console_byte()
+            }
+            #[cfg(not(feature = "physical-keyboard-console"))]
+            {
+                None
+            }
+        }))
     }
     #[cfg(test)]
     {
-        Ok(NO_BYTE)
+        Ok(console_read_result(None, || None))
     }
+}
+
+fn console_read_result(
+    com2: Option<u8>,
+    poll_physical_keyboard: impl FnOnce() -> Option<u8>,
+) -> u64 {
+    if let Some(byte) = com2 {
+        return u64::from(byte);
+    }
+    poll_physical_keyboard().map_or(NO_BYTE, u64::from)
 }
 
 fn dispatch_console_write(args: SyscallArgs) -> Result<u64, SyscallError> {
@@ -3025,6 +3045,21 @@ mod tests {
             dispatch_console_write_for_test(intruder, console, b'x'),
             Err(SyscallError::Capability(CapabilityError::WrongHolder))
         );
+    }
+
+    #[test]
+    fn console_read_prefers_com2_then_physical_keyboard_then_no_byte() {
+        let mut physical_polled = false;
+        assert_eq!(
+            console_read_result(Some(b'c'), || {
+                physical_polled = true;
+                Some(b'p')
+            }),
+            u64::from(b'c')
+        );
+        assert!(!physical_polled);
+        assert_eq!(console_read_result(None, || Some(b'p')), u64::from(b'p'));
+        assert_eq!(console_read_result(None, || None), NO_BYTE);
     }
 
     #[test]

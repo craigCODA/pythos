@@ -104,6 +104,8 @@ mod permission_validation;
 mod persistent_objects;
 #[cfg(any(test, feature = "physical-input-event-diagnostic"))]
 mod physical_input_diagnostic;
+#[cfg(any(test, feature = "physical-keyboard-console"))]
+mod physical_keyboard_console;
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
 mod physical_wake;
 mod process;

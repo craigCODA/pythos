@@ -4,6 +4,7 @@ pub const MAX_LINE_LEN: usize = 96;
 pub enum LineAction {
     None,
     Echo(u8),
+    Erase,
     Execute {
         line: [u8; MAX_LINE_LEN],
         len: usize,
@@ -48,6 +49,15 @@ impl LineEditor {
             } else {
                 LineAction::Execute { line, len }
             };
+        }
+
+        if byte == 0x08 || byte == 0x7F {
+            if self.overflowed || self.len == 0 {
+                return LineAction::None;
+            }
+            self.len -= 1;
+            self.line[self.len] = 0;
+            return LineAction::Erase;
         }
 
         if self.overflowed {
@@ -107,5 +117,37 @@ mod tests {
             LineAction::Execute { len: 4, .. }
         ));
         assert_eq!(editor.input(b'\n'), LineAction::None);
+    }
+
+    #[test]
+    fn backspace_deletes_previous_byte_before_execute() {
+        let mut editor = LineEditor::new();
+        for &byte in b"helq" {
+            assert!(matches!(editor.input(byte), LineAction::Echo(_)));
+        }
+
+        assert_eq!(editor.input(0x08), LineAction::Erase);
+        assert_eq!(editor.input(b'p'), LineAction::Echo(b'p'));
+        let LineAction::Execute { line, len } = editor.input(b'\r') else {
+            panic!("expected edited line to execute");
+        };
+
+        assert_eq!(&line[..len], b"help");
+    }
+
+    #[test]
+    fn delete_key_deletes_previous_byte_before_execute() {
+        let mut editor = LineEditor::new();
+        for &byte in b"helo" {
+            assert!(matches!(editor.input(byte), LineAction::Echo(_)));
+        }
+
+        assert_eq!(editor.input(0x7F), LineAction::Erase);
+        assert_eq!(editor.input(b'p'), LineAction::Echo(b'p'));
+        let LineAction::Execute { line, len } = editor.input(b'\n') else {
+            panic!("expected edited line to execute");
+        };
+
+        assert_eq!(&line[..len], b"help");
     }
 }

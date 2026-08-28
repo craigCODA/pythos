@@ -62,6 +62,7 @@ pub unsafe extern "C" fn _start(bootstrap_ptr: *const BootstrapCapabilityBlock) 
             Some(byte) => match line_editor.input(byte) {
                 LineAction::None => {}
                 LineAction::Echo(byte) => syscalls::write_byte(console, byte),
+                LineAction::Erase => syscalls::write_str(console, "\x08 \x08"),
                 LineAction::Execute { line, len } => {
                     syscalls::write_str(console, "\r\n");
                     run_line(console, system_control, &mut object_caps, &line[..len]);

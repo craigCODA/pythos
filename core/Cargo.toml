@@ -40,6 +40,10 @@ physical-wake-diagnostic = []
 # Phase 6 cinematic frame, normalizes a fixed key set, and reports events; it is
 # not enabled by default and is not shell keyboard control.
 physical-input-event-diagnostic = []
+# Opt-in normal-boot physical keyboard console ingress. PythCore keeps i8042
+# port access in kernel mode and exposes only bounded console bytes through the
+# existing object-shell console syscall.
+physical-keyboard-console = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

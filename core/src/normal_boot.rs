@@ -6,6 +6,8 @@
 //! then enters `shell.elf` as the persistent ring-3 program.
 
 use crate::memory::physical::PhysicalMemory;
+#[cfg(feature = "physical-keyboard-console")]
+use crate::physical_keyboard_console;
 #[cfg(feature = "pythtig-phase2-test")]
 use crate::pyth_runtime_launch;
 use crate::pyth_service_supervisor::{
@@ -253,6 +255,14 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         }
     } else {
         serial::write_line("PYTHOS:CORE:NORMAL_BOOT:PS2_INIT_FAILED");
+    }
+    #[cfg(feature = "physical-keyboard-console")]
+    {
+        if ps2::initialize_keyboard_polling().is_ok() {
+            physical_keyboard_console::mark_ready();
+        } else {
+            physical_keyboard_console::mark_ps2_init_failed();
+        }
     }
 
     let shell_process = match build_shell_process(&substrate.shell_launch) {
