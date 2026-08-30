@@ -35,8 +35,12 @@ ADR 0074 adds an opt-in physical wake diagnostic. Its QEMU harness,
 Enter through QMP, and requires `PYTHOS:CORE:PHYSICAL_WAKE:ACCEPTED`. On
 2026-08-26 the same diagnostic image was copied to the USB ESP and the operator
 reported physical acceptance after typing `wake` plus Enter on the current boot
-machine. That proves only this diagnostic polling path on that machine, not
-generic USB HID, trackpad input, IRQ-driven input, or shell keyboard control.
+machine. The captured Set-1 make/break and Enter sequence was
+`11 91 1E 9E 25 A5 12 92 1C`. The raw physical boot clip is `40.638811 s`,
+`366801558 bytes`, with SHA-256
+`8deabe1c4dc3f8b659c81d7ab4bde149b58f8e75c61b4c9de08062a645d02dd9`.
+That proves only this diagnostic polling path on that machine, not generic USB
+HID, trackpad input, IRQ-driven input, or shell keyboard control.
 
 ADR 0075 adds the follow-up physical input event diagnostic. Its QEMU harness,
 `scripts/test-physical-input-event-diagnostic.py`, injects `space space
