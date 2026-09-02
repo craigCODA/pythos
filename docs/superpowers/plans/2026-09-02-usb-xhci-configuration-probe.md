@@ -114,7 +114,7 @@ cargo build -p pythos-core --target x86_64-unknown-none --features usb-xhci-conf
 
 Require the driver tests and cross-target build to pass.
 
-- [ ] **Step 7: Commit the sequential EP0 probe layer**
+- [x] **Step 7: Commit the sequential EP0 probe layer**
 
 Run: `git add core/Cargo.toml core/src/usb_xhci_driver.rs docs/superpowers/plans/2026-09-02-usb-xhci-configuration-probe.md && git commit -m "feat(usb): read xHCI configuration descriptors"`
 
@@ -128,29 +128,29 @@ Run: `git add core/Cargo.toml core/src/usb_xhci_driver.rs docs/superpowers/plans
 - Consumes: `run_configuration_probe`, `XhciConfigurationProbeResult`, and existing descriptor/swap fallback rendering.
 - Produces: `build_configuration_probe_screen(...)`, `render_configuration_probe(...)`, and configuration-feature precedence over the device-descriptor-only path.
 
-- [ ] **Step 1: Write failing framebuffer tests**
+- [x] **Step 1: Write failing framebuffer tests**
 
 Add a literal result fixture and assert the panel contains `xhci cfg`, address/device/config completion codes, total length, configuration/interface counts, `03 01 02`, endpoint `81`, attributes `03`, MPS `0004`, interval `010`, scratchpad count, and `no disk writes`. Add an error-panel test using a typed configuration error.
 
-- [ ] **Step 2: Run the screen tests and verify RED**
+- [x] **Step 2: Run the screen tests and verify RED**
 
 Run: `cargo test -p pythos-core --bin pythcore usb_xhci_probe_screen::tests::formats_configuration_probe -- --nocapture`
 
 Expected: compilation fails because configuration screen builders do not exist.
 
-- [ ] **Step 3: Implement framebuffer rendering**
+- [x] **Step 3: Implement framebuffer rendering**
 
 Use the existing fixed diagnostic-line builder and do not add dynamic allocation.
 
-- [ ] **Step 4: Run screen tests and verify GREEN**
+- [x] **Step 4: Run screen tests and verify GREEN**
 
 Run the same focused command and require the success/error panel tests to pass.
 
-- [ ] **Step 5: Wire boot feature precedence**
+- [x] **Step 5: Wire boot feature precedence**
 
 When `usb-xhci-configuration-probe` is enabled, run/render it instead of the device-descriptor-only path. Keep all previous feature-only branches unchanged when configuration probing is disabled.
 
-- [ ] **Step 6: Build both old and new features**
+- [x] **Step 6: Build both old and new features**
 
 Run:
 

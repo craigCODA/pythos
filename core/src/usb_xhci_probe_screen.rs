@@ -7,7 +7,8 @@
 use crate::framebuffer;
 #[cfg(any(test, feature = "usb-xhci-command-probe"))]
 use crate::usb_xhci_driver::{
-    XhciAddressProbeResult, XhciCommandProbeResult, XhciDescriptorProbeResult, XhciDriverError,
+    XhciAddressProbeResult, XhciCommandProbeResult, XhciConfigurationProbeResult,
+    XhciDescriptorProbeResult, XhciDriverError,
 };
 use crate::usb_xhci_probe::{
     UsbController, UsbControllerKind, UsbMemoryBar, UsbProbeReport, XhciPortChange,
@@ -377,6 +378,125 @@ pub fn build_descriptor_probe_screen(
     screen
 }
 
+#[cfg(any(test, feature = "usb-xhci-configuration-probe"))]
+pub fn build_configuration_probe_screen(
+    report: &UsbProbeReport,
+    result: XhciConfigurationProbeResult,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci cfg");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+
+    let mut port = ProbeLine::new();
+    port.push_str("port ");
+    port.push_hex(u64::from(result.descriptor.address.command.port_number), 2);
+    port.push_str(" slot ");
+    port.push_hex(u64::from(result.descriptor.address.command.slot_id), 2);
+    screen.push(port);
+
+    let mut device = ProbeLine::new();
+    device.push_str("addr cc ");
+    device.push_hex(
+        u64::from(result.descriptor.address.address_device_completion_code),
+        2,
+    );
+    device.push_str(" desc cc ");
+    device.push_hex(u64::from(result.descriptor.descriptor_completion_code), 2);
+    screen.push(device);
+
+    let mut transfers = ProbeLine::new();
+    transfers.push_str("hdr cc ");
+    transfers.push_hex(u64::from(result.configuration_header_completion_code), 2);
+    transfers.push_str(" cfg cc ");
+    transfers.push_hex(u64::from(result.configuration_completion_code), 2);
+    screen.push(transfers);
+
+    let mut total = ProbeLine::new();
+    total.push_str("total ");
+    total.push_dec(u64::from(result.configuration.header.total_length), 4);
+    total.push_str(" val ");
+    total.push_hex(
+        u64::from(result.configuration.header.configuration_value),
+        2,
+    );
+    screen.push(total);
+
+    let mut counts = ProbeLine::new();
+    counts.push_str("cfgs ");
+    counts.push_hex(
+        u64::from(result.descriptor.descriptor.configuration_count),
+        2,
+    );
+    counts.push_str(" ifs ");
+    counts.push_hex(u64::from(result.configuration.header.interface_count), 2);
+    screen.push(counts);
+
+    let mut interface = ProbeLine::new();
+    interface.push_str("if ");
+    interface.push_hex(u64::from(result.configuration.interface_class), 2);
+    interface.push_str(" ");
+    interface.push_hex(u64::from(result.configuration.interface_subclass), 2);
+    interface.push_str(" ");
+    interface.push_hex(u64::from(result.configuration.interface_protocol), 2);
+    interface.push_str(" ep ");
+    interface.push_hex(
+        u64::from(result.configuration.interrupt_in_endpoint_address),
+        2,
+    );
+    screen.push(interface);
+
+    let mut endpoint = ProbeLine::new();
+    endpoint.push_str("attr ");
+    endpoint.push_hex(u64::from(result.configuration.interrupt_in_attributes), 2);
+    endpoint.push_str(" mps ");
+    endpoint.push_dec(
+        u64::from(result.configuration.interrupt_in_max_packet_size),
+        4,
+    );
+    screen.push(endpoint);
+
+    let mut interval = ProbeLine::new();
+    interval.push_str("int ");
+    interval.push_dec(u64::from(result.configuration.interrupt_in_interval), 3);
+    interval.push_str(" scratch ");
+    interval.push_hex(
+        u64::from(result.descriptor.address.command.scratchpad_count),
+        2,
+    );
+    screen.push(interval);
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-configuration-probe"))]
+pub fn build_configuration_error_screen(
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci cfg err");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+    push_u32(&mut screen, "err ", error.screen_code());
+    push_change(&mut screen, change);
+    push_ports_summary(&mut screen, port_status);
+    push_xecp(&mut screen, port_status);
+    push_legacy(&mut screen, port_status);
+    screen
+}
+
 #[cfg(any(test, feature = "usb-xhci-descriptor-probe"))]
 pub fn build_descriptor_error_screen(
     report: &UsbProbeReport,
@@ -497,6 +617,28 @@ pub fn render_descriptor_probe(
     result: XhciDescriptorProbeResult,
 ) -> Result<(), ()> {
     let screen = build_descriptor_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-configuration-probe")]
+pub fn render_configuration_probe(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    result: XhciConfigurationProbeResult,
+) -> Result<(), ()> {
+    let screen = build_configuration_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-configuration-probe")]
+pub fn render_configuration_error(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> Result<(), ()> {
+    let screen = build_configuration_error_screen(report, port_status, change, error);
     render_screen(framebuffer_info, screen)
 }
 
@@ -1056,6 +1198,123 @@ mod tests {
         assert_eq!(screen.line(7), Some("chg p6"));
         assert_eq!(screen.line(8), Some("was sc 000002A0"));
         assert_eq!(screen.line(9), Some("now sc 00220603"));
+    }
+
+    #[test]
+    fn formats_configuration_probe_result_for_no_serial_capture() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let result = crate::usb_xhci_driver::XhciConfigurationProbeResult {
+            descriptor: crate::usb_xhci_driver::XhciDescriptorProbeResult {
+                address: crate::usb_xhci_driver::XhciAddressProbeResult {
+                    command: crate::usb_xhci_driver::XhciCommandProbeResult {
+                        port_number: 6,
+                        noop_completion_code: 1,
+                        enable_slot_completion_code: 1,
+                        slot_id: 1,
+                        scratchpad_count: 8,
+                        usbsts_after_start: 0,
+                        portsc_after_reset: 0x0022_0603,
+                    },
+                    address_device_completion_code: 1,
+                    device_address: 4,
+                    slot_state: 2,
+                    ep0_state: 1,
+                    port_speed: 1,
+                    context_size: 32,
+                    default_control_max_packet_size: 8,
+                },
+                descriptor_completion_code: 1,
+                descriptor: crate::usb_xhci_driver::XhciDeviceDescriptorSnapshot {
+                    length: 18,
+                    descriptor_type: 1,
+                    usb_bcd: 0x0200,
+                    device_class: 0,
+                    device_subclass: 0,
+                    device_protocol: 0,
+                    max_packet_size0: 8,
+                    vendor_id: 0x0627,
+                    product_id: 0x0001,
+                    device_bcd: 0x0000,
+                    manufacturer_index: 1,
+                    product_index: 2,
+                    serial_index: 0,
+                    configuration_count: 1,
+                },
+            },
+            configuration_header_completion_code: 1,
+            configuration_completion_code: 1,
+            configuration: crate::usb_xhci_driver::XhciConfigurationDescriptorSnapshot {
+                header: crate::usb_xhci_driver::XhciConfigurationDescriptorHeader {
+                    length: 9,
+                    descriptor_type: 2,
+                    total_length: 34,
+                    interface_count: 1,
+                    configuration_value: 1,
+                    configuration_index: 0,
+                    attributes: 0xA0,
+                    max_power: 50,
+                },
+                interface_number: 0,
+                alternate_setting: 0,
+                endpoint_count: 1,
+                interface_class: 3,
+                interface_subclass: 1,
+                interface_protocol: 2,
+                interrupt_in_endpoint_address: 0x81,
+                interrupt_in_attributes: 0x03,
+                interrupt_in_max_packet_size: 4,
+                interrupt_in_interval: 10,
+            },
+        };
+
+        let screen = build_configuration_probe_screen(&report, result);
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci cfg"));
+        assert_eq!(screen.line(2), Some("no disk writes"));
+        assert_eq!(screen.line(6), Some("port 06 slot 01"));
+        assert_eq!(screen.line(7), Some("addr cc 01 desc cc 01"));
+        assert_eq!(screen.line(8), Some("hdr cc 01 cfg cc 01"));
+        assert_eq!(screen.line(9), Some("total 0034 val 01"));
+        assert_eq!(screen.line(10), Some("cfgs 01 ifs 01"));
+        assert_eq!(screen.line(11), Some("if 03 01 02 ep 81"));
+        assert_eq!(screen.line(12), Some("attr 03 mps 0004"));
+        assert_eq!(screen.line(13), Some("int 010 scratch 08"));
+    }
+
+    #[test]
+    fn formats_configuration_probe_error_for_no_serial_capture() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = crate::usb_xhci_probe::XhciPortChange {
+            port_number: 6,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+
+        let screen = build_configuration_error_screen(
+            &report,
+            port_status,
+            change,
+            crate::usb_xhci_driver::XhciDriverError::ConfigurationHeaderNonSuccess,
+        );
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci cfg err"));
+        assert_eq!(screen.line(2), Some("no disk writes"));
+        assert_eq!(screen.line(6), Some("err 0000002A"));
     }
 
     #[test]
