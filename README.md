@@ -218,6 +218,19 @@ photo-backed physical descriptor acceptance. Configuration descriptor reads,
 HID parsing, endpoint polling, cursor movement, and trackpad support remain
 pending.
 
+ADR 0084 adds `usb-xhci-configuration-probe`, an opt-in QEMU-only extension.
+It reads the fixed nine-byte configuration header, validates `wTotalLength`
+against a 256-byte cap, then reads exactly that bounded length and walks the
+standard configuration, interface, and endpoint descriptors. The accepted
+QEMU run reported total length `34`, configuration value `1`, one interface,
+HID boot-mouse class/subclass/protocol `03/01/02`, interrupt-IN endpoint
+`0x81`, attributes `0x03`, max packet size `4`, interval `7`,
+`USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
+`NO_DISK_WRITES`. The feature does not send `SET_CONFIGURATION`, configure a
+non-control endpoint, parse or poll HID reports, move a cursor, or touch
+storage. Physical deployment and PythOS target validation are pending, so the
+USB does not need to be inserted yet.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths
@@ -249,6 +262,7 @@ Current-state references:
 - [ADR 0081: USB xHCI command ring driver diagnostic](docs/decisions/0081-usb-xhci-command-ring-driver.md)
 - [ADR 0082: USB xHCI Address Device probe](docs/decisions/0082-usb-xhci-address-device-probe.md)
 - [ADR 0083: USB xHCI Device Descriptor probe](docs/decisions/0083-usb-xhci-device-descriptor-probe.md)
+- [ADR 0084: USB xHCI Configuration Descriptor probe](docs/decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)

@@ -192,7 +192,7 @@ Do not add `SET_CONFIGURATION`, Configure Endpoint, HID parsing, or polling.
 
 Run the same command and require `QEMU_OUTCOME success` plus `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`.
 
-- [ ] **Step 5: Commit the QEMU acceptance harness**
+- [x] **Step 5: Commit the QEMU acceptance harness**
 
 Run: `git add scripts/test-usb-xhci-configuration-probe.py docs/superpowers/plans/2026-09-02-usb-xhci-configuration-probe.md && git commit -m "test(usb): accept xHCI configuration probe"`
 
@@ -209,15 +209,15 @@ Run: `git add scripts/test-usb-xhci-configuration-probe.py docs/superpowers/plan
 - Consumes: fresh test output and exact QEMU markers from Tasks 1-4.
 - Produces: an honest QEMU-only state record and physical-deployment handoff.
 
-- [ ] **Step 1: Record ADR 0084 and QEMU evidence**
+- [x] **Step 1: Record ADR 0084 and QEMU evidence**
 
 Document the two-stage bounded read, 256-byte cap, typed failures, exact markers, no-write boundary, and explicit physical-pending status.
 
-- [ ] **Step 2: Update project/state documentation**
+- [x] **Step 2: Update project/state documentation**
 
 Record that configuration/interface/endpoint metadata is discovered but the device is not configured and the endpoint is not polled. Set the next action to verified USB deployment and physical configuration-descriptor acceptance, not HID input.
 
-- [ ] **Step 3: Run formatting, static, focused, and regression checks**
+- [x] **Step 3: Run formatting, static, focused, and regression checks**
 
 Run:
 
@@ -234,11 +234,11 @@ py -3 scripts\test-boot.py
 
 Require success markers and `QEMU_OUTCOME success` from each QEMU harness. Record any unrelated baseline failures without mislabeling them as configuration-probe regressions.
 
-- [ ] **Step 4: Stop before physical deployment**
+- [x] **Step 4: Stop before physical deployment**
 
 Report the QEMU-accepted image hash and ask the owner to insert the USB. Re-identify the exact disk, volume, bus, partition flags, and filesystem before any copy. Do not deploy or claim physical acceptance in this task.
 
-- [ ] **Step 5: Commit the QEMU-only acceptance record**
+- [x] **Step 5: Commit the QEMU-only acceptance record**
 
 Run: `git add README.md docs/TECHNICAL-OVERVIEW.md docs/decisions/0084-usb-xhci-configuration-descriptor-probe.md docs/evidence/index.html docs/superpowers/plans/2026-09-02-usb-xhci-configuration-probe.md && git commit -m "docs(usb): record configuration probe acceptance"`
 

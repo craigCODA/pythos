@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, physical command-ring success, physical Address Device evidence, and photo-backed xHCI descriptor-probe evidence.">
+    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, physical command-ring and descriptor success, plus QEMU xHCI configuration-descriptor evidence.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -413,6 +413,44 @@
           </div>
           <p><a href="../decisions/0083-usb-xhci-device-descriptor-probe.md">ADR 0083 defines the xHCI Device Descriptor probe boundary</a>.</p>
           <p><a href="2026-09-01-linux-mint-usb-mouse-map.tar.gz">Download the returned Linux Mint USB mouse map archive</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-configuration-probe-2026-09-02">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-09-02 QEMU configuration discovery</p>
+            <h2>xHCI Configuration Descriptor Probe Accepted In QEMU</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-configuration-probe</code> image extends
+            the Device Descriptor path with a bounded two-stage endpoint-0
+            read. It validates the nine-byte configuration header, caps
+            <code>wTotalLength</code> at 256 bytes, reads exactly the validated
+            total, and walks standard interface and endpoint descriptors.
+          </p>
+          <div class="evidence-stats" aria-label="2026-09-02 USB xHCI configuration probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>physical</strong> pending</span>
+            <span><strong>total</strong> 34</span>
+            <span><strong>interface</strong> 03 01 02</span>
+            <span><strong>endpoint</strong> 81</span>
+            <span><strong>attributes</strong> 03</span>
+            <span><strong>mps</strong> 4</span>
+            <span><strong>interval</strong> 7</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_CONFIGURATION_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Transfer result</strong> header CC <code>01</code>, full CC <code>01</code>, total length <code>0022</code>, configuration value <code>01</code>, interface count <code>01</code></p>
+          <p class="fact"><strong>Parsed QEMU mouse</strong> HID boot mouse <code>03/01/02</code>, interrupt-IN endpoint <code>0x81</code>, attributes <code>0x03</code>, max packet <code>4</code>, interval <code>7</code></p>
+          <p class="fact"><strong>Storage boundary</strong> <code>NO_DISK_WRITES</code>; the harness uses a disposable simulated USB-storage image only for boot-detach sequencing</p>
+          <p class="boundary-note">
+            This is QEMU-only configuration-descriptor evidence. No physical
+            image has been deployed for ADR 0084. It does not prove the AMD
+            <code>1022:7914</code> path, the Dell/PixArt configuration read,
+            <code>SET_CONFIGURATION</code>, endpoint configuration, HID report
+            parsing or polling, cursor movement, or trackpad support.
+          </p>
+          <p><a href="../decisions/0084-usb-xhci-configuration-descriptor-probe.md">ADR 0084 defines the bounded Configuration Descriptor probe and physical-pending boundary</a>.</p>
         </div>
       </section>
 

@@ -226,6 +226,18 @@ photo-backed physical descriptor acceptance. Configuration descriptor reads,
 HID parsing, endpoint polling, cursor movement, and trackpad support remain
 pending.
 
+ADR 0084 adds `usb-xhci-configuration-probe` as a QEMU-only bounded extension.
+It reads and validates the nine-byte configuration header, caps
+`wTotalLength` at 256 bytes, reads exactly that total, and walks standard
+configuration, interface, and endpoint descriptors. The accepted QEMU mouse
+reported total length `34`, one configuration and interface, boot-mouse
+`03/01/02`, interrupt-IN endpoint `0x81`, attributes `0x03`, max packet `4`,
+and interval `7`. The harness emitted
+`USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
+`NO_DISK_WRITES`. Physical deployment and validation remain pending; the
+feature does not activate the configuration or endpoint and does not parse or
+poll HID reports.
+
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
 and where the boundary of the work still is.
@@ -256,6 +268,7 @@ and where the boundary of the work still is.
 | ADR 0081 USB/xHCI command-ring diagnostic QEMU-accepted through No-op and Enable Slot command completions with static DMA rings; scratchpad-enabled image deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows No-op CC `01`, Enable Slot CC `01`, slot `01`, scratchpad count `08`, and `no disk writes` | Descriptor reads, endpoint setup, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0082 USB/xHCI Address Device probe QEMU-accepted with input/output contexts, Address Device CC `1`, assigned address `1`, slot state `2`, EP0 state `1`, and `NO_DISK_WRITES`; deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows Address Device CC `01`, device address `01`, slot state `02`, EP0 state `01`, speed `02`, MPS `0008`, and `no disk writes` | Descriptor reads, endpoint setup beyond EP0 context, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0083 USB/xHCI Device Descriptor probe QEMU-accepted with one EP0 `GET_DESCRIPTOR(Device)` transfer and deployed to the verified USB ESP; Linux Mint field-kit evidence maps the physical Dell/PixArt mouse descriptor as `413c:301a`, MPS0 `8`, HID boot mouse `03/01/02`, endpoint `0x81`; physical frame on AMD `1022:7914` shows descriptor CC `01`, length `12`, type `01`, USB BCD `0200`, MPS `008`, VID/PID `413C 301A`, and `no disk writes` | Configuration descriptor reads, HID parsing, mouse movement, IRQ input, or trackpad support |
+| ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted with bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, interval `7`, and `NO_DISK_WRITES` | Physical configuration-descriptor proof, `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -747,6 +760,20 @@ class/subclass/protocol `00 00 00`, MPS0 `008`, configuration count `01`,
 VID/PID `413C 301A`, and scratchpad count `08`; SHA-256
 `4204994560727C63A8F631A05CCECFA68C3FC20189E12A2834E621327FDA61B6`.
 
+ADR 0084 is the next bounded discovery layer and is QEMU-only. The
+`usb-xhci-configuration-probe` feature reuses the addressed slot and endpoint
+0, advances three control TDs without wrapping the 16-entry ring, first reads
+the fixed configuration header, validates a maximum 256-byte `wTotalLength`,
+then reads exactly that total. The parser walks checked standard descriptors
+and records interface plus interrupt-IN endpoint metadata. The accepted run
+reported header and full transfer completion code `1`, total length `34`,
+configuration value `1`, interface count `1`, HID boot mouse `03/01/02`,
+endpoint `0x81`, attributes `0x03`, max packet `4`, and interval `7`; it ended
+with `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
+`NO_DISK_WRITES`. No configuration-probe image has been deployed or accepted
+on the physical target. The physical Dell/PixArt descriptor expectation stays
+device-specific at interval `10`, as recorded by Linux.
+
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
 The script stages itself into `~/pythos-field-kit`, collects PCI, xHCI, USB,
@@ -767,6 +794,7 @@ See:
 - [ADR 0081 USB xHCI command-ring driver diagnostic](decisions/0081-usb-xhci-command-ring-driver.md)
 - [ADR 0082 USB xHCI Address Device probe](decisions/0082-usb-xhci-address-device-probe.md)
 - [ADR 0083 USB xHCI Device Descriptor probe](decisions/0083-usb-xhci-device-descriptor-probe.md)
+- [ADR 0084 USB xHCI Configuration Descriptor probe](decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)
@@ -823,6 +851,7 @@ python scripts\test-usb-xhci-swap-probe.py
 python scripts\test-usb-xhci-command-probe.py
 python scripts\test-usb-xhci-address-probe.py
 python scripts\test-usb-xhci-descriptor-probe.py
+python scripts\test-usb-xhci-configuration-probe.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -989,6 +1018,7 @@ scripts/test-usb-xhci-swap-probe.py
 scripts/test-usb-xhci-command-probe.py
 scripts/test-usb-xhci-address-probe.py
 scripts/test-usb-xhci-descriptor-probe.py
+scripts/test-usb-xhci-configuration-probe.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py
