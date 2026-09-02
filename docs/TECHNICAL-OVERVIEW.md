@@ -241,8 +241,10 @@ error was shared by every command and control-transfer wait, the first attempt
 does not prove how far the configuration flow progressed. The refreshed image
 adds distinct No-op, Enable Slot, Address Device, Device Descriptor,
 configuration-header, and full-configuration timeout identities with readable
-framebuffer stage text. The feature still does not activate the configuration
-or endpoint and does not parse or poll HID reports.
+framebuffer stage text. It is deployed to the re-identified Lexar D70E with
+8-of-8 source-to-target hashes matching and 111 unrelated files preserved. A
+new Lenovo boot is pending. The feature still does not activate the
+configuration or endpoint and does not parse or poll HID reports.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -784,9 +786,13 @@ captured port `06` changing from `000002A0` to `000202E1`, followed by `xhci
 cfg err`, `no disk writes`, and generic error `0000000F`. Since `0x0F` covered
 all command and transfer waits, that attempt is a physical connect-plus-timeout
 result, not configuration-descriptor success. The staged follow-up assigns
-codes `0x2C..0x31` and readable labels to the six possible waits. The physical
-Dell/PixArt descriptor expectation remains device-specific at interval `10`,
-as recorded by Linux.
+codes `0x2C..0x31` and readable labels to the six possible waits. The refreshed
+8-file image was copied to the re-identified Lexar D70E without formatting or
+deleting files; 4,042,520 bytes matched source hashes and all 111 unrelated
+files remained byte-identical. Its deployed core SHA-256 is
+`325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11`.
+The physical Dell/PixArt descriptor expectation remains device-specific at
+interval `10`, as recorded by Linux, and the refreshed Lenovo boot is pending.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.

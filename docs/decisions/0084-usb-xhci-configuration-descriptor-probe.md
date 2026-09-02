@@ -175,10 +175,22 @@ after boot-USB removal and mouse insertion, shows port `06` changing from
 `0000000F`. This proves the physical swap/connect path and a bounded timeout;
 it does not prove any specific command or configuration transfer completed.
 
-The USB ESP must be re-identified before deploying the staged diagnostic, and
-physical configuration-descriptor acceptance requires a fresh Lenovo result.
-QEMU evidence does not prove the Dell/PixArt configuration read, HID input, or
-cursor support.
+The staged diagnostic was then deployed to the re-identified Disk 2 Lexar D70E
+USB ESP, serial `1026R51254700477`, active MBR/FAT32 `PYTHOS_ESP`, with
+non-boot/non-system flags and a clean volume. The predeployment 119-file volume
+was copied to
+`D:\PythOS-Workspace\checkpoints\2026-09-02-adr0084-timeout-stage-usb-predeploy-backup`
+and verified file by file. Deployment overwrote only the 8 accepted image files
+(4,042,520 bytes), preserved all 111 unrelated files byte-identically, and
+read back the deployed core as:
+
+```text
+325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11
+```
+
+Physical configuration-descriptor acceptance still requires a fresh Lenovo
+result from this staged image. QEMU and deployment evidence do not prove the
+Dell/PixArt configuration read, HID input, or cursor support.
 
 ## Consequences
 

@@ -235,8 +235,12 @@ shows a new connect on port `06` followed by `xhci cfg err` / `0x0F`. That
 proves the intended handoff and physical controller path reached a finite wait,
 but the shared timeout code did not identify which command or transfer stalled.
 The follow-up keeps the same flow and adds exact timeout identities `0x2C`
-through `0x31` plus a readable stage line. A refreshed physical retry is still
-required before claiming a configuration-descriptor read on the Lenovo.
+through `0x31` plus a readable stage line. That refreshed image is now deployed
+to the same re-identified Lexar D70E: 8 source files / 4,042,520 bytes matched
+on readback, 111 unrelated files stayed byte-identical, and the deployed core
+SHA-256 is `325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11`.
+A refreshed Lenovo boot is still required before claiming a physical
+configuration-descriptor read.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
