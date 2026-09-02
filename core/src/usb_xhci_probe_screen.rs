@@ -171,6 +171,7 @@ pub fn build_swap_screen(
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
     push_text(&mut screen, "swap mouse now");
+    push_text(&mut screen, "diag cfg stage1");
     push_text(&mut screen, "no disk writes");
     push_count(&mut screen, report.count() as u64);
     if let Some(controller) = select_controller(report) {
@@ -1003,8 +1004,9 @@ mod tests {
 
         assert_eq!(screen.line(0), Some("PythOS"));
         assert_eq!(screen.line(1), Some("swap mouse now"));
-        assert_eq!(screen.line(2), Some("no disk writes"));
-        assert_eq!(screen.line(6), Some("ports total 08 snap 01"));
+        assert_eq!(screen.line(2), Some("diag cfg stage1"));
+        assert_eq!(screen.line(3), Some("no disk writes"));
+        assert_eq!(screen.line(7), Some("ports total 08 snap 01"));
     }
 
     #[test]
