@@ -161,7 +161,7 @@ cargo build -p pythos-core --target x86_64-unknown-none --features usb-xhci-conf
 
 Require both builds to pass.
 
-- [ ] **Step 7: Commit boot and framebuffer integration**
+- [x] **Step 7: Commit boot and framebuffer integration**
 
 Run: `git add core/src/usb_xhci_probe_boot.rs core/src/usb_xhci_probe_screen.rs docs/superpowers/plans/2026-09-02-usb-xhci-configuration-probe.md && git commit -m "feat(usb): render configuration probe results"`
 
@@ -174,21 +174,21 @@ Run: `git add core/src/usb_xhci_probe_boot.rs core/src/usb_xhci_probe_screen.rs 
 - Consumes: the existing descriptor harness flow, QEMU xHCI USB-storage detach, and QEMU USB-mouse hotplug.
 - Produces: stable terminal line `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`.
 
-- [ ] **Step 1: Write the harness before the feature is complete**
+- [x] **Step 1: Write the harness before the feature is complete**
 
-Require every ADR 0083 marker plus configuration header/full completion codes, total length `34`, configuration value `1`, interface count `1`, interface class/subclass/protocol `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, interval `10`, `XHCI_CONFIGURATION_READY`, `NO_DISK_WRITES`, and final probe readiness.
+Require every ADR 0083 marker plus configuration header/full completion codes, total length `34`, configuration value `1`, interface count `1`, interface class/subclass/protocol `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, live QEMU interval `7`, `XHCI_CONFIGURATION_READY`, `NO_DISK_WRITES`, and final probe readiness.
 
-- [ ] **Step 2: Run the harness and verify RED**
+- [x] **Step 2: Run the harness and verify RED**
 
 Run: `py -3 scripts\test-usb-xhci-configuration-probe.py`
 
 Expected: failure on missing feature/markers before boot integration is complete.
 
-- [ ] **Step 3: Complete only the minimal boot/marker integration required by the harness**
+- [x] **Step 3: Complete only the minimal boot/marker integration required by the harness**
 
 Do not add `SET_CONFIGURATION`, Configure Endpoint, HID parsing, or polling.
 
-- [ ] **Step 4: Run the harness and verify GREEN**
+- [x] **Step 4: Run the harness and verify GREEN**
 
 Run the same command and require `QEMU_OUTCOME success` plus `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`.
 

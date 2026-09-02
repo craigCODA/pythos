@@ -736,6 +736,7 @@ pub fn run_configuration_probe(
     compiler_fence(Ordering::SeqCst);
     let header_bytes = read_configuration_descriptor_header_buffer();
     let header = parse_configuration_descriptor_header(&header_bytes)?;
+    emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_HEADER_READY");
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_TOTAL_LENGTH=",
         u64::from(header.total_length),
