@@ -47,6 +47,11 @@ usb-xhci-address-probe = ["usb-xhci-command-probe"]
 # GET_DESCRIPTOR(Device) control transfer. It still does not configure
 # non-control endpoints, parse HID reports, move a cursor, or touch storage.
 usb-xhci-descriptor-probe = ["usb-xhci-address-probe"]
+# `usb-xhci-configuration-probe` adds bounded EP0 reads for the standard
+# configuration, interface, and interrupt-IN endpoint descriptors. It does not
+# set a configuration, configure endpoints, parse HID reports, poll input,
+# move a cursor, enable USB interrupts, or touch storage.
+usb-xhci-configuration-probe = ["usb-xhci-descriptor-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]

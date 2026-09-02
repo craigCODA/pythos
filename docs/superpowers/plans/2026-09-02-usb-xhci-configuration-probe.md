@@ -65,11 +65,11 @@ Expected: compilation fails because the header/snapshot types and parser functio
 
 Add `XhciConfigurationDescriptorHeader`, `XhciConfigurationDescriptorSnapshot`, and exact `XhciDriverError` variants for invalid header, oversized total length, malformed descriptor chain, missing interface, and missing interrupt-IN endpoint. Walk descriptors using each descriptor's `bLength`; never index beyond validated `total_length`.
 
-- [ ] **Step 8: Run parser tests and verify GREEN**
+- [x] **Step 8: Run parser tests and verify GREEN**
 
 Run the focused command and require all configuration TRB/parser tests to pass.
 
-- [ ] **Step 9: Commit the tested TRB/parser layer**
+- [x] **Step 9: Commit the tested TRB/parser layer**
 
 Run: `git add core/src/usb_xhci_driver.rs docs/superpowers/plans/2026-09-02-usb-xhci-configuration-probe.md && git commit -m "feat(usb): parse bounded configuration descriptors"`
 
@@ -83,27 +83,27 @@ Run: `git add core/src/usb_xhci_driver.rs docs/superpowers/plans/2026-09-02-usb-
 - Consumes: `XhciDescriptorProbeResult`, `XhciCommandProbeState`, the control/event rings, `poll_transfer_completion`, and the static descriptor DMA page.
 - Produces: `XhciConfigurationProbeResult` and `run_configuration_probe(registers: XhciRegisterSnapshot, port_number: u8) -> Result<XhciConfigurationProbeResult, XhciDriverError>`.
 
-- [ ] **Step 1: Write failing control-ring progression tests**
+- [x] **Step 1: Write failing control-ring progression tests**
 
 Add a pure test proving three sequential control TDs occupy TRB ranges `0..=2`, `3..=5`, and `6..=8`, and that a start index unable to fit three TRBs returns `ControlRingExhausted`.
 
-- [ ] **Step 2: Run the focused test and verify RED**
+- [x] **Step 2: Run the focused test and verify RED**
 
 Run the focused driver test command and require failure because the bounded control-ring allocator does not exist.
 
-- [ ] **Step 3: Implement sequential control-read submission**
+- [x] **Step 3: Implement sequential control-read submission**
 
 Refactor device-descriptor submission through a bounded `submit_ep0_control_read` helper that advances a caller-owned control-ring index. Keep cycle state `true` because this slice never wraps the 16-entry ring. Read the device descriptor at indices `0..=2`, the 9-byte configuration header at `3..=5`, and the exact full descriptor at `6..=8`.
 
-- [ ] **Step 4: Implement the configuration probe result path**
+- [x] **Step 4: Implement the configuration probe result path**
 
 Require successful Address Device and device-descriptor completion before the configuration reads. Validate `wTotalLength` before issuing the second configuration request. Emit header/full completion codes and parsed fields, then emit `XHCI_CONFIGURATION_READY` only after parsing succeeds.
 
-- [ ] **Step 5: Add the feature declaration**
+- [x] **Step 5: Add the feature declaration**
 
 Add `usb-xhci-configuration-probe = ["usb-xhci-descriptor-probe"]` with an explicit non-goal comment.
 
-- [ ] **Step 6: Run focused tests and feature build**
+- [x] **Step 6: Run focused tests and feature build**
 
 Run:
 

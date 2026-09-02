@@ -129,6 +129,10 @@ pub enum XhciDriverError {
     MalformedConfigurationDescriptor,
     MissingConfigurationInterface,
     MissingInterruptInEndpoint,
+    ControlRingExhausted,
+    DeviceDescriptorNonSuccess,
+    ConfigurationHeaderNonSuccess,
+    ConfigurationTransferNonSuccess,
 }
 
 impl XhciDriverError {
@@ -215,6 +219,18 @@ impl XhciDriverError {
             XhciDriverError::MissingInterruptInEndpoint => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_INTERRUPT_IN_MISSING"
             }
+            XhciDriverError::ControlRingExhausted => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONTROL_RING_EXHAUSTED"
+            }
+            XhciDriverError::DeviceDescriptorNonSuccess => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:DESCRIPTOR_NON_SUCCESS"
+            }
+            XhciDriverError::ConfigurationHeaderNonSuccess => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_HEADER_NON_SUCCESS"
+            }
+            XhciDriverError::ConfigurationTransferNonSuccess => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_TRANSFER_NON_SUCCESS"
+            }
         }
     }
 
@@ -247,6 +263,10 @@ impl XhciDriverError {
             XhciDriverError::MalformedConfigurationDescriptor => 0x25,
             XhciDriverError::MissingConfigurationInterface => 0x26,
             XhciDriverError::MissingInterruptInEndpoint => 0x27,
+            XhciDriverError::ControlRingExhausted => 0x28,
+            XhciDriverError::DeviceDescriptorNonSuccess => 0x29,
+            XhciDriverError::ConfigurationHeaderNonSuccess => 0x2A,
+            XhciDriverError::ConfigurationTransferNonSuccess => 0x2B,
         }
     }
 }
@@ -324,6 +344,21 @@ pub struct XhciConfigurationDescriptorSnapshot {
     pub interrupt_in_attributes: u8,
     pub interrupt_in_max_packet_size: u16,
     pub interrupt_in_interval: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XhciConfigurationProbeResult {
+    pub descriptor: XhciDescriptorProbeResult,
+    pub configuration_header_completion_code: u8,
+    pub configuration_completion_code: u8,
+    pub configuration: XhciConfigurationDescriptorSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct XhciControlTransferSlots {
+    setup: usize,
+    data: usize,
+    status: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -554,6 +589,7 @@ struct XhciCommandProbeState {
     result: XhciCommandProbeResult,
     dma: XhciDmaState,
     event_index: usize,
+    control_index: usize,
 }
 
 #[cfg(feature = "usb-xhci-command-probe")]
@@ -585,11 +621,21 @@ pub fn run_descriptor_probe(
         return Err(XhciDriverError::AddressDeviceNonSuccess);
     }
 
+    device_descriptor_from_command_state(registers, &mut state, address)
+}
+
+#[cfg(feature = "usb-xhci-descriptor-probe")]
+fn device_descriptor_from_command_state(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    state: &mut XhciCommandProbeState,
+    address: XhciAddressProbeResult,
+) -> Result<XhciDescriptorProbeResult, XhciDriverError> {
     let descriptor_event = submit_ep0_device_descriptor_request(
         registers,
         state.dma,
         state.result.slot_id,
         &mut state.event_index,
+        &mut state.control_index,
     )?;
     let descriptor_completion_code = descriptor_event.completion_code();
     emit_hex(
@@ -653,6 +699,124 @@ pub fn run_descriptor_probe(
         address,
         descriptor_completion_code,
         descriptor,
+    })
+}
+
+#[cfg(feature = "usb-xhci-configuration-probe")]
+pub fn run_configuration_probe(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    port_number: u8,
+) -> Result<XhciConfigurationProbeResult, XhciDriverError> {
+    let mut state = initialize_command_probe(registers, port_number)?;
+    let address = address_device_from_command_state(registers, port_number, &mut state)?;
+    if address.address_device_completion_code != XHCI_COMPLETION_SUCCESS {
+        return Err(XhciDriverError::AddressDeviceNonSuccess);
+    }
+    let descriptor = device_descriptor_from_command_state(registers, &mut state, address)?;
+    if descriptor.descriptor_completion_code != XHCI_COMPLETION_SUCCESS {
+        return Err(XhciDriverError::DeviceDescriptorNonSuccess);
+    }
+
+    let header_event = submit_ep0_configuration_descriptor_request(
+        registers,
+        state.dma,
+        state.result.slot_id,
+        &mut state.event_index,
+        &mut state.control_index,
+        XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH as u16,
+    )?;
+    let configuration_header_completion_code = header_event.completion_code();
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_HEADER_TRANSFER_CC=",
+        u64::from(configuration_header_completion_code),
+    );
+    if configuration_header_completion_code != XHCI_COMPLETION_SUCCESS {
+        return Err(XhciDriverError::ConfigurationHeaderNonSuccess);
+    }
+    compiler_fence(Ordering::SeqCst);
+    let header_bytes = read_configuration_descriptor_header_buffer();
+    let header = parse_configuration_descriptor_header(&header_bytes)?;
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_TOTAL_LENGTH=",
+        u64::from(header.total_length),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_VALUE=",
+        u64::from(header.configuration_value),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_COUNT=",
+        u64::from(header.interface_count),
+    );
+
+    let configuration_event = submit_ep0_configuration_descriptor_request(
+        registers,
+        state.dma,
+        state.result.slot_id,
+        &mut state.event_index,
+        &mut state.control_index,
+        header.total_length,
+    )?;
+    let configuration_completion_code = configuration_event.completion_code();
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_TRANSFER_CC=",
+        u64::from(configuration_completion_code),
+    );
+    if configuration_completion_code != XHCI_COMPLETION_SUCCESS {
+        return Err(XhciDriverError::ConfigurationTransferNonSuccess);
+    }
+    compiler_fence(Ordering::SeqCst);
+    let configuration_bytes =
+        read_configuration_descriptor_buffer(usize::from(header.total_length))?;
+    let configuration =
+        parse_configuration_descriptor(&configuration_bytes, usize::from(header.total_length))?;
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_NUMBER=",
+        u64::from(configuration.interface_number),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_ALTERNATE_SETTING=",
+        u64::from(configuration.alternate_setting),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_ENDPOINT_COUNT=",
+        u64::from(configuration.endpoint_count),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_CLASS=",
+        u64::from(configuration.interface_class),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_SUBCLASS=",
+        u64::from(configuration.interface_subclass),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_PROTOCOL=",
+        u64::from(configuration.interface_protocol),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERRUPT_IN_ENDPOINT=",
+        u64::from(configuration.interrupt_in_endpoint_address),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERRUPT_IN_ATTRIBUTES=",
+        u64::from(configuration.interrupt_in_attributes),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERRUPT_IN_MPS=",
+        u64::from(configuration.interrupt_in_max_packet_size),
+    );
+    emit_hex(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERRUPT_IN_INTERVAL=",
+        u64::from(configuration.interrupt_in_interval),
+    );
+    emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_READY");
+
+    Ok(XhciConfigurationProbeResult {
+        descriptor,
+        configuration_header_completion_code,
+        configuration_completion_code,
+        configuration,
     })
 }
 
@@ -830,6 +994,7 @@ fn initialize_command_probe(
         },
         dma,
         event_index,
+        control_index: 0,
     })
 }
 
@@ -1485,18 +1650,63 @@ fn submit_ep0_device_descriptor_request(
     dma: XhciDmaState,
     slot_id: u8,
     event_index: &mut usize,
+    control_index: &mut usize,
+) -> Result<XhciTrb, XhciDriverError> {
+    zero_dma_page(descriptor_buffer_ptr());
+    submit_ep0_control_read(
+        registers,
+        dma,
+        slot_id,
+        event_index,
+        control_index,
+        device_descriptor_setup_trb(true),
+        device_descriptor_data_trb(dma.descriptor_buffer_phys, true),
+    )
+}
+
+fn submit_ep0_configuration_descriptor_request(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    dma: XhciDmaState,
+    slot_id: u8,
+    event_index: &mut usize,
+    control_index: &mut usize,
+    length: u16,
+) -> Result<XhciTrb, XhciDriverError> {
+    if usize::from(length) > XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH {
+        return Err(XhciDriverError::ConfigurationDescriptorTooLarge);
+    }
+    zero_dma_page(descriptor_buffer_ptr());
+    submit_ep0_control_read(
+        registers,
+        dma,
+        slot_id,
+        event_index,
+        control_index,
+        configuration_descriptor_setup_trb(length, true),
+        configuration_descriptor_data_trb(dma.descriptor_buffer_phys, length, true),
+    )
+}
+
+fn submit_ep0_control_read(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    dma: XhciDmaState,
+    slot_id: u8,
+    event_index: &mut usize,
+    control_index: &mut usize,
+    setup_trb: XhciTrb,
+    data_trb: XhciTrb,
 ) -> Result<XhciTrb, XhciDriverError> {
     if slot_id == 0 {
         return Err(XhciDriverError::MissingSlotId);
     }
-    zero_dma_page(descriptor_buffer_ptr());
-    write_trb(control_ring_ptr(), 0, device_descriptor_setup_trb(true));
+    let slots = reserve_control_transfer(control_index)?;
+    write_trb(control_ring_ptr(), slots.setup, setup_trb);
+    write_trb(control_ring_ptr(), slots.data, data_trb);
     write_trb(
         control_ring_ptr(),
-        1,
-        device_descriptor_data_trb(dma.descriptor_buffer_phys, true),
+        slots.status,
+        control_status_stage_trb(true),
     );
-    write_trb(control_ring_ptr(), 2, control_status_stage_trb(true));
     compiler_fence(Ordering::SeqCst);
     write_mmio_u32(
         doorbell_offset(registers, slot_id)?,
@@ -1504,9 +1714,30 @@ fn submit_ep0_device_descriptor_request(
     )?;
     let status_trb_phys = dma
         .control_ring_phys
-        .checked_add((2 * core::mem::size_of::<XhciTrb>()) as u64)
+        .checked_add((slots.status * core::mem::size_of::<XhciTrb>()) as u64)
         .ok_or(XhciDriverError::MmioWindowOverflow)?;
     poll_transfer_completion(registers, dma, status_trb_phys, event_index)
+}
+
+fn reserve_control_transfer(
+    control_index: &mut usize,
+) -> Result<XhciControlTransferSlots, XhciDriverError> {
+    let setup = *control_index;
+    let data = setup
+        .checked_add(1)
+        .ok_or(XhciDriverError::ControlRingExhausted)?;
+    let status = setup
+        .checked_add(2)
+        .ok_or(XhciDriverError::ControlRingExhausted)?;
+    if status >= XHCI_CONTROL_RING_TRBS - 1 {
+        return Err(XhciDriverError::ControlRingExhausted);
+    }
+    *control_index = status + 1;
+    Ok(XhciControlTransferSlots {
+        setup,
+        data,
+        status,
+    })
 }
 
 fn poll_transfer_completion(
@@ -1999,6 +2230,46 @@ fn read_device_descriptor_buffer() -> [u8; XHCI_DEVICE_DESCRIPTOR_LENGTH] {
     bytes
 }
 
+fn read_configuration_descriptor_header_buffer() -> [u8; XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH]
+{
+    let mut bytes = [0u8; XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH];
+    read_descriptor_buffer_prefix(&mut bytes);
+    bytes
+}
+
+fn read_configuration_descriptor_buffer(
+    length: usize,
+) -> Result<[u8; XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH], XhciDriverError> {
+    if length > XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH {
+        return Err(XhciDriverError::ConfigurationDescriptorTooLarge);
+    }
+    let mut bytes = [0u8; XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH];
+    read_descriptor_buffer_prefix(&mut bytes[..length]);
+    Ok(bytes)
+}
+
+fn read_descriptor_buffer_prefix(bytes: &mut [u8]) {
+    let base = descriptor_buffer_ptr();
+    let mut index = 0usize;
+    while index < bytes.len() {
+        // SAFETY:
+        // 1. Invariant: `base + index` points inside the static descriptor DMA
+        //    page.
+        // 2. Established by: callers cap `bytes` at 256 bytes, below the 4 KiB
+        //    page length, and this loop bounds `index` by `bytes.len()`.
+        // 3. Lifetime: the descriptor page lives for the full diagnostic boot.
+        // 4. Pointer ownership: the xHC writes during the completed transfer;
+        //    PythCore reads it afterward through volatile byte loads.
+        // 5. Alignment: byte reads need no stricter alignment.
+        // 6. Mapped length: at most the first 256 bytes of the page are read.
+        // 7. Concurrency: single-core polled path after observing completion.
+        // 8. Violation: reading early or past the cap could expose stale or
+        //    unrelated DMA-page data.
+        bytes[index] = unsafe { base.add(index).read_volatile() };
+        index += 1;
+    }
+}
+
 fn emit_line(marker: &str) {
     #[cfg(not(test))]
     crate::serial::write_line(marker);
@@ -2325,6 +2596,48 @@ mod tests {
             parse_configuration_descriptor(&no_endpoint, 18),
             Err(XhciDriverError::MissingInterruptInEndpoint)
         );
+    }
+
+    #[test]
+    fn configuration_descriptor_control_transfers_advance_without_ring_wrap() {
+        let mut control_index = 0usize;
+
+        assert_eq!(
+            reserve_control_transfer(&mut control_index),
+            Ok(XhciControlTransferSlots {
+                setup: 0,
+                data: 1,
+                status: 2,
+            })
+        );
+        assert_eq!(
+            reserve_control_transfer(&mut control_index),
+            Ok(XhciControlTransferSlots {
+                setup: 3,
+                data: 4,
+                status: 5,
+            })
+        );
+        assert_eq!(
+            reserve_control_transfer(&mut control_index),
+            Ok(XhciControlTransferSlots {
+                setup: 6,
+                data: 7,
+                status: 8,
+            })
+        );
+        assert_eq!(control_index, 9);
+    }
+
+    #[test]
+    fn configuration_descriptor_control_transfer_rejects_ring_exhaustion() {
+        let mut control_index = XHCI_CONTROL_RING_TRBS - 2;
+
+        assert_eq!(
+            reserve_control_transfer(&mut control_index),
+            Err(XhciDriverError::ControlRingExhausted)
+        );
+        assert_eq!(control_index, XHCI_CONTROL_RING_TRBS - 2);
     }
 
     #[test]
