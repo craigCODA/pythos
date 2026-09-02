@@ -419,8 +419,8 @@
       <section class="band" id="usb-xhci-configuration-probe-2026-09-02">
         <div class="content">
           <div class="section-head">
-            <p class="kicker">2026-09-02 QEMU configuration discovery</p>
-            <h2>xHCI Configuration Descriptor Probe Accepted In QEMU</h2>
+            <p class="kicker">2026-09-02 QEMU and first physical attempt</p>
+            <h2>xHCI Configuration Probe Reached A Physical Timed Wait</h2>
           </div>
           <p class="lede">
             The opt-in <code>usb-xhci-configuration-probe</code> image extends
@@ -431,7 +431,7 @@
           </p>
           <div class="evidence-stats" aria-label="2026-09-02 USB xHCI configuration probe summary">
             <span><strong>qemu</strong> pass</span>
-            <span><strong>physical</strong> pending</span>
+            <span><strong>physical</strong> timeout</span>
             <span><strong>total</strong> 34</span>
             <span><strong>interface</strong> 03 01 02</span>
             <span><strong>endpoint</strong> 81</span>
@@ -442,14 +442,26 @@
           <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_CONFIGURATION_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
           <p class="fact"><strong>Transfer result</strong> header CC <code>01</code>, full CC <code>01</code>, total length <code>0022</code>, configuration value <code>01</code>, interface count <code>01</code></p>
           <p class="fact"><strong>Parsed QEMU mouse</strong> HID boot mouse <code>03/01/02</code>, interrupt-IN endpoint <code>0x81</code>, attributes <code>0x03</code>, max packet <code>4</code>, interval <code>7</code></p>
+          <p class="fact"><strong>Physical attempt</strong> Lenovo <code>81VS</code> reached the swap prompt, detected the mouse connect on port <code>06</code>, then rendered <code>xhci cfg err</code> / generic timeout <code>0x0F</code></p>
+          <p class="fact"><strong>Refreshed diagnostic</strong> additive screen codes <code>0x2C..0x31</code> distinguish No-op, Enable Slot, Address Device, Device Descriptor, configuration header, and full configuration waits</p>
           <p class="fact"><strong>Storage boundary</strong> <code>NO_DISK_WRITES</code>; the harness uses a disposable simulated USB-storage image only for boot-detach sequencing</p>
           <p class="boundary-note">
-            This is QEMU-only configuration-descriptor evidence. No physical
-            image has been deployed for ADR 0084. It does not prove the AMD
-            <code>1022:7914</code> path, the Dell/PixArt configuration read,
+            This is QEMU configuration-descriptor success plus physical
+            connect-and-timeout evidence. It does not prove the Dell/PixArt
+            configuration descriptor was read, or prove
             <code>SET_CONFIGURATION</code>, endpoint configuration, HID report
             parsing or polling, cursor movement, or trackpad support.
           </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-02-physical-usb-xhci-configuration-swap-ready.jpg" alt="PythOS ADR 0084 swap prompt with frozen AMD xHCI port snapshot on the Lenovo physical target">
+              <figcaption class="caption">First frame: boot USB still inserted at the required swap prompt.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-02-physical-usb-xhci-configuration-timeout.jpg" alt="PythOS ADR 0084 physical attempt showing mouse connect on port 6 and generic xHCI configuration timeout error 0x0F">
+              <figcaption class="caption">Second frame: mouse connect detected after USB removal, followed by the pre-stage-diagnostic timeout.</figcaption>
+            </figure>
+          </div>
           <p><a href="../decisions/0084-usb-xhci-configuration-descriptor-probe.md">ADR 0084 defines the bounded Configuration Descriptor probe and physical-pending boundary</a>.</p>
         </div>
       </section>

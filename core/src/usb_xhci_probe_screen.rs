@@ -246,7 +246,7 @@ pub fn build_command_error_screen(
         push_bdf(&mut screen, controller);
         push_vid_did(&mut screen, controller);
     }
-    push_u32(&mut screen, "err ", error.screen_code());
+    push_driver_error(&mut screen, error);
     push_change(&mut screen, change);
     push_ports_summary(&mut screen, port_status);
     push_xecp(&mut screen, port_status);
@@ -489,7 +489,7 @@ pub fn build_configuration_error_screen(
         push_bdf(&mut screen, controller);
         push_vid_did(&mut screen, controller);
     }
-    push_u32(&mut screen, "err ", error.screen_code());
+    push_driver_error(&mut screen, error);
     push_change(&mut screen, change);
     push_ports_summary(&mut screen, port_status);
     push_xecp(&mut screen, port_status);
@@ -513,7 +513,7 @@ pub fn build_descriptor_error_screen(
         push_bdf(&mut screen, controller);
         push_vid_did(&mut screen, controller);
     }
-    push_u32(&mut screen, "err ", error.screen_code());
+    push_driver_error(&mut screen, error);
     push_change(&mut screen, change);
     push_ports_summary(&mut screen, port_status);
     push_xecp(&mut screen, port_status);
@@ -537,7 +537,7 @@ pub fn build_address_error_screen(
         push_bdf(&mut screen, controller);
         push_vid_did(&mut screen, controller);
     }
-    push_u32(&mut screen, "err ", error.screen_code());
+    push_driver_error(&mut screen, error);
     push_change(&mut screen, change);
     push_ports_summary(&mut screen, port_status);
     push_xecp(&mut screen, port_status);
@@ -826,6 +826,13 @@ fn push_u32(screen: &mut ProbeScreen, label: &str, value: u32) {
     line.push_str(label);
     line.push_hex(u64::from(value), 8);
     screen.push(line);
+}
+
+fn push_driver_error(screen: &mut ProbeScreen, error: XhciDriverError) {
+    push_u32(screen, "err ", error.screen_code());
+    if let Some(stage) = error.screen_stage() {
+        push_text(screen, stage);
+    }
 }
 
 fn bar_base(bar: Option<UsbMemoryBar>) -> u64 {
@@ -1308,13 +1315,15 @@ mod tests {
             &report,
             port_status,
             change,
-            crate::usb_xhci_driver::XhciDriverError::ConfigurationHeaderNonSuccess,
+            crate::usb_xhci_driver::XhciDriverError::ConfigurationHeaderTransferTimeout,
         );
 
         assert_eq!(screen.line(0), Some("PythOS"));
         assert_eq!(screen.line(1), Some("xhci cfg err"));
         assert_eq!(screen.line(2), Some("no disk writes"));
-        assert_eq!(screen.line(6), Some("err 0000002A"));
+        assert_eq!(screen.line(6), Some("err 00000030"));
+        assert_eq!(screen.line(7), Some("stage config header"));
+        assert_eq!(screen.line(8), Some("chg p6"));
     }
 
     #[test]

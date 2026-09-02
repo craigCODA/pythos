@@ -218,7 +218,7 @@ photo-backed physical descriptor acceptance. Configuration descriptor reads,
 HID parsing, endpoint polling, cursor movement, and trackpad support remain
 pending.
 
-ADR 0084 adds `usb-xhci-configuration-probe`, an opt-in QEMU-only extension.
+ADR 0084 adds `usb-xhci-configuration-probe`, an opt-in bounded extension.
 It reads the fixed nine-byte configuration header, validates `wTotalLength`
 against a 256-byte cap, then reads exactly that bounded length and walks the
 standard configuration, interface, and endpoint descriptors. The accepted
@@ -228,8 +228,15 @@ HID boot-mouse class/subclass/protocol `03/01/02`, interrupt-IN endpoint
 `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
 `NO_DISK_WRITES`. The feature does not send `SET_CONFIGURATION`, configure a
 non-control endpoint, parse or poll HID reports, move a cursor, or touch
-storage. Physical deployment and PythOS target validation are pending, so the
-USB does not need to be inserted yet.
+storage. The QEMU-accepted image was deployed to the verified Lexar USB and
+booted on the Lenovo `81VS`. The first photo shows the frozen initial snapshot
+and `swap mouse now`; after boot-USB removal and mouse insertion, the second
+shows a new connect on port `06` followed by `xhci cfg err` / `0x0F`. That
+proves the intended handoff and physical controller path reached a finite wait,
+but the shared timeout code did not identify which command or transfer stalled.
+The follow-up keeps the same flow and adds exact timeout identities `0x2C`
+through `0x31` plus a readable stage line. A refreshed physical retry is still
+required before claiming a configuration-descriptor read on the Lenovo.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
@@ -281,6 +288,8 @@ Physical evidence records:
 - [2026-09-01 physical USB/xHCI command-ring success frame](docs/evidence/2026-09-01-physical-usb-xhci-command-ring-success.png)
 - [2026-09-01 physical USB/xHCI Address Device success frame](docs/evidence/2026-09-01-physical-usb-xhci-address-device-success.png)
 - [2026-09-01 physical USB/xHCI Device Descriptor success frame](docs/evidence/2026-09-01-physical-usb-xhci-device-descriptor-success.png)
+- [2026-09-02 physical ADR 0084 swap-ready frame](docs/evidence/2026-09-02-physical-usb-xhci-configuration-swap-ready.jpg)
+- [2026-09-02 physical ADR 0084 generic-timeout frame](docs/evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg)
 - [2026-09-01 Linux Mint USB mouse map archive](docs/evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 - Current USB/xHCI deployment state is tracked in
   `D:\PythOS-Workspace\CURRENT-STATE.md`.

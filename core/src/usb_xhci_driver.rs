@@ -117,6 +117,12 @@ pub enum XhciDriverError {
     PortDisconnected,
     PortResetTimeout,
     CommandTimeout,
+    NoopCommandTimeout,
+    EnableSlotCommandTimeout,
+    AddressDeviceCommandTimeout,
+    DeviceDescriptorTransferTimeout,
+    ConfigurationHeaderTransferTimeout,
+    ConfigurationTransferTimeout,
     UnexpectedEventType,
     UnexpectedCommandPointer,
     UnexpectedTransferPointer,
@@ -182,6 +188,24 @@ impl XhciDriverError {
             }
             XhciDriverError::CommandTimeout => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:COMMAND_TIMEOUT"
+            }
+            XhciDriverError::NoopCommandTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:NOOP_COMMAND_TIMEOUT"
+            }
+            XhciDriverError::EnableSlotCommandTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:ENABLE_SLOT_TIMEOUT"
+            }
+            XhciDriverError::AddressDeviceCommandTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:ADDRESS_DEVICE_TIMEOUT"
+            }
+            XhciDriverError::DeviceDescriptorTransferTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:DEVICE_DESCRIPTOR_TIMEOUT"
+            }
+            XhciDriverError::ConfigurationHeaderTransferTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIGURATION_HEADER_TIMEOUT"
+            }
+            XhciDriverError::ConfigurationTransferTimeout => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIGURATION_TRANSFER_TIMEOUT"
             }
             XhciDriverError::UnexpectedEventType => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:UNEXPECTED_EVENT"
@@ -251,6 +275,12 @@ impl XhciDriverError {
             XhciDriverError::PortDisconnected => 13,
             XhciDriverError::PortResetTimeout => 14,
             XhciDriverError::CommandTimeout => 15,
+            XhciDriverError::NoopCommandTimeout => 0x2C,
+            XhciDriverError::EnableSlotCommandTimeout => 0x2D,
+            XhciDriverError::AddressDeviceCommandTimeout => 0x2E,
+            XhciDriverError::DeviceDescriptorTransferTimeout => 0x2F,
+            XhciDriverError::ConfigurationHeaderTransferTimeout => 0x30,
+            XhciDriverError::ConfigurationTransferTimeout => 0x31,
             XhciDriverError::UnexpectedEventType => 16,
             XhciDriverError::UnexpectedCommandPointer => 17,
             XhciDriverError::CommandCompletionFailure => 18,
@@ -267,6 +297,25 @@ impl XhciDriverError {
             XhciDriverError::DeviceDescriptorNonSuccess => 0x29,
             XhciDriverError::ConfigurationHeaderNonSuccess => 0x2A,
             XhciDriverError::ConfigurationTransferNonSuccess => 0x2B,
+        }
+    }
+
+    pub const fn screen_stage(self) -> Option<&'static str> {
+        match self {
+            XhciDriverError::NoopCommandTimeout => Some("stage noop command"),
+            XhciDriverError::EnableSlotCommandTimeout => Some("stage enable slot"),
+            XhciDriverError::AddressDeviceCommandTimeout => Some("stage address device"),
+            XhciDriverError::DeviceDescriptorTransferTimeout => Some("stage device descriptor"),
+            XhciDriverError::ConfigurationHeaderTransferTimeout => Some("stage config header"),
+            XhciDriverError::ConfigurationTransferTimeout => Some("stage config full"),
+            _ => None,
+        }
+    }
+
+    const fn with_timeout_stage(self, staged_timeout: Self) -> Self {
+        match self {
+            XhciDriverError::CommandTimeout => staged_timeout,
+            _ => self,
         }
     }
 }
@@ -636,7 +685,8 @@ fn device_descriptor_from_command_state(
         state.result.slot_id,
         &mut state.event_index,
         &mut state.control_index,
-    )?;
+    )
+    .map_err(|error| error.with_timeout_stage(XhciDriverError::DeviceDescriptorTransferTimeout))?;
     let descriptor_completion_code = descriptor_event.completion_code();
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DESCRIPTOR_TRANSFER_CC=",
@@ -724,7 +774,10 @@ pub fn run_configuration_probe(
         &mut state.event_index,
         &mut state.control_index,
         XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH as u16,
-    )?;
+    )
+    .map_err(|error| {
+        error.with_timeout_stage(XhciDriverError::ConfigurationHeaderTransferTimeout)
+    })?;
     let configuration_header_completion_code = header_event.completion_code();
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_HEADER_TRANSFER_CC=",
@@ -757,7 +810,8 @@ pub fn run_configuration_probe(
         &mut state.event_index,
         &mut state.control_index,
         header.total_length,
-    )?;
+    )
+    .map_err(|error| error.with_timeout_stage(XhciDriverError::ConfigurationTransferTimeout))?;
     let configuration_completion_code = configuration_event.completion_code();
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_TRANSFER_CC=",
@@ -860,7 +914,8 @@ fn address_device_from_command_state(
         ),
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
         &mut state.event_index,
-    )?;
+    )
+    .map_err(|error| error.with_timeout_stage(XhciDriverError::AddressDeviceCommandTimeout))?;
     let address_completion_code = address_device.completion_code();
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_ADDRESS_DEVICE_CC=",
@@ -956,7 +1011,8 @@ fn initialize_command_probe(
         XHCI_TRB_TYPE_NO_OP_COMMAND,
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
         &mut event_index,
-    )?;
+    )
+    .map_err(|error| error.with_timeout_stage(XhciDriverError::NoopCommandTimeout))?;
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_NOOP_CC=",
         u64::from(noop.completion_code()),
@@ -969,7 +1025,8 @@ fn initialize_command_probe(
         XHCI_TRB_TYPE_ENABLE_SLOT,
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
         &mut event_index,
-    )?;
+    )
+    .map_err(|error| error.with_timeout_stage(XhciDriverError::EnableSlotCommandTimeout))?;
     if enable_slot.slot_id() == 0 {
         return Err(XhciDriverError::MissingSlotId);
     }
@@ -2305,6 +2362,66 @@ mod tests {
 
     fn dma_test_lock() -> MutexGuard<'static, ()> {
         DMA_TEST_LOCK.lock().expect("xHCI DMA test mutex poisoned")
+    }
+
+    #[test]
+    fn timeout_diagnostics_identify_each_command_and_transfer_stage() {
+        let cases = [
+            (
+                XhciDriverError::NoopCommandTimeout,
+                0x2C,
+                "stage noop command",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:NOOP_COMMAND_TIMEOUT",
+            ),
+            (
+                XhciDriverError::EnableSlotCommandTimeout,
+                0x2D,
+                "stage enable slot",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:ENABLE_SLOT_TIMEOUT",
+            ),
+            (
+                XhciDriverError::AddressDeviceCommandTimeout,
+                0x2E,
+                "stage address device",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:ADDRESS_DEVICE_TIMEOUT",
+            ),
+            (
+                XhciDriverError::DeviceDescriptorTransferTimeout,
+                0x2F,
+                "stage device descriptor",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:DEVICE_DESCRIPTOR_TIMEOUT",
+            ),
+            (
+                XhciDriverError::ConfigurationHeaderTransferTimeout,
+                0x30,
+                "stage config header",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIGURATION_HEADER_TIMEOUT",
+            ),
+            (
+                XhciDriverError::ConfigurationTransferTimeout,
+                0x31,
+                "stage config full",
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIGURATION_TRANSFER_TIMEOUT",
+            ),
+        ];
+
+        for (error, screen_code, screen_stage, marker) in cases {
+            assert_eq!(error.screen_code(), screen_code);
+            assert_eq!(error.screen_stage(), Some(screen_stage));
+            assert_eq!(error.marker(), marker);
+        }
+        assert_eq!(XhciDriverError::CommandTimeout.screen_code(), 0x0F);
+        assert_eq!(XhciDriverError::CommandTimeout.screen_stage(), None);
+        assert_eq!(
+            XhciDriverError::CommandTimeout
+                .with_timeout_stage(XhciDriverError::ConfigurationHeaderTransferTimeout),
+            XhciDriverError::ConfigurationHeaderTransferTimeout
+        );
+        assert_eq!(
+            XhciDriverError::UnexpectedEventType
+                .with_timeout_stage(XhciDriverError::ConfigurationHeaderTransferTimeout),
+            XhciDriverError::UnexpectedEventType
+        );
     }
 
     #[test]

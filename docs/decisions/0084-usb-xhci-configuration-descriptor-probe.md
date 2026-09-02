@@ -2,7 +2,7 @@
 
 Date: 2026-09-02
 
-Status: Accepted in QEMU; physical validation pending
+Status: Accepted in QEMU; first physical attempt timed out; staged retry pending
 
 ## Context
 
@@ -20,6 +20,12 @@ Specification reference:
 
 - Intel xHCI Requirements Specification, Revision 1.22:
   <https://www.intel.com/content/dam/www/public/us/en/documents/technical-specifications/extensible-host-controler-interface-usb-xhci.pdf>
+
+The first physical ADR 0084 deployment reached the intended Lenovo handoff but
+ended at `xhci cfg err` / `0x0F`. Both command-completion polling and
+transfer-completion polling returned the same generic `CommandTimeout`, so the
+frame could not establish whether the wait was No-op, Enable Slot, Address
+Device, Device Descriptor, configuration header, or full configuration.
 
 ## Decision
 
@@ -56,13 +62,33 @@ Endpoint, create a non-control endpoint context, read a HID report descriptor,
 poll an interrupt endpoint, parse HID reports, move a cursor, enable xHCI
 interrupts, support the built-in I2C trackpad, or write storage.
 
+The physical follow-up keeps the generic `CommandTimeout` identity for the
+polling primitives but remaps it at the six existing call sites. This is an
+additive diagnostic contract; no polling limit, command ordering, transfer
+layout, or error behavior changes:
+
+| Screen code | Framebuffer stage | Serial identity |
+|---|---|---|
+| `0x2C` | `stage noop command` | `NOOP_COMMAND_TIMEOUT` |
+| `0x2D` | `stage enable slot` | `ENABLE_SLOT_TIMEOUT` |
+| `0x2E` | `stage address device` | `ADDRESS_DEVICE_TIMEOUT` |
+| `0x2F` | `stage device descriptor` | `DEVICE_DESCRIPTOR_TIMEOUT` |
+| `0x30` | `stage config header` | `CONFIGURATION_HEADER_TIMEOUT` |
+| `0x31` | `stage config full` | `CONFIGURATION_TRANSFER_TIMEOUT` |
+
 ## Verification
 
 TDD began with failing tests for configuration Setup/Data TRBs, bounded header
 and descriptor parsing, malformed inputs, and sequential control-ring
-progression. The focused driver suite passed 28 tests. The framebuffer RED /
+progression. The focused driver suite passed 29 tests. The framebuffer RED /
 GREEN pass added success and typed-error panels. Both the previous descriptor
 feature and the new configuration feature build for `x86_64-unknown-none`.
+
+The staged physical follow-up began with a failing host contract for the six
+missing error identities and a failing framebuffer contract for the missing
+stage line. After the minimal mapping change, all 656 PythCore host tests pass,
+including the exact codes, labels, serial identities, and preservation of
+non-timeout errors.
 
 The QEMU harness is:
 
@@ -102,17 +128,20 @@ SHA-256 hashes:
 
 ```text
 BOOTX64.EFI   085A02AA250050CB55B065B7842B09CDE5C087291ABD19D83FA05F6197918578
-PYTHCORE.ELF  5A15A9CAD0D44D5C5CA3DD2495F5BD3C27331D2F182263AF877C8E4151162E47
+PYTHCORE.ELF  325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11
 ```
 
 QEMU's mouse reports interval `7`; the physical Dell/PixArt mouse mapped by
 Linux reports interval `10`. These are device-specific descriptor values, not
 a parser discrepancy.
 
-Fresh regression gates also passed `cargo fmt --all -- --check`,
-`git diff --check`, Python compilation of the new harness, the prior ADR 0083
-descriptor harness, `scripts/test-boot.py` with `BOOT_TEST_OK`, and
-`scripts/test-persistent-storage.py` with `PERSISTENT_STORAGE_TEST_OK`.
+Fresh regression gates passed `cargo fmt --all -- --check`, `git diff --check`,
+the full 656-test PythCore host suite, the prior ADR 0083 descriptor harness,
+the refreshed ADR 0084 configuration harness, `scripts/test-boot.py` with
+`BOOT_TEST_OK`, and `scripts/test-persistent-storage.py` with
+`PERSISTENT_STORAGE_TEST_OK`. The refreshed ADR 0084 harness again reached
+`XHCI_CONFIGURATION_READY`, `NO_DISK_WRITES`, `QEMU_OUTCOME success`, and
+`USB_XHCI_CONFIGURATION_PROBE_TEST_OK` without emitting a driver error.
 
 The repository-wide `python -m pytest tests` command is not runnable in this
 Windows environment because `python` resolves to the Microsoft Store alias and
@@ -127,11 +156,29 @@ same three Phase 13 production-wiring failures verified on the clean base:
 They are baseline failures, not configuration-probe regressions, and are not
 silently represented as green.
 
-No physical configuration-probe image has been deployed in this ADR. The USB
-ESP must be re-identified before any later deployment, and physical PythOS
-acceptance requires a fresh target boot result. QEMU evidence does not prove
-the AMD controller path, Dell/PixArt configuration read, HID input, or cursor
-support.
+The QEMU-accepted configuration image was deployed to the re-identified Lexar
+D70E USB ESP and booted on the Lenovo `81VS` / IdeaPad Slim 1 14AST-05. Two
+chronological frames are preserved:
+
+```text
+docs/evidence/2026-09-02-physical-usb-xhci-configuration-swap-ready.jpg
+SHA-256 60C9B9D5626CC30866D99A501C1221EAC75A741B1C8A409A8B57EF4A648E323F
+
+docs/evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg
+SHA-256 D36E95696074815A034C219042D94D53BA9F083890B014A050D7E8E7AE60608D
+```
+
+The first shows `swap mouse now`, `no disk writes`, AMD `1022:7914`, and the
+frozen eight-port baseline while the boot USB is still inserted. The second,
+after boot-USB removal and mouse insertion, shows port `06` changing from
+`000002A0` to `000202E1`, `xhci cfg err`, `no disk writes`, and error
+`0000000F`. This proves the physical swap/connect path and a bounded timeout;
+it does not prove any specific command or configuration transfer completed.
+
+The USB ESP must be re-identified before deploying the staged diagnostic, and
+physical configuration-descriptor acceptance requires a fresh Lenovo result.
+QEMU evidence does not prove the Dell/PixArt configuration read, HID input, or
+cursor support.
 
 ## Consequences
 
@@ -139,6 +186,6 @@ PythOS now has a bounded, opt-in configuration discovery layer in QEMU. It can
 identify the standard HID boot-mouse interface and interrupt-IN endpoint
 metadata without activating that configuration or endpoint.
 
-The next phase boundary is physical validation of this exact slice. Endpoint
+The next phase boundary is a staged physical retry of this exact slice. Endpoint
 configuration, HID report discovery, polling, and cursor behavior remain
 separate future slices requiring explicit owner invocation.
