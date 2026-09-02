@@ -1,0 +1,36 @@
+PythOS Linux Mint field kit
+
+Do not double-click the .sh files from the USB. Linux Mint may open them in a
+text editor, and FAT USB volumes may be mounted noexec. Use Terminal and paste
+the commands below exactly.
+
+1. Boot Linux Mint from the eMMC.
+
+2. Insert and mount the PythOS USB.
+
+3. Paste this whole command into Terminal:
+
+bash -c 'for p in "/media/$USER/PYTHOS_ESP/PYTHOS-FIELD-KIT/run.sh" "/run/media/$USER/PYTHOS_ESP/PYTHOS-FIELD-KIT/run.sh" "/mnt/PYTHOS_ESP/PYTHOS-FIELD-KIT/run.sh"; do [ -f "$p" ] && exec bash "$p" stage-local; done; p="$(find /media /run/media /mnt -maxdepth 5 -path "*/PYTHOS-FIELD-KIT/run.sh" -print -quit 2>/dev/null)"; [ -n "$p" ] && exec bash "$p" stage-local; echo "PythOS field kit not found. Mount PYTHOS_ESP, then try again."; exit 1'
+
+4. If you need the USB port for the mouse, unmount/eject the PythOS USB and
+   unplug it.
+
+5. Plug in the USB mouse, then paste:
+
+sudo bash ~/pythos-field-kit/run.sh mouse
+
+6. Follow the prompts. After the report is created, reinsert and mount the
+   PythOS USB.
+
+7. Paste:
+
+sudo bash ~/pythos-field-kit/run.sh copy-last
+
+8. Shut down Mint, move the PythOS USB back to Windows, and send the newest
+   tarball under:
+
+P:\PYTHOS-FIELD-KIT\reports\
+
+If the script asks for your password, enter your Linux Mint password. Nothing
+in this field kit formats disks, installs PythOS to eMMC, deploys boot files,
+or writes PCI/xHCI registers.

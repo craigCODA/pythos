@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC Phase 10 frames, and QEMU evidence for the current milestone.">
+    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, physical command-ring success, physical Address Device evidence, and photo-backed xHCI descriptor-probe evidence.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -68,6 +68,351 @@
             <img class="evidence-img" src="2026-08-26-physical-wake-accepted.jpg" alt="PythOS physical wake diagnostic showing input wake, raw keyboard bytes, and accepted on the target laptop">
             <figcaption class="caption">Acceptance frame extracted from the raw 40.64-second physical boot clip.</figcaption>
           </figure>
+        </div>
+      </section>
+
+      <section class="band" id="hardware-probe-2026-08-28">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-08-28 no-write storage probe</p>
+              <h2>O2 Micro SDHCI/eMMC Read Confirmed</h2>
+            </div>
+            <p class="lede">
+              After the normal boot diagnostic reached <code>stage 19</code> /
+              <code>init block dev</code>, the no-write hardware-probe image
+              identified the target storage path as O2 Micro <code>1217:8620</code>
+              SDHCI/eMMC and completed a read-only LBA0 probe.
+            </p>
+            <div class="evidence-stats" aria-label="2026-08-28 hardware probe summary">
+              <span><strong>bdf</strong> 01:00.0</span>
+              <span><strong>vid:did</strong> 1217:8620</span>
+              <span><strong>class</strong> 08 05 01</span>
+              <span><strong>result</strong> emmc read</span>
+            </div>
+            <p class="fact"><strong>BAR0</strong> <code>00000000E8B01000</code></p>
+            <p class="fact"><strong>OCR</strong> <code>C0FF8080</code></p>
+            <p class="fact"><strong>LBA0 checksum</strong> <code>000006F9</code></p>
+            <p class="fact"><strong>Nonzero bytes</strong> <code>0000000C</code></p>
+            <p class="fact"><strong>Photo SHA-256</strong> <code>690058616C26DC7A0034906B766465D540B6C3D22E0307CA09F79651C68441C6</code></p>
+            <p class="boundary-note">
+              This proves read-only SDHCI/eMMC controller/card access on this
+              current target. It does not prove physical normal boot writes,
+              object-store persistence, shell entry, or broad hardware support.
+            </p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-08-28-hardware-probe-o2micro-emmc-read.jpg" alt="PythOS no-write hardware probe showing O2 Micro 1217:8620 SDHCI eMMC read evidence">
+            <figcaption class="caption">Physical framebuffer report from the no-write hardware-probe payload.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band" id="normal-sdhci-ring3-2026-08-29">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-08-29 normal boot diagnostic</p>
+              <h2>SDHCI/eMMC Candidate Reached Ring 3</h2>
+            </div>
+            <p class="lede">
+              The deployed normal diagnostic plus <code>sdhci-emmc-backend</code>
+              image reached <code>stage 37</code> / <code>ring3 enter</code> on
+              the current physical target after the no-write probe identified
+              O2 Micro <code>1217:8620</code> SDHCI/eMMC.
+            </p>
+            <div class="evidence-stats" aria-label="2026-08-29 normal SDHCI ring-3 summary">
+              <span><strong>stage</strong> 37</span>
+              <span><strong>label</strong> ring3 enter</span>
+              <span><strong>image</strong> normal SDHCI/eMMC</span>
+              <span><strong>result</strong> handoff</span>
+            </div>
+            <p class="fact"><strong>Deployed core SHA-256</strong> <code>1432589585001622FF623D8F7751D227AE3011561457C1173C411A07840EDBF8</code></p>
+            <p class="fact"><strong>Photo SHA-256</strong> <code>73DE7440513C54A574F21C7C5ADD8E02AF7362CAA98BDC254518D5BC4CF09AF8</code></p>
+            <p class="boundary-note">
+              The visible <code>Enter Shell</code> tile is retained framebuffer
+              content from before ring-3 entry. This evidence does not prove
+              trackpad input, framebuffer terminal output, physical shell input,
+              or durable eMMC persistence.
+            </p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-08-29-normal-sdhci-ring3-enter.jpg" alt="PythOS normal SDHCI eMMC diagnostic showing stage 37 ring3 enter on physical hardware">
+            <figcaption class="caption">Physical framebuffer report from the deployed normal SDHCI/eMMC diagnostic candidate.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-probe-2026-08-31">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-08-31 no-write USB probe</p>
+              <h2>AMD xHCI Register Read Confirmed</h2>
+            </div>
+            <p class="lede">
+              The opt-in <code>usb-xhci-probe</code> image was QEMU-accepted,
+              deployed to the verified <code>P:</code> USB ESP target, and then
+              booted on the physical machine. It mapped the selected xHCI BAR
+              into PythCore page tables, read the xHCI register header, rendered
+              framebuffer identity, and emitted <code>NO_DISK_WRITES</code>.
+            </p>
+            <div class="evidence-stats" aria-label="2026-08-31 USB xHCI probe summary">
+              <span><strong>bdf</strong> 00:10.0</span>
+              <span><strong>vid:did</strong> 1022:7914</span>
+              <span><strong>class</strong> 0C 03 30</span>
+              <span><strong>result</strong> xhci regs</span>
+            </div>
+            <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+            <p class="fact"><strong>Physical BAR0</strong> <code>00000000E8C68000</code></p>
+            <p class="fact"><strong>Physical registers</strong> CAPLENGTH <code>20</code>, HCIVERSION <code>0100</code>, HCSPARAMS1 <code>08000820</code>, HCCPARAMS1 <code>014040C3</code>, USBSTS <code>00000009</code></p>
+            <p class="fact"><strong>External USB mouse</strong> Dell/PixArt <code>413c:301a</code> behind Linux path <code>usb 1-1</code></p>
+            <p class="fact"><strong>Built-in trackpad</strong> I2C HID <code>ELAN0666:00 04F3:304B</code>, not PS/2</p>
+            <p class="fact"><strong>Copy verification</strong> <code>USB_XHCI_PROBE_VERIFY_OK files:8 bytes:3814456</code></p>
+            <p class="fact"><strong>Deployed core SHA-256</strong> <code>479588E4268C65E6F03EECAEF0534D7D5F4ADEEF9EBA0B1DD50D3549BF67D0AA</code></p>
+            <p class="fact"><strong>Photo SHA-256</strong> <code>EF950D8A3B9804635C99BDF04C49026A87912F79E2FDC13A393FAA21CF0481C8</code></p>
+            <p class="boundary-note">
+              This proves physical xHCI controller/register reachability on the
+              current target. It does not claim USB enumeration, HID parsing,
+              mouse movement, trackpad support, IRQ input, DMA rings, or broad
+              USB support.
+            </p>
+            <p><a href="../decisions/0078-usb-xhci-register-probe.md">ADR 0078 defines the xHCI probe boundary</a>.</p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-08-31-physical-usb-xhci-register-probe.png" alt="PythOS USB xHCI register probe showing AMD 1022:7914 xHCI registers and no disk writes on physical hardware">
+            <figcaption class="caption">Physical framebuffer report from the deployed no-write USB/xHCI register probe.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-port-probe-2026-08-31">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-08-31 QEMU USB probe and deployment</p>
+            <h2>xHCI Port Status Layer Added</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-port-probe</code> image extends the
+            no-write xHCI register probe with max-port decoding, xECP decoding,
+            USB legacy-ownership observation, and up to eight
+            <code>PORTSC</code>/<code>PORTPMSC</code> reads. It does not reset
+            xHCI, claim ownership, allocate rings, enumerate USB devices, parse
+            HID, or move a cursor.
+          </p>
+          <div class="evidence-stats" aria-label="2026-08-31 USB xHCI port probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>max ports</strong> 08</span>
+            <span><strong>port base</strong> 0440</span>
+            <span><strong>usb</strong> deployed</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_PORT_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Observed QEMU port</strong> port 5 <code>PORTSC 00000E03</code>, <code>PORTPMSC 00000000</code></p>
+          <p class="fact"><strong>Ownership result</strong> xECP byte offset <code>0020</code>, USB legacy-support capability absent</p>
+          <p class="fact"><strong>Copy verification</strong> <code>USB_XHCI_PORT_VERIFY_OK files:8 bytes:3840440</code></p>
+          <p class="fact"><strong>Deployed core SHA-256</strong> <code>447D1F9CA8D97F8000F0905566628AE3B959C212E4E2B33C558220E436D94320</code></p>
+          <p class="boundary-note">
+            Physical port-status evidence for AMD <code>1022:7914</code> is
+            pending. This entry records the QEMU-accepted diagnostic candidate
+            and verified USB deployment only.
+          </p>
+          <p><a href="../decisions/0079-usb-xhci-port-status-probe.md">ADR 0079 defines the xHCI port-status probe boundary</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-swap-probe-2026-08-31">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-08-31 QEMU hotplug, USB deployment, and physical video</p>
+            <h2>xHCI Swap Port Diagnostic Added</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-swap-probe</code> image handles the
+            single-port hardware test case. It renders <code>swap mouse now</code>,
+            waits while the boot USB can be removed, ignores the expected
+            detach event, and polls read-only xHCI port-status registers for a
+            later disconnected-to-connected mouse event.
+          </p>
+          <div class="evidence-stats" aria-label="2026-08-31 USB xHCI swap probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>detach</strong> ignored</span>
+            <span><strong>connect</strong> port 5</span>
+            <span><strong>usb</strong> deployed</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_SWAP_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Prompt marker</strong> <code>SWAP_READY</code> after <code>FRAMEBUFFER_SWAP_READY</code></p>
+          <p class="fact"><strong>Ignored QEMU detach</strong> port 1 <code>PORTSC 00001203</code> to <code>000202A0</code></p>
+          <p class="fact"><strong>Observed QEMU connect</strong> port 5 <code>PORTSC 000002A0</code> to <code>00020EE1</code></p>
+          <p class="fact"><strong>Copy verification</strong> <code>USB_XHCI_SWAP_CONNECT_VERIFY_OK files:8 bytes:3857656</code></p>
+          <p class="fact"><strong>Deployed core SHA-256</strong> <code>A11B480D37A0C0299B4D6D96080C506C533BC0D1E3492CE1876C3F4F1A269BFE</code></p>
+          <p class="fact"><strong>Observed physical connect</strong> port 5 <code>PORTSC 000002A0</code> to <code>000202E1</code></p>
+          <p class="fact"><strong>Physical still SHA-256</strong> <code>20B2CCA74EB8FD23080943FB368147F3D56A884A09F753479A9E4D5FF9A038E8</code></p>
+          <p class="boundary-note">
+            The first physical attempt proved the previous build stopped on
+            boot-USB removal before mouse insertion. The corrected physical
+            image kept polling and recorded the later port-5 connect. This
+            remains a no-write port-status observation layer, not xHCI
+            ownership transfer, USB enumeration, HID parsing, or cursor
+            movement.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-08-31-physical-usb-xhci-swap-port.jpg" alt="PythOS USB xHCI swap probe showing port 5 connect after boot USB removal on physical hardware">
+              <figcaption class="caption">Physical framebuffer still from the corrected swap-port diagnostic video.</figcaption>
+            </figure>
+          </div>
+          <p><a href="../decisions/0080-usb-xhci-swap-port-probe.md">ADR 0080 defines the xHCI swap-port probe boundary</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-command-probe-2026-09-01">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-09-01 QEMU, USB deployment, and physical command-ring success</p>
+            <h2>xHCI Command Ring Accepted On Hardware</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-command-probe</code> image is the first
+            write/DMA xHCI driver diagnostic. It reuses the swap-port flow, then
+            resets and starts the controller, configures static page-aligned
+            scratchpad and command/event DMA structures, resets the selected
+            connected root port, completes a No-op Command, and completes
+            Enable Slot in QEMU and on the physical AMD <code>1022:7914</code>
+            controller.
+          </p>
+          <div class="evidence-stats" aria-label="2026-09-01 USB xHCI command probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>phys</strong> pass</span>
+            <span><strong>usb</strong> deployed</span>
+            <span><strong>port</strong> 06</span>
+            <span><strong>noop cc</strong> 01</span>
+            <span><strong>enable slot</strong> 01</span>
+            <span><strong>slot</strong> 01</span>
+            <span><strong>scratch</strong> 08</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_COMMAND_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Driver markers</strong> <code>XHCI_SCRATCHPAD_COUNT=0</code>, <code>XHCI_COMMAND_RING_READY</code>, <code>XHCI_EVENT_RING_READY</code>, <code>XHCI_NOOP_COMMAND_COMPLETE</code>, <code>XHCI_ENABLE_SLOT_READY</code></p>
+          <p class="fact"><strong>Observed QEMU port</strong> port 5 <code>PORTSC 00220E03</code> after reset</p>
+          <p class="fact"><strong>Physical scratchpad gate</strong> port 5 connect reached <code>xhci cmd err</code> / <code>err 00000006</code>, mapped to unsupported scratchpad buffers in the first image</p>
+          <p class="fact"><strong>Physical error frame SHA-256</strong> <code>A6D6271A065EA3B6547A28F69CCFDD37484F10B4266105A980255D2B1B24CB2E</code></p>
+          <p class="fact"><strong>Physical command-ring success</strong> BDF <code>00 10 00</code>, vendor/device <code>1022 7914</code>, port <code>06</code>, slot <code>01</code>, No-op CC <code>01</code>, Enable Slot CC <code>01</code>, <code>USBSTS 00000000</code>, <code>PORTSC 00220603</code>, scratchpad count <code>08</code></p>
+          <p class="fact"><strong>Physical success frame SHA-256</strong> <code>534B40C205D3BC4FE43F8BF0CBF6D0EFA0687E7F19E247BE08C94F818664AC52</code></p>
+          <p class="fact"><strong>USB deployment</strong> verified <code>P:</code> Lexar D70E <code>PYTHOS_ESP</code>; <code>USB_XHCI_SCRATCHPAD_VERIFY_OK files:8 bytes:3949296</code></p>
+          <p class="fact"><strong>Deployed core SHA-256</strong> <code>5E65C5A697A443369CB9AAC11E4AADAB7A26888B920EC89F43BEC5F33CF8CC44</code></p>
+          <p class="fact"><strong>No-write marker</strong> <code>PYTHOS:CORE:USB_XHCI_PROBE:NO_DISK_WRITES</code></p>
+          <p class="boundary-note">
+            This is physical command-ring acceptance. It does not prove USB
+            addressing, descriptor reads, endpoint setup beyond the command
+            ring, HID parsing, cursor movement, IRQ-driven input, or trackpad
+            support.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-01-physical-usb-xhci-command-scratchpad-error.png" alt="PythOS USB xHCI command probe showing error 00000006 after port 5 mouse connect on physical hardware">
+              <figcaption class="caption">Physical framebuffer report from the first command-ring diagnostic attempt; the refreshed image now includes scratchpad support.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-01-physical-usb-xhci-command-ring-success.png" alt="PythOS USB xHCI command probe showing No-op and Enable Slot completion on physical hardware">
+              <figcaption class="caption">Physical framebuffer report from the scratchpad-enabled command-ring diagnostic success.</figcaption>
+            </figure>
+          </div>
+          <p><a href="../decisions/0081-usb-xhci-command-ring-driver.md">ADR 0081 defines the xHCI command-ring diagnostic boundary</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-address-probe-2026-09-01">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-09-01 QEMU, USB deployment, and physical Address Device success</p>
+            <h2>xHCI Address Device Accepted On Hardware</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-address-probe</code> image builds on the
+            command-ring success path. It prepares xHCI input/output contexts,
+            wires endpoint 0, issues one Address Device command, and reports
+            the assigned address and context states while preserving
+            <code>NO_DISK_WRITES</code>. The deployed image also reached the
+            same Address Device success boundary on the physical AMD
+            <code>1022:7914</code> controller.
+          </p>
+          <div class="evidence-stats" aria-label="2026-09-01 USB xHCI address probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>phys</strong> pass</span>
+            <span><strong>addr cc</strong> 01</span>
+            <span><strong>dev addr</strong> 01</span>
+            <span><strong>slot state</strong> 02</span>
+            <span><strong>ep0 state</strong> 01</span>
+            <span><strong>mps</strong> 0008</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_ADDRESS_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Observed QEMU address result</strong> Address Device CC <code>01</code>, device address <code>01</code>, slot state <code>02</code>, EP0 state <code>01</code></p>
+          <p class="fact"><strong>Context setup</strong> context size <code>32</code>, port speed <code>03</code>, max packet size <code>0064</code></p>
+          <p class="fact"><strong>USB deployment</strong> verified <code>P:</code> Lexar D70E <code>PYTHOS_ESP</code>; <code>USB_XHCI_ADDRESS_VERIFY_OK files:8 bytes:3977256</code></p>
+          <p class="fact"><strong>Deployed core SHA-256</strong> <code>E666859BFEE4FE6162690F3D8860E24992492441F859AEE6C8F4FC14DDBC3D53</code></p>
+          <p class="fact"><strong>Physical address result</strong> BDF <code>00 10 00</code>, vendor/device <code>1022 7914</code>, port <code>05</code>, slot <code>01</code>, No-op CC <code>01</code>, Enable Slot CC <code>01</code>, Address Device CC <code>01</code>, device address <code>01</code>, slot state <code>02</code>, EP0 state <code>01</code>, speed <code>02</code>, context size <code>32</code>, max packet size <code>0008</code>, <code>PORTSC 00220A03</code>, scratchpad count <code>08</code></p>
+          <p class="fact"><strong>Physical success frame SHA-256</strong> <code>8A4D2D6D8F74AEE88D2B535F4447CBDC338E590944F0D8130E7B6FD6476A6D5A</code></p>
+          <p class="fact"><strong>No-write marker</strong> <code>PYTHOS:CORE:USB_XHCI_PROBE:NO_DISK_WRITES</code></p>
+          <p class="boundary-note">
+            This is physical Address Device acceptance. It does not prove
+            descriptor reads, HID parsing, endpoint polling, cursor movement,
+            IRQ-driven input, or trackpad support.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-01-physical-usb-xhci-address-device-success.png" alt="PythOS USB xHCI address probe showing Address Device completion on physical hardware">
+              <figcaption class="caption">Physical framebuffer report from the Address Device diagnostic success.</figcaption>
+            </figure>
+          </div>
+          <p><a href="../decisions/0082-usb-xhci-address-device-probe.md">ADR 0082 defines the xHCI Address Device probe boundary</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-descriptor-probe-2026-09-01">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-09-01 QEMU, USB deployment, Linux target mapping, and physical photo</p>
+            <h2>xHCI Device Descriptor Probe Accepted On Hardware</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-descriptor-probe</code> image builds on
+            the physical Address Device layer. It queues one endpoint-0
+            <code>GET_DESCRIPTOR(Device)</code> control transfer, reads the
+            18-byte device descriptor, and reports the descriptor completion
+            code plus parsed descriptor fields while preserving
+            <code>NO_DISK_WRITES</code>.
+          </p>
+          <div class="evidence-stats" aria-label="2026-09-01 USB xHCI descriptor probe summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>phys</strong> photo pass</span>
+            <span><strong>usb</strong> deployed</span>
+            <span><strong>desc cc</strong> 01</span>
+            <span><strong>len</strong> 12</span>
+            <span><strong>type</strong> 01</span>
+            <span><strong>qemu vid</strong> 0627</span>
+            <span><strong>target vid</strong> 413c</span>
+          </div>
+          <p class="fact"><strong>QEMU acceptance</strong> <code>USB_XHCI_DESCRIPTOR_PROBE_TEST_OK</code> / <code>QEMU_OUTCOME success</code></p>
+          <p class="fact"><strong>Observed QEMU descriptor</strong> transfer CC <code>01</code>, length <code>12</code>, type <code>01</code>, USB BCD <code>0200</code>, class/sub/protocol <code>00 00 00</code>, MPS0 <code>0040</code>, VID/PID <code>0627 0001</code>, config count <code>01</code></p>
+          <p class="fact"><strong>USB deployment</strong> verified <code>P:</code> Lexar D70E <code>PYTHOS_ESP</code>; <code>USB_XHCI_DESCRIPTOR_VERIFY_OK files:8 bytes:3996680</code></p>
+          <p class="fact"><strong>Deployed core SHA-256</strong> <code>CFE2381F38DA91E11A31F021B315B4B12C030DB3F296C8B591BA6DF0A5289924</code></p>
+          <p class="fact"><strong>Linux target mouse map</strong> Dell/PixArt <code>413c:301a</code>, path <code>/sys/bus/usb/devices/2-1</code>, low speed, MPS0 <code>8</code>, HID boot mouse <code>03/01/02</code>, endpoint <code>0x81</code> interrupt IN, max packet <code>4</code>, interval <code>10</code></p>
+          <p class="fact"><strong>Field-kit archive SHA-256</strong> <code>528058762026647AFA2D5FD94E6086128C6B4EDD88CE60880C573294AFA3006B</code></p>
+          <p class="fact"><strong>Physical descriptor result</strong> deployed descriptor screen shows <code>xhci desc</code>, <code>no disk writes</code>, BDF <code>00 10 00</code>, vendor/device <code>1022 7914</code>, port <code>05</code>, slot <code>01</code>, Address Device CC <code>01</code>, descriptor CC <code>01</code>, length <code>12</code>, type <code>01</code>, USB BCD <code>0200</code>, device BCD <code>0100</code>, class/sub/protocol <code>00 00 00</code>, MPS0 <code>008</code>, config count <code>01</code>, VID/PID <code>413C 301A</code>, scratchpad count <code>08</code></p>
+          <p class="fact"><strong>Physical frame SHA-256</strong> <code>4204994560727C63A8F631A05CCECFA68C3FC20189E12A2834E621327FDA61B6</code></p>
+          <p class="boundary-note">
+            This is QEMU descriptor evidence, deployment evidence, Linux target
+            descriptor mapping, and photo-backed physical descriptor
+            acceptance. It does not prove configuration descriptor reads, HID
+            parsing, cursor movement, IRQ-driven input, or trackpad support.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-01-physical-usb-xhci-device-descriptor-success.png" alt="PythOS USB xHCI descriptor probe showing Dell mouse device descriptor completion on physical hardware">
+              <figcaption class="caption">Physical framebuffer report from the Device Descriptor diagnostic success.</figcaption>
+            </figure>
+          </div>
+          <p><a href="../decisions/0083-usb-xhci-device-descriptor-probe.md">ADR 0083 defines the xHCI Device Descriptor probe boundary</a>.</p>
+          <p><a href="2026-09-01-linux-mint-usb-mouse-map.tar.gz">Download the returned Linux Mint USB mouse map archive</a>.</p>
         </div>
       </section>
 

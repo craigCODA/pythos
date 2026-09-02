@@ -956,10 +956,8 @@ fn dispatch_object_request_with_raw_buffers(
 
 #[cfg(any(
     test,
-    all(
-        not(test),
-        any(not(feature = "verify"), feature = "phase13-package-test")
-    )
+    feature = "phase13-package-test",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
 ))]
 fn reconcile_package_schema_references_from_object_service(
     object_service: &ObjectService,
@@ -968,6 +966,18 @@ fn reconcile_package_schema_references_from_object_service(
         package_service.reconcile_schema_references_from_object_service(object_service)
     })
     .unwrap_or(Err(PackageStatus::Denied))
+}
+
+#[cfg(all(
+    not(test),
+    not(feature = "verify"),
+    feature = "hardware-probe",
+    not(feature = "phase13-package-test")
+))]
+fn reconcile_package_schema_references_from_object_service(
+    _object_service: &ObjectService,
+) -> Result<(), PackageStatus> {
+    Err(PackageStatus::Denied)
 }
 
 #[cfg(any(
