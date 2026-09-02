@@ -89,7 +89,16 @@ const XHCI_ENDPOINT_AVERAGE_TRB_LENGTH_CONTROL: u32 = 8;
 const XHCI_ENDPOINT_DEQUEUE_CYCLE_STATE: u64 = 1;
 const XHCI_DEFAULT_CONTROL_ENDPOINT_ID: u32 = 1;
 const XHCI_DEVICE_DESCRIPTOR_LENGTH: usize = 18;
+const XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH: usize = 9;
+const XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH: usize = 256;
 const USB_REQUEST_GET_DESCRIPTOR_DEVICE: u64 = 0x0012_0000_0100_0680;
+const USB_REQUEST_GET_DESCRIPTOR_CONFIGURATION: u64 = 0x0000_0000_0200_0680;
+const USB_DESCRIPTOR_TYPE_CONFIGURATION: u8 = 2;
+const USB_DESCRIPTOR_TYPE_INTERFACE: u8 = 4;
+const USB_DESCRIPTOR_TYPE_ENDPOINT: u8 = 5;
+const USB_ENDPOINT_DIRECTION_IN: u8 = 0x80;
+const USB_ENDPOINT_TRANSFER_TYPE_MASK: u8 = 0x03;
+const USB_ENDPOINT_TRANSFER_TYPE_INTERRUPT: u8 = 0x03;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum XhciDriverError {
@@ -115,6 +124,11 @@ pub enum XhciDriverError {
     MissingSlotId,
     UnsupportedPortSpeed,
     AddressDeviceNonSuccess,
+    InvalidConfigurationDescriptorHeader,
+    ConfigurationDescriptorTooLarge,
+    MalformedConfigurationDescriptor,
+    MissingConfigurationInterface,
+    MissingInterruptInEndpoint,
 }
 
 impl XhciDriverError {
@@ -186,6 +200,21 @@ impl XhciDriverError {
             XhciDriverError::AddressDeviceNonSuccess => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:ADDRESS_NON_SUCCESS"
             }
+            XhciDriverError::InvalidConfigurationDescriptorHeader => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_HEADER_INVALID"
+            }
+            XhciDriverError::ConfigurationDescriptorTooLarge => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_TOO_LARGE"
+            }
+            XhciDriverError::MalformedConfigurationDescriptor => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_MALFORMED"
+            }
+            XhciDriverError::MissingConfigurationInterface => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_INTERFACE_MISSING"
+            }
+            XhciDriverError::MissingInterruptInEndpoint => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:CONFIG_INTERRUPT_IN_MISSING"
+            }
         }
     }
 
@@ -213,6 +242,11 @@ impl XhciDriverError {
             XhciDriverError::UnsupportedPortSpeed => 0x20,
             XhciDriverError::UnexpectedTransferPointer => 0x21,
             XhciDriverError::AddressDeviceNonSuccess => 0x22,
+            XhciDriverError::InvalidConfigurationDescriptorHeader => 0x23,
+            XhciDriverError::ConfigurationDescriptorTooLarge => 0x24,
+            XhciDriverError::MalformedConfigurationDescriptor => 0x25,
+            XhciDriverError::MissingConfigurationInterface => 0x26,
+            XhciDriverError::MissingInterruptInEndpoint => 0x27,
         }
     }
 }
@@ -263,6 +297,33 @@ pub struct XhciDescriptorProbeResult {
     pub address: XhciAddressProbeResult,
     pub descriptor_completion_code: u8,
     pub descriptor: XhciDeviceDescriptorSnapshot,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XhciConfigurationDescriptorHeader {
+    pub length: u8,
+    pub descriptor_type: u8,
+    pub total_length: u16,
+    pub interface_count: u8,
+    pub configuration_value: u8,
+    pub configuration_index: u8,
+    pub attributes: u8,
+    pub max_power: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XhciConfigurationDescriptorSnapshot {
+    pub header: XhciConfigurationDescriptorHeader,
+    pub interface_number: u8,
+    pub alternate_setting: u8,
+    pub endpoint_count: u8,
+    pub interface_class: u8,
+    pub interface_subclass: u8,
+    pub interface_protocol: u8,
+    pub interrupt_in_endpoint_address: u8,
+    pub interrupt_in_attributes: u8,
+    pub interrupt_in_max_packet_size: u16,
+    pub interrupt_in_interval: u8,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1109,6 +1170,30 @@ pub const fn device_descriptor_data_trb(descriptor_phys: u64, cycle: bool) -> Xh
     )
 }
 
+pub const fn configuration_descriptor_setup_trb(length: u16, cycle: bool) -> XhciTrb {
+    XhciTrb::new(
+        USB_REQUEST_GET_DESCRIPTOR_CONFIGURATION | ((length as u64) << 48),
+        0,
+        8,
+        command_trb_control(XHCI_TRB_TYPE_SETUP_STAGE, cycle)
+            | XHCI_TRB_IMMEDIATE_DATA
+            | (XHCI_SETUP_TRANSFER_TYPE_IN << XHCI_SETUP_TRANSFER_TYPE_SHIFT),
+    )
+}
+
+pub const fn configuration_descriptor_data_trb(
+    descriptor_phys: u64,
+    length: u16,
+    cycle: bool,
+) -> XhciTrb {
+    XhciTrb::new(
+        descriptor_phys,
+        0,
+        length as u32,
+        command_trb_control(XHCI_TRB_TYPE_DATA_STAGE, cycle) | XHCI_TRB_DIRECTION_IN,
+    )
+}
+
 pub const fn control_status_stage_trb(cycle: bool) -> XhciTrb {
     XhciTrb::new(
         0,
@@ -1136,6 +1221,132 @@ pub const fn parse_device_descriptor(
         product_index: bytes[15],
         serial_index: bytes[16],
         configuration_count: bytes[17],
+    }
+}
+
+pub fn parse_configuration_descriptor_header(
+    bytes: &[u8; XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH],
+) -> Result<XhciConfigurationDescriptorHeader, XhciDriverError> {
+    if bytes[0] as usize != XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH
+        || bytes[1] != USB_DESCRIPTOR_TYPE_CONFIGURATION
+    {
+        return Err(XhciDriverError::InvalidConfigurationDescriptorHeader);
+    }
+    let total_length = u16::from_le_bytes([bytes[2], bytes[3]]);
+    if usize::from(total_length) < XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH {
+        return Err(XhciDriverError::InvalidConfigurationDescriptorHeader);
+    }
+    if usize::from(total_length) > XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH {
+        return Err(XhciDriverError::ConfigurationDescriptorTooLarge);
+    }
+
+    Ok(XhciConfigurationDescriptorHeader {
+        length: bytes[0],
+        descriptor_type: bytes[1],
+        total_length,
+        interface_count: bytes[4],
+        configuration_value: bytes[5],
+        configuration_index: bytes[6],
+        attributes: bytes[7],
+        max_power: bytes[8],
+    })
+}
+
+pub fn parse_configuration_descriptor(
+    bytes: &[u8],
+    total_length: usize,
+) -> Result<XhciConfigurationDescriptorSnapshot, XhciDriverError> {
+    if total_length < XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH || total_length > bytes.len() {
+        return Err(XhciDriverError::MalformedConfigurationDescriptor);
+    }
+    if total_length > XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH {
+        return Err(XhciDriverError::ConfigurationDescriptorTooLarge);
+    }
+
+    let header_bytes = [
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7], bytes[8],
+    ];
+    let header = parse_configuration_descriptor_header(&header_bytes)?;
+    if usize::from(header.total_length) != total_length {
+        return Err(XhciDriverError::MalformedConfigurationDescriptor);
+    }
+
+    let mut interface = None;
+    let mut saw_interface = false;
+    let mut offset = XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH;
+    while offset < total_length {
+        if offset + 2 > total_length {
+            return Err(XhciDriverError::MalformedConfigurationDescriptor);
+        }
+        let descriptor_length = usize::from(bytes[offset]);
+        if descriptor_length < 2 || offset + descriptor_length > total_length {
+            return Err(XhciDriverError::MalformedConfigurationDescriptor);
+        }
+
+        match bytes[offset + 1] {
+            USB_DESCRIPTOR_TYPE_INTERFACE => {
+                if descriptor_length < 9 {
+                    return Err(XhciDriverError::MalformedConfigurationDescriptor);
+                }
+                saw_interface = true;
+                interface = Some((
+                    bytes[offset + 2],
+                    bytes[offset + 3],
+                    bytes[offset + 4],
+                    bytes[offset + 5],
+                    bytes[offset + 6],
+                    bytes[offset + 7],
+                ));
+            }
+            USB_DESCRIPTOR_TYPE_ENDPOINT => {
+                if descriptor_length < 7 {
+                    return Err(XhciDriverError::MalformedConfigurationDescriptor);
+                }
+                let endpoint_address = bytes[offset + 2];
+                let endpoint_attributes = bytes[offset + 3];
+                if endpoint_address & USB_ENDPOINT_DIRECTION_IN != 0
+                    && endpoint_attributes & USB_ENDPOINT_TRANSFER_TYPE_MASK
+                        == USB_ENDPOINT_TRANSFER_TYPE_INTERRUPT
+                {
+                    let Some((
+                        interface_number,
+                        alternate_setting,
+                        endpoint_count,
+                        interface_class,
+                        interface_subclass,
+                        interface_protocol,
+                    )) = interface
+                    else {
+                        return Err(XhciDriverError::MissingConfigurationInterface);
+                    };
+                    return Ok(XhciConfigurationDescriptorSnapshot {
+                        header,
+                        interface_number,
+                        alternate_setting,
+                        endpoint_count,
+                        interface_class,
+                        interface_subclass,
+                        interface_protocol,
+                        interrupt_in_endpoint_address: endpoint_address,
+                        interrupt_in_attributes: endpoint_attributes,
+                        interrupt_in_max_packet_size: u16::from_le_bytes([
+                            bytes[offset + 4],
+                            bytes[offset + 5],
+                        ]),
+                        interrupt_in_interval: bytes[offset + 6],
+                    });
+                }
+            }
+            _ => {}
+        }
+
+        offset += descriptor_length;
+    }
+
+    if !saw_interface {
+        Err(XhciDriverError::MissingConfigurationInterface)
+    } else {
+        Err(XhciDriverError::MissingInterruptInEndpoint)
     }
 }
 
@@ -1994,6 +2205,126 @@ mod tests {
         assert_ne!(trb.control() & XHCI_TRB_DIRECTION_IN, 0);
         assert_eq!(trb.control() & XHCI_TRB_IMMEDIATE_DATA, 0);
         assert_eq!(trb.control() & XHCI_TRB_INTERRUPT_ON_COMPLETION, 0);
+    }
+
+    #[test]
+    fn configuration_descriptor_setup_trb_encodes_nine_byte_header_request() {
+        let trb = configuration_descriptor_setup_trb(9, true);
+
+        assert_eq!(trb.parameter(), 0x0009_0000_0200_0680);
+        assert_eq!(trb.status(), 8);
+        assert_eq!(trb.trb_type(), XHCI_TRB_TYPE_SETUP_STAGE);
+        assert!(trb.cycle());
+        assert_ne!(trb.control() & XHCI_TRB_IMMEDIATE_DATA, 0);
+        assert_eq!(
+            (trb.control() >> XHCI_SETUP_TRANSFER_TYPE_SHIFT) & 0x3,
+            XHCI_SETUP_TRANSFER_TYPE_IN
+        );
+    }
+
+    #[test]
+    fn configuration_descriptor_data_trb_encodes_exact_in_length() {
+        let trb = configuration_descriptor_data_trb(0x9000, 34, true);
+
+        assert_eq!(trb.parameter(), 0x9000);
+        assert_eq!(trb.status() & XHCI_TRANSFER_LENGTH_MASK, 34);
+        assert_eq!(trb.trb_type(), XHCI_TRB_TYPE_DATA_STAGE);
+        assert!(trb.cycle());
+        assert_ne!(trb.control() & XHCI_TRB_DIRECTION_IN, 0);
+        assert_eq!(trb.control() & XHCI_TRB_IMMEDIATE_DATA, 0);
+        assert_eq!(trb.control() & XHCI_TRB_INTERRUPT_ON_COMPLETION, 0);
+    }
+
+    #[test]
+    fn configuration_descriptor_header_extracts_bounded_total_length() {
+        let header =
+            parse_configuration_descriptor_header(&[9, 2, 34, 0, 1, 1, 0, 0xA0, 50]).unwrap();
+
+        assert_eq!(header.length, 9);
+        assert_eq!(header.descriptor_type, 2);
+        assert_eq!(header.total_length, 34);
+        assert_eq!(header.interface_count, 1);
+        assert_eq!(header.configuration_value, 1);
+        assert_eq!(header.attributes, 0xA0);
+        assert_eq!(header.max_power, 50);
+    }
+
+    #[test]
+    fn configuration_descriptor_parser_finds_boot_mouse_interrupt_in_endpoint() {
+        let bytes = [
+            9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 9, 0x21, 0x11, 0x01, 0, 1,
+            0x22, 0x34, 0, 7, 5, 0x81, 0x03, 4, 0, 10,
+        ];
+
+        let descriptor = parse_configuration_descriptor(&bytes, 34).unwrap();
+
+        assert_eq!(descriptor.header.total_length, 34);
+        assert_eq!(descriptor.header.interface_count, 1);
+        assert_eq!(descriptor.header.configuration_value, 1);
+        assert_eq!(descriptor.interface_number, 0);
+        assert_eq!(descriptor.alternate_setting, 0);
+        assert_eq!(descriptor.endpoint_count, 1);
+        assert_eq!(descriptor.interface_class, 3);
+        assert_eq!(descriptor.interface_subclass, 1);
+        assert_eq!(descriptor.interface_protocol, 2);
+        assert_eq!(descriptor.interrupt_in_endpoint_address, 0x81);
+        assert_eq!(descriptor.interrupt_in_attributes, 0x03);
+        assert_eq!(descriptor.interrupt_in_max_packet_size, 4);
+        assert_eq!(descriptor.interrupt_in_interval, 10);
+    }
+
+    #[test]
+    fn configuration_descriptor_header_rejects_wrong_descriptor_type() {
+        assert_eq!(
+            parse_configuration_descriptor_header(&[9, 1, 34, 0, 1, 1, 0, 0x80, 50]),
+            Err(XhciDriverError::InvalidConfigurationDescriptorHeader)
+        );
+    }
+
+    #[test]
+    fn configuration_descriptor_header_rejects_total_length_above_bound() {
+        assert_eq!(
+            parse_configuration_descriptor_header(&[9, 2, 1, 1, 1, 1, 0, 0x80, 50]),
+            Err(XhciDriverError::ConfigurationDescriptorTooLarge)
+        );
+    }
+
+    #[test]
+    fn configuration_descriptor_parser_rejects_zero_length_and_overrun() {
+        let mut zero_length = [
+            9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 9, 0x21, 0x11, 0x01, 0, 1,
+            0x22, 0x34, 0, 7, 5, 0x81, 0x03, 4, 0, 10,
+        ];
+        zero_length[9] = 0;
+        assert_eq!(
+            parse_configuration_descriptor(&zero_length, 34),
+            Err(XhciDriverError::MalformedConfigurationDescriptor)
+        );
+
+        let mut overrun = [
+            9, 2, 34, 0, 1, 1, 0, 0xA0, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 9, 0x21, 0x11, 0x01, 0, 1,
+            0x22, 0x34, 0, 7, 5, 0x81, 0x03, 4, 0, 10,
+        ];
+        overrun[9] = 40;
+        assert_eq!(
+            parse_configuration_descriptor(&overrun, 34),
+            Err(XhciDriverError::MalformedConfigurationDescriptor)
+        );
+    }
+
+    #[test]
+    fn configuration_descriptor_parser_requires_interface_and_interrupt_in_endpoint() {
+        let no_interface = [9, 2, 9, 0, 0, 1, 0, 0x80, 50];
+        assert_eq!(
+            parse_configuration_descriptor(&no_interface, 9),
+            Err(XhciDriverError::MissingConfigurationInterface)
+        );
+
+        let no_endpoint = [9, 2, 18, 0, 1, 1, 0, 0x80, 50, 9, 4, 0, 0, 0, 3, 1, 2, 0];
+        assert_eq!(
+            parse_configuration_descriptor(&no_endpoint, 18),
+            Err(XhciDriverError::MissingInterruptInEndpoint)
+        );
     }
 
     #[test]
