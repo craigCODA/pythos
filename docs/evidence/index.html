@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, physical command-ring and descriptor success, plus QEMU xHCI configuration-descriptor evidence.">
+    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, device-descriptor, and configuration-descriptor success.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -419,8 +419,8 @@
       <section class="band" id="usb-xhci-configuration-probe-2026-09-02">
         <div class="content">
           <div class="section-head">
-            <p class="kicker">2026-09-02 QEMU and first physical attempt</p>
-            <h2>xHCI Configuration Probe Reached A Physical Timed Wait</h2>
+            <p class="kicker">2026-09-02 to 2026-09-03 QEMU and physical acceptance</p>
+            <h2>xHCI Configuration Descriptor Completed On The Lenovo</h2>
           </div>
           <p class="lede">
             The opt-in <code>usb-xhci-configuration-probe</code> image extends
@@ -431,7 +431,7 @@
           </p>
           <div class="evidence-stats" aria-label="2026-09-02 USB xHCI configuration probe summary">
             <span><strong>qemu</strong> pass</span>
-            <span><strong>physical</strong> timeout</span>
+            <span><strong>physical</strong> pass</span>
             <span><strong>total</strong> 34</span>
             <span><strong>interface</strong> 03 01 02</span>
             <span><strong>endpoint</strong> 81</span>
@@ -443,14 +443,15 @@
           <p class="fact"><strong>Transfer result</strong> header CC <code>01</code>, full CC <code>01</code>, total length <code>0022</code>, configuration value <code>01</code>, interface count <code>01</code></p>
           <p class="fact"><strong>Parsed QEMU mouse</strong> HID boot mouse <code>03/01/02</code>, interrupt-IN endpoint <code>0x81</code>, attributes <code>0x03</code>, max packet <code>4</code>, interval <code>7</code></p>
           <p class="fact"><strong>Physical attempt</strong> Lenovo <code>81VS</code> reached the swap prompt, detected the mouse connect on port <code>06</code>, then rendered <code>xhci cfg err</code> / generic timeout <code>0x0F</code></p>
-          <p class="fact"><strong>Refreshed diagnostic</strong> additive screen codes <code>0x2C..0x31</code> distinguish No-op, Enable Slot, Address Device, Device Descriptor, configuration header, and full configuration waits; the staged image is deployed with 8-of-8 hashes matching and 111 unrelated USB files preserved</p>
+          <p class="fact"><strong>Refreshed diagnostic</strong> additive screen codes <code>0x2C..0x31</code> distinguish No-op, Enable Slot, Address Device, Device Descriptor, configuration header, and full configuration waits; <code>diag cfg stage1</code> identifies the deployed image</p>
+          <p class="fact"><strong>Physical acceptance</strong> port <code>05</code>, slot <code>01</code>; Address Device, Device Descriptor, header, and full configuration completion codes all <code>01</code>; total <code>34</code>, value <code>1</code>, HID boot mouse <code>03/01/02</code>, endpoint <code>0x81</code>, attributes <code>0x03</code>, max packet <code>4</code>, interval <code>10</code></p>
           <p class="fact"><strong>Storage boundary</strong> <code>NO_DISK_WRITES</code>; the harness uses a disposable simulated USB-storage image only for boot-detach sequencing</p>
           <p class="boundary-note">
-            This is QEMU configuration-descriptor success plus physical
-            connect-and-timeout evidence. It does not prove the Dell/PixArt
-            configuration descriptor was read, or prove
-            <code>SET_CONFIGURATION</code>, endpoint configuration, HID report
-            parsing or polling, cursor movement, or trackpad support.
+            This is QEMU and target-specific physical configuration-descriptor
+            success for the Lenovo <code>81VS</code> and Dell/PixArt mouse. It
+            does not prove <code>SET_CONFIGURATION</code>, endpoint
+            configuration, HID report parsing or polling, cursor movement, or
+            trackpad support.
           </p>
           <div class="gallery">
             <figure class="tile">
@@ -461,8 +462,16 @@
               <img class="evidence-img" src="2026-09-02-physical-usb-xhci-configuration-timeout.jpg" alt="PythOS ADR 0084 physical attempt showing mouse connect on port 6 and generic xHCI configuration timeout error 0x0F">
               <figcaption class="caption">Second frame: mouse connect detected after USB removal, followed by the pre-stage-diagnostic timeout.</figcaption>
             </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png" alt="PythOS ADR 0084 staged physical image at the swap prompt with visible diag cfg stage1 identifier">
+              <figcaption class="caption">Identified retry: the deployed staged image is proven before the USB handoff.</figcaption>
+            </figure>
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-03-physical-usb-xhci-configuration-success.png" alt="PythOS ADR 0084 physical configuration descriptor success for a boot mouse on port 5">
+              <figcaption class="caption">Physical success: all four completion codes are 01 and the Dell/PixArt boot-mouse endpoint metadata is parsed.</figcaption>
+            </figure>
           </div>
-          <p><a href="../decisions/0084-usb-xhci-configuration-descriptor-probe.md">ADR 0084 defines the bounded Configuration Descriptor probe and physical-pending boundary</a>.</p>
+          <p><a href="../decisions/0084-usb-xhci-configuration-descriptor-probe.md">ADR 0084 defines the bounded Configuration Descriptor probe and its physical acceptance boundary</a>.</p>
         </div>
       </section>
 

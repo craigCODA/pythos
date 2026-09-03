@@ -241,10 +241,15 @@ error was shared by every command and control-transfer wait, the first attempt
 does not prove how far the configuration flow progressed. The refreshed image
 adds distinct No-op, Enable Slot, Address Device, Device Descriptor,
 configuration-header, and full-configuration timeout identities with readable
-framebuffer stage text. It is deployed to the re-identified Lexar D70E with
-8-of-8 source-to-target hashes matching and 111 unrelated files preserved. A
-new Lenovo boot is pending. The feature still does not activate the
-configuration or endpoint and does not parse or poll HID reports.
+framebuffer stage text plus the visible boot-source ID `diag cfg stage1`. It
+was deployed to the re-identified Lexar D70E with 8-of-8 source-to-target
+hashes matching and 111 unrelated files preserved. The 2026-09-03 Lenovo retry
+displayed that ID, then physically completed Address Device, Device Descriptor,
+configuration header, and full configuration transfers with completion code
+`01`. The Dell/PixArt result is total length `34`, value `1`, one interface,
+boot mouse `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, and
+interval `10`. The feature still does not activate the configuration or
+endpoint and does not parse or poll HID reports.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -276,7 +281,7 @@ and where the boundary of the work still is.
 | ADR 0081 USB/xHCI command-ring diagnostic QEMU-accepted through No-op and Enable Slot command completions with static DMA rings; scratchpad-enabled image deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows No-op CC `01`, Enable Slot CC `01`, slot `01`, scratchpad count `08`, and `no disk writes` | Descriptor reads, endpoint setup, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0082 USB/xHCI Address Device probe QEMU-accepted with input/output contexts, Address Device CC `1`, assigned address `1`, slot state `2`, EP0 state `1`, and `NO_DISK_WRITES`; deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows Address Device CC `01`, device address `01`, slot state `02`, EP0 state `01`, speed `02`, MPS `0008`, and `no disk writes` | Descriptor reads, endpoint setup beyond EP0 context, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0083 USB/xHCI Device Descriptor probe QEMU-accepted with one EP0 `GET_DESCRIPTOR(Device)` transfer and deployed to the verified USB ESP; Linux Mint field-kit evidence maps the physical Dell/PixArt mouse descriptor as `413c:301a`, MPS0 `8`, HID boot mouse `03/01/02`, endpoint `0x81`; physical frame on AMD `1022:7914` shows descriptor CC `01`, length `12`, type `01`, USB BCD `0200`, MPS `008`, VID/PID `413C 301A`, and `no disk writes` | Configuration descriptor reads, HID parsing, mouse movement, IRQ input, or trackpad support |
-| ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted with bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, interval `7`, and `NO_DISK_WRITES`; first physical deployment reached mouse connect then generic timeout `0x0F`, motivating exact staged timeout diagnostics | Physical configuration-descriptor success, `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
+| ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -789,10 +794,16 @@ result, not configuration-descriptor success. The staged follow-up assigns
 codes `0x2C..0x31` and readable labels to the six possible waits. The refreshed
 8-file image was copied to the re-identified Lexar D70E without formatting or
 deleting files; 4,042,520 bytes matched source hashes and all 111 unrelated
-files remained byte-identical. Its deployed core SHA-256 is
-`325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11`.
-The physical Dell/PixArt descriptor expectation remains device-specific at
-interval `10`, as recorded by Linux, and the refreshed Lenovo boot is pending.
+files remained byte-identical. The next image added `diag cfg stage1` and was
+deployed with core SHA-256
+`689276371BD5A69CB567D2E204022C8F86747F25FD276336BE0FABFD6907DDAD`.
+On 2026-09-03 the Lenovo displayed that exact marker, then rendered `xhci cfg`
+success on port `05`, slot `01`: Address Device, Device Descriptor,
+configuration header, and full configuration completion codes were all `01`;
+total length was `34`, value `1`, one configuration and interface, HID boot
+mouse `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, and the
+device-specific interval `10` previously recorded by Linux. This closes the
+physical configuration-descriptor boundary for this target and mouse only.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
@@ -826,6 +837,8 @@ See:
 - [2026-09-01 physical USB/xHCI Device Descriptor success frame](evidence/2026-09-01-physical-usb-xhci-device-descriptor-success.png)
 - [2026-09-02 physical ADR 0084 swap-ready frame](evidence/2026-09-02-physical-usb-xhci-configuration-swap-ready.jpg)
 - [2026-09-02 physical ADR 0084 generic-timeout frame](evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg)
+- [2026-09-03 physical ADR 0084 identified swap-ready frame](evidence/2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png)
+- [2026-09-03 physical ADR 0084 configuration success frame](evidence/2026-09-03-physical-usb-xhci-configuration-success.png)
 - [2026-09-01 Linux Mint USB mouse map archive](evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 
 This is a target-specific physical result, not a generic hardware-support claim.
@@ -907,8 +920,7 @@ implemented or not claimed:
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
-* physical USB configuration descriptor success, endpoint setup beyond EP0,
-  or HID report polling;
+* endpoint setup beyond EP0 or HID report polling;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * punctuation/modifier keyboard layout or framebuffer terminal input;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;

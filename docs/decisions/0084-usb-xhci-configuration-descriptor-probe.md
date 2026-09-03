@@ -188,16 +188,47 @@ read back the deployed core as:
 325A4F142282BDA353178110A74D97FEF20ADF78A0117EA1D3BAA44366990A11
 ```
 
-Physical configuration-descriptor acceptance still requires a fresh Lenovo
-result from this staged image. QEMU and deployment evidence do not prove the
-Dell/PixArt configuration read, HID input, or cursor support.
+A visible boot-source identifier was added after the operator confirmed that a
+later Lenovo screen had repeated the old panel character for character even
+though the refreshed kernel was present on the Lexar. The new build renders
+`diag cfg stage1` before the handoff. Its deployed core SHA-256 is:
+
+```text
+689276371BD5A69CB567D2E204022C8F86747F25FD276336BE0FABFD6907DDAD
+```
+
+The 2026-09-03 retry produced two new chronological frames:
+
+```text
+docs/evidence/2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png
+SHA-256 BC96F7B4609831D6FB16721A2B25525FFCC1C7274BD30C4FCDD8CDDEC6B11B3C
+
+docs/evidence/2026-09-03-physical-usb-xhci-configuration-success.png
+SHA-256 54E9FBFA04EBF0F225AD90707AFC55C72703615CA8BCF0B01F96D0B8EF419BEA
+```
+
+The first frame proves the intended staged image reached the Lenovo by showing
+`diag cfg stage1` above the frozen AMD `1022:7914` port snapshot. After the
+wide boot USB was removed and the external mouse inserted, the second frame
+shows physical success on port `05`, slot `01`. Address Device, Device
+Descriptor, the nine-byte configuration header, and the bounded full
+configuration transfer all report completion code `01`. The parsed Dell/PixArt
+mouse reports total length `34`, configuration value `1`, one configuration,
+one interface, HID boot mouse class/subclass/protocol `03/01/02`, interrupt-IN
+endpoint `0x81`, attributes `0x03`, maximum packet size `4`, and interval `10`.
+Together with the exact QEMU-accepted image hash and prior file-by-file USB
+readback, these frames establish physical configuration-descriptor acceptance
+for the Lenovo `81VS` and this mouse. They do not establish HID input or cursor
+support.
 
 ## Consequences
 
-PythOS now has a bounded, opt-in configuration discovery layer in QEMU. It can
-identify the standard HID boot-mouse interface and interrupt-IN endpoint
-metadata without activating that configuration or endpoint.
+PythOS now has a bounded, opt-in configuration discovery layer accepted in
+QEMU and on the Lenovo `81VS` with the Dell/PixArt mouse. It can identify the
+standard HID boot-mouse interface and interrupt-IN endpoint metadata without
+activating that configuration or endpoint.
 
-The next phase boundary is a staged physical retry of this exact slice. Endpoint
-configuration, HID report discovery, polling, and cursor behavior remain
-separate future slices requiring explicit owner invocation.
+The next phase boundary is `SET_CONFIGURATION` plus endpoint-context setup as a
+separate bounded slice. HID report discovery, interrupt-IN polling, cursor
+behavior, and shell input remain later slices requiring explicit owner
+invocation.
