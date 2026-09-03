@@ -75,9 +75,9 @@
 
 - [x] Record the exact ordering, bounded DMA ownership, typed failures, markers, no-write boundary, and QEMU-only status in ADR 0085.
 - [x] Run formatting, diff checks, all PythCore tests, old/new cross-target builds, the ADR 0084 and ADR 0085 QEMU harnesses, and `scripts/test-boot.py`. Report unrelated known baseline failures honestly if the broader Python suite is sampled.
-- [ ] Update project/external state only from fresh evidence.
-- [ ] Commit normally, push the exact branch, verify local/remote equality, and create/verify a Git bundle checkpoint.
-- [ ] Stop before USB deployment; re-identify the removable target and obtain deployment approval in a later turn.
+- [x] Update project/external state only from fresh evidence.
+- [x] Commit normally, push the exact branch, verify local/remote equality, and create/verify a Git bundle checkpoint.
+- [x] Stop before USB deployment; re-identify the removable target and obtain deployment approval in a later turn.
 
 ## Verification Matrix
 
