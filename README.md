@@ -243,6 +243,18 @@ interface, HID boot mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes
 descriptor acceptance; it is not `SET_CONFIGURATION`, endpoint activation, HID
 report polling, cursor movement, or shell input.
 
+ADR 0085 adds `usb-xhci-endpoint-configuration-probe` as the next opt-in,
+bounded transition. It maps endpoint `0x81` to DCI 3, prepares a separate
+page-aligned interrupt transfer ring without a Normal TRB, configures that
+endpoint first, and only after command success sends USB
+`SET_CONFIGURATION(1)` on endpoint 0. The accepted QEMU run reported Configure
+Endpoint CC `01`, SET_CONFIGURATION CC `01`, configured slot state `03`,
+configured endpoint state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
+`QEMU_OUTCOME success`, and `NO_DISK_WRITES`. It rejected any interrupt-transfer,
+HID-report, or cursor marker. This proves endpoint/device configuration in QEMU,
+not physical acceptance or mouse input; USB deployment and the Lenovo run are
+still pending.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths
@@ -275,6 +287,7 @@ Current-state references:
 - [ADR 0082: USB xHCI Address Device probe](docs/decisions/0082-usb-xhci-address-device-probe.md)
 - [ADR 0083: USB xHCI Device Descriptor probe](docs/decisions/0083-usb-xhci-device-descriptor-probe.md)
 - [ADR 0084: USB xHCI Configuration Descriptor probe](docs/decisions/0084-usb-xhci-configuration-descriptor-probe.md)
+- [ADR 0085: USB xHCI Endpoint Configuration probe](docs/decisions/0085-usb-xhci-endpoint-configuration-probe.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)

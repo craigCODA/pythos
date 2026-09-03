@@ -8,7 +8,7 @@ use crate::framebuffer;
 #[cfg(any(test, feature = "usb-xhci-command-probe"))]
 use crate::usb_xhci_driver::{
     XhciAddressProbeResult, XhciCommandProbeResult, XhciConfigurationProbeResult,
-    XhciDescriptorProbeResult, XhciDriverError,
+    XhciDescriptorProbeResult, XhciDriverError, XhciEndpointConfigurationProbeResult,
 };
 use crate::usb_xhci_probe::{
     UsbController, UsbControllerKind, UsbMemoryBar, UsbProbeReport, XhciPortChange,
@@ -171,6 +171,9 @@ pub fn build_swap_screen(
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
     push_text(&mut screen, "swap mouse now");
+    #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+    push_text(&mut screen, "diag ep cfg1");
+    #[cfg(not(feature = "usb-xhci-endpoint-configuration-probe"))]
     push_text(&mut screen, "diag cfg stage1");
     push_text(&mut screen, "no disk writes");
     push_count(&mut screen, report.count() as u64);
@@ -474,6 +477,108 @@ pub fn build_configuration_probe_screen(
     screen
 }
 
+#[cfg(any(test, feature = "usb-xhci-endpoint-configuration-probe"))]
+pub fn build_endpoint_configuration_probe_screen(
+    report: &UsbProbeReport,
+    result: XhciEndpointConfigurationProbeResult,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci ep cfg");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+
+    let configuration = result.configuration;
+    let address = configuration.descriptor.address;
+    let endpoint = configuration.configuration;
+    let mut port = ProbeLine::new();
+    port.push_str("port ");
+    port.push_hex(u64::from(address.command.port_number), 2);
+    port.push_str(" slot ");
+    port.push_hex(u64::from(address.command.slot_id), 2);
+    screen.push(port);
+
+    let mut endpoint_line = ProbeLine::new();
+    endpoint_line.push_str("ep ");
+    endpoint_line.push_hex(u64::from(endpoint.interrupt_in_endpoint_address), 2);
+    endpoint_line.push_str(" dci ");
+    endpoint_line.push_hex(u64::from(result.endpoint_id), 2);
+    endpoint_line.push_str(" int ");
+    endpoint_line.push_hex(u64::from(result.endpoint_context_interval), 2);
+    screen.push(endpoint_line);
+
+    let mut completions = ProbeLine::new();
+    completions.push_str("cfgcmd cc ");
+    completions.push_hex(u64::from(result.configure_endpoint_completion_code), 2);
+    completions.push_str(" set cc ");
+    completions.push_hex(u64::from(result.set_configuration_completion_code), 2);
+    screen.push(completions);
+
+    let mut states = ProbeLine::new();
+    states.push_str("slot ");
+    states.push_hex(u64::from(result.configured_slot_state), 2);
+    states.push_str(" epst ");
+    states.push_hex(u64::from(result.configured_endpoint_state), 2);
+    screen.push(states);
+
+    let mut first_completions = ProbeLine::new();
+    first_completions.push_str("addr ");
+    first_completions.push_hex(u64::from(address.address_device_completion_code), 2);
+    first_completions.push_str(" desc ");
+    first_completions.push_hex(
+        u64::from(configuration.descriptor.descriptor_completion_code),
+        2,
+    );
+    screen.push(first_completions);
+
+    let mut descriptor_completions = ProbeLine::new();
+    descriptor_completions.push_str("hdr ");
+    descriptor_completions.push_hex(
+        u64::from(configuration.configuration_header_completion_code),
+        2,
+    );
+    descriptor_completions.push_str(" full ");
+    descriptor_completions.push_hex(u64::from(configuration.configuration_completion_code), 2);
+    screen.push(descriptor_completions);
+
+    let mut packet = ProbeLine::new();
+    packet.push_str("mps ");
+    packet.push_dec(u64::from(endpoint.interrupt_in_max_packet_size & 0x07FF), 4);
+    packet.push_str(" scratch ");
+    packet.push_hex(u64::from(address.command.scratchpad_count), 2);
+    screen.push(packet);
+    push_text(&mut screen, "no interrupt poll");
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-endpoint-configuration-probe"))]
+pub fn build_endpoint_configuration_error_screen(
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci ep cfg err");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+    push_driver_error(&mut screen, error);
+    push_change(&mut screen, change);
+    push_ports_summary(&mut screen, port_status);
+    push_xecp(&mut screen, port_status);
+    push_legacy(&mut screen, port_status);
+    screen
+}
+
 #[cfg(any(test, feature = "usb-xhci-configuration-probe"))]
 pub fn build_configuration_error_screen(
     report: &UsbProbeReport,
@@ -628,6 +733,28 @@ pub fn render_configuration_probe(
     result: XhciConfigurationProbeResult,
 ) -> Result<(), ()> {
     let screen = build_configuration_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+pub fn render_endpoint_configuration_probe(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    result: XhciEndpointConfigurationProbeResult,
+) -> Result<(), ()> {
+    let screen = build_endpoint_configuration_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+pub fn render_endpoint_configuration_error(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> Result<(), ()> {
+    let screen = build_endpoint_configuration_error_screen(report, port_status, change, error);
     render_screen(framebuffer_info, screen)
 }
 
@@ -1326,6 +1453,133 @@ mod tests {
         assert_eq!(screen.line(6), Some("err 00000030"));
         assert_eq!(screen.line(7), Some("stage config header"));
         assert_eq!(screen.line(8), Some("chg p6"));
+    }
+
+    #[test]
+    fn formats_endpoint_configuration_probe_result_for_no_serial_capture() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let result = crate::usb_xhci_driver::XhciEndpointConfigurationProbeResult {
+            configuration: crate::usb_xhci_driver::XhciConfigurationProbeResult {
+                descriptor: crate::usb_xhci_driver::XhciDescriptorProbeResult {
+                    address: crate::usb_xhci_driver::XhciAddressProbeResult {
+                        command: crate::usb_xhci_driver::XhciCommandProbeResult {
+                            port_number: 5,
+                            noop_completion_code: 1,
+                            enable_slot_completion_code: 1,
+                            slot_id: 1,
+                            scratchpad_count: 8,
+                            usbsts_after_start: 0,
+                            portsc_after_reset: 0x0022_0603,
+                        },
+                        address_device_completion_code: 1,
+                        device_address: 4,
+                        slot_state: 2,
+                        ep0_state: 1,
+                        port_speed: 1,
+                        context_size: 32,
+                        default_control_max_packet_size: 8,
+                    },
+                    descriptor_completion_code: 1,
+                    descriptor: crate::usb_xhci_driver::XhciDeviceDescriptorSnapshot {
+                        length: 18,
+                        descriptor_type: 1,
+                        usb_bcd: 0x0200,
+                        device_class: 0,
+                        device_subclass: 0,
+                        device_protocol: 0,
+                        max_packet_size0: 8,
+                        vendor_id: 0x413c,
+                        product_id: 0x301a,
+                        device_bcd: 0x0100,
+                        manufacturer_index: 1,
+                        product_index: 2,
+                        serial_index: 0,
+                        configuration_count: 1,
+                    },
+                },
+                configuration_header_completion_code: 1,
+                configuration_completion_code: 1,
+                configuration: crate::usb_xhci_driver::XhciConfigurationDescriptorSnapshot {
+                    header: crate::usb_xhci_driver::XhciConfigurationDescriptorHeader {
+                        length: 9,
+                        descriptor_type: 2,
+                        total_length: 34,
+                        interface_count: 1,
+                        configuration_value: 1,
+                        configuration_index: 0,
+                        attributes: 0xA0,
+                        max_power: 50,
+                    },
+                    interface_number: 0,
+                    alternate_setting: 0,
+                    endpoint_count: 1,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 2,
+                    interrupt_in_endpoint_address: 0x81,
+                    interrupt_in_attributes: 0x03,
+                    interrupt_in_max_packet_size: 4,
+                    interrupt_in_interval: 10,
+                },
+            },
+            endpoint_id: 3,
+            endpoint_context_interval: 6,
+            configure_endpoint_completion_code: 1,
+            set_configuration_completion_code: 1,
+            configured_slot_state: 3,
+            configured_endpoint_state: 1,
+        };
+
+        let screen = build_endpoint_configuration_probe_screen(&report, result);
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci ep cfg"));
+        assert_eq!(screen.line(2), Some("no disk writes"));
+        assert_eq!(screen.line(6), Some("port 05 slot 01"));
+        assert_eq!(screen.line(7), Some("ep 81 dci 03 int 06"));
+        assert_eq!(screen.line(8), Some("cfgcmd cc 01 set cc 01"));
+        assert_eq!(screen.line(9), Some("slot 03 epst 01"));
+        assert_eq!(screen.line(10), Some("addr 01 desc 01"));
+        assert_eq!(screen.line(11), Some("hdr 01 full 01"));
+        assert_eq!(screen.line(12), Some("mps 0004 scratch 08"));
+        assert_eq!(screen.line(13), Some("no interrupt poll"));
+    }
+
+    #[test]
+    fn formats_endpoint_configuration_probe_error_for_no_serial_capture() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = crate::usb_xhci_probe::XhciPortChange {
+            port_number: 5,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+
+        let screen = build_endpoint_configuration_error_screen(
+            &report,
+            port_status,
+            change,
+            crate::usb_xhci_driver::XhciDriverError::ConfigureEndpointCommandTimeout,
+        );
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci ep cfg err"));
+        assert_eq!(screen.line(2), Some("no disk writes"));
+        assert_eq!(screen.line(6), Some("err 00000032"));
+        assert_eq!(screen.line(7), Some("stage configure ep"));
+        assert_eq!(screen.line(8), Some("chg p5"));
     }
 
     #[test]

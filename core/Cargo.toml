@@ -52,6 +52,11 @@ usb-xhci-descriptor-probe = ["usb-xhci-address-probe"]
 # set a configuration, configure endpoints, parse HID reports, poll input,
 # move a cursor, enable USB interrupts, or touch storage.
 usb-xhci-configuration-probe = ["usb-xhci-descriptor-probe"]
+# `usb-xhci-endpoint-configuration-probe` builds the discovered interrupt-IN
+# endpoint context, requires Configure Endpoint success, then sends the USB
+# SET_CONFIGURATION request. It does not queue or poll an interrupt transfer,
+# parse HID reports, move a cursor, enable USB interrupts, or touch storage.
+usb-xhci-endpoint-configuration-probe = ["usb-xhci-configuration-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]
