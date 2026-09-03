@@ -252,8 +252,10 @@ Endpoint CC `01`, SET_CONFIGURATION CC `01`, configured slot state `03`,
 configured endpoint state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
 `QEMU_OUTCOME success`, and `NO_DISK_WRITES`. It rejected any interrupt-transfer,
 HID-report, or cursor marker. This proves endpoint/device configuration in QEMU,
-not physical acceptance or mouse input; USB deployment and the Lenovo run are
-still pending.
+not physical acceptance or mouse input. The exact eight-file image was deployed
+to the re-identified Lexar D70E without formatting or deleting files;
+source-to-target readback matched all 4,077,208 bytes and all 111 unrelated
+files remained byte-identical. The Lenovo run is still pending.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input

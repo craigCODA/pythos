@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: Accepted in QEMU; physical deployment and acceptance pending
+Status: Accepted in QEMU and deployed; physical acceptance pending
 
 ## Context
 
@@ -144,6 +144,24 @@ lints in unchanged Phase 13 files, including `needless_return`,
 in this slice's changed USB/xHCI files, so they remain outside this ADR rather
 than being silently rewritten.
 
+The candidate was then deployed to the freshly re-identified Disk 2 Lexar D70E
+USB target, serial `1026R51254700477`: online and healthy USB/MBR media with
+active FAT32 Partition 1 mounted as `P:` / `PYTHOS_ESP`, and neither Windows
+boot nor system. Read-only `chkdsk P:` found no filesystem problems. Before
+deployment, all 119 files (4,755,253 bytes) were copied to
+`D:\PythOS-Workspace\checkpoints\2026-09-03-adr0085-endpoint-configuration-usb-predeploy-backup`
+and matched the USB file-for-file; aggregate manifest SHA-256 was
+`C5AC720E61E94F39955EB7876764507890BA2F364FE21102D70C8B667A221422`.
+
+Deployment copied only the eight accepted ESP files, with no format or delete
+pass. Source-to-target readback reported
+`USB_XHCI_ENDPOINT_CONFIGURATION_VERIFY_OK files:8 bytes:4077208`. All 111
+unrelated files (712,733 bytes) remained byte-identical. The deployed core
+SHA-256 is
+`7BCEAD13881D8ED7455543B127AC072128FCA270102C181B0D3C75ECCAE653C7`.
+This establishes deployment integrity, not physical endpoint-configuration
+success.
+
 ## Consequences
 
 PythOS now has a bounded, opt-in QEMU-accepted transition from parsed endpoint
@@ -151,9 +169,8 @@ metadata to a Running interrupt-IN Endpoint Context and a Configured USB device.
 The interrupt ring exists but contains no input request, so this is not mouse
 input support.
 
-The next action is not HID polling. First, re-identify the removable USB target,
-deploy the exact QEMU-accepted image without formatting or deleting unrelated
-files, verify hashes by readback, and boot it on the Lenovo with the Dell/PixArt
-mouse. Only a successful physical `xhci ep cfg` result can close this boundary.
+The next action is not HID polling. Safely eject the verified USB and boot it on
+the Lenovo with the Dell/PixArt mouse. Only a successful physical
+`diag ep cfg1` followed by `xhci ep cfg` result can close this boundary.
 Interrupt-IN polling and cursor behavior remain a later separately authorized
 slice.

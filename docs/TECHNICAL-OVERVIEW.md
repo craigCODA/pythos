@@ -259,8 +259,10 @@ after command success. QEMU reported Configure Endpoint CC `01`,
 SET_CONFIGURATION CC `01`, configured slot state `03`, configured endpoint
 state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
 `QEMU_OUTCOME success`, and `NO_DISK_WRITES`. The harness rejects any
-interrupt-transfer, HID-report, or cursor marker. Physical deployment and
-Lenovo acceptance remain pending; no input report was requested.
+interrupt-transfer, HID-report, or cursor marker. The eight-file image was
+deployed to the re-identified Lexar D70E with full source-to-target hash
+readback; all 111 unrelated files remained byte-identical. Lenovo acceptance
+remains pending, and no input report was requested.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -827,8 +829,10 @@ The accepted QEMU run reached configured Slot state `3` and Endpoint state `1`,
 then halted with `NO_DISK_WRITES`, `QEMU_OUTCOME success`, and
 `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`. Its oracle rejects an
 interrupt transfer, HID report, or cursor marker. The image has not yet been
-deployed or physically accepted, and the configured interrupt ring has never
-been polled.
+physically accepted, and the configured interrupt ring has never been polled.
+The exact image is deployed on the verified Lexar D70E: eight files and
+4,077,208 bytes matched source hashes, while 111 unrelated files were preserved
+byte-identically.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
