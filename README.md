@@ -251,11 +251,15 @@ endpoint first, and only after command success sends USB
 Endpoint CC `01`, SET_CONFIGURATION CC `01`, configured slot state `03`,
 configured endpoint state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
 `QEMU_OUTCOME success`, and `NO_DISK_WRITES`. It rejected any interrupt-transfer,
-HID-report, or cursor marker. This proves endpoint/device configuration in QEMU,
-not physical acceptance or mouse input. The exact eight-file image was deployed
-to the re-identified Lexar D70E without formatting or deleting files;
+HID-report, or cursor marker. The exact eight-file image was deployed to the
+re-identified Lexar D70E without formatting or deleting files;
 source-to-target readback matched all 4,077,208 bytes and all 111 unrelated
-files remained byte-identical. The Lenovo run is still pending.
+files remained byte-identical. The 2026-09-03 Lenovo `81VS` run then physically
+completed the same bounded transition on AMD `1022:7914`, port `05`, slot `01`:
+endpoint `0x81` mapped to DCI 3 with interval encoding `06`, Configure Endpoint
+and `SET_CONFIGURATION` both returned `01`, and the configured Slot and Endpoint
+states were `03` and `01`. The screen retained `no disk writes` and `no interrupt
+poll`; the illuminated mouse confirms port power, not HID reports or input.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
@@ -312,6 +316,7 @@ Physical evidence records:
 - [2026-09-02 physical ADR 0084 generic-timeout frame](docs/evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg)
 - [2026-09-03 physical ADR 0084 identified swap-ready frame](docs/evidence/2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png)
 - [2026-09-03 physical ADR 0084 configuration success frame](docs/evidence/2026-09-03-physical-usb-xhci-configuration-success.png)
+- [2026-09-03 physical ADR 0085 endpoint-configuration success frame](docs/evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg)
 - [2026-09-01 Linux Mint USB mouse map archive](docs/evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 - Current USB/xHCI deployment state is tracked in
   `D:\PythOS-Workspace\CURRENT-STATE.md`.

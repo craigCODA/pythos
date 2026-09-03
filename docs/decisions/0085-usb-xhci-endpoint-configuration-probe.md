@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: Accepted in QEMU and deployed; physical acceptance pending
+Status: Accepted in QEMU and physically on Lenovo 81VS
 
 ## Context
 
@@ -160,17 +160,39 @@ unrelated files (712,733 bytes) remained byte-identical. The deployed core
 SHA-256 is
 `7BCEAD13881D8ED7455543B127AC072128FCA270102C181B0D3C75ECCAE653C7`.
 This establishes deployment integrity, not physical endpoint-configuration
-success.
+success by itself.
+
+The 2026-09-03 physical run on the Lenovo `81VS` produced the target-specific
+success frame:
+
+```text
+docs/evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg
+SHA-256 09426FBBF3DC904BAC52DF7C7974F70FF4477751CB05FC141A837E93E35D5548
+```
+
+The frame shows `xhci ep cfg` and `no disk writes` on AMD xHCI `1022:7914` at
+BDF `00:10.0`, port `05`, slot `01`. Endpoint `0x81` maps to DCI 3 with
+physical Endpoint Context interval encoding `06`. Configure Endpoint and
+`SET_CONFIGURATION` completion codes are both `01`; the configured Slot state
+is `03` and configured Endpoint state is `01`. Address Device, Device
+Descriptor, configuration-header, and full-configuration completion codes are
+also all `01`; maximum packet size is `4` and scratchpad count is `8`. The final
+line is `no interrupt poll`. The operator additionally observed the mouse
+illuminate, which confirms port power but not an interrupt transfer, HID report,
+cursor movement, or shell input.
+
+Together with the accepted image hashes and exact USB readback, this closes the
+physical endpoint/device-configuration boundary for this Lenovo and
+Dell/PixArt mouse only. It is not a generic USB-HID support claim.
 
 ## Consequences
 
-PythOS now has a bounded, opt-in QEMU-accepted transition from parsed endpoint
-metadata to a Running interrupt-IN Endpoint Context and a Configured USB device.
-The interrupt ring exists but contains no input request, so this is not mouse
-input support.
+PythOS now has a bounded, opt-in transition accepted in QEMU and on the Lenovo
+`81VS` from parsed endpoint metadata to a Running interrupt-IN Endpoint Context
+and a Configured USB device. The interrupt ring exists but contains no input
+request, so this is not mouse input support.
 
-The next action is not HID polling. Safely eject the verified USB and boot it on
-the Lenovo with the Dell/PixArt mouse. Only a successful physical
-`diag ep cfg1` followed by `xhci ep cfg` result can close this boundary.
-Interrupt-IN polling and cursor behavior remain a later separately authorized
-slice.
+The next possible layer is a separately authorized, bounded interrupt-IN
+transfer that reports raw input bytes without cursor or shell integration.
+HID parsing, cursor behavior, IRQ-driven input, and trackpad support remain
+later separate slices.

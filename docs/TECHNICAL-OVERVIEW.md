@@ -261,8 +261,13 @@ state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
 `QEMU_OUTCOME success`, and `NO_DISK_WRITES`. The harness rejects any
 interrupt-transfer, HID-report, or cursor marker. The eight-file image was
 deployed to the re-identified Lexar D70E with full source-to-target hash
-readback; all 111 unrelated files remained byte-identical. Lenovo acceptance
-remains pending, and no input report was requested.
+readback; all 111 unrelated files remained byte-identical. The 2026-09-03
+Lenovo `81VS` run then physically completed the transition on AMD `1022:7914`,
+port `05`, slot `01`: endpoint `0x81`, DCI 3, interval encoding `06`, Configure
+Endpoint CC `01`, `SET_CONFIGURATION` CC `01`, configured Slot state `03`, and
+configured Endpoint state `01`. The framebuffer retained `no disk writes` and
+`no interrupt poll`. The mouse illuminated, confirming port power only; no
+input report was requested or observed.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -295,7 +300,7 @@ and where the boundary of the work still is.
 | ADR 0082 USB/xHCI Address Device probe QEMU-accepted with input/output contexts, Address Device CC `1`, assigned address `1`, slot state `2`, EP0 state `1`, and `NO_DISK_WRITES`; deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows Address Device CC `01`, device address `01`, slot state `02`, EP0 state `01`, speed `02`, MPS `0008`, and `no disk writes` | Descriptor reads, endpoint setup beyond EP0 context, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0083 USB/xHCI Device Descriptor probe QEMU-accepted with one EP0 `GET_DESCRIPTOR(Device)` transfer and deployed to the verified USB ESP; Linux Mint field-kit evidence maps the physical Dell/PixArt mouse descriptor as `413c:301a`, MPS0 `8`, HID boot mouse `03/01/02`, endpoint `0x81`; physical frame on AMD `1022:7914` shows descriptor CC `01`, length `12`, type `01`, USB BCD `0200`, MPS `008`, VID/PID `413C 301A`, and `no disk writes` | Configuration descriptor reads, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
-| ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted through DCI 3 Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured slot state `03`, configured endpoint state `01`, and `NO_DISK_WRITES` | Physical endpoint-configuration acceptance, interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
+| ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -828,11 +833,18 @@ before submitting the no-data USB `SET_CONFIGURATION(1)` TD on endpoint 0.
 The accepted QEMU run reached configured Slot state `3` and Endpoint state `1`,
 then halted with `NO_DISK_WRITES`, `QEMU_OUTCOME success`, and
 `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`. Its oracle rejects an
-interrupt transfer, HID report, or cursor marker. The image has not yet been
-physically accepted, and the configured interrupt ring has never been polled.
-The exact image is deployed on the verified Lexar D70E: eight files and
+interrupt transfer, HID report, or cursor marker. The configured interrupt ring
+has never been polled.
+The exact image was deployed on the verified Lexar D70E: eight files and
 4,077,208 bytes matched source hashes, while 111 unrelated files were preserved
-byte-identically.
+byte-identically. The Lenovo `81VS` physical frame then showed `xhci ep cfg`,
+AMD `1022:7914` at BDF `00:10.0`, port `05`, slot `01`, endpoint `0x81`, DCI 3,
+interval encoding `06`, Configure Endpoint and `SET_CONFIGURATION` completion
+codes `01`, configured Slot state `03`, configured Endpoint state `01`, and all
+four prerequisite address/descriptor completion codes `01`. It also showed
+`no disk writes` and `no interrupt poll`. The illuminated mouse establishes
+power, not an interrupt transfer or HID report; the configured interrupt ring
+still has never been polled.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
@@ -869,6 +881,7 @@ See:
 - [2026-09-02 physical ADR 0084 generic-timeout frame](evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg)
 - [2026-09-03 physical ADR 0084 identified swap-ready frame](evidence/2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png)
 - [2026-09-03 physical ADR 0084 configuration success frame](evidence/2026-09-03-physical-usb-xhci-configuration-success.png)
+- [2026-09-03 physical ADR 0085 endpoint-configuration success frame](evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg)
 - [2026-09-01 Linux Mint USB mouse map archive](evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 
 This is a target-specific physical result, not a generic hardware-support claim.
@@ -951,7 +964,7 @@ implemented or not claimed:
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
-* physical endpoint configuration, interrupt transfers, or HID report polling;
+* physical interrupt transfers or HID report polling;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * punctuation/modifier keyboard layout or framebuffer terminal input;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;

@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, device-descriptor, and configuration-descriptor success.">
+    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, descriptor, and endpoint-configuration success.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -472,6 +472,50 @@
             </figure>
           </div>
           <p><a href="../decisions/0084-usb-xhci-configuration-descriptor-probe.md">ADR 0084 defines the bounded Configuration Descriptor probe and its physical acceptance boundary</a>.</p>
+        </div>
+      </section>
+
+      <section class="band" id="usb-xhci-endpoint-configuration-probe-2026-09-03">
+        <div class="content">
+          <div class="section-head">
+            <p class="kicker">2026-09-03 QEMU, deployment, and physical acceptance</p>
+            <h2>xHCI Interrupt Endpoint Configured On The Lenovo</h2>
+          </div>
+          <p class="lede">
+            The opt-in <code>usb-xhci-endpoint-configuration-probe</code> image
+            converts the physically discovered boot-mouse endpoint metadata into
+            a Running xHCI Endpoint Context, then sends USB
+            <code>SET_CONFIGURATION(1)</code>. It deliberately stops before an
+            interrupt transfer is submitted.
+          </p>
+          <div class="evidence-stats" aria-label="2026-09-03 USB xHCI endpoint configuration summary">
+            <span><strong>qemu</strong> pass</span>
+            <span><strong>physical</strong> pass</span>
+            <span><strong>endpoint</strong> 81 / DCI 03</span>
+            <span><strong>slot</strong> 03</span>
+            <span><strong>endpoint state</strong> 01</span>
+            <span><strong>writes</strong> 0</span>
+          </div>
+          <p class="fact"><strong>Physical target</strong> Lenovo <code>81VS</code>, AMD xHCI <code>1022:7914</code> at BDF <code>00:10.0</code>, port <code>05</code>, slot <code>01</code></p>
+          <p class="fact"><strong>Endpoint context</strong> interrupt-IN endpoint <code>0x81</code>, DCI <code>03</code>, interval encoding <code>06</code>, max packet <code>4</code></p>
+          <p class="fact"><strong>Completion result</strong> Configure Endpoint CC <code>01</code>, SET_CONFIGURATION CC <code>01</code>, configured Slot state <code>03</code>, configured Endpoint state <code>01</code></p>
+          <p class="fact"><strong>Prerequisites</strong> Address Device, Device Descriptor, configuration header, and full configuration completion codes all <code>01</code>; scratchpad count <code>08</code></p>
+          <p class="fact"><strong>Power observation</strong> the external mouse illuminated; this establishes USB port power only</p>
+          <p class="fact"><strong>Storage and input boundary</strong> <code>no disk writes</code> and <code>no interrupt poll</code></p>
+          <p class="boundary-note">
+            This is target-specific physical endpoint/device-configuration
+            acceptance for the Lenovo <code>81VS</code> and Dell/PixArt mouse.
+            It does not prove an interrupt transfer, HID report parsing, cursor
+            movement, shell input, IRQ delivery, trackpad input, or generic USB
+            support.
+          </p>
+          <div class="gallery">
+            <figure class="tile">
+              <img class="evidence-img" src="2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg" alt="PythOS ADR 0085 physical endpoint configuration success on the Lenovo with Configure Endpoint and Set Configuration completion codes 01">
+              <figcaption class="caption">Physical success: endpoint 0x81 is Running, the device is Configured, disk writes remain disabled, and interrupt polling has not begun. SHA-256: 09426FBBF3DC904BAC52DF7C7974F70FF4477751CB05FC141A837E93E35D5548.</figcaption>
+            </figure>
+          </div>
+          <p><a href="../decisions/0085-usb-xhci-endpoint-configuration-probe.md">ADR 0085 defines the bounded Endpoint Configuration probe and its physical acceptance boundary</a>.</p>
         </div>
       </section>
 
