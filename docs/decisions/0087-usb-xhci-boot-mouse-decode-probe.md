@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Accepted in QEMU; physical Lenovo verification pending
+Status: Accepted in QEMU and user-observed on Lenovo 81VS; no physical media capture
 
 ## Context
 
@@ -86,13 +86,31 @@ serial log    33E8E44709E8BD09098AFC5F067174117D262A4F80FED621D002E77375976A63
 
 The prior physical report `00 FE 00 00` is covered by a host test that decodes
 buttons `00`, X `-2`, Y `0`, auxiliary `00`, and constructs
-`RawInputEvent::MouseMoved { dx: -2, dy: 0 }`. This is not yet physical
-acceptance of the ADR 0087 image.
+`RawInputEvent::MouseMoved { dx: -2, dy: 0 }`.
+
+Physical acceptance followed on 2026-09-04 on the same Lenovo `81VS`, AMD xHCI
+`1022:7914`, and Dell/PixArt mouse path used for ADR 0086. The deployed
+`PYTHCORE.ELF` matched the QEMU-accepted SHA-256 above. The user directly
+transcribed these final decoded-panel lines:
+
+```text
+btn 00 l0 r0 m0
+dx -007 dy -007
+aux 00
+```
+
+The user's phone lost power before a photograph or video could be recorded, so
+this physical acceptance is explicitly user-observed and transcription-backed,
+not media-backed. The lowercase `l0` is the literal left-button field rendered
+by the source; it can resemble `10` in the fixed boot font. No firmware-setting
+change was reported. The probe retained its one-report, no-cursor, and no-disk-
+write boundary; the separately authorized USB deployment replaced eight boot
+image files and preserved 111 unrelated files byte-for-byte.
 
 ## Consequences
 
-PythOS now has a QEMU-accepted semantic bridge from one validated xHCI report
-to its existing typed mouse-movement representation while preserving the
-one-report safety boundary. Physical acceptance on the Lenovo remains the next
-step. Recurring transfers, button-transition tracking, and visible cursor
-movement remain later, separately approved boundaries.
+PythOS now has a QEMU-accepted and user-observed Lenovo-accepted semantic bridge
+from one validated xHCI report to its existing typed mouse-movement
+representation while preserving the one-report safety boundary. Recurring
+transfers, button-transition tracking, and visible cursor movement remain
+later, separately approved boundaries.

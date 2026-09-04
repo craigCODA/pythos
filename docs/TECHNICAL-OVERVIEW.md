@@ -285,8 +285,11 @@ mouse report, maps movement to `RawInputEvent::MouseMoved`, and retains byte
 four as raw `aux` evidence rather than claiming wheel semantics. QEMU decoded
 `00 08 FC 00` as buttons `00`, X `+8`, Y `-4`, auxiliary `00`, emitted
 `XHCI_BOOT_MOUSE_DECODE_READY`, retained `NO_DISK_WRITES`, and halted after one
-report. Physical ADR 0087 acceptance, recurring reports, button transitions,
-and cursor behavior remain unproven.
+report. On the Lenovo `81VS`, the user then observed `btn 00 l0 r0 m0`, signed
+`dx -007 dy -007`, and `aux 00`. The phone lost power before a photograph could
+be recorded, so that physical acceptance is transcription-backed rather than
+media-backed. Recurring reports, button transitions, and cursor behavior remain
+unproven.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -890,6 +893,7 @@ See:
 - [ADR 0085 USB xHCI Endpoint Configuration probe](decisions/0085-usb-xhci-endpoint-configuration-probe.md)
 - [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
+- [2026-09-04 physical ADR 0087 transcription report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)
