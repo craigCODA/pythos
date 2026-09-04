@@ -81,6 +81,17 @@ impl ProbeLine {
         }
     }
 
+    fn push_signed_dec_i32(&mut self, value: i32, digits: usize) {
+        let signed = i64::from(value);
+        if signed < 0 {
+            self.push_byte(b'-');
+            self.push_dec((-signed) as u64, digits);
+        } else {
+            self.push_byte(b'+');
+            self.push_dec(signed as u64, digits);
+        }
+    }
+
     pub fn as_str(&self) -> Option<&str> {
         core::str::from_utf8(&self.bytes[..self.len]).ok()
     }
@@ -704,6 +715,161 @@ pub fn build_boot_mouse_decode_probe_screen(
     screen
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(test, allow(dead_code))]
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+pub enum UsbBootMouseRecurringFailure {
+    Driver(crate::usb_xhci_driver::XhciDriverError),
+    Decode(crate::input_drivers::InputDriverError),
+    TerminalInvariant,
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+pub fn build_boot_mouse_recurring_probe_screen(
+    report: &crate::usb_xhci_probe::UsbProbeReport,
+    endpoint: crate::usb_xhci_driver::XhciEndpointConfigurationProbeResult,
+    progress: crate::usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci mouse sequence");
+    push_text(&mut screen, "no disk writes");
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+    push_recurring_endpoint_identity(&mut screen, endpoint);
+
+    let mut reports = ProbeLine::new();
+    reports.push_str("reports ");
+    reports.push_dec(u64::from(summary.report_count), 2);
+    reports.push_str(" wrap ");
+    reports.push_dec(u64::from(progress.transfer_wrap_count), 1);
+    screen.push(reports);
+
+    let last = summary
+        .last_report
+        .unwrap_or(crate::input_drivers::UsbBootMouseReport {
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            auxiliary: None,
+        });
+    let mut last_line = ProbeLine::new();
+    last_line.push_str("last ");
+    last_line.push_hex(u64::from(last.buttons), 2);
+    last_line.push_str(" l");
+    last_line.push_byte(bool_digit(last.left_pressed()));
+    last_line.push_str(" r");
+    last_line.push_byte(bool_digit(last.right_pressed()));
+    last_line.push_str(" m");
+    last_line.push_byte(bool_digit(last.middle_pressed()));
+    screen.push(last_line);
+
+    push_recurring_observation(&mut screen, summary);
+
+    let mut totals = ProbeLine::new();
+    totals.push_str("sumx ");
+    totals.push_signed_dec_i32(summary.dx_total, 4);
+    totals.push_str(" sumy ");
+    totals.push_signed_dec_i32(summary.dy_total, 4);
+    screen.push(totals);
+
+    let mut auxiliary = ProbeLine::new();
+    auxiliary.push_str("aux ");
+    match summary.latest_auxiliary {
+        Some(value) => auxiliary.push_hex(u64::from(value), 2),
+        None => auxiliary.push_str("--"),
+    }
+    auxiliary.push_str(" present ");
+    auxiliary.push_byte(bool_digit(summary.auxiliary_seen));
+    screen.push(auxiliary);
+    push_text(&mut screen, "frozen no cursor");
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+pub fn build_boot_mouse_recurring_error_screen(
+    report: &crate::usb_xhci_probe::UsbProbeReport,
+    _port_status: crate::usb_xhci_probe::XhciPortStatusSnapshot,
+    change: crate::usb_xhci_probe::XhciPortChange,
+    progress: crate::usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+    failure: UsbBootMouseRecurringFailure,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci input error");
+    push_text(&mut screen, "no disk writes");
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+
+    let mut port = ProbeLine::new();
+    port.push_str("chg p");
+    port.push_hex(u64::from(change.port_number), 1);
+    screen.push(port);
+
+    let mut done = ProbeLine::new();
+    done.push_str("done ");
+    done.push_dec(u64::from(progress.completed_reports), 2);
+    screen.push(done);
+
+    let mut next = ProbeLine::new();
+    next.push_str("next ");
+    next.push_dec(u64::from(progress.next_trb_index), 2);
+    next.push_str(" cycle ");
+    next.push_byte(bool_digit(progress.next_cycle));
+    screen.push(next);
+
+    push_recurring_observation(&mut screen, summary);
+    match failure {
+        UsbBootMouseRecurringFailure::Driver(error) => push_driver_error(&mut screen, error),
+        UsbBootMouseRecurringFailure::Decode(_) => push_text(&mut screen, "decode invalid"),
+        UsbBootMouseRecurringFailure::TerminalInvariant => {
+            push_text(&mut screen, "terminal invariant")
+        }
+    }
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+fn push_recurring_endpoint_identity(
+    screen: &mut ProbeScreen,
+    result: crate::usb_xhci_driver::XhciEndpointConfigurationProbeResult,
+) {
+    let address = result.configuration.descriptor.address;
+    let endpoint = result.configuration.configuration;
+    let mut port = ProbeLine::new();
+    port.push_str("port ");
+    port.push_hex(u64::from(address.command.port_number), 2);
+    port.push_str(" slot ");
+    port.push_hex(u64::from(address.command.slot_id), 2);
+    screen.push(port);
+
+    let mut endpoint_line = ProbeLine::new();
+    endpoint_line.push_str("ep ");
+    endpoint_line.push_hex(u64::from(endpoint.interrupt_in_endpoint_address), 2);
+    endpoint_line.push_str(" dci ");
+    endpoint_line.push_hex(u64::from(result.endpoint_id), 2);
+    screen.push(endpoint_line);
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+fn push_recurring_observation(
+    screen: &mut ProbeScreen,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+) {
+    let mut seen = ProbeLine::new();
+    seen.push_str("seen ");
+    seen.push_hex(u64::from(summary.pressed_seen), 2);
+    seen.push_str(" rel ");
+    seen.push_hex(u64::from(summary.released_after_pressed), 2);
+    screen.push(seen);
+}
+
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
 fn push_usb_boot_mouse_lines(
     screen: &mut ProbeScreen,
@@ -979,6 +1145,39 @@ pub fn render_boot_mouse_decode_probe(
     decoded: crate::input_drivers::UsbBootMouseReport,
 ) -> Result<(), ()> {
     let screen = build_boot_mouse_decode_probe_screen(report, result, decoded);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+pub fn render_boot_mouse_recurring_probe(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    endpoint: crate::usb_xhci_driver::XhciEndpointConfigurationProbeResult,
+    progress: crate::usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+) -> Result<(), ()> {
+    let screen = build_boot_mouse_recurring_probe_screen(report, endpoint, progress, summary);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+pub fn render_boot_mouse_recurring_error(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    progress: crate::usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+    failure: UsbBootMouseRecurringFailure,
+) -> Result<(), ()> {
+    let screen = build_boot_mouse_recurring_error_screen(
+        report,
+        port_status,
+        change,
+        progress,
+        summary,
+        failure,
+    );
     render_screen(framebuffer_info, screen)
 }
 

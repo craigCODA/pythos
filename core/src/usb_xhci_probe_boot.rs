@@ -11,6 +11,22 @@ use crate::usb_xhci_driver;
 use crate::{fb_debug, serial, usb_xhci_probe, usb_xhci_probe_screen};
 use pythos_shared::boot_protocol::PythBootInfo;
 
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+#[derive(Clone, Copy)]
+struct UsbBootMouseRecurringResult {
+    endpoint: usb_xhci_driver::XhciEndpointConfigurationProbeResult,
+    progress: usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+#[derive(Clone, Copy)]
+struct UsbBootMouseRecurringError {
+    progress: usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+    failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure,
+}
+
 pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> ! {
     serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:ENTER");
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_HARDWARE_PROBE_ENTER);
@@ -73,12 +89,25 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         not(feature = "usb-xhci-interrupt-transfer-probe")
     ))]
     let mut xhci_endpoint_configuration_error = None;
-    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-interrupt-transfer-probe",
+        not(feature = "usb-xhci-boot-mouse-recurring-probe")
+    ))]
     let mut xhci_interrupt_transfer_result = None;
-    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-interrupt-transfer-probe",
+        not(feature = "usb-xhci-boot-mouse-recurring-probe")
+    ))]
     let mut xhci_interrupt_transfer_error = None;
-    #[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-boot-mouse-decode-probe",
+        not(feature = "usb-xhci-boot-mouse-recurring-probe")
+    ))]
     let mut xhci_boot_mouse_decoded = None;
+    #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+    let mut xhci_boot_mouse_recurring_result = None;
+    #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+    let mut xhci_boot_mouse_recurring_error = None;
     let mut xhci_error = None;
     if let Some(controller) = report.first_xhci() {
         usb_xhci_probe::emit_selected_xhci_identity(controller);
@@ -143,6 +172,21 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                                                     "PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_INPUT_PROMPT_FAILED",
                                                 );
                                             }
+                                            #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+                                            match run_boot_mouse_recurring_probe(
+                                                snapshot,
+                                                change.port_number,
+                                            ) {
+                                                Ok(result) => {
+                                                    xhci_boot_mouse_recurring_result = Some(result);
+                                                }
+                                                Err(error) => {
+                                                    xhci_boot_mouse_recurring_error = Some(error);
+                                                }
+                                            }
+                                            #[cfg(not(
+                                                feature = "usb-xhci-boot-mouse-recurring-probe"
+                                            ))]
                                             match usb_xhci_driver::run_interrupt_transfer_probe(
                                                 snapshot,
                                                 change.port_number,
@@ -298,7 +342,49 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         fb_debug::COLOR_HARDWARE_PROBE_NO_STORAGE
     };
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    #[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+    #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+    let render_result = match (
+        xhci_boot_mouse_recurring_result,
+        xhci_boot_mouse_recurring_error,
+        xhci_port_status,
+        xhci_port_change,
+    ) {
+        (Some(result), _, _, _) => usb_xhci_probe_screen::render_boot_mouse_recurring_probe(
+            &boot_info.framebuffer,
+            &report,
+            result.endpoint,
+            result.progress,
+            result.summary,
+        ),
+        (None, Some(error), Some(port_status), Some(change)) => {
+            usb_xhci_probe_screen::render_boot_mouse_recurring_error(
+                &boot_info.framebuffer,
+                &report,
+                port_status,
+                change,
+                error.progress,
+                error.summary,
+                error.failure,
+            )
+        }
+        (None, _, Some(port_status), Some(change)) => usb_xhci_probe_screen::render_swap_change(
+            &boot_info.framebuffer,
+            &report,
+            port_status,
+            change,
+        ),
+        _ => usb_xhci_probe_screen::render(
+            &boot_info.framebuffer,
+            &report,
+            xhci_snapshot,
+            xhci_port_status,
+            xhci_error,
+        ),
+    };
+    #[cfg(all(
+        feature = "usb-xhci-boot-mouse-decode-probe",
+        not(feature = "usb-xhci-boot-mouse-recurring-probe")
+    ))]
     let render_result = match (
         xhci_interrupt_transfer_result,
         xhci_boot_mouse_decoded,
@@ -602,6 +688,183 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     loop {
         core::hint::spin_loop();
     }
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+fn run_boot_mouse_recurring_probe(
+    registers: usb_xhci_probe::XhciRegisterSnapshot,
+    port_number: u8,
+) -> Result<UsbBootMouseRecurringResult, UsbBootMouseRecurringError> {
+    let mut summary = crate::input_drivers::UsbBootMouseSequenceSummary::new();
+    let mut session =
+        match usb_xhci_driver::XhciInterruptTransferProbeSession::begin(registers, port_number) {
+            Ok(session) => session,
+            Err(error) => {
+                serial::write_line(error.marker());
+                return Err(UsbBootMouseRecurringError {
+                    progress: empty_recurring_progress(),
+                    summary,
+                    failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::Driver(error),
+                });
+            }
+        };
+    let endpoint = session.endpoint_configuration();
+    let mut ordinal = 1u8;
+    while ordinal <= usb_xhci_driver::XHCI_BOOT_MOUSE_RECURRING_REPORTS {
+        let before = session.progress();
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_ORDINAL=",
+            u64::from(ordinal),
+        );
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_TRB_INDEX=",
+            u64::from(before.next_trb_index),
+        );
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_CYCLE=",
+            u64::from(before.next_cycle as u8),
+        );
+
+        let sample = match session.capture_next() {
+            Ok(sample) => sample,
+            Err(error) => {
+                serial::write_line(error.marker());
+                return Err(UsbBootMouseRecurringError {
+                    progress: session.progress(),
+                    summary,
+                    failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::Driver(error),
+                });
+            }
+        };
+        if sample.ordinal != ordinal
+            || sample.trb_index != before.next_trb_index
+            || sample.trb_cycle != before.next_cycle
+        {
+            serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_TERMINAL_INVARIANT");
+            return Err(UsbBootMouseRecurringError {
+                progress: session.progress(),
+                summary,
+                failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::TerminalInvariant,
+            });
+        }
+
+        let captured = usize::from(sample.captured_length).min(sample.raw_report.len());
+        let decoded = match crate::input_drivers::decode_usb_boot_mouse_report(
+            &sample.raw_report[..captured],
+        ) {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DECODE_INVALID");
+                return Err(UsbBootMouseRecurringError {
+                    progress: session.progress(),
+                    summary,
+                    failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::Decode(error),
+                });
+            }
+        };
+        emit_boot_mouse_decode(decoded);
+        summary.observe(decoded);
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_READY=",
+            u64::from(ordinal),
+        );
+        if sample.wrapped_after_completion {
+            serial::write_hex_u64(
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_RING_WRAP=",
+                u64::from(session.progress().transfer_wrap_count),
+            );
+        }
+        ordinal += 1;
+    }
+
+    let progress = session.progress();
+    if summary.report_count != usb_xhci_driver::XHCI_BOOT_MOUSE_RECURRING_REPORTS
+        || progress.completed_reports != usb_xhci_driver::XHCI_BOOT_MOUSE_RECURRING_REPORTS
+        || progress.transfer_wrap_count != 1
+    {
+        serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_TERMINAL_INVARIANT");
+        return Err(UsbBootMouseRecurringError {
+            progress,
+            summary,
+            failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::TerminalInvariant,
+        });
+    }
+
+    emit_boot_mouse_recurring_summary(progress, summary);
+    Ok(UsbBootMouseRecurringResult {
+        endpoint,
+        progress,
+        summary,
+    })
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+const fn empty_recurring_progress() -> usb_xhci_driver::XhciInterruptTransferProgress {
+    usb_xhci_driver::XhciInterruptTransferProgress {
+        completed_reports: 0,
+        next_trb_index: 0,
+        next_cycle: true,
+        transfer_wrap_count: 0,
+        event_index: 0,
+        event_cycle: true,
+        event_wrap_count: 0,
+    }
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+fn emit_boot_mouse_recurring_summary(
+    progress: usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+) {
+    let last = summary
+        .last_report
+        .unwrap_or(crate::input_drivers::UsbBootMouseReport {
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            auxiliary: None,
+        });
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_COUNT=",
+        u64::from(summary.report_count),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DX_TOTAL_I32=",
+        u64::from(summary.dx_total as u32),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DY_TOTAL_I32=",
+        u64::from(summary.dy_total as u32),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_BUTTONS_LAST=",
+        u64::from(last.buttons),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_PRESSED_SEEN=",
+        u64::from(summary.pressed_seen),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_RELEASED_AFTER_PRESSED=",
+        u64::from(summary.released_after_pressed),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_SEQUENCE_AUX_PRESENT=",
+        u64::from(summary.auxiliary_seen as u8),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_SEQUENCE_AUX_LAST=",
+        u64::from(summary.latest_auxiliary.unwrap_or(0)),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_WRAP_COUNT=",
+        u64::from(progress.transfer_wrap_count),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_EVENT_RING_WRAP_COUNT=",
+        u64::from(progress.event_wrap_count),
+    );
+    serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_RECURRING_READY");
 }
 
 #[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]

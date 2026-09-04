@@ -67,6 +67,9 @@ usb-xhci-interrupt-transfer-probe = ["usb-xhci-endpoint-configuration-probe"]
 # byte as raw auxiliary evidence. It still queues only one report, does not move
 # a cursor, does not recur, and does not touch storage.
 usb-xhci-boot-mouse-decode-probe = ["usb-xhci-interrupt-transfer-probe"]
+# Sixteen single-in-flight boot-mouse reports prove one transfer-ring wrap and
+# aggregate state only. No cursor, wheel semantics, IRQ input, or storage.
+usb-xhci-boot-mouse-recurring-probe = ["usb-xhci-boot-mouse-decode-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]
