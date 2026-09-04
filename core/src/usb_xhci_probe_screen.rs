@@ -1235,6 +1235,223 @@ mod tests {
     use super::*;
     use crate::font;
 
+    fn recurring_endpoint_configuration() -> XhciEndpointConfigurationProbeResult {
+        XhciEndpointConfigurationProbeResult {
+            configuration: crate::usb_xhci_driver::XhciConfigurationProbeResult {
+                descriptor: crate::usb_xhci_driver::XhciDescriptorProbeResult {
+                    address: crate::usb_xhci_driver::XhciAddressProbeResult {
+                        command: crate::usb_xhci_driver::XhciCommandProbeResult {
+                            port_number: 5,
+                            noop_completion_code: 1,
+                            enable_slot_completion_code: 1,
+                            slot_id: 1,
+                            scratchpad_count: 8,
+                            usbsts_after_start: 0,
+                            portsc_after_reset: 0x0022_0603,
+                        },
+                        address_device_completion_code: 1,
+                        device_address: 4,
+                        slot_state: 2,
+                        ep0_state: 1,
+                        port_speed: 1,
+                        context_size: 32,
+                        default_control_max_packet_size: 8,
+                    },
+                    descriptor_completion_code: 1,
+                    descriptor: crate::usb_xhci_driver::XhciDeviceDescriptorSnapshot {
+                        length: 18,
+                        descriptor_type: 1,
+                        usb_bcd: 0x0200,
+                        device_class: 0,
+                        device_subclass: 0,
+                        device_protocol: 0,
+                        max_packet_size0: 8,
+                        vendor_id: 0x413c,
+                        product_id: 0x301a,
+                        device_bcd: 0x0100,
+                        manufacturer_index: 1,
+                        product_index: 2,
+                        serial_index: 0,
+                        configuration_count: 1,
+                    },
+                },
+                configuration_header_completion_code: 1,
+                configuration_completion_code: 1,
+                configuration: crate::usb_xhci_driver::XhciConfigurationDescriptorSnapshot {
+                    header: crate::usb_xhci_driver::XhciConfigurationDescriptorHeader {
+                        length: 9,
+                        descriptor_type: 2,
+                        total_length: 34,
+                        interface_count: 1,
+                        configuration_value: 1,
+                        configuration_index: 0,
+                        attributes: 0xA0,
+                        max_power: 50,
+                    },
+                    interface_number: 0,
+                    alternate_setting: 0,
+                    endpoint_count: 1,
+                    interface_class: 3,
+                    interface_subclass: 1,
+                    interface_protocol: 2,
+                    interrupt_in_endpoint_address: 0x81,
+                    interrupt_in_attributes: 0x03,
+                    interrupt_in_max_packet_size: 4,
+                    interrupt_in_interval: 10,
+                },
+            },
+            endpoint_id: 3,
+            endpoint_context_interval: 6,
+            configure_endpoint_completion_code: 1,
+            set_configuration_completion_code: 1,
+            configured_slot_state: 3,
+            configured_endpoint_state: 1,
+        }
+    }
+
+    fn assert_screen_uses_fixed_boot_font(screen: &ProbeScreen) {
+        for line_index in 0..screen.line_count() {
+            let line = screen.line(line_index).unwrap();
+            for byte in line.bytes() {
+                assert!(
+                    font::glyph(byte).is_some(),
+                    "missing glyph for byte {byte:?} in line {line:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn formats_recurring_boot_mouse_success_from_report_state_without_cursor() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        assert!(report.record(controller(UsbControllerKind::Ehci, 0, 18)));
+        let progress = crate::usb_xhci_driver::XhciInterruptTransferProgress {
+            completed_reports: 16,
+            next_trb_index: 1,
+            next_cycle: false,
+            transfer_wrap_count: 1,
+            event_index: 7,
+            event_cycle: false,
+            event_wrap_count: 1,
+        };
+        let summary = crate::input_drivers::UsbBootMouseSequenceSummary {
+            report_count: 16,
+            dx_total: 112,
+            dy_total: -56,
+            last_report: Some(crate::input_drivers::UsbBootMouseReport {
+                buttons: 0,
+                dx: 0,
+                dy: 0,
+                auxiliary: Some(0),
+            }),
+            pressed_seen: 1,
+            released_after_pressed: 1,
+            auxiliary_seen: true,
+            latest_auxiliary: Some(0),
+        };
+
+        let screen = build_boot_mouse_recurring_probe_screen(
+            &report,
+            recurring_endpoint_configuration(),
+            progress,
+            summary,
+        );
+
+        let expected = [
+            "PythOS",
+            "xhci mouse sequence",
+            "no disk writes",
+            "bdf 00 10 00",
+            "vid did 1022 7914",
+            "port 05 slot 01",
+            "ep 81 dci 03",
+            "reports 16 wrap 1",
+            "last 00 l0 r0 m0",
+            "seen 01 rel 01",
+            "sumx +0112 sumy -0056",
+            "aux 00 present 1",
+            "frozen no cursor",
+        ];
+        assert_eq!(screen.line_count(), expected.len());
+        for (index, expected_line) in expected.iter().enumerate() {
+            assert_eq!(screen.line(index), Some(*expected_line));
+        }
+        assert_screen_uses_fixed_boot_font(&screen);
+    }
+
+    #[test]
+    fn formats_recurring_boot_mouse_typed_error_without_success_freeze() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = XhciPortChange {
+            port_number: 5,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+        let progress = crate::usb_xhci_driver::XhciInterruptTransferProgress {
+            completed_reports: 7,
+            next_trb_index: 7,
+            next_cycle: true,
+            transfer_wrap_count: 0,
+            event_index: 11,
+            event_cycle: true,
+            event_wrap_count: 0,
+        };
+        let summary = crate::input_drivers::UsbBootMouseSequenceSummary {
+            report_count: 7,
+            dx_total: 56,
+            dy_total: -28,
+            last_report: Some(crate::input_drivers::UsbBootMouseReport {
+                buttons: 1,
+                dx: 8,
+                dy: -4,
+                auxiliary: Some(0),
+            }),
+            pressed_seen: 1,
+            released_after_pressed: 0,
+            auxiliary_seen: true,
+            latest_auxiliary: Some(0),
+        };
+
+        let screen = build_boot_mouse_recurring_error_screen(
+            &report,
+            port_status,
+            change,
+            progress,
+            summary,
+            UsbBootMouseRecurringFailure::Driver(
+                crate::usb_xhci_driver::XhciDriverError::InterruptTransferTimeout,
+            ),
+        );
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci input error"));
+        assert_eq!(screen.line(2), Some("no disk writes"));
+        assert_eq!(screen.line(6), Some("done 07"));
+        assert_eq!(screen.line(7), Some("next 07 cycle 1"));
+        assert_eq!(screen.line(8), Some("seen 01 rel 00"));
+        assert_eq!(screen.line(9), Some("err 0000003A"));
+        assert_eq!(screen.line(10), Some("stage interrupt in"));
+        for index in 0..screen.line_count() {
+            let line = screen.line(index).unwrap();
+            assert!(!line.contains("frozen"));
+            assert!(!line.contains("sequence"));
+        }
+        assert_screen_uses_fixed_boot_font(&screen);
+    }
+
     #[test]
     fn formats_usb_boot_mouse_semantics_with_signed_axes_and_raw_auxiliary() {
         let decoded =
