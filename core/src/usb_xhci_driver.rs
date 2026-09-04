@@ -856,11 +856,14 @@ struct DmaBytePage(UnsafeCell<[u8; XHCI_PAGE_SIZE_BYTES]>);
 // SAFETY:
 // 1. Invariant: these wrappers expose only this module's static xHCI DMA state.
 // 2. Established by: session setup initializes the buffers, then each bounded
-//    capture transfers ownership CPU -> xHCI -> CPU in sequence.
+//    capture reserves one software slot, initializes CPU-owned DMA state, and
+//    publishes it to xHCI before later reclaiming it after completion.
 // 3. Lifetime: the buffers are static for the whole diagnostic boot.
-// 4. Pointer ownership: PythCore mutates a transfer TRB/report page only before
-//    `arm`; xHCI owns it until a matching completion is observed; PythCore
-//    reads the completed report and calls `complete` before any later reuse.
+// 4. Pointer ownership: `arm` reserves the sole software slot and prevents
+//    overlap, but PythCore still owns and initializes the TRB/report page.
+//    Ownership transfers to xHCI only after those writes are fenced and the
+//    endpoint doorbell is rung. PythCore reads after a matching completion and
+//    permits reuse only after `complete`.
 // 5. Alignment: each wrapper has 4 KiB alignment.
 // 6. Mapped length: each const generic `N` fixes the backing array length.
 // 7. Concurrency: single-core diagnostic path, polled commands, no IRQ handler.
@@ -870,7 +873,8 @@ struct DmaBytePage(UnsafeCell<[u8; XHCI_PAGE_SIZE_BYTES]>);
 unsafe impl<const N: usize> Sync for DmaU64Array<N> {}
 
 // SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
-// `DmaU64Array`; the interrupt-ring producer allows one Normal TRB in flight.
+// `DmaU64Array`; the producer reserves one Normal TRB before CPU initialization
+// and xHCI ownership begins only after fence-and-doorbell publication.
 unsafe impl<const N: usize> Sync for DmaTrbRing<N> {}
 
 // SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
@@ -882,7 +886,8 @@ unsafe impl Sync for DmaErst {}
 unsafe impl<const N: usize> Sync for DmaScratchpadPages<N> {}
 
 // SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
-// `DmaU64Array`; post-arm failures leave the report page unavailable for reuse.
+// `DmaU64Array`; post-arm failures leave the CPU-initialized report page
+// unavailable for reuse without publishing another request.
 unsafe impl Sync for DmaBytePage {}
 
 static XHCI_DCBAA: DmaU64Array<XHCI_DCBAA_ENTRIES> =
@@ -933,7 +938,7 @@ struct XhciCommandProbeState {
     control_index: usize,
 }
 
-#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+#[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
 pub struct XhciInterruptTransferProbeSession {
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
@@ -1215,8 +1220,9 @@ pub fn run_interrupt_transfer_probe(
     })
 }
 
-#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+#[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
 impl XhciInterruptTransferProbeSession {
+    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
     pub fn begin(
         registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
         port_number: u8,
@@ -3142,9 +3148,10 @@ fn descriptor_buffer_ptr() -> *mut u8 {
 
 fn interrupt_report_buffer_ptr() -> *mut u8 {
     // SAFETY: same static single-owner DMA accessor invariant as `dcbaa_ptr`,
-    // for the interrupt-IN report page. The session reuses it only after the
-    // matching completion returns ownership to PythCore; a post-arm failure
-    // leaves it unavailable for the rest of the bounded diagnostic.
+    // for the interrupt-IN report page. `arm` only reserves its software slot;
+    // PythCore initializes this page, fences the TRB writes, then publishes it
+    // to xHCI by ringing the doorbell. Reuse requires matching completion plus
+    // `complete`; a post-arm failure leaves it unavailable for this diagnostic.
     unsafe { (*XHCI_INTERRUPT_REPORT_BUFFER.0.get()).as_mut_ptr() }
 }
 
@@ -3162,9 +3169,10 @@ fn control_ring_ptr() -> *mut XhciTrb {
 
 fn interrupt_ring_ptr() -> *mut XhciTrb {
     // SAFETY: same static single-owner DMA accessor invariant as `dcbaa_ptr`,
-    // for the interrupt-IN endpoint transfer ring. The session publishes one
-    // Normal TRB at a time, returns CPU ownership only after its matching
-    // completion, and does not reuse a post-arm failure; no IRQ handler exists.
+    // for the interrupt-IN endpoint transfer ring. `arm` reserves one software
+    // slot; PythCore writes and fences that Normal TRB before doorbell
+    // publication gives xHCI ownership. Matching completion plus `complete`
+    // returns it for reuse; post-arm failure is not reused and no IRQ exists.
     unsafe { (*XHCI_INTERRUPT_RING.0.get()).as_mut_ptr() }
 }
 
@@ -3306,6 +3314,114 @@ mod tests {
 
     fn dma_test_lock() -> MutexGuard<'static, ()> {
         DMA_TEST_LOCK.lock().expect("xHCI DMA test mutex poisoned")
+    }
+
+    fn test_interrupt_transfer_session(completed_reports: u8) -> XhciInterruptTransferProbeSession {
+        XhciInterruptTransferProbeSession {
+            registers: crate::usb_xhci_probe::XhciRegisterSnapshot {
+                bar0_base: 0,
+                capability_length: 0,
+                hci_version: 0,
+                hcsparams1: 0,
+                hcsparams2: 0,
+                hcsparams3: 0,
+                hccparams1: 0,
+                dboff: 0,
+                rtsoff: 0,
+                usbcmd: 0,
+                usbsts: 0,
+                pagesize: 0,
+            },
+            dma: XhciDmaState {
+                dcbaa_phys: 0,
+                scratchpad_array_phys: 0,
+                scratchpad_count: 0,
+                command_ring_phys: 0,
+                control_ring_phys: 0,
+                interrupt_ring_phys: 0,
+                event_ring_phys: 0,
+                erst_phys: 0,
+                input_context_phys: 0,
+                output_context_phys: 0,
+                descriptor_buffer_phys: 0,
+                interrupt_report_buffer_phys: 0,
+            },
+            endpoint_configuration: XhciEndpointConfigurationProbeResult {
+                configuration: XhciConfigurationProbeResult {
+                    descriptor: XhciDescriptorProbeResult {
+                        address: XhciAddressProbeResult {
+                            command: XhciCommandProbeResult {
+                                port_number: 0,
+                                noop_completion_code: 0,
+                                enable_slot_completion_code: 0,
+                                slot_id: 0,
+                                scratchpad_count: 0,
+                                usbsts_after_start: 0,
+                                portsc_after_reset: 0,
+                            },
+                            address_device_completion_code: 0,
+                            device_address: 0,
+                            slot_state: 0,
+                            ep0_state: 0,
+                            port_speed: 0,
+                            context_size: 0,
+                            default_control_max_packet_size: 0,
+                        },
+                        descriptor_completion_code: 0,
+                        descriptor: XhciDeviceDescriptorSnapshot {
+                            length: 0,
+                            descriptor_type: 0,
+                            usb_bcd: 0,
+                            device_class: 0,
+                            device_subclass: 0,
+                            device_protocol: 0,
+                            max_packet_size0: 0,
+                            vendor_id: 0,
+                            product_id: 0,
+                            device_bcd: 0,
+                            manufacturer_index: 0,
+                            product_index: 0,
+                            serial_index: 0,
+                            configuration_count: 0,
+                        },
+                    },
+                    configuration_header_completion_code: 0,
+                    configuration_completion_code: 0,
+                    configuration: XhciConfigurationDescriptorSnapshot {
+                        header: XhciConfigurationDescriptorHeader {
+                            length: 0,
+                            descriptor_type: 0,
+                            total_length: 0,
+                            interface_count: 0,
+                            configuration_value: 0,
+                            configuration_index: 0,
+                            attributes: 0,
+                            max_power: 0,
+                        },
+                        interface_number: 0,
+                        alternate_setting: 0,
+                        endpoint_count: 0,
+                        interface_class: 0,
+                        interface_subclass: 0,
+                        interface_protocol: 0,
+                        interrupt_in_endpoint_address: 0,
+                        interrupt_in_attributes: 0,
+                        interrupt_in_max_packet_size: 0,
+                        interrupt_in_interval: 0,
+                    },
+                },
+                endpoint_id: 0,
+                endpoint_context_interval: 0,
+                configure_endpoint_completion_code: 0,
+                set_configuration_completion_code: 0,
+                configured_slot_state: 0,
+                configured_endpoint_state: 0,
+            },
+            event_consumer: XhciEventRingConsumer::new(),
+            transfer_producer: XhciInterruptTransferProducer::new(),
+            requested_length: 0,
+            completed_reports,
+        }
     }
 
     #[test]
@@ -3979,6 +4095,23 @@ mod tests {
         );
         assert_eq!(
             producer.arm(),
+            Ok(XhciInterruptTransferCursorSnapshot {
+                index: 0,
+                cycle: true,
+            })
+        );
+    }
+
+    #[test]
+    fn session_capture_next_rejects_seventeenth_capture_before_arming_or_dma_access() {
+        let mut session = test_interrupt_transfer_session(XHCI_BOOT_MOUSE_RECURRING_REPORTS);
+
+        assert_eq!(
+            session.capture_next(),
+            Err(XhciDriverError::InterruptTransferSequenceComplete)
+        );
+        assert_eq!(
+            session.transfer_producer.arm(),
             Ok(XhciInterruptTransferCursorSnapshot {
                 index: 0,
                 cycle: true,
