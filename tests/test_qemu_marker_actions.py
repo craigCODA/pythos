@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 import unittest
 from pathlib import Path
 
@@ -33,6 +34,108 @@ class QemuMarkerActionTest(unittest.TestCase):
         ready, seen_at = run_qemu.marker_delay_ready(seen_at, True, 2.0, 12.0)
         self.assertTrue(ready)
         self.assertEqual(seen_at, 10.0)
+
+    def test_usb_mouse_sequence_is_fourteen_moves_then_left_press_release(self) -> None:
+        run_qemu = load_run_qemu_module()
+        move = [
+            {"type": "rel", "data": {"axis": "x", "value": 8}},
+            {"type": "rel", "data": {"axis": "y", "value": -4}},
+        ]
+        self.assertEqual(run_qemu.usb_mouse_sequence_events(0), move)
+        self.assertEqual(run_qemu.usb_mouse_sequence_events(13), move)
+        self.assertEqual(
+            run_qemu.usb_mouse_sequence_events(14),
+            [{"type": "btn", "data": {"button": "left", "down": True}}],
+        )
+        self.assertEqual(
+            run_qemu.usb_mouse_sequence_events(15),
+            [{"type": "btn", "data": {"button": "left", "down": False}}],
+        )
+        with self.assertRaises(ValueError):
+            run_qemu.usb_mouse_sequence_events(16)
+
+    def test_marker_sequence_sends_each_new_occurrence_once(self) -> None:
+        run_qemu = load_run_qemu_module()
+        self.assertIsNone(run_qemu.next_marker_sequence_step(0, 0, 16))
+        self.assertEqual(run_qemu.next_marker_sequence_step(1, 0, 16), 0)
+        self.assertIsNone(run_qemu.next_marker_sequence_step(1, 1, 16))
+        with self.assertRaises(ValueError):
+            run_qemu.next_marker_sequence_step(3, 1, 16)
+        with self.assertRaises(ValueError):
+            run_qemu.next_marker_sequence_step(17, 16, 16)
+
+    def test_marker_sequence_increments_only_after_successful_qmp_send(self) -> None:
+        run_qemu = load_run_qemu_module()
+        sent_steps: list[int] = []
+
+        def send_step(step: int) -> None:
+            sent_steps.append(step)
+
+        self.assertEqual(
+            run_qemu.advance_marker_sequence_step(1, 0, 16, send_step),
+            1,
+        )
+        self.assertEqual(sent_steps, [0])
+
+        def failing_send_step(step: int) -> None:
+            raise RuntimeError(f"failed step {step}")
+
+        with self.assertRaisesRegex(RuntimeError, "failed step 1"):
+            run_qemu.advance_marker_sequence_step(2, 1, 16, failing_send_step)
+
+    def test_incomplete_sequence_overrides_success_outcome(self) -> None:
+        run_qemu = load_run_qemu_module()
+        self.assertEqual(
+            run_qemu.sequence_completion_outcome(
+                run_qemu.QemuOutcome.SUCCESS,
+                True,
+                15,
+                16,
+            ),
+            run_qemu.QemuOutcome.RESET,
+        )
+        self.assertEqual(
+            run_qemu.sequence_completion_outcome(
+                run_qemu.QemuOutcome.SUCCESS,
+                True,
+                16,
+                16,
+            ),
+            run_qemu.QemuOutcome.SUCCESS,
+        )
+
+    def test_sequence_option_requires_xhci(self) -> None:
+        run_qemu = load_run_qemu_module()
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "run-qemu.py",
+                "--sequence-usb-mouse-after-marker",
+                "PYTHOS:CORE:INPUT:MOUSE",
+            ]
+            with self.assertRaises(SystemExit) as error:
+                run_qemu.main()
+            self.assertIn("requires --xhci", str(error.exception))
+        finally:
+            sys.argv = original_argv
+
+    def test_sequence_option_is_exclusive_with_one_shot_movement(self) -> None:
+        run_qemu = load_run_qemu_module()
+        original_argv = sys.argv
+        try:
+            sys.argv = [
+                "run-qemu.py",
+                "--xhci",
+                "--move-usb-mouse-after-marker",
+                "PYTHOS:CORE:INPUT:MOUSE",
+                "--sequence-usb-mouse-after-marker",
+                "PYTHOS:CORE:INPUT:MOUSE",
+            ]
+            with self.assertRaises(SystemExit) as error:
+                run_qemu.main()
+            self.assertIn("mutually exclusive", str(error.exception))
+        finally:
+            sys.argv = original_argv
 
 
 if __name__ == "__main__":

@@ -111,6 +111,7 @@ def find_ovmf(explicit: str | None) -> str:
 
 
 QMP_PORT = 4488
+USB_MOUSE_SEQUENCE_LENGTH = 16
 
 
 def read_qmp_message(sock_file) -> dict:
@@ -180,6 +181,69 @@ def request_usb_mouse_movement() -> None:
             },
         )
     )
+
+
+def usb_mouse_sequence_events(step: int) -> list[dict]:
+    if 0 <= step < 14:
+        return [
+            {"type": "rel", "data": {"axis": "x", "value": 8}},
+            {"type": "rel", "data": {"axis": "y", "value": -4}},
+        ]
+    if step == 14:
+        return [{"type": "btn", "data": {"button": "left", "down": True}}]
+    if step == 15:
+        return [{"type": "btn", "data": {"button": "left", "down": False}}]
+    raise ValueError(f"usb mouse sequence step {step} is outside 0..15")
+
+
+def next_marker_sequence_step(observed: int, sent: int, limit: int) -> int | None:
+    if limit <= 0:
+        raise ValueError("marker sequence limit must be positive")
+    if observed < 0 or sent < 0 or sent > limit:
+        raise ValueError("marker sequence counts are invalid")
+    if observed == sent:
+        return None
+    if observed == sent + 1 and sent < limit:
+        return sent
+    raise ValueError(
+        f"marker sequence mismatch: observed {observed}, sent {sent}, limit {limit}"
+    )
+
+
+def request_usb_mouse_sequence_step(step: int) -> None:
+    events = usb_mouse_sequence_events(step)
+    run_qmp_commands(
+        (
+            {
+                "execute": "input-send-event",
+                "arguments": {"events": events},
+            },
+        )
+    )
+
+
+def advance_marker_sequence_step(
+    observed: int,
+    sent: int,
+    limit: int,
+    send_step,
+) -> int:
+    step = next_marker_sequence_step(observed, sent, limit)
+    if step is None:
+        return sent
+    send_step(step)
+    return sent + 1
+
+
+def sequence_completion_outcome(
+    outcome: QemuOutcome,
+    sequence_requested: bool,
+    sent: int,
+    limit: int,
+) -> QemuOutcome:
+    if sequence_requested and sent != limit:
+        return QemuOutcome.RESET
+    return outcome
 
 
 def request_device_removal(device_id: str) -> None:
@@ -336,6 +400,10 @@ def main() -> int:
         "--move-usb-mouse-after-marker",
         help="QMP-inject one relative mouse movement after this serial marker appears",
     )
+    parser.add_argument(
+        "--sequence-usb-mouse-after-marker",
+        help="QMP-inject fourteen mouse movements then left press/release for marker occurrences",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -364,6 +432,12 @@ def main() -> int:
         raise SystemExit("--hotplug-usb-mouse-after-marker requires --xhci")
     if args.move_usb_mouse_after_marker and not args.xhci:
         raise SystemExit("--move-usb-mouse-after-marker requires --xhci")
+    if args.sequence_usb_mouse_after_marker and not args.xhci:
+        raise SystemExit("--sequence-usb-mouse-after-marker requires --xhci")
+    if args.move_usb_mouse_after_marker and args.sequence_usb_mouse_after_marker:
+        raise SystemExit(
+            "--move-usb-mouse-after-marker and --sequence-usb-mouse-after-marker are mutually exclusive"
+        )
     if args.usb_mouse and args.hotplug_usb_mouse_after_marker:
         raise SystemExit("--usb-mouse and --hotplug-usb-mouse-after-marker are mutually exclusive")
     if args.hotplug_usb_mouse_delay < 0:
@@ -522,6 +596,8 @@ def main() -> int:
     remove_error = None
     mouse_move_done = False
     mouse_move_error = None
+    mouse_sequence_steps_sent = 0
+    mouse_sequence_error = None
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
@@ -571,6 +647,19 @@ def main() -> int:
                     process.terminate()
                     break
                 mouse_move_done = True
+            if args.sequence_usb_mouse_after_marker:
+                try:
+                    mouse_sequence_steps_sent = advance_marker_sequence_step(
+                        serial.count(args.sequence_usb_mouse_after_marker),
+                        mouse_sequence_steps_sent,
+                        USB_MOUSE_SEQUENCE_LENGTH,
+                        request_usb_mouse_sequence_step,
+                    )
+                except (OSError, RuntimeError, ConnectionError, ValueError) as error:
+                    mouse_sequence_error = error
+                    print(f"usb mouse sequence failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
             if args.kill_after_marker and args.kill_after_marker in serial:
                 process.kill()
                 process.wait(timeout=2)
@@ -619,8 +708,26 @@ def main() -> int:
         timed_out,
         success_marker=args.success_marker,
     )
+    final_outcome = sequence_completion_outcome(
+        outcome,
+        bool(args.sequence_usb_mouse_after_marker),
+        mouse_sequence_steps_sent,
+        USB_MOUSE_SEQUENCE_LENGTH,
+    )
+    if final_outcome != outcome and mouse_sequence_error is None:
+        print(
+            "usb mouse sequence incomplete: "
+            f"sent {mouse_sequence_steps_sent} of {USB_MOUSE_SEQUENCE_LENGTH}",
+            file=sys.stderr,
+        )
+    outcome = final_outcome
     print(f"QEMU_OUTCOME {outcome.value}")
-    if hotplug_error is not None or remove_error is not None or mouse_move_error is not None:
+    if (
+        hotplug_error is not None
+        or remove_error is not None
+        or mouse_move_error is not None
+        or mouse_sequence_error is not None
+    ):
         return SCRIPT_EXIT_CODES[QemuOutcome.RESET.value]
     if args.expect_outcome and outcome.value != args.expect_outcome:
         print(
