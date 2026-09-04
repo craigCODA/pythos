@@ -197,6 +197,19 @@ def read_serial_log(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
 
 
+def marker_delay_ready(
+    marker_seen_at: float | None,
+    marker_present: bool,
+    delay_seconds: float,
+    now: float,
+) -> tuple[bool, float | None]:
+    if not marker_present:
+        return False, marker_seen_at
+    if marker_seen_at is None:
+        marker_seen_at = now
+    return now >= marker_seen_at + delay_seconds, marker_seen_at
+
+
 def ensure_storage_image(path: Path, size_bytes: int = DEFAULT_STORAGE_SIZE_BYTES) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
@@ -314,6 +327,12 @@ def main() -> int:
         help="qemu-xhci port for --hotplug-usb-mouse-after-marker",
     )
     parser.add_argument(
+        "--hotplug-usb-mouse-delay",
+        type=float,
+        default=0.0,
+        help="seconds to wait after the hotplug marker before adding the USB mouse",
+    )
+    parser.add_argument(
         "--move-usb-mouse-after-marker",
         help="QMP-inject one relative mouse movement after this serial marker appears",
     )
@@ -347,6 +366,12 @@ def main() -> int:
         raise SystemExit("--move-usb-mouse-after-marker requires --xhci")
     if args.usb_mouse and args.hotplug_usb_mouse_after_marker:
         raise SystemExit("--usb-mouse and --hotplug-usb-mouse-after-marker are mutually exclusive")
+    if args.hotplug_usb_mouse_delay < 0:
+        raise SystemExit("--hotplug-usb-mouse-delay must be non-negative")
+    if args.hotplug_usb_mouse_delay and not args.hotplug_usb_mouse_after_marker:
+        raise SystemExit(
+            "--hotplug-usb-mouse-delay requires --hotplug-usb-mouse-after-marker"
+        )
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
@@ -492,6 +517,7 @@ def main() -> int:
     requested_quit = False
     hotplug_done = False
     hotplug_error = None
+    hotplug_marker_seen_at = None
     remove_done = False
     remove_error = None
     mouse_move_done = False
@@ -514,11 +540,16 @@ def main() -> int:
                     process.terminate()
                     break
                 remove_done = True
-            if (
-                args.hotplug_usb_mouse_after_marker
-                and not hotplug_done
-                and args.hotplug_usb_mouse_after_marker in serial
-            ):
+            hotplug_ready, hotplug_marker_seen_at = marker_delay_ready(
+                hotplug_marker_seen_at,
+                bool(
+                    args.hotplug_usb_mouse_after_marker
+                    and args.hotplug_usb_mouse_after_marker in serial
+                ),
+                args.hotplug_usb_mouse_delay,
+                time.monotonic(),
+            )
+            if args.hotplug_usb_mouse_after_marker and not hotplug_done and hotplug_ready:
                 try:
                     request_usb_mouse_hotplug(args.hotplug_usb_mouse_port)
                 except (OSError, RuntimeError, ConnectionError) as error:

@@ -548,13 +548,15 @@ fn poll_for_port_status_change(
     usb_xhci_probe::XhciProbeError,
 > {
     serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_SWAP_POLL_START");
+    let mut stable_connection =
+        usb_xhci_probe::StableConnectedPortGate::new(usb_xhci_probe::XHCI_CONNECTED_STABLE_SAMPLES);
     let mut attempt = 0usize;
     while attempt < usb_xhci_probe::XHCI_SWAP_POLL_ATTEMPTS {
         let next = usb_xhci_probe::read_port_status_from_mapped_window(
             usb_xhci_probe::XHCI_MMIO_VIRT,
             registers,
         )?;
-        if let Some(change) = usb_xhci_probe::first_connected_port(baseline, next) {
+        if let Some(change) = stable_connection.observe(baseline, next) {
             serial::write_hex_u64(
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_SWAP_POLL_ATTEMPT=",
                 attempt as u64,
@@ -563,8 +565,8 @@ fn poll_for_port_status_change(
         }
         if let Some(change) = usb_xhci_probe::first_changed_port(baseline, next) {
             usb_xhci_probe::emit_xhci_ignored_port_change(change);
-            baseline = next;
         }
+        baseline = next;
         bounded_swap_poll_delay();
         attempt += 1;
     }

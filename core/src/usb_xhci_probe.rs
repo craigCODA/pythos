@@ -45,6 +45,7 @@ pub const XHCI_MMIO_LEN: u64 = XHCI_REGISTER_WINDOW_LEN;
 pub const XHCI_PORT_SNAPSHOT_LIMIT: usize = 8;
 pub const XHCI_SWAP_POLL_ATTEMPTS: usize = 3_000_000;
 pub const XHCI_SWAP_POLL_SPINS: usize = 1_024;
+pub const XHCI_CONNECTED_STABLE_SAMPLES: usize = 1_024;
 
 const XHCI_CAPLENGTH_OFFSET: u64 = 0x00;
 const XHCI_HCIVERSION_OFFSET: u64 = 0x02;
@@ -231,6 +232,75 @@ pub struct XhciPortChange {
     pub after_portsc: u32,
     pub before_portpmsc: u32,
     pub after_portpmsc: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct StableConnectedPortGate {
+    candidate: Option<XhciPortChange>,
+    connected_samples: usize,
+    required_samples: usize,
+}
+
+impl StableConnectedPortGate {
+    pub const fn new(required_samples: usize) -> Self {
+        Self {
+            candidate: None,
+            connected_samples: 0,
+            required_samples,
+        }
+    }
+
+    pub fn observe(
+        &mut self,
+        before: XhciPortStatusSnapshot,
+        after: XhciPortStatusSnapshot,
+    ) -> Option<XhciPortChange> {
+        if let Some(mut candidate) = self.candidate {
+            if let Some(port) = port_with_number(after, candidate.port_number) {
+                if port.portsc & XHCI_PORTSC_CURRENT_CONNECT_STATUS != 0 {
+                    candidate.after_portsc = port.portsc;
+                    candidate.after_portpmsc = port.portpmsc;
+                    self.candidate = Some(candidate);
+                    self.connected_samples = self.connected_samples.saturating_add(1);
+                    if self.connected_samples >= self.required_samples {
+                        self.candidate = None;
+                        self.connected_samples = 0;
+                        return Some(candidate);
+                    }
+                    return None;
+                }
+            }
+            self.candidate = None;
+            self.connected_samples = 0;
+        }
+
+        if let Some(candidate) = first_connected_port(before, after) {
+            self.candidate = Some(candidate);
+            self.connected_samples = 1;
+            if self.connected_samples >= self.required_samples {
+                self.candidate = None;
+                self.connected_samples = 0;
+                return Some(candidate);
+            }
+        }
+        None
+    }
+}
+
+fn port_with_number(
+    snapshot: XhciPortStatusSnapshot,
+    port_number: u8,
+) -> Option<XhciPortRegisterSnapshot> {
+    let mut index = 0usize;
+    while index < usize::from(snapshot.captured_ports) && index < XHCI_PORT_SNAPSHOT_LIMIT {
+        if let Some(port) = snapshot.port_at(index) {
+            if port.port_number == port_number {
+                return Some(port);
+            }
+        }
+        index += 1;
+    }
+    None
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1598,6 +1668,55 @@ mod tests {
                 port_number: 1,
                 before_portsc: 0x0002_02A0,
                 after_portsc: 0x0002_0EE1,
+                before_portpmsc: 0,
+                after_portpmsc: 0,
+            })
+        );
+    }
+
+    fn single_port_status(portsc: u32) -> XhciPortStatusSnapshot {
+        let mut ports = [None; XHCI_PORT_SNAPSHOT_LIMIT];
+        ports[0] = Some(XhciPortRegisterSnapshot {
+            port_number: 5,
+            portsc,
+            portpmsc: 0,
+        });
+        XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 1,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports,
+        }
+    }
+
+    #[test]
+    fn stable_connected_port_gate_rejects_a_transient_connect() {
+        let disconnected = single_port_status(0x0000_02A0);
+        let connected = single_port_status(0x0002_02E1);
+        let mut gate = StableConnectedPortGate::new(3);
+
+        assert_eq!(gate.observe(disconnected, connected), None);
+        assert_eq!(gate.observe(connected, disconnected), None);
+        assert_eq!(gate.observe(disconnected, disconnected), None);
+    }
+
+    #[test]
+    fn stable_connected_port_gate_requires_consecutive_connected_samples() {
+        let disconnected = single_port_status(0x0000_02A0);
+        let connected = single_port_status(0x0002_02E1);
+        let mut gate = StableConnectedPortGate::new(3);
+
+        assert_eq!(gate.observe(disconnected, connected), None);
+        assert_eq!(gate.observe(connected, connected), None);
+        assert_eq!(
+            gate.observe(connected, connected),
+            Some(XhciPortChange {
+                port_number: 5,
+                before_portsc: 0x0000_02A0,
+                after_portsc: 0x0002_02E1,
                 before_portpmsc: 0,
                 after_portpmsc: 0,
             })

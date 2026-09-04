@@ -112,6 +112,8 @@ def run_probe_boot() -> str:
             "pythos_boot_usb",
             "--hotplug-usb-mouse-after-marker",
             IGNORED_CHANGE_MARKER,
+            "--hotplug-usb-mouse-delay",
+            "2.0",
             "--move-usb-mouse-after-marker",
             TRANSFER_ARMED_MARKER,
             "--expect-outcome",
