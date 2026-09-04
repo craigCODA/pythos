@@ -241,7 +241,11 @@ def sequence_completion_outcome(
     sent: int,
     limit: int,
 ) -> QemuOutcome:
-    if sequence_requested and sent != limit:
+    if (
+        outcome == QemuOutcome.SUCCESS
+        and sequence_requested
+        and sent != limit
+    ):
         return QemuOutcome.RESET
     return outcome
 

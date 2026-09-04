@@ -56,13 +56,63 @@ class QemuMarkerActionTest(unittest.TestCase):
 
     def test_marker_sequence_sends_each_new_occurrence_once(self) -> None:
         run_qemu = load_run_qemu_module()
-        self.assertIsNone(run_qemu.next_marker_sequence_step(0, 0, 16))
-        self.assertEqual(run_qemu.next_marker_sequence_step(1, 0, 16), 0)
-        self.assertIsNone(run_qemu.next_marker_sequence_step(1, 1, 16))
+        dispatched_steps: list[int] = []
+
+        def send_step(step: int) -> None:
+            dispatched_steps.append(step)
+
         with self.assertRaises(ValueError):
-            run_qemu.next_marker_sequence_step(3, 1, 16)
+            run_qemu.advance_marker_sequence_step(2, 0, 16, send_step)
+        self.assertEqual(dispatched_steps, [])
+
+        sent = 0
+        for observed in range(1, 17):
+            sent = run_qemu.advance_marker_sequence_step(
+                observed,
+                sent,
+                16,
+                send_step,
+            )
+
+        self.assertEqual(sent, 16)
+        self.assertEqual(dispatched_steps, list(range(16)))
+        self.assertEqual(
+            run_qemu.advance_marker_sequence_step(16, sent, 16, send_step),
+            16,
+        )
+        self.assertEqual(dispatched_steps, list(range(16)))
         with self.assertRaises(ValueError):
-            run_qemu.next_marker_sequence_step(17, 16, 16)
+            run_qemu.advance_marker_sequence_step(17, sent, 16, send_step)
+        self.assertEqual(dispatched_steps, list(range(16)))
+
+    def test_sequence_step_sends_exact_input_send_event_envelope(self) -> None:
+        run_qemu = load_run_qemu_module()
+        commands_seen: list[tuple[dict, ...]] = []
+        original_run_qmp_commands = run_qemu.run_qmp_commands
+        try:
+            run_qemu.run_qmp_commands = commands_seen.append
+            run_qemu.request_usb_mouse_sequence_step(14)
+        finally:
+            run_qemu.run_qmp_commands = original_run_qmp_commands
+
+        self.assertEqual(
+            commands_seen,
+            [
+                (
+                    {
+                        "execute": "input-send-event",
+                        "arguments": {
+                            "events": [
+                                {
+                                    "type": "btn",
+                                    "data": {"button": "left", "down": True},
+                                }
+                            ]
+                        },
+                    },
+                )
+            ],
+        )
 
     def test_marker_sequence_increments_only_after_successful_qmp_send(self) -> None:
         run_qemu = load_run_qemu_module()
@@ -103,6 +153,16 @@ class QemuMarkerActionTest(unittest.TestCase):
             ),
             run_qemu.QemuOutcome.SUCCESS,
         )
+        for outcome in (
+            run_qemu.QemuOutcome.PANIC,
+            run_qemu.QemuOutcome.TIMEOUT,
+            run_qemu.QemuOutcome.MARKER_ORDER_VIOLATION,
+            run_qemu.QemuOutcome.RESET,
+        ):
+            self.assertEqual(
+                run_qemu.sequence_completion_outcome(outcome, True, 15, 16),
+                outcome,
+            )
 
     def test_sequence_option_requires_xhci(self) -> None:
         run_qemu = load_run_qemu_module()
