@@ -102,6 +102,7 @@ const XHCI_DEVICE_DESCRIPTOR_LENGTH: usize = 18;
 const XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH: usize = 9;
 const XHCI_CONFIGURATION_DESCRIPTOR_MAX_LENGTH: usize = 256;
 pub const XHCI_RAW_REPORT_CAPTURE_BYTES: usize = 8;
+pub const XHCI_BOOT_MOUSE_RECURRING_REPORTS: u8 = 16;
 const USB_REQUEST_GET_DESCRIPTOR_DEVICE: u64 = 0x0012_0000_0100_0680;
 const USB_REQUEST_GET_DESCRIPTOR_CONFIGURATION: u64 = 0x0000_0000_0200_0680;
 const USB_REQUEST_SET_CONFIGURATION: u64 = 0x0000_0000_0000_0900;
@@ -167,6 +168,7 @@ pub enum XhciDriverError {
     InvalidInterruptTransferProducerState,
     InterruptTransferAlreadyArmed,
     InterruptTransferNotArmed,
+    InterruptTransferSequenceComplete,
 }
 
 impl XhciDriverError {
@@ -331,6 +333,9 @@ impl XhciDriverError {
             XhciDriverError::InterruptTransferNotArmed => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_NOT_ARMED"
             }
+            XhciDriverError::InterruptTransferSequenceComplete => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_SEQUENCE_COMPLETE"
+            }
         }
     }
 
@@ -389,6 +394,7 @@ impl XhciDriverError {
             XhciDriverError::InvalidInterruptTransferProducerState => 0x3F,
             XhciDriverError::InterruptTransferAlreadyArmed => 0x40,
             XhciDriverError::InterruptTransferNotArmed => 0x41,
+            XhciDriverError::InterruptTransferSequenceComplete => 0x42,
         }
     }
 
@@ -512,6 +518,30 @@ pub struct XhciEndpointConfigurationProbeResult {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct XhciInterruptTransferProbeResult {
     pub endpoint_configuration: XhciEndpointConfigurationProbeResult,
+    pub transfer_completion_code: u8,
+    pub requested_length: u16,
+    pub actual_length: u16,
+    pub captured_length: u8,
+    pub raw_report: [u8; XHCI_RAW_REPORT_CAPTURE_BYTES],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XhciInterruptTransferProgress {
+    pub completed_reports: u8,
+    pub next_trb_index: u8,
+    pub next_cycle: bool,
+    pub transfer_wrap_count: u8,
+    pub event_index: u8,
+    pub event_cycle: bool,
+    pub event_wrap_count: u8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct XhciInterruptTransferSample {
+    pub ordinal: u8,
+    pub trb_index: u8,
+    pub trb_cycle: bool,
+    pub wrapped_after_completion: bool,
     pub transfer_completion_code: u8,
     pub requested_length: u16,
     pub actual_length: u16,
@@ -894,6 +924,17 @@ struct XhciCommandProbeState {
     control_index: usize,
 }
 
+#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+pub struct XhciInterruptTransferProbeSession {
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    dma: XhciDmaState,
+    endpoint_configuration: XhciEndpointConfigurationProbeResult,
+    event_consumer: XhciEventRingConsumer,
+    transfer_producer: XhciInterruptTransferProducer,
+    requested_length: u16,
+    completed_reports: u8,
+}
+
 #[cfg(feature = "usb-xhci-command-probe")]
 pub fn run_command_probe(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
@@ -1151,60 +1192,135 @@ pub fn run_interrupt_transfer_probe(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     port_number: u8,
 ) -> Result<XhciInterruptTransferProbeResult, XhciDriverError> {
-    let mut state = initialize_command_probe(registers, port_number)?;
-    let endpoint_configuration =
-        endpoint_configuration_from_command_state(registers, port_number, &mut state)?;
-    let requested_length = endpoint_configuration
-        .configuration
-        .configuration
-        .interrupt_in_max_packet_size
-        & 0x07FF;
-    let transfer_trb_phys = prepare_interrupt_transfer(state.dma, requested_length)?;
-    emit_hex(
-        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_REQUESTED=",
-        u64::from(requested_length),
-    );
-    write_mmio_u32(
-        doorbell_offset(registers, state.result.slot_id)?,
-        u32::from(endpoint_configuration.endpoint_id),
-    )?;
-    emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_ARMED");
-    let completion = poll_interrupt_transfer_completion(
-        registers,
-        state.dma,
-        transfer_trb_phys,
-        state.result.slot_id,
-        endpoint_configuration.endpoint_id,
-        requested_length,
-        &mut state.event_consumer,
-    )?;
-    let (raw_report, captured_length) = capture_interrupt_report_prefix(completion.actual_length);
-    emit_hex(
-        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_CC=",
-        u64::from(completion.completion_code),
-    );
-    emit_hex(
-        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_ACTUAL=",
-        u64::from(completion.actual_length),
-    );
-    emit_hex(
-        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_CAPTURED=",
-        u64::from(captured_length),
-    );
-    emit_hex(
-        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_RAW=",
-        pack_raw_report_le(raw_report),
-    );
-    emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_READY");
+    let mut session = XhciInterruptTransferProbeSession::begin(registers, port_number)?;
+    let endpoint_configuration = session.endpoint_configuration();
+    let sample = session.capture_next()?;
 
     Ok(XhciInterruptTransferProbeResult {
         endpoint_configuration,
-        transfer_completion_code: completion.completion_code,
-        requested_length,
-        actual_length: completion.actual_length,
-        captured_length,
-        raw_report,
+        transfer_completion_code: sample.transfer_completion_code,
+        requested_length: sample.requested_length,
+        actual_length: sample.actual_length,
+        captured_length: sample.captured_length,
+        raw_report: sample.raw_report,
     })
+}
+
+#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+impl XhciInterruptTransferProbeSession {
+    pub fn begin(
+        registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+        port_number: u8,
+    ) -> Result<Self, XhciDriverError> {
+        let mut state = initialize_command_probe(registers, port_number)?;
+        let endpoint_configuration =
+            endpoint_configuration_from_command_state(registers, port_number, &mut state)?;
+        let requested_length = endpoint_configuration
+            .configuration
+            .configuration
+            .interrupt_in_max_packet_size
+            & 0x07FF;
+
+        Ok(Self {
+            registers,
+            dma: state.dma,
+            endpoint_configuration,
+            event_consumer: state.event_consumer,
+            transfer_producer: XhciInterruptTransferProducer::new(),
+            requested_length,
+            completed_reports: 0,
+        })
+    }
+
+    pub const fn endpoint_configuration(&self) -> XhciEndpointConfigurationProbeResult {
+        self.endpoint_configuration
+    }
+
+    pub const fn progress(&self) -> XhciInterruptTransferProgress {
+        XhciInterruptTransferProgress {
+            completed_reports: self.completed_reports,
+            next_trb_index: self.transfer_producer.index as u8,
+            next_cycle: self.transfer_producer.cycle,
+            transfer_wrap_count: self.transfer_producer.wrap_count(),
+            event_index: self.event_consumer.index as u8,
+            event_cycle: self.event_consumer.expected_cycle(),
+            event_wrap_count: self.event_consumer.wrap_count(),
+        }
+    }
+
+    pub fn capture_next(&mut self) -> Result<XhciInterruptTransferSample, XhciDriverError> {
+        if self.completed_reports >= XHCI_BOOT_MOUSE_RECURRING_REPORTS {
+            return Err(XhciDriverError::InterruptTransferSequenceComplete);
+        }
+
+        let cursor = self.transfer_producer.arm()?;
+        let transfer_trb_phys =
+            prepare_interrupt_transfer_at(self.dma, self.requested_length, cursor)?;
+        emit_hex(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_REQUESTED=",
+            u64::from(self.requested_length),
+        );
+        write_mmio_u32(
+            doorbell_offset(
+                self.registers,
+                self.endpoint_configuration
+                    .configuration
+                    .descriptor
+                    .address
+                    .command
+                    .slot_id,
+            )?,
+            u32::from(self.endpoint_configuration.endpoint_id),
+        )?;
+        emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_ARMED");
+        let completion = poll_interrupt_transfer_completion(
+            self.registers,
+            self.dma,
+            transfer_trb_phys,
+            self.endpoint_configuration
+                .configuration
+                .descriptor
+                .address
+                .command
+                .slot_id,
+            self.endpoint_configuration.endpoint_id,
+            self.requested_length,
+            &mut self.event_consumer,
+        )?;
+        let (raw_report, captured_length) =
+            capture_interrupt_report_prefix(completion.actual_length);
+        emit_hex(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_CC=",
+            u64::from(completion.completion_code),
+        );
+        emit_hex(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_ACTUAL=",
+            u64::from(completion.actual_length),
+        );
+        emit_hex(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_CAPTURED=",
+            u64::from(captured_length),
+        );
+        emit_hex(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_RAW=",
+            pack_raw_report_le(raw_report),
+        );
+        emit_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_READY");
+
+        let wrapped_after_completion = self.transfer_producer.complete()?;
+        self.completed_reports += 1;
+        Ok(XhciInterruptTransferSample {
+            ordinal: self.completed_reports,
+            trb_index: cursor.index as u8,
+            trb_cycle: cursor.cycle,
+            wrapped_after_completion,
+            transfer_completion_code: completion.completion_code,
+            requested_length: self.requested_length,
+            actual_length: completion.actual_length,
+            captured_length,
+            raw_report,
+        })
+    }
 }
 
 #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
@@ -1976,21 +2092,31 @@ pub const fn interrupt_transfer_actual_length(
     Ok(requested_length - residual_length as u16)
 }
 
-fn prepare_interrupt_transfer(
+fn prepare_interrupt_transfer_at(
     dma: XhciDmaState,
     requested_length: u16,
+    cursor: XhciInterruptTransferCursorSnapshot,
 ) -> Result<u64, XhciDriverError> {
     if requested_length == 0 || usize::from(requested_length) > XHCI_PAGE_SIZE_BYTES {
         return Err(XhciDriverError::InvalidInterruptTransferLength);
     }
+    if cursor.index >= XHCI_INTERRUPT_RING_TRBS - 1 {
+        return Err(XhciDriverError::InvalidInterruptTransferProducerState);
+    }
     zero_dma_page(interrupt_report_buffer_ptr());
     write_trb(
         interrupt_ring_ptr(),
-        0,
-        interrupt_in_normal_trb(dma.interrupt_report_buffer_phys, requested_length, true),
+        cursor.index,
+        interrupt_in_normal_trb(
+            dma.interrupt_report_buffer_phys,
+            requested_length,
+            cursor.cycle,
+        ),
     );
     compiler_fence(Ordering::SeqCst);
-    Ok(dma.interrupt_ring_phys)
+    dma.interrupt_ring_phys
+        .checked_add((cursor.index * core::mem::size_of::<XhciTrb>()) as u64)
+        .ok_or(XhciDriverError::InvalidInterruptTransferProducerState)
 }
 
 fn capture_interrupt_report_prefix(
@@ -3770,8 +3896,9 @@ mod tests {
         let dma = prepare_dma_state(0).unwrap();
         prepare_interrupt_in_endpoint_context(dma, 32, 1, 0x81, 4, 10).unwrap();
         write_dma_u32(interrupt_report_buffer_ptr(), 0, 0xFFFF_FFFF);
+        let cursor = XhciInterruptTransferProducer::new().arm().unwrap();
 
-        let transfer_trb_phys = prepare_interrupt_transfer(dma, 4).unwrap();
+        let transfer_trb_phys = prepare_interrupt_transfer_at(dma, 4, cursor).unwrap();
 
         assert_eq!(transfer_trb_phys, dma.interrupt_ring_phys);
         assert_ne!(dma.interrupt_report_buffer_phys, dma.descriptor_buffer_phys);
@@ -3787,16 +3914,66 @@ mod tests {
     }
 
     #[test]
+    fn recurring_interrupt_preparation_publishes_wrapped_cycle_without_overwriting_link() {
+        let _guard = dma_test_lock();
+        let dma = prepare_dma_state(0).unwrap();
+        prepare_interrupt_in_endpoint_context(dma, 32, 3, 0x81, 4, 7).unwrap();
+        let link_before = read_trb(interrupt_ring_ptr(), 15);
+
+        let first = XhciInterruptTransferCursorSnapshot {
+            index: 0,
+            cycle: true,
+        };
+        let fifteenth = XhciInterruptTransferCursorSnapshot {
+            index: 14,
+            cycle: true,
+        };
+        let sixteenth = XhciInterruptTransferCursorSnapshot {
+            index: 0,
+            cycle: false,
+        };
+
+        assert_eq!(
+            prepare_interrupt_transfer_at(dma, 4, first).unwrap(),
+            dma.interrupt_ring_phys
+        );
+        assert_eq!(
+            prepare_interrupt_transfer_at(dma, 4, fifteenth).unwrap(),
+            dma.interrupt_ring_phys + 14 * 16
+        );
+        assert_eq!(
+            prepare_interrupt_transfer_at(dma, 4, sixteenth).unwrap(),
+            dma.interrupt_ring_phys
+        );
+        assert!(!read_trb(interrupt_ring_ptr(), 0).cycle());
+        assert_eq!(read_trb(interrupt_ring_ptr(), 15), link_before);
+    }
+
+    #[test]
     fn interrupt_transfer_preparation_rejects_empty_or_oversized_buffer() {
         let _guard = dma_test_lock();
         let dma = prepare_dma_state(0).unwrap();
 
         assert_eq!(
-            prepare_interrupt_transfer(dma, 0),
+            prepare_interrupt_transfer_at(
+                dma,
+                0,
+                XhciInterruptTransferCursorSnapshot {
+                    index: 0,
+                    cycle: true,
+                },
+            ),
             Err(XhciDriverError::InvalidInterruptTransferLength)
         );
         assert_eq!(
-            prepare_interrupt_transfer(dma, (XHCI_PAGE_SIZE_BYTES + 1) as u16),
+            prepare_interrupt_transfer_at(
+                dma,
+                (XHCI_PAGE_SIZE_BYTES + 1) as u16,
+                XhciInterruptTransferCursorSnapshot {
+                    index: 0,
+                    cycle: true,
+                },
+            ),
             Err(XhciDriverError::InvalidInterruptTransferLength)
         );
     }
