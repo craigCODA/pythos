@@ -164,6 +164,9 @@ pub enum XhciDriverError {
     UnexpectedInterruptTransferSlot,
     UnexpectedInterruptTransferEndpoint,
     InvalidInterruptTransferLength,
+    InvalidInterruptTransferProducerState,
+    InterruptTransferAlreadyArmed,
+    InterruptTransferNotArmed,
 }
 
 impl XhciDriverError {
@@ -319,6 +322,15 @@ impl XhciDriverError {
             XhciDriverError::InvalidInterruptTransferLength => {
                 "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_LENGTH"
             }
+            XhciDriverError::InvalidInterruptTransferProducerState => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_PRODUCER_INVALID"
+            }
+            XhciDriverError::InterruptTransferAlreadyArmed => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_ALREADY_ARMED"
+            }
+            XhciDriverError::InterruptTransferNotArmed => {
+                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_DRIVER_ERROR:INTERRUPT_TRANSFER_NOT_ARMED"
+            }
         }
     }
 
@@ -374,6 +386,9 @@ impl XhciDriverError {
             XhciDriverError::UnexpectedInterruptTransferSlot => 0x3C,
             XhciDriverError::UnexpectedInterruptTransferEndpoint => 0x3D,
             XhciDriverError::InvalidInterruptTransferLength => 0x3E,
+            XhciDriverError::InvalidInterruptTransferProducerState => 0x3F,
+            XhciDriverError::InterruptTransferAlreadyArmed => 0x40,
+            XhciDriverError::InterruptTransferNotArmed => 0x41,
         }
     }
 
@@ -589,6 +604,112 @@ impl XhciTrb {
 
     pub const fn slot_id(self) -> u8 {
         (self.control >> XHCI_TRB_SLOT_ID_SHIFT) as u8
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct XhciInterruptTransferCursorSnapshot {
+    index: usize,
+    cycle: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct XhciInterruptTransferProducer {
+    index: usize,
+    cycle: bool,
+    in_flight: bool,
+    wrap_count: u8,
+}
+
+impl XhciInterruptTransferProducer {
+    const fn new() -> Self {
+        Self {
+            index: 0,
+            cycle: true,
+            in_flight: false,
+            wrap_count: 0,
+        }
+    }
+
+    fn arm(&mut self) -> Result<XhciInterruptTransferCursorSnapshot, XhciDriverError> {
+        if self.index >= XHCI_INTERRUPT_RING_TRBS - 1 {
+            return Err(XhciDriverError::InvalidInterruptTransferProducerState);
+        }
+        if self.in_flight {
+            return Err(XhciDriverError::InterruptTransferAlreadyArmed);
+        }
+
+        self.in_flight = true;
+        Ok(XhciInterruptTransferCursorSnapshot {
+            index: self.index,
+            cycle: self.cycle,
+        })
+    }
+
+    fn complete(&mut self) -> Result<bool, XhciDriverError> {
+        if self.index >= XHCI_INTERRUPT_RING_TRBS - 1 {
+            return Err(XhciDriverError::InvalidInterruptTransferProducerState);
+        }
+        if !self.in_flight {
+            return Err(XhciDriverError::InterruptTransferNotArmed);
+        }
+
+        self.in_flight = false;
+        self.index += 1;
+        if self.index == XHCI_INTERRUPT_RING_TRBS - 1 {
+            self.index = 0;
+            self.cycle = !self.cycle;
+            self.wrap_count += 1;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    const fn wrap_count(self) -> u8 {
+        self.wrap_count
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct XhciEventRingConsumer {
+    index: usize,
+    expected_cycle: bool,
+    wrap_count: u8,
+}
+
+impl XhciEventRingConsumer {
+    const fn new() -> Self {
+        Self {
+            index: 0,
+            expected_cycle: true,
+            wrap_count: 0,
+        }
+    }
+
+    const fn accepts(&self, event: XhciTrb) -> bool {
+        event.cycle() == self.expected_cycle
+    }
+
+    fn advance(&mut self) {
+        self.index += 1;
+        if self.index == XHCI_EVENT_RING_TRBS {
+            self.index = 0;
+            self.expected_cycle = !self.expected_cycle;
+            self.wrap_count += 1;
+        }
+    }
+
+    const fn index(&self) -> usize {
+        self.index
+    }
+
+    const fn expected_cycle(&self) -> bool {
+        self.expected_cycle
+    }
+
+    const fn wrap_count(&self) -> u8 {
+        self.wrap_count
     }
 }
 
@@ -3804,5 +3925,55 @@ mod tests {
         let portsc = 0x0002_0EE1;
 
         assert_eq!(port_reset_write_value(portsc), 0x0000_0EF0);
+    }
+
+    #[test]
+    fn recurring_transfer_cursor_uses_fifteen_data_trbs_then_toggles_cycle() {
+        let mut producer = XhciInterruptTransferProducer::new();
+        for expected_index in 0..15 {
+            let armed = producer.arm().unwrap();
+            assert_eq!(armed.index, expected_index);
+            assert!(armed.cycle);
+            let wrapped = producer.complete().unwrap();
+            assert_eq!(wrapped, expected_index == 14);
+        }
+        let sixteenth = producer.arm().unwrap();
+        assert_eq!(sixteenth.index, 0);
+        assert!(!sixteenth.cycle);
+        assert_eq!(producer.wrap_count(), 1);
+    }
+
+    #[test]
+    fn recurring_transfer_cursor_rejects_second_arm_while_dma_is_owned() {
+        let mut producer = XhciInterruptTransferProducer::new();
+        producer.arm().unwrap();
+        assert_eq!(
+            producer.arm(),
+            Err(XhciDriverError::InterruptTransferAlreadyArmed)
+        );
+    }
+
+    #[test]
+    fn event_consumer_toggles_expected_cycle_only_at_ring_wrap() {
+        let mut consumer = XhciEventRingConsumer::new();
+        for _ in 0..15 {
+            consumer.advance();
+        }
+        assert_eq!(consumer.index(), 15);
+        assert!(consumer.expected_cycle());
+        consumer.advance();
+        assert_eq!(consumer.index(), 0);
+        assert!(!consumer.expected_cycle());
+        assert_eq!(consumer.wrap_count(), 1);
+    }
+
+    #[test]
+    fn event_consumer_rejects_stale_cycle_after_wrap() {
+        let mut consumer = XhciEventRingConsumer::new();
+        for _ in 0..16 {
+            consumer.advance();
+        }
+        assert!(!consumer.accepts(XhciTrb::new(0, 0, 0, XHCI_TRB_CYCLE)));
+        assert!(consumer.accepts(XhciTrb::empty()));
     }
 }

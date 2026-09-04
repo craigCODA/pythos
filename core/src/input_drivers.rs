@@ -65,6 +65,49 @@ pub struct UsbBootMouseReport {
     pub auxiliary: Option<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+pub struct UsbBootMouseSequenceSummary {
+    pub report_count: u8,
+    pub dx_total: i32,
+    pub dy_total: i32,
+    pub last_report: Option<UsbBootMouseReport>,
+    pub pressed_seen: u8,
+    pub released_after_pressed: u8,
+    pub auxiliary_seen: bool,
+    pub latest_auxiliary: Option<u8>,
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+impl UsbBootMouseSequenceSummary {
+    pub const fn new() -> Self {
+        Self {
+            report_count: 0,
+            dx_total: 0,
+            dy_total: 0,
+            last_report: None,
+            pressed_seen: 0,
+            released_after_pressed: 0,
+            auxiliary_seen: false,
+            latest_auxiliary: None,
+        }
+    }
+
+    pub fn observe(&mut self, report: UsbBootMouseReport) {
+        let prior_buttons = self.last_report.map_or(0, |prior| prior.buttons);
+        self.released_after_pressed |= prior_buttons & !report.buttons & 0x07;
+        self.pressed_seen |= report.buttons & 0x07;
+        self.dx_total += i32::from(report.dx);
+        self.dy_total += i32::from(report.dy);
+        if let Some(auxiliary) = report.auxiliary {
+            self.auxiliary_seen = true;
+            self.latest_auxiliary = Some(auxiliary);
+        }
+        self.last_report = Some(report);
+        self.report_count += 1;
+    }
+}
+
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
 impl UsbBootMouseReport {
     pub const fn left_pressed(self) -> bool {
@@ -401,5 +444,55 @@ mod tests {
             decode_usb_boot_mouse_report(&[0x00, 0x01, 0x02, 0x03, 0x04]),
             Err(InputDriverError::BadUsbBootMouseReport)
         );
+    }
+
+    #[test]
+    fn usb_boot_mouse_sequence_accumulates_signed_motion_and_latest_report() {
+        let mut summary = UsbBootMouseSequenceSummary::new();
+        summary.observe(UsbBootMouseReport {
+            buttons: 0,
+            dx: 8,
+            dy: -4,
+            auxiliary: Some(0),
+        });
+        summary.observe(UsbBootMouseReport {
+            buttons: 0,
+            dx: -7,
+            dy: -7,
+            auxiliary: None,
+        });
+
+        assert_eq!(summary.report_count, 2);
+        assert_eq!(summary.dx_total, 1);
+        assert_eq!(summary.dy_total, -11);
+        assert_eq!(summary.last_report.unwrap().dx, -7);
+        assert!(summary.auxiliary_seen);
+        assert_eq!(summary.latest_auxiliary, Some(0));
+    }
+
+    #[test]
+    fn usb_boot_mouse_sequence_records_only_observed_press_then_release() {
+        let mut summary = UsbBootMouseSequenceSummary::new();
+        summary.observe(UsbBootMouseReport {
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            auxiliary: None,
+        });
+        assert_eq!(summary.released_after_pressed, 0);
+        summary.observe(UsbBootMouseReport {
+            buttons: 1,
+            dx: 0,
+            dy: 0,
+            auxiliary: None,
+        });
+        summary.observe(UsbBootMouseReport {
+            buttons: 0,
+            dx: 0,
+            dy: 0,
+            auxiliary: None,
+        });
+        assert_eq!(summary.pressed_seen, 1);
+        assert_eq!(summary.released_after_pressed, 1);
     }
 }
