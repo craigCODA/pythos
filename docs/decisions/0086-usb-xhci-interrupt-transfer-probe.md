@@ -2,7 +2,7 @@
 
 Date: 2026-09-03
 
-Status: Accepted in QEMU; physical acceptance pending
+Status: Accepted in QEMU and on Lenovo 81VS for one raw report
 
 ## Context
 
@@ -118,17 +118,41 @@ PYTHCORE.ELF  5E5C53FB66903ECE0970B919B4BAF8AC69FE706CB8EEF52ADDB01A3A5BE601DE
 serial log    754298A9CADC61949F2DEFBEADFA5B34C655FF563C2DC356D5D79124E0087F3B
 ```
 
-This is QEMU acceptance only. It does not prove that the physical Lenovo and
-Dell/PixArt mouse can complete this transfer. A separately authorized media
-deployment, source-to-target hash readback, and physical result frame are
-required before changing that status.
+Physical acceptance followed on 2026-09-04 on the Lenovo `81VS` and its AMD
+xHCI controller at `00:10.0`, vendor/device `1022:7914`. The deployed
+`PYTHCORE.ELF` matched the QEMU-accepted SHA-256 above. A continuous 49.75
+second video and three result stills show this ordered path:
+
+1. PythOS reached `swap mouse now` and remained there while the boot USB was
+   removed instead of consuming the earlier port-5 transient;
+2. the subsequently inserted mouse qualified on port 6, changing from
+   `PORTSC=0x000002A0` to `PORTSC=0x000202E1`;
+3. PythOS rendered `xhci raw input` and `move mouse once`;
+4. physical mouse movement completed one transfer on slot 1, endpoint `0x81`,
+   DCI 3, with success completion code 1; and
+5. the final panel reported requested/received/captured length 4 and raw bytes
+   `00 FE 00 00`, followed by `one report only` and `no hid decode`.
+
+The physical evidence hashes are:
+
+```text
+20260904_080757.mp4                         514BCF8C1BDD306DB2B83E74211D45F51E7AE00D0BDA52AEC76E5660BCD448FD
+Screenshot_20260904_081144_Gallery.jpg      848F673C2B6F561F5470913167BA142C0D511E11070EEEC4B2C1304262361AB2
+Screenshot_20260904_081211_Gallery.jpg      902A1578E828A326F17F44CEAFE9739C986839C4C6434441F61D6CC6E77860A8
+Screenshot_20260904_081227_Gallery.jpg      50ED3DFDA02B101A936022CDC110A13DD0F568893CC0264E1F03EDF2C5F3F51B
+```
+
+No firmware-setting change was reported for this run. The probe itself retained
+the `no disk writes` panel throughout; the earlier authorized media deployment
+is separate from the kernel's no-write probe claim.
 
 ## Consequences
 
-PythOS now has a bounded QEMU-accepted path from an empty configured endpoint
-ring to one validated raw input report. The endpoint is not a persistent input
-service: the diagnostic owns one TRB, one DMA buffer, one doorbell, one event,
-and then stops.
+PythOS now has a bounded QEMU-accepted and Lenovo-accepted path from an empty
+configured endpoint ring to one validated raw input report on the tested AMD
+`1022:7914` controller and Dell/PixArt mouse. This is not generic hardware
+support. The endpoint is not a persistent input service: the diagnostic owns
+one TRB, one DMA buffer, one doorbell, one event, and then stops.
 
 The next possible separately approved boundary is raw boot-mouse report
 decoding for buttons and signed movement. Recurring reports and a visible
