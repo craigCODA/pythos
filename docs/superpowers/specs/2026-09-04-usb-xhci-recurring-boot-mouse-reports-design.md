@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Approved in conversation; awaiting review of this written specification.
+Status: Approved for implementation by the user on 2026-09-04.
 
 ## Goal
 
