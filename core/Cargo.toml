@@ -57,6 +57,11 @@ usb-xhci-configuration-probe = ["usb-xhci-descriptor-probe"]
 # SET_CONFIGURATION request. It does not queue or poll an interrupt transfer,
 # parse HID reports, move a cursor, enable USB interrupts, or touch storage.
 usb-xhci-endpoint-configuration-probe = ["usb-xhci-configuration-probe"]
+# `usb-xhci-interrupt-transfer-probe` queues exactly one Normal TRB on the
+# configured interrupt-IN endpoint and captures one raw report. It does not
+# decode HID semantics, move a cursor, recur, enable USB interrupts, or touch
+# storage.
+usb-xhci-interrupt-transfer-probe = ["usb-xhci-endpoint-configuration-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]

@@ -261,6 +261,15 @@ and `SET_CONFIGURATION` both returned `01`, and the configured Slot and Endpoint
 states were `03` and `01`. The screen retained `no disk writes` and `no interrupt
 poll`; the illuminated mouse confirms port power, not HID reports or input.
 
+ADR 0086 adds `usb-xhci-interrupt-transfer-probe` as one more opt-in boundary.
+It queues one interrupt-IN Normal TRB against the configured DCI 3 endpoint,
+rings that endpoint once, validates the returned Transfer Event and residual
+length, captures up to eight raw bytes, and stops. The QEMU harness injected
+one `x=8`, `y=-4` movement and received the four raw bytes `00 08 FC 00` with
+completion code `01`, `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`,
+`QEMU_OUTCOME success`, and `NO_DISK_WRITES`. This is not HID decoding,
+recurring input, cursor movement, shell input, or physical acceptance.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths
@@ -294,6 +303,7 @@ Current-state references:
 - [ADR 0083: USB xHCI Device Descriptor probe](docs/decisions/0083-usb-xhci-device-descriptor-probe.md)
 - [ADR 0084: USB xHCI Configuration Descriptor probe](docs/decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [ADR 0085: USB xHCI Endpoint Configuration probe](docs/decisions/0085-usb-xhci-endpoint-configuration-probe.md)
+- [ADR 0086: USB xHCI one-shot interrupt transfer probe](docs/decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)

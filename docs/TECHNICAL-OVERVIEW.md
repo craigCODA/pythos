@@ -269,6 +269,15 @@ configured Endpoint state `01`. The framebuffer retained `no disk writes` and
 `no interrupt poll`. The mouse illuminated, confirming port power only; no
 input report was requested or observed.
 
+ADR 0086 adds `usb-xhci-interrupt-transfer-probe` as the first bounded raw
+input transfer. It owns one dedicated report buffer and one Normal TRB, rings
+DCI 3 once, accepts only Success or Short Packet, validates the event's TRB
+pointer/slot/endpoint/residual fields, captures at most eight received bytes,
+and halts. QEMU injection of `x=8`, `y=-4` produced `00 08 FC 00`, completion
+code `01`, exact requested/actual/captured length `4`, framebuffer success,
+`NO_DISK_WRITES`, and `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`. Physical
+acceptance, HID semantics, a second report, and cursor behavior remain unproven.
+
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
 and where the boundary of the work still is.
@@ -301,6 +310,7 @@ and where the boundary of the work still is.
 | ADR 0083 USB/xHCI Device Descriptor probe QEMU-accepted with one EP0 `GET_DESCRIPTOR(Device)` transfer and deployed to the verified USB ESP; Linux Mint field-kit evidence maps the physical Dell/PixArt mouse descriptor as `413c:301a`, MPS0 `8`, HID boot mouse `03/01/02`, endpoint `0x81`; physical frame on AMD `1022:7914` shows descriptor CC `01`, length `12`, type `01`, USB BCD `0200`, MPS `008`, VID/PID `413C 301A`, and `no disk writes` | Configuration descriptor reads, HID parsing, mouse movement, IRQ input, or trackpad support |
 | ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
+| ADR 0086 USB/xHCI one-shot interrupt transfer probe QEMU-accepted with one four-byte raw report `00 08 FC 00`, completion code `01`, exact event identity checks, and `NO_DISK_WRITES` | Physical interrupt-transfer acceptance, HID decoding, recurring reports, cursor movement, IRQ input, or trackpad support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -833,8 +843,8 @@ before submitting the no-data USB `SET_CONFIGURATION(1)` TD on endpoint 0.
 The accepted QEMU run reached configured Slot state `3` and Endpoint state `1`,
 then halted with `NO_DISK_WRITES`, `QEMU_OUTCOME success`, and
 `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`. Its oracle rejects an
-interrupt transfer, HID report, or cursor marker. The configured interrupt ring
-has never been polled.
+interrupt transfer, HID report, or cursor marker. At the ADR 0085 boundary, the
+configured interrupt ring was not polled.
 The exact image was deployed on the verified Lexar D70E: eight files and
 4,077,208 bytes matched source hashes, while 111 unrelated files were preserved
 byte-identically. The Lenovo `81VS` physical frame then showed `xhci ep cfg`,
@@ -843,8 +853,8 @@ interval encoding `06`, Configure Endpoint and `SET_CONFIGURATION` completion
 codes `01`, configured Slot state `03`, configured Endpoint state `01`, and all
 four prerequisite address/descriptor completion codes `01`. It also showed
 `no disk writes` and `no interrupt poll`. The illuminated mouse establishes
-power, not an interrupt transfer or HID report; the configured interrupt ring
-still has never been polled.
+power, not an interrupt transfer or HID report; that physical run did not poll
+the configured interrupt ring.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
@@ -868,6 +878,7 @@ See:
 - [ADR 0083 USB xHCI Device Descriptor probe](decisions/0083-usb-xhci-device-descriptor-probe.md)
 - [ADR 0084 USB xHCI Configuration Descriptor probe](decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [ADR 0085 USB xHCI Endpoint Configuration probe](decisions/0085-usb-xhci-endpoint-configuration-probe.md)
+- [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)
@@ -931,6 +942,7 @@ python scripts\test-usb-xhci-address-probe.py
 python scripts\test-usb-xhci-descriptor-probe.py
 python scripts\test-usb-xhci-configuration-probe.py
 python scripts\test-usb-xhci-endpoint-configuration-probe.py
+python scripts\test-usb-xhci-interrupt-transfer-probe.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots

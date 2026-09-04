@@ -63,10 +63,20 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         not(feature = "usb-xhci-endpoint-configuration-probe")
     ))]
     let mut xhci_configuration_error = None;
-    #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-endpoint-configuration-probe",
+        not(feature = "usb-xhci-interrupt-transfer-probe")
+    ))]
     let mut xhci_endpoint_configuration_result = None;
-    #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-endpoint-configuration-probe",
+        not(feature = "usb-xhci-interrupt-transfer-probe")
+    ))]
     let mut xhci_endpoint_configuration_error = None;
+    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    let mut xhci_interrupt_transfer_result = None;
+    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    let mut xhci_interrupt_transfer_error = None;
     let mut xhci_error = None;
     if let Some(controller) = report.first_xhci() {
         usb_xhci_probe::emit_selected_xhci_identity(controller);
@@ -113,7 +123,41 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                                         );
                                         xhci_port_status = Some(next_status);
                                         xhci_port_change = Some(change);
-                                        #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+                                        #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+                                        {
+                                            if usb_xhci_probe_screen::render_interrupt_transfer_prompt(
+                                                &boot_info.framebuffer,
+                                                &report,
+                                                port_status,
+                                                change,
+                                            )
+                                            .is_ok()
+                                            {
+                                                serial::write_line(
+                                                    "PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_INPUT_PROMPT_READY",
+                                                );
+                                            } else {
+                                                serial::write_line(
+                                                    "PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_INPUT_PROMPT_FAILED",
+                                                );
+                                            }
+                                            match usb_xhci_driver::run_interrupt_transfer_probe(
+                                                snapshot,
+                                                change.port_number,
+                                            ) {
+                                                Ok(result) => {
+                                                    xhci_interrupt_transfer_result = Some(result);
+                                                }
+                                                Err(error) => {
+                                                    serial::write_line(error.marker());
+                                                    xhci_interrupt_transfer_error = Some(error);
+                                                }
+                                            }
+                                        }
+                                        #[cfg(all(
+                                            feature = "usb-xhci-endpoint-configuration-probe",
+                                            not(feature = "usb-xhci-interrupt-transfer-probe")
+                                        ))]
                                         match usb_xhci_driver::run_endpoint_configuration_probe(
                                             snapshot,
                                             change.port_number,
@@ -233,7 +277,45 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         fb_debug::COLOR_HARDWARE_PROBE_NO_STORAGE
     };
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    #[cfg(feature = "usb-xhci-endpoint-configuration-probe")]
+    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    let render_result = match (
+        xhci_interrupt_transfer_result,
+        xhci_interrupt_transfer_error,
+        xhci_port_status,
+        xhci_port_change,
+    ) {
+        (Some(result), _, _, _) => usb_xhci_probe_screen::render_interrupt_transfer_probe(
+            &boot_info.framebuffer,
+            &report,
+            result,
+        ),
+        (None, Some(error), Some(port_status), Some(change)) => {
+            usb_xhci_probe_screen::render_interrupt_transfer_error(
+                &boot_info.framebuffer,
+                &report,
+                port_status,
+                change,
+                error,
+            )
+        }
+        (None, _, Some(port_status), Some(change)) => usb_xhci_probe_screen::render_swap_change(
+            &boot_info.framebuffer,
+            &report,
+            port_status,
+            change,
+        ),
+        _ => usb_xhci_probe_screen::render(
+            &boot_info.framebuffer,
+            &report,
+            xhci_snapshot,
+            xhci_port_status,
+            xhci_error,
+        ),
+    };
+    #[cfg(all(
+        feature = "usb-xhci-endpoint-configuration-probe",
+        not(feature = "usb-xhci-interrupt-transfer-probe")
+    ))]
     let render_result = match (
         xhci_endpoint_configuration_result,
         xhci_endpoint_configuration_error,

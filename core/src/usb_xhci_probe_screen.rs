@@ -9,6 +9,7 @@ use crate::framebuffer;
 use crate::usb_xhci_driver::{
     XhciAddressProbeResult, XhciCommandProbeResult, XhciConfigurationProbeResult,
     XhciDescriptorProbeResult, XhciDriverError, XhciEndpointConfigurationProbeResult,
+    XhciInterruptTransferProbeResult,
 };
 use crate::usb_xhci_probe::{
     UsbController, UsbControllerKind, UsbMemoryBar, UsbProbeReport, XhciPortChange,
@@ -203,6 +204,30 @@ pub fn build_swap_change_screen(
     push_ports_summary(&mut screen, port_status);
     push_xecp(&mut screen, port_status);
     push_legacy(&mut screen, port_status);
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
+pub fn build_interrupt_transfer_prompt_screen(
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci raw input");
+    push_text(&mut screen, "move mouse once");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+    push_change(&mut screen, change);
+    push_ports_summary(&mut screen, port_status);
+    push_xecp(&mut screen, port_status);
+    push_legacy(&mut screen, port_status);
+    push_text(&mut screen, "one report only");
     screen
 }
 
@@ -555,6 +580,91 @@ pub fn build_endpoint_configuration_probe_screen(
     screen
 }
 
+#[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
+pub fn build_interrupt_transfer_probe_screen(
+    report: &UsbProbeReport,
+    result: XhciInterruptTransferProbeResult,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci raw report");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+
+    let endpoint_result = result.endpoint_configuration;
+    let address = endpoint_result.configuration.descriptor.address;
+    let endpoint = endpoint_result.configuration.configuration;
+    let mut port = ProbeLine::new();
+    port.push_str("port ");
+    port.push_hex(u64::from(address.command.port_number), 2);
+    port.push_str(" slot ");
+    port.push_hex(u64::from(address.command.slot_id), 2);
+    screen.push(port);
+
+    let mut endpoint_line = ProbeLine::new();
+    endpoint_line.push_str("ep ");
+    endpoint_line.push_hex(u64::from(endpoint.interrupt_in_endpoint_address), 2);
+    endpoint_line.push_str(" dci ");
+    endpoint_line.push_hex(u64::from(endpoint_result.endpoint_id), 2);
+    screen.push(endpoint_line);
+
+    let mut completion = ProbeLine::new();
+    completion.push_str("cc ");
+    completion.push_hex(u64::from(result.transfer_completion_code), 2);
+    completion.push_str(" len ");
+    completion.push_dec(u64::from(result.requested_length), 4);
+    screen.push(completion);
+
+    let mut lengths = ProbeLine::new();
+    lengths.push_str("got ");
+    lengths.push_dec(u64::from(result.actual_length), 4);
+    lengths.push_str(" cap ");
+    lengths.push_dec(u64::from(result.captured_length), 2);
+    screen.push(lengths);
+
+    let mut raw = ProbeLine::new();
+    raw.push_str("raw ");
+    let mut index = 0usize;
+    while index < usize::from(result.captured_length) && index < result.raw_report.len() {
+        if index != 0 {
+            raw.push_str(" ");
+        }
+        raw.push_hex(u64::from(result.raw_report[index]), 2);
+        index += 1;
+    }
+    screen.push(raw);
+    push_text(&mut screen, "one report only");
+    push_text(&mut screen, "no hid decode");
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
+pub fn build_interrupt_transfer_error_screen(
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci input err");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+    push_driver_error(&mut screen, error);
+    push_change(&mut screen, change);
+    push_ports_summary(&mut screen, port_status);
+    push_text(&mut screen, "one report only");
+    screen
+}
+
 #[cfg(any(test, feature = "usb-xhci-endpoint-configuration-probe"))]
 pub fn build_endpoint_configuration_error_screen(
     report: &UsbProbeReport,
@@ -684,6 +794,17 @@ pub fn render_swap_change(
     render_screen(framebuffer_info, screen)
 }
 
+#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+pub fn render_interrupt_transfer_prompt(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+) -> Result<(), ()> {
+    let screen = build_interrupt_transfer_prompt_screen(report, port_status, change);
+    render_screen(framebuffer_info, screen)
+}
+
 #[cfg(feature = "usb-xhci-command-probe")]
 pub fn render_command_probe(
     framebuffer_info: &PythFramebufferInfo,
@@ -743,6 +864,28 @@ pub fn render_endpoint_configuration_probe(
     result: XhciEndpointConfigurationProbeResult,
 ) -> Result<(), ()> {
     let screen = build_endpoint_configuration_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+pub fn render_interrupt_transfer_probe(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    result: XhciInterruptTransferProbeResult,
+) -> Result<(), ()> {
+    let screen = build_interrupt_transfer_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+pub fn render_interrupt_transfer_error(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    port_status: XhciPortStatusSnapshot,
+    change: XhciPortChange,
+    error: XhciDriverError,
+) -> Result<(), ()> {
+    let screen = build_interrupt_transfer_error_screen(report, port_status, change, error);
     render_screen(framebuffer_info, screen)
 }
 
@@ -1544,6 +1687,37 @@ mod tests {
         assert_eq!(screen.line(11), Some("hdr 01 full 01"));
         assert_eq!(screen.line(12), Some("mps 0004 scratch 08"));
         assert_eq!(screen.line(13), Some("no interrupt poll"));
+    }
+
+    #[test]
+    fn formats_interrupt_transfer_prompt_before_waiting_for_motion() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = XhciPortChange {
+            port_number: 5,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+
+        let screen = build_interrupt_transfer_prompt_screen(&report, port_status, change);
+
+        assert_eq!(screen.line(0), Some("PythOS"));
+        assert_eq!(screen.line(1), Some("xhci raw input"));
+        assert_eq!(screen.line(2), Some("move mouse once"));
+        assert_eq!(screen.line(3), Some("no disk writes"));
+        assert_eq!(screen.line(7), Some("chg p5"));
+        assert_eq!(screen.line(13), Some("one report only"));
     }
 
     #[test]

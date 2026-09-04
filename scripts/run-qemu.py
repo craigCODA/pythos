@@ -166,6 +166,22 @@ def request_usb_mouse_hotplug(port: str) -> None:
     )
 
 
+def request_usb_mouse_movement() -> None:
+    run_qmp_commands(
+        (
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {"type": "rel", "data": {"axis": "x", "value": 8}},
+                        {"type": "rel", "data": {"axis": "y", "value": -4}},
+                    ]
+                },
+            },
+        )
+    )
+
+
 def request_device_removal(device_id: str) -> None:
     run_qmp_commands(
         (
@@ -297,6 +313,10 @@ def main() -> int:
         default="1",
         help="qemu-xhci port for --hotplug-usb-mouse-after-marker",
     )
+    parser.add_argument(
+        "--move-usb-mouse-after-marker",
+        help="QMP-inject one relative mouse movement after this serial marker appears",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -323,6 +343,8 @@ def main() -> int:
         raise SystemExit("--remove-usb-device-after-marker requires --xhci")
     if args.hotplug_usb_mouse_after_marker and not args.xhci:
         raise SystemExit("--hotplug-usb-mouse-after-marker requires --xhci")
+    if args.move_usb_mouse_after_marker and not args.xhci:
+        raise SystemExit("--move-usb-mouse-after-marker requires --xhci")
     if args.usb_mouse and args.hotplug_usb_mouse_after_marker:
         raise SystemExit("--usb-mouse and --hotplug-usb-mouse-after-marker are mutually exclusive")
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
@@ -472,6 +494,8 @@ def main() -> int:
     hotplug_error = None
     remove_done = False
     remove_error = None
+    mouse_move_done = False
+    mouse_move_error = None
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
@@ -503,6 +527,19 @@ def main() -> int:
                     process.terminate()
                     break
                 hotplug_done = True
+            if (
+                args.move_usb_mouse_after_marker
+                and not mouse_move_done
+                and args.move_usb_mouse_after_marker in serial
+            ):
+                try:
+                    request_usb_mouse_movement()
+                except (OSError, RuntimeError, ConnectionError) as error:
+                    mouse_move_error = error
+                    print(f"usb mouse movement failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
+                mouse_move_done = True
             if args.kill_after_marker and args.kill_after_marker in serial:
                 process.kill()
                 process.wait(timeout=2)
@@ -552,7 +589,7 @@ def main() -> int:
         success_marker=args.success_marker,
     )
     print(f"QEMU_OUTCOME {outcome.value}")
-    if hotplug_error is not None or remove_error is not None:
+    if hotplug_error is not None or remove_error is not None or mouse_move_error is not None:
         return SCRIPT_EXIT_CODES[QemuOutcome.RESET.value]
     if args.expect_outcome and outcome.value != args.expect_outcome:
         print(
