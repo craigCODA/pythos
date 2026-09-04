@@ -71,6 +71,16 @@ impl ProbeLine {
         }
     }
 
+    fn push_signed_dec_i8(&mut self, value: i8, digits: usize) {
+        let signed = i16::from(value);
+        if signed < 0 {
+            self.push_byte(b'-');
+            self.push_dec((-signed) as u64, digits);
+        } else {
+            self.push_dec(signed as u64, digits);
+        }
+    }
+
     pub fn as_str(&self) -> Option<&str> {
         core::str::from_utf8(&self.bytes[..self.len]).ok()
     }
@@ -642,6 +652,90 @@ pub fn build_interrupt_transfer_probe_screen(
     screen
 }
 
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+pub fn build_boot_mouse_decode_probe_screen(
+    report: &UsbProbeReport,
+    result: XhciInterruptTransferProbeResult,
+    decoded: crate::input_drivers::UsbBootMouseReport,
+) -> ProbeScreen {
+    let mut screen = ProbeScreen::new();
+    push_text(&mut screen, "PythOS");
+    push_text(&mut screen, "xhci mouse decoded");
+    push_text(&mut screen, "no disk writes");
+    push_count(&mut screen, report.count() as u64);
+    if let Some(controller) = select_controller(report) {
+        push_bdf(&mut screen, controller);
+        push_vid_did(&mut screen, controller);
+    }
+
+    let endpoint_result = result.endpoint_configuration;
+    let address = endpoint_result.configuration.descriptor.address;
+    let endpoint = endpoint_result.configuration.configuration;
+    let mut port = ProbeLine::new();
+    port.push_str("port ");
+    port.push_hex(u64::from(address.command.port_number), 2);
+    port.push_str(" slot ");
+    port.push_hex(u64::from(address.command.slot_id), 2);
+    screen.push(port);
+
+    let mut endpoint_line = ProbeLine::new();
+    endpoint_line.push_str("ep ");
+    endpoint_line.push_hex(u64::from(endpoint.interrupt_in_endpoint_address), 2);
+    endpoint_line.push_str(" dci ");
+    endpoint_line.push_hex(u64::from(endpoint_result.endpoint_id), 2);
+    screen.push(endpoint_line);
+
+    let mut completion = ProbeLine::new();
+    completion.push_str("cc ");
+    completion.push_hex(u64::from(result.transfer_completion_code), 2);
+    completion.push_str(" len ");
+    completion.push_dec(u64::from(result.requested_length), 4);
+    screen.push(completion);
+
+    let mut lengths = ProbeLine::new();
+    lengths.push_str("got ");
+    lengths.push_dec(u64::from(result.actual_length), 4);
+    lengths.push_str(" cap ");
+    lengths.push_dec(u64::from(result.captured_length), 2);
+    screen.push(lengths);
+
+    push_usb_boot_mouse_lines(&mut screen, decoded);
+    push_text(&mut screen, "one report no cursor");
+    screen
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+fn push_usb_boot_mouse_lines(
+    screen: &mut ProbeScreen,
+    decoded: crate::input_drivers::UsbBootMouseReport,
+) {
+    let mut buttons = ProbeLine::new();
+    buttons.push_str("btn ");
+    buttons.push_hex(u64::from(decoded.buttons), 2);
+    buttons.push_str(" l");
+    buttons.push_byte(bool_digit(decoded.left_pressed()));
+    buttons.push_str(" r");
+    buttons.push_byte(bool_digit(decoded.right_pressed()));
+    buttons.push_str(" m");
+    buttons.push_byte(bool_digit(decoded.middle_pressed()));
+    screen.push(buttons);
+
+    let mut axes = ProbeLine::new();
+    axes.push_str("dx ");
+    axes.push_signed_dec_i8(decoded.dx, 3);
+    axes.push_str(" dy ");
+    axes.push_signed_dec_i8(decoded.dy, 3);
+    screen.push(axes);
+
+    let mut auxiliary = ProbeLine::new();
+    auxiliary.push_str("aux ");
+    match decoded.auxiliary {
+        Some(value) => auxiliary.push_hex(u64::from(value), 2),
+        None => auxiliary.push_str("--"),
+    }
+    screen.push(auxiliary);
+}
+
 #[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
 pub fn build_interrupt_transfer_error_screen(
     report: &UsbProbeReport,
@@ -874,6 +968,17 @@ pub fn render_interrupt_transfer_probe(
     result: XhciInterruptTransferProbeResult,
 ) -> Result<(), ()> {
     let screen = build_interrupt_transfer_probe_screen(report, result);
+    render_screen(framebuffer_info, screen)
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+pub fn render_boot_mouse_decode_probe(
+    framebuffer_info: &PythFramebufferInfo,
+    report: &UsbProbeReport,
+    result: XhciInterruptTransferProbeResult,
+    decoded: crate::input_drivers::UsbBootMouseReport,
+) -> Result<(), ()> {
+    let screen = build_boot_mouse_decode_probe_screen(report, result, decoded);
     render_screen(framebuffer_info, screen)
 }
 
@@ -1129,6 +1234,19 @@ fn bool_digit(value: bool) -> u8 {
 mod tests {
     use super::*;
     use crate::font;
+
+    #[test]
+    fn formats_usb_boot_mouse_semantics_with_signed_axes_and_raw_auxiliary() {
+        let decoded =
+            crate::input_drivers::decode_usb_boot_mouse_report(&[0x05, 0xFE, 0x00, 0x7F]).unwrap();
+        let mut screen = ProbeScreen::new();
+
+        push_usb_boot_mouse_lines(&mut screen, decoded);
+
+        assert_eq!(screen.line(0), Some("btn 05 l1 r0 m1"));
+        assert_eq!(screen.line(1), Some("dx -002 dy 000"));
+        assert_eq!(screen.line(2), Some("aux 7F"));
+    }
 
     fn controller(kind: UsbControllerKind, bus: u8, device: u8) -> UsbController {
         UsbController {

@@ -275,8 +275,18 @@ DCI 3 once, accepts only Success or Short Packet, validates the event's TRB
 pointer/slot/endpoint/residual fields, captures at most eight received bytes,
 and halts. QEMU injection of `x=8`, `y=-4` produced `00 08 FC 00`, completion
 code `01`, exact requested/actual/captured length `4`, framebuffer success,
-`NO_DISK_WRITES`, and `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`. Physical
-acceptance, HID semantics, a second report, and cursor behavior remain unproven.
+`NO_DISK_WRITES`, and `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`. The
+2026-09-04 Lenovo run physically accepted the same one-report boundary with
+raw bytes `00 FE 00 00`.
+
+ADR 0087 adds `usb-xhci-boot-mouse-decode-probe`. It decodes standard
+left/right/middle bits and signed X/Y from exactly one three- or four-byte boot
+mouse report, maps movement to `RawInputEvent::MouseMoved`, and retains byte
+four as raw `aux` evidence rather than claiming wheel semantics. QEMU decoded
+`00 08 FC 00` as buttons `00`, X `+8`, Y `-4`, auxiliary `00`, emitted
+`XHCI_BOOT_MOUSE_DECODE_READY`, retained `NO_DISK_WRITES`, and halted after one
+report. Physical ADR 0087 acceptance, recurring reports, button transitions,
+and cursor behavior remain unproven.
 
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
@@ -879,6 +889,7 @@ See:
 - [ADR 0084 USB xHCI Configuration Descriptor probe](decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [ADR 0085 USB xHCI Endpoint Configuration probe](decisions/0085-usb-xhci-endpoint-configuration-probe.md)
 - [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
+- [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)
@@ -943,6 +954,7 @@ python scripts\test-usb-xhci-descriptor-probe.py
 python scripts\test-usb-xhci-configuration-probe.py
 python scripts\test-usb-xhci-endpoint-configuration-probe.py
 python scripts\test-usb-xhci-interrupt-transfer-probe.py
+python scripts\test-usb-xhci-boot-mouse-decode-probe.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots

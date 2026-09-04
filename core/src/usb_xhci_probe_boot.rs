@@ -77,6 +77,8 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     let mut xhci_interrupt_transfer_result = None;
     #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
     let mut xhci_interrupt_transfer_error = None;
+    #[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+    let mut xhci_boot_mouse_decoded = None;
     let mut xhci_error = None;
     if let Some(controller) = report.first_xhci() {
         usb_xhci_probe::emit_selected_xhci_identity(controller);
@@ -146,6 +148,25 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                                                 change.port_number,
                                             ) {
                                                 Ok(result) => {
+                                                    #[cfg(
+                                                        feature = "usb-xhci-boot-mouse-decode-probe"
+                                                    )]
+                                                    {
+                                                        let captured =
+                                                            usize::from(result.captured_length)
+                                                                .min(result.raw_report.len());
+                                                        match crate::input_drivers::decode_usb_boot_mouse_report(
+                                                            &result.raw_report[..captured],
+                                                        ) {
+                                                            Ok(decoded) => {
+                                                                emit_boot_mouse_decode(decoded);
+                                                                xhci_boot_mouse_decoded = Some(decoded);
+                                                            }
+                                                            Err(_) => serial::write_line(
+                                                                "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DECODE_INVALID",
+                                                            ),
+                                                        }
+                                                    }
                                                     xhci_interrupt_transfer_result = Some(result);
                                                 }
                                                 Err(error) => {
@@ -277,7 +298,54 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         fb_debug::COLOR_HARDWARE_PROBE_NO_STORAGE
     };
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    #[cfg(feature = "usb-xhci-interrupt-transfer-probe")]
+    #[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+    let render_result = match (
+        xhci_interrupt_transfer_result,
+        xhci_boot_mouse_decoded,
+        xhci_interrupt_transfer_error,
+        xhci_port_status,
+        xhci_port_change,
+    ) {
+        (Some(result), Some(decoded), _, _, _) => {
+            usb_xhci_probe_screen::render_boot_mouse_decode_probe(
+                &boot_info.framebuffer,
+                &report,
+                result,
+                decoded,
+            )
+        }
+        (Some(result), None, _, _, _) => usb_xhci_probe_screen::render_interrupt_transfer_probe(
+            &boot_info.framebuffer,
+            &report,
+            result,
+        ),
+        (None, _, Some(error), Some(port_status), Some(change)) => {
+            usb_xhci_probe_screen::render_interrupt_transfer_error(
+                &boot_info.framebuffer,
+                &report,
+                port_status,
+                change,
+                error,
+            )
+        }
+        (None, _, _, Some(port_status), Some(change)) => usb_xhci_probe_screen::render_swap_change(
+            &boot_info.framebuffer,
+            &report,
+            port_status,
+            change,
+        ),
+        _ => usb_xhci_probe_screen::render(
+            &boot_info.framebuffer,
+            &report,
+            xhci_snapshot,
+            xhci_port_status,
+            xhci_error,
+        ),
+    };
+    #[cfg(all(
+        feature = "usb-xhci-interrupt-transfer-probe",
+        not(feature = "usb-xhci-boot-mouse-decode-probe")
+    ))]
     let render_result = match (
         xhci_interrupt_transfer_result,
         xhci_interrupt_transfer_error,
@@ -534,6 +602,34 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     loop {
         core::hint::spin_loop();
     }
+}
+
+#[cfg(feature = "usb-xhci-boot-mouse-decode-probe")]
+fn emit_boot_mouse_decode(decoded: crate::input_drivers::UsbBootMouseReport) {
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_BUTTONS=",
+        u64::from(decoded.buttons),
+    );
+    if let crate::input_drivers::RawInputEvent::MouseMoved { dx, dy } = decoded.movement_event() {
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DX_I8=",
+            u64::from(dx as u8),
+        );
+        serial::write_hex_u64(
+            "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DY_I8=",
+            u64::from(dy as u8),
+        );
+    }
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_AUX_PRESENT=",
+        u64::from(decoded.auxiliary.is_some() as u8),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_AUX=",
+        u64::from(decoded.auxiliary.unwrap_or(0)),
+    );
+    serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_EVENT_READY");
+    serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DECODE_READY");
 }
 
 #[cfg(feature = "usb-xhci-swap-probe")]

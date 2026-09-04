@@ -23,6 +23,8 @@ pub enum InputDriverError {
     Capability(CapabilityError),
     UnknownScancode,
     BadMousePacket,
+    #[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+    BadUsbBootMouseReport,
 }
 
 impl From<CapabilityError> for InputDriverError {
@@ -46,6 +48,65 @@ pub enum RawInputEvent {
     MouseButton {
         left: bool,
     },
+}
+
+/// The bounded, protocol-level meaning of one USB HID boot-mouse report.
+///
+/// Only the three standard boot-protocol bytes are assigned semantics here.
+/// A fourth byte is retained as auxiliary evidence because ADR 0086 proved
+/// four-byte transfers on the target mouse without proving that byte is a
+/// wheel report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+pub struct UsbBootMouseReport {
+    pub buttons: u8,
+    pub dx: i8,
+    pub dy: i8,
+    pub auxiliary: Option<u8>,
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+impl UsbBootMouseReport {
+    pub const fn left_pressed(self) -> bool {
+        self.buttons & 0x01 != 0
+    }
+
+    pub const fn right_pressed(self) -> bool {
+        self.buttons & 0x02 != 0
+    }
+
+    pub const fn middle_pressed(self) -> bool {
+        self.buttons & 0x04 != 0
+    }
+
+    pub const fn movement_event(self) -> RawInputEvent {
+        RawInputEvent::MouseMoved {
+            dx: self.dx,
+            dy: self.dy,
+        }
+    }
+}
+
+/// Decode exactly one three- or four-byte USB HID boot-mouse report.
+///
+/// This deliberately does not use the PS/2 packet validator: USB boot reports
+/// do not carry the PS/2 byte-zero "always 1" synchronization bit.
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-decode-probe"))]
+pub fn decode_usb_boot_mouse_report(report: &[u8]) -> Result<UsbBootMouseReport, InputDriverError> {
+    if report.len() != 3 && report.len() != 4 {
+        return Err(InputDriverError::BadUsbBootMouseReport);
+    }
+
+    Ok(UsbBootMouseReport {
+        buttons: report[0] & 0x07,
+        dx: report[1] as i8,
+        dy: report[2] as i8,
+        auxiliary: if report.len() == 4 {
+            Some(report[3])
+        } else {
+            None
+        },
+    })
 }
 
 /// Scancode-set-1 make codes for the keys the interactive launcher screen
@@ -300,6 +361,45 @@ mod tests {
         assert_eq!(
             mouse.decode(&capabilities, input, [0x08, 5, 253]),
             Ok(RawInputEvent::MouseMoved { dx: 5, dy: -3 })
+        );
+    }
+
+    #[test]
+    fn usb_boot_mouse_decodes_the_physically_captured_report() {
+        let decoded = decode_usb_boot_mouse_report(&[0x00, 0xFE, 0x00, 0x00]).unwrap();
+
+        assert_eq!(decoded.buttons, 0);
+        assert_eq!(decoded.dx, -2);
+        assert_eq!(decoded.dy, 0);
+        assert_eq!(decoded.auxiliary, Some(0));
+        assert_eq!(
+            decoded.movement_event(),
+            RawInputEvent::MouseMoved { dx: -2, dy: 0 }
+        );
+    }
+
+    #[test]
+    fn usb_boot_mouse_decodes_buttons_signed_axes_and_optional_auxiliary_byte() {
+        let decoded = decode_usb_boot_mouse_report(&[0x05, 0x7F, 0x80]).unwrap();
+
+        assert_eq!(decoded.buttons, 0x05);
+        assert!(decoded.left_pressed());
+        assert!(!decoded.right_pressed());
+        assert!(decoded.middle_pressed());
+        assert_eq!(decoded.dx, 127);
+        assert_eq!(decoded.dy, -128);
+        assert_eq!(decoded.auxiliary, None);
+    }
+
+    #[test]
+    fn usb_boot_mouse_rejects_reports_outside_the_bounded_three_or_four_bytes() {
+        assert_eq!(
+            decode_usb_boot_mouse_report(&[0x00, 0x01]),
+            Err(InputDriverError::BadUsbBootMouseReport)
+        );
+        assert_eq!(
+            decode_usb_boot_mouse_report(&[0x00, 0x01, 0x02, 0x03, 0x04]),
+            Err(InputDriverError::BadUsbBootMouseReport)
         );
     }
 }

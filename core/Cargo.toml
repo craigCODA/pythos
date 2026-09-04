@@ -62,6 +62,11 @@ usb-xhci-endpoint-configuration-probe = ["usb-xhci-configuration-probe"]
 # decode HID semantics, move a cursor, recur, enable USB interrupts, or touch
 # storage.
 usb-xhci-interrupt-transfer-probe = ["usb-xhci-endpoint-configuration-probe"]
+# `usb-xhci-boot-mouse-decode-probe` interprets the standard three-byte USB
+# boot-mouse prefix from the one captured report and retains an optional fourth
+# byte as raw auxiliary evidence. It still queues only one report, does not move
+# a cursor, does not recur, and does not touch storage.
+usb-xhci-boot-mouse-decode-probe = ["usb-xhci-interrupt-transfer-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]
