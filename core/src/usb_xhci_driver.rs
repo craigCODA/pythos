@@ -890,7 +890,7 @@ struct XhciDmaState {
 struct XhciCommandProbeState {
     result: XhciCommandProbeResult,
     dma: XhciDmaState,
-    event_index: usize,
+    event_consumer: XhciEventRingConsumer,
     control_index: usize,
 }
 
@@ -936,7 +936,7 @@ fn device_descriptor_from_command_state(
         registers,
         state.dma,
         state.result.slot_id,
-        &mut state.event_index,
+        &mut state.event_consumer,
         &mut state.control_index,
     )
     .map_err(|error| error.with_timeout_stage(XhciDriverError::DeviceDescriptorTransferTimeout))?;
@@ -1033,7 +1033,7 @@ fn configuration_from_command_state(
         registers,
         state.dma,
         state.result.slot_id,
-        &mut state.event_index,
+        &mut state.event_consumer,
         &mut state.control_index,
         XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH as u16,
     )
@@ -1069,7 +1069,7 @@ fn configuration_from_command_state(
         registers,
         state.dma,
         state.result.slot_id,
-        &mut state.event_index,
+        &mut state.event_consumer,
         &mut state.control_index,
         header.total_length,
     )
@@ -1176,7 +1176,7 @@ pub fn run_interrupt_transfer_probe(
         state.result.slot_id,
         endpoint_configuration.endpoint_id,
         requested_length,
-        &mut state.event_index,
+        &mut state.event_consumer,
     )?;
     let (raw_report, captured_length) = capture_interrupt_report_prefix(completion.actual_length);
     emit_hex(
@@ -1240,7 +1240,7 @@ fn endpoint_configuration_from_command_state(
         3,
         configure_endpoint_command_trb(state.dma.input_context_phys, state.result.slot_id, true),
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
-        &mut state.event_index,
+        &mut state.event_consumer,
     )
     .map_err(|error| error.with_timeout_stage(XhciDriverError::ConfigureEndpointCommandTimeout))?;
     let configure_endpoint_completion_code = configure_endpoint.completion_code();
@@ -1257,7 +1257,7 @@ fn endpoint_configuration_from_command_state(
         registers,
         state.dma,
         state.result.slot_id,
-        &mut state.event_index,
+        &mut state.event_consumer,
         &mut state.control_index,
         endpoint.header.configuration_value,
     )
@@ -1337,7 +1337,7 @@ fn address_device_from_command_state(
             false,
         ),
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
-        &mut state.event_index,
+        &mut state.event_consumer,
     )
     .map_err(|error| error.with_timeout_stage(XhciDriverError::AddressDeviceCommandTimeout))?;
     let address_completion_code = address_device.completion_code();
@@ -1427,14 +1427,14 @@ fn initialize_command_probe(
         u64::from(portsc_after_reset),
     );
 
-    let mut event_index = 0usize;
+    let mut event_consumer = XhciEventRingConsumer::new();
     let noop = submit_command(
         registers,
         dma,
         0,
         XHCI_TRB_TYPE_NO_OP_COMMAND,
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
-        &mut event_index,
+        &mut event_consumer,
     )
     .map_err(|error| error.with_timeout_stage(XhciDriverError::NoopCommandTimeout))?;
     emit_hex(
@@ -1448,7 +1448,7 @@ fn initialize_command_probe(
         1,
         XHCI_TRB_TYPE_ENABLE_SLOT,
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
-        &mut event_index,
+        &mut event_consumer,
     )
     .map_err(|error| error.with_timeout_stage(XhciDriverError::EnableSlotCommandTimeout))?;
     if enable_slot.slot_id() == 0 {
@@ -1475,7 +1475,7 @@ fn initialize_command_probe(
             portsc_after_reset,
         },
         dma,
-        event_index,
+        event_consumer,
         control_index: 0,
     })
 }
@@ -2273,7 +2273,7 @@ fn submit_command(
     command_index: usize,
     command_type: u8,
     expected_event_type: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
 ) -> Result<XhciTrb, XhciDriverError> {
     submit_command_trb(
         registers,
@@ -2281,7 +2281,7 @@ fn submit_command(
         command_index,
         XhciTrb::new(0, 0, 0, command_trb_control(command_type, true)),
         expected_event_type,
-        event_index,
+        event_consumer,
     )
 }
 
@@ -2291,7 +2291,7 @@ fn submit_command_trb(
     command_index: usize,
     command: XhciTrb,
     expected_event_type: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
 ) -> Result<XhciTrb, XhciDriverError> {
     submit_command_trb_with_completion_policy(
         registers,
@@ -2299,7 +2299,7 @@ fn submit_command_trb(
         command_index,
         command,
         expected_event_type,
-        event_index,
+        event_consumer,
         true,
     )
 }
@@ -2310,7 +2310,7 @@ fn submit_command_trb_observe_completion(
     command_index: usize,
     command: XhciTrb,
     expected_event_type: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
 ) -> Result<XhciTrb, XhciDriverError> {
     submit_command_trb_with_completion_policy(
         registers,
@@ -2318,7 +2318,7 @@ fn submit_command_trb_observe_completion(
         command_index,
         command,
         expected_event_type,
-        event_index,
+        event_consumer,
         false,
     )
 }
@@ -2329,7 +2329,7 @@ fn submit_command_trb_with_completion_policy(
     command_index: usize,
     command: XhciTrb,
     expected_event_type: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     require_success: bool,
 ) -> Result<XhciTrb, XhciDriverError> {
     let command_phys = dma
@@ -2344,7 +2344,7 @@ fn submit_command_trb_with_completion_policy(
         dma,
         command_phys,
         expected_event_type,
-        event_index,
+        event_consumer,
         require_success,
     )
 }
@@ -2354,15 +2354,14 @@ fn poll_command_completion(
     dma: XhciDmaState,
     command_phys: u64,
     expected_event_type: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     require_success: bool,
 ) -> Result<XhciTrb, XhciDriverError> {
     let mut attempt = 0usize;
     while attempt < XHCI_COMMAND_WAIT_LIMIT {
-        let event = read_trb(event_ring_ptr(), *event_index);
-        if event.cycle() {
-            let next_event_index = (*event_index + 1) % XHCI_EVENT_RING_TRBS;
-            ack_event(registers, dma, next_event_index)?;
+        let event = read_trb(event_ring_ptr(), event_consumer.index());
+        if let Some(event) = accept_event_at_consumer(event, event_consumer) {
+            ack_event(registers, dma, event_consumer.index())?;
             if event.trb_type() == expected_event_type {
                 if event.parameter() != command_phys {
                     return Err(XhciDriverError::UnexpectedCommandPointer);
@@ -2370,10 +2369,8 @@ fn poll_command_completion(
                 if require_success && event.completion_code() != XHCI_COMPLETION_SUCCESS {
                     return Err(XhciDriverError::CommandCompletionFailure);
                 }
-                *event_index = next_event_index;
                 return Ok(event);
             }
-            *event_index = next_event_index;
         }
         bounded_spin();
         attempt += 1;
@@ -2397,11 +2394,22 @@ fn ack_event(
     )
 }
 
+fn accept_event_at_consumer(
+    event: XhciTrb,
+    consumer: &mut XhciEventRingConsumer,
+) -> Option<XhciTrb> {
+    if !consumer.accepts(event) {
+        return None;
+    }
+    consumer.advance();
+    Some(event)
+}
+
 fn submit_ep0_device_descriptor_request(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
     slot_id: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     control_index: &mut usize,
 ) -> Result<XhciTrb, XhciDriverError> {
     zero_dma_page(descriptor_buffer_ptr());
@@ -2409,7 +2417,7 @@ fn submit_ep0_device_descriptor_request(
         registers,
         dma,
         slot_id,
-        event_index,
+        event_consumer,
         control_index,
         device_descriptor_setup_trb(true),
         device_descriptor_data_trb(dma.descriptor_buffer_phys, true),
@@ -2420,7 +2428,7 @@ fn submit_ep0_configuration_descriptor_request(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
     slot_id: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     control_index: &mut usize,
     length: u16,
 ) -> Result<XhciTrb, XhciDriverError> {
@@ -2432,7 +2440,7 @@ fn submit_ep0_configuration_descriptor_request(
         registers,
         dma,
         slot_id,
-        event_index,
+        event_consumer,
         control_index,
         configuration_descriptor_setup_trb(length, true),
         configuration_descriptor_data_trb(dma.descriptor_buffer_phys, length, true),
@@ -2443,7 +2451,7 @@ fn submit_ep0_set_configuration_request(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
     slot_id: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     control_index: &mut usize,
     configuration_value: u8,
 ) -> Result<XhciTrb, XhciDriverError> {
@@ -2470,14 +2478,14 @@ fn submit_ep0_set_configuration_request(
         .control_ring_phys
         .checked_add((slots.status * core::mem::size_of::<XhciTrb>()) as u64)
         .ok_or(XhciDriverError::MmioWindowOverflow)?;
-    poll_transfer_completion(registers, dma, status_trb_phys, event_index)
+    poll_transfer_completion(registers, dma, status_trb_phys, event_consumer)
 }
 
 fn submit_ep0_control_read(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
     slot_id: u8,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
     control_index: &mut usize,
     setup_trb: XhciTrb,
     data_trb: XhciTrb,
@@ -2502,7 +2510,7 @@ fn submit_ep0_control_read(
         .control_ring_phys
         .checked_add((slots.status * core::mem::size_of::<XhciTrb>()) as u64)
         .ok_or(XhciDriverError::MmioWindowOverflow)?;
-    poll_transfer_completion(registers, dma, status_trb_phys, event_index)
+    poll_transfer_completion(registers, dma, status_trb_phys, event_consumer)
 }
 
 fn reserve_control_transfer(
@@ -2544,15 +2552,13 @@ fn poll_transfer_completion(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     dma: XhciDmaState,
     transfer_trb_phys: u64,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
 ) -> Result<XhciTrb, XhciDriverError> {
     let mut attempt = 0usize;
     while attempt < XHCI_COMMAND_WAIT_LIMIT {
-        let event = read_trb(event_ring_ptr(), *event_index);
-        if event.cycle() {
-            let next_event_index = (*event_index + 1) % XHCI_EVENT_RING_TRBS;
-            ack_event(registers, dma, next_event_index)?;
-            *event_index = next_event_index;
+        let event = read_trb(event_ring_ptr(), event_consumer.index());
+        if let Some(event) = accept_event_at_consumer(event, event_consumer) {
+            ack_event(registers, dma, event_consumer.index())?;
             if event.trb_type() != XHCI_TRB_TYPE_TRANSFER_EVENT {
                 return Err(XhciDriverError::UnexpectedEventType);
             }
@@ -2574,15 +2580,13 @@ fn poll_interrupt_transfer_completion(
     expected_slot_id: u8,
     expected_endpoint_id: u8,
     requested_length: u16,
-    event_index: &mut usize,
+    event_consumer: &mut XhciEventRingConsumer,
 ) -> Result<XhciInterruptTransferCompletion, XhciDriverError> {
     let mut attempt = 0usize;
     while attempt < XHCI_INTERRUPT_TRANSFER_WAIT_LIMIT {
-        let event = read_trb(event_ring_ptr(), *event_index);
-        if event.cycle() {
-            let next_event_index = (*event_index + 1) % XHCI_EVENT_RING_TRBS;
-            ack_event(registers, dma, next_event_index)?;
-            *event_index = next_event_index;
+        let event = read_trb(event_ring_ptr(), event_consumer.index());
+        if let Some(event) = accept_event_at_consumer(event, event_consumer) {
+            ack_event(registers, dma, event_consumer.index())?;
             return validate_interrupt_transfer_event(
                 event,
                 transfer_trb_phys,
@@ -3980,5 +3984,25 @@ mod tests {
         }
         assert!(!consumer.accepts(XhciTrb::new(0, 0, 0, XHCI_TRB_CYCLE)));
         assert!(consumer.accepts(XhciTrb::empty()));
+    }
+
+    #[test]
+    fn accept_event_at_consumer_rejects_stale_event_then_advances_on_matching_cycle() {
+        let mut consumer = XhciEventRingConsumer::new();
+        for _ in 0..16 {
+            consumer.advance();
+        }
+        let stale_event = XhciTrb::new(0xAAAA, 0, 0, XHCI_TRB_CYCLE);
+        let matching_event = XhciTrb::new(0xBBBB, 0, 0, 0);
+
+        assert_eq!(accept_event_at_consumer(stale_event, &mut consumer), None);
+        assert_eq!(consumer.index(), 0);
+        assert!(!consumer.expected_cycle());
+        assert_eq!(
+            accept_event_at_consumer(matching_event, &mut consumer),
+            Some(matching_event)
+        );
+        assert_eq!(consumer.index(), 1);
+        assert!(!consumer.expected_cycle());
     }
 }
