@@ -855,25 +855,34 @@ struct DmaBytePage(UnsafeCell<[u8; XHCI_PAGE_SIZE_BYTES]>);
 
 // SAFETY:
 // 1. Invariant: these wrappers expose only this module's static xHCI DMA state.
-// 2. Established by: the diagnostic initializes and uses the buffers once.
+// 2. Established by: session setup initializes the buffers, then each bounded
+//    capture transfers ownership CPU -> xHCI -> CPU in sequence.
 // 3. Lifetime: the buffers are static for the whole diagnostic boot.
-// 4. Pointer ownership: PythCore owns all mutation before handing them to xHCI.
+// 4. Pointer ownership: PythCore mutates a transfer TRB/report page only before
+//    `arm`; xHCI owns it until a matching completion is observed; PythCore
+//    reads the completed report and calls `complete` before any later reuse.
 // 5. Alignment: each wrapper has 4 KiB alignment.
 // 6. Mapped length: each const generic `N` fixes the backing array length.
 // 7. Concurrency: single-core diagnostic path, polled commands, no IRQ handler.
-// 8. Violation: concurrent aliasing could corrupt the controller DMA contract.
+// 8. Violation: concurrent aliasing or reuse after a post-arm failure could
+//    corrupt an in-flight controller DMA request; failures therefore terminate
+//    the bounded diagnostic without clearing or reusing that report page.
 unsafe impl<const N: usize> Sync for DmaU64Array<N> {}
 
-// SAFETY: same static single-owner xHCI DMA invariant as `DmaU64Array`.
+// SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
+// `DmaU64Array`; the interrupt-ring producer allows one Normal TRB in flight.
 unsafe impl<const N: usize> Sync for DmaTrbRing<N> {}
 
-// SAFETY: same static single-owner xHCI DMA invariant as `DmaU64Array`.
+// SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
+// `DmaU64Array`.
 unsafe impl Sync for DmaErst {}
 
-// SAFETY: same static single-owner xHCI DMA invariant as `DmaU64Array`.
+// SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
+// `DmaU64Array`.
 unsafe impl<const N: usize> Sync for DmaScratchpadPages<N> {}
 
-// SAFETY: same static single-owner xHCI DMA invariant as `DmaU64Array`.
+// SAFETY: same repeated, sequential CPU -> xHCI -> CPU ownership invariant as
+// `DmaU64Array`; post-arm failures leave the report page unavailable for reuse.
 unsafe impl Sync for DmaBytePage {}
 
 static XHCI_DCBAA: DmaU64Array<XHCI_DCBAA_ENTRIES> =
@@ -1249,9 +1258,7 @@ impl XhciInterruptTransferProbeSession {
     }
 
     pub fn capture_next(&mut self) -> Result<XhciInterruptTransferSample, XhciDriverError> {
-        if self.completed_reports >= XHCI_BOOT_MOUSE_RECURRING_REPORTS {
-            return Err(XhciDriverError::InterruptTransferSequenceComplete);
-        }
+        ensure_interrupt_transfer_sequence_active(self.completed_reports)?;
 
         let cursor = self.transfer_producer.arm()?;
         let transfer_trb_phys =
@@ -2090,6 +2097,16 @@ pub const fn interrupt_transfer_actual_length(
         return Err(XhciDriverError::InvalidInterruptTransferLength);
     }
     Ok(requested_length - residual_length as u16)
+}
+
+const fn ensure_interrupt_transfer_sequence_active(
+    completed_reports: u8,
+) -> Result<(), XhciDriverError> {
+    if completed_reports >= XHCI_BOOT_MOUSE_RECURRING_REPORTS {
+        Err(XhciDriverError::InterruptTransferSequenceComplete)
+    } else {
+        Ok(())
+    }
 }
 
 fn prepare_interrupt_transfer_at(
@@ -3125,7 +3142,9 @@ fn descriptor_buffer_ptr() -> *mut u8 {
 
 fn interrupt_report_buffer_ptr() -> *mut u8 {
     // SAFETY: same static single-owner DMA accessor invariant as `dcbaa_ptr`,
-    // for the one in-flight interrupt-IN report buffer page.
+    // for the interrupt-IN report page. The session reuses it only after the
+    // matching completion returns ownership to PythCore; a post-arm failure
+    // leaves it unavailable for the rest of the bounded diagnostic.
     unsafe { (*XHCI_INTERRUPT_REPORT_BUFFER.0.get()).as_mut_ptr() }
 }
 
@@ -3143,8 +3162,9 @@ fn control_ring_ptr() -> *mut XhciTrb {
 
 fn interrupt_ring_ptr() -> *mut XhciTrb {
     // SAFETY: same static single-owner DMA accessor invariant as `dcbaa_ptr`,
-    // for the interrupt-IN endpoint transfer ring. The one-shot diagnostic
-    // owns its single in-flight Normal TRB and exposes no interrupt handler.
+    // for the interrupt-IN endpoint transfer ring. The session publishes one
+    // Normal TRB at a time, returns CPU ownership only after its matching
+    // completion, and does not reuse a post-arm failure; no IRQ handler exists.
     unsafe { (*XHCI_INTERRUPT_RING.0.get()).as_mut_ptr() }
 }
 
@@ -3947,6 +3967,42 @@ mod tests {
         );
         assert!(!read_trb(interrupt_ring_ptr(), 0).cycle());
         assert_eq!(read_trb(interrupt_ring_ptr(), 15), link_before);
+    }
+
+    #[test]
+    fn interrupt_transfer_sequence_rejects_seventeenth_capture_without_arming() {
+        let mut producer = XhciInterruptTransferProducer::new();
+
+        assert_eq!(
+            ensure_interrupt_transfer_sequence_active(XHCI_BOOT_MOUSE_RECURRING_REPORTS),
+            Err(XhciDriverError::InterruptTransferSequenceComplete)
+        );
+        assert_eq!(
+            producer.arm(),
+            Ok(XhciInterruptTransferCursorSnapshot {
+                index: 0,
+                cycle: true,
+            })
+        );
+    }
+
+    #[test]
+    fn interrupt_transfer_preparation_failure_after_arm_preserves_report_page_and_owner() {
+        let _guard = dma_test_lock();
+        let dma = prepare_dma_state(0).unwrap();
+        write_dma_u32(interrupt_report_buffer_ptr(), 0, 0xFFFF_FFFF);
+        let mut producer = XhciInterruptTransferProducer::new();
+        let cursor = producer.arm().unwrap();
+
+        assert_eq!(
+            prepare_interrupt_transfer_at(dma, 0, cursor),
+            Err(XhciDriverError::InvalidInterruptTransferLength)
+        );
+        assert_eq!(read_dma_u32(interrupt_report_buffer_ptr(), 0), 0xFFFF_FFFF);
+        assert_eq!(
+            producer.arm(),
+            Err(XhciDriverError::InterruptTransferAlreadyArmed)
+        );
     }
 
     #[test]
