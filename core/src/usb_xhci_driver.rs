@@ -608,12 +608,14 @@ impl XhciTrb {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "usb-xhci-command-probe", allow(dead_code))]
 struct XhciInterruptTransferCursorSnapshot {
     index: usize,
     cycle: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "usb-xhci-command-probe", allow(dead_code))]
 struct XhciInterruptTransferProducer {
     index: usize,
     cycle: bool,
@@ -621,6 +623,7 @@ struct XhciInterruptTransferProducer {
     wrap_count: u8,
 }
 
+#[cfg_attr(feature = "usb-xhci-command-probe", allow(dead_code))]
 impl XhciInterruptTransferProducer {
     const fn new() -> Self {
         Self {
@@ -672,12 +675,14 @@ impl XhciInterruptTransferProducer {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "usb-xhci-command-probe", allow(dead_code))]
 struct XhciEventRingConsumer {
     index: usize,
     expected_cycle: bool,
     wrap_count: u8,
 }
 
+#[cfg_attr(feature = "usb-xhci-command-probe", allow(dead_code))]
 impl XhciEventRingConsumer {
     const fn new() -> Self {
         Self {
