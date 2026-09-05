@@ -285,9 +285,15 @@ wrap, one event-ring wrap, deterministic motion totals, and an observed left
 press followed by release. The final panel is frozen and explicitly says
 `frozen no cursor`; it retains `NO_DISK_WRITES`. The fresh harness ended with
 `USB_XHCI_BOOT_MOUSE_RECURRING_PROBE_TEST_OK` and `QEMU_OUTCOME success`.
-Status is **Accepted in QEMU; physical validation pending**. It does not add a
-cursor, wheel/click semantics, normal input-event routing, IRQ USB input, hub
-support, hot-unplug recovery, a second ring wrap, or storage writes.
+The hash-verified image was then deployed to the Lexar D70E while preserving
+108 unrelated files. On the Lenovo `81VS`, the Dell/PixArt mouse completed all
+sixteen reports on port 6 and the frozen panel showed `reports 16 wrap 1`,
+`seen 01 rel 01`, signed movement totals, `frozen no cursor`, and
+`no disk writes`. Status is **Accepted in QEMU and on this Lenovo/Dell-PixArt
+target**. The click was decoded, but this diagnostic intentionally performs no
+click action and draws no cursor. It does not establish generic USB HID,
+wheel/click semantics, normal input-event routing, IRQ USB input, hub support,
+hot-unplug recovery, a second ring wrap, or storage writes.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
@@ -326,6 +332,7 @@ Current-state references:
 - [ADR 0087: USB xHCI one-shot boot-mouse decode probe](docs/decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088: USB xHCI recurring boot-mouse probe](docs/decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
 - [Physical ADR 0087 boot-mouse decode report](docs/evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
+- [Physical ADR 0088 recurring boot-mouse report](docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)

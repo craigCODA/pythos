@@ -890,11 +890,16 @@ transfer, and recurring transfer completions, so exactly one event wrap is not
 a stable acceptance rule; the recorded QEMU run observed exactly one. The
 final framebuffer freezes at `reports 16 wrap 1` with
 `frozen no cursor` and `no disk writes`. Typed driver, decode, or terminal-
-invariant failure stops without readiness. ADR 0088 status is **Accepted in
-QEMU; physical validation pending**. No recurring image has been deployed,
-and this evidence does not establish physical DMA/controller behavior, cursor
-movement, wheel/click semantics, normal input routing, IRQ input, hub support,
-hot-unplug recovery, a second ring wrap, or writes.
+invariant failure stops without readiness. The hash-verified image was deployed
+to the Lexar D70E while preserving 108 unrelated files. The Lenovo `81VS` and
+Dell/PixArt mouse then reached the successful panel on port 6 with `reports 16
+wrap 1`, `seen 01 rel 01`, X total `-61`, Y total `-82`, `frozen no cursor`,
+and `no disk writes`. ADR 0088 status is **Accepted in QEMU and on this
+Lenovo/Dell-PixArt target**. This target-specific result does not establish
+generic physical support, a physical COM1 transcript or event-ring wrap count,
+cursor movement, click actions, wheel semantics, normal input routing, IRQ
+input, hub support, hot-unplug recovery, a second transfer-ring wrap, or PythOS
+storage writes.
 
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
@@ -922,6 +927,7 @@ See:
 - [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088 USB xHCI recurring boot-mouse probe](decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
 - [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
+- [2026-09-04 physical ADR 0088 recurring report](evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)

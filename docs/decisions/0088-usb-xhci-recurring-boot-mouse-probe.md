@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Accepted in QEMU; physical validation pending
+Status: Accepted in QEMU and on the Lenovo 81VS/Dell-PixArt target
 
 ## Context
 
@@ -174,14 +174,35 @@ The final COM1 log is 35,346 bytes. It contains the sequence target exactly
 once before ordinal 1, exactly sixteen global occurrences of every repeated
 group marker, and zero driver, decode, or terminal-invariant failure markers.
 
-This is QEMU xHCI evidence only. No recurring image has been deployed to USB
-and no physical recurring report sequence has been accepted.
+## Physical Verification
+
+The exact QEMU-accepted eight-file image was deployed to the freshly identified
+Lexar D70E boot USB at commit `e168c49aeb1eb6fe745c845e2399396e0a658b53`.
+All source-to-target hashes matched and all 108 unrelated USB files retained
+identical before/after hashes.
+
+The Lenovo `81VS` then rendered the successful frozen recurring panel on AMD
+xHCI `1022:7914`, port 6, slot 1, endpoint `0x81`, DCI 3. It reported `reports
+16 wrap 1`, final buttons `00`, `seen 01 rel 01`, signed totals X `-61` and Y
+`-82`, `aux 00 present 1`, `frozen no cursor`, and `no disk writes`. Therefore
+the same physical sequence observed a left-button press and its later release;
+the absence of a click action or visible cursor is the intended diagnostic
+boundary, not a decode failure.
+
+The retained photo is
+`docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-success.png`,
+SHA-256
+`B5802BE845386BDFE37815A7477CF684C8ABFE00115C7ED2F13681821EA47598`.
+The full target-specific evidence and limitations are recorded in
+`docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md`.
+There is no physical COM1 transcript.
 
 ## Consequences
 
-PythOS now has a deterministic emulator proof for bounded recurring boot-mouse
-transport, ordered decode/aggregation, one transfer-ring cycle transition, and
-event-ring cycle-state handling. Physical validation remains separately gated:
-the exact removable target must be re-identified, a write must be explicitly
-approved, and the Lenovo/Dell-PixArt run must reach the frozen sixteen-report
-panel before this status can be expanded.
+PythOS now has deterministic emulator proof plus target-specific physical proof
+for bounded recurring boot-mouse transport, ordered decode/aggregation, a
+transfer-ring cycle transition, signed movement, and a press/release sequence.
+This does not establish generic USB HID support, physical COM1 marker ordering,
+the physical event-ring wrap count, cursor or click behavior, wheel semantics,
+normal input routing, IRQ-driven input, hub support, hot-unplug recovery, a
+second transfer-ring wrap, or PythOS storage writes.
