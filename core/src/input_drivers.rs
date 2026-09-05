@@ -251,6 +251,136 @@ pub(crate) fn scancode_to_keycode(scancode: u8) -> Option<KeyCode> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum PhysicalScanSet {
+    Unknown,
+    Set1,
+    Set2,
+}
+
+/// Decodes physical PS/2 keyboard transport bytes into raw key make events.
+///
+/// The decoder owns scan-set selection and release/extended-prefix
+/// suppression. Higher layers retain their own policy for accepted keys.
+pub(crate) struct PhysicalKeyboardDecoder {
+    mode: PhysicalScanSet,
+    release_prefix: bool,
+    extended_prefix: bool,
+}
+
+impl PhysicalKeyboardDecoder {
+    pub(crate) const fn new() -> Self {
+        Self {
+            mode: PhysicalScanSet::Unknown,
+            release_prefix: false,
+            extended_prefix: false,
+        }
+    }
+
+    pub(crate) fn feed_raw_byte(&mut self, byte: u8) -> Option<RawInputEvent> {
+        if self.consume_non_make_byte(byte) {
+            return None;
+        }
+        let key = self.decode_make_byte(byte)?;
+        Some(RawInputEvent::KeyPressed {
+            scancode: byte,
+            key,
+        })
+    }
+
+    fn consume_non_make_byte(&mut self, byte: u8) -> bool {
+        if self.extended_prefix {
+            self.extended_prefix = false;
+            if byte == 0xF0 {
+                self.release_prefix = true;
+            }
+            return true;
+        }
+        if byte == 0xE0 {
+            self.extended_prefix = true;
+            return true;
+        }
+        if byte == 0xF0 {
+            self.release_prefix = true;
+            return true;
+        }
+        if self.release_prefix {
+            self.release_prefix = false;
+            return true;
+        }
+        if matches!(self.mode, PhysicalScanSet::Set1 | PhysicalScanSet::Unknown) && byte & 0x80 != 0
+        {
+            self.mode = PhysicalScanSet::Set1;
+            return true;
+        }
+        false
+    }
+
+    fn decode_make_byte(&mut self, byte: u8) -> Option<KeyCode> {
+        match self.mode {
+            PhysicalScanSet::Unknown => {
+                if let Some(key) = scancode_to_keycode(byte) {
+                    self.mode = PhysicalScanSet::Set1;
+                    return Some(key);
+                }
+                if let Some(key) = decode_set2_key(byte) {
+                    self.mode = PhysicalScanSet::Set2;
+                    return Some(key);
+                }
+                None
+            }
+            PhysicalScanSet::Set1 => scancode_to_keycode(byte),
+            PhysicalScanSet::Set2 => decode_set2_key(byte),
+        }
+    }
+}
+
+fn decode_set2_key(byte: u8) -> Option<KeyCode> {
+    match byte {
+        0x1C => Some(KeyCode::A),
+        0x32 => Some(KeyCode::B),
+        0x21 => Some(KeyCode::C),
+        0x23 => Some(KeyCode::D),
+        0x24 => Some(KeyCode::E),
+        0x2B => Some(KeyCode::F),
+        0x34 => Some(KeyCode::G),
+        0x33 => Some(KeyCode::H),
+        0x43 => Some(KeyCode::I),
+        0x3B => Some(KeyCode::J),
+        0x42 => Some(KeyCode::K),
+        0x4B => Some(KeyCode::L),
+        0x3A => Some(KeyCode::M),
+        0x31 => Some(KeyCode::N),
+        0x44 => Some(KeyCode::O),
+        0x4D => Some(KeyCode::P),
+        0x15 => Some(KeyCode::Q),
+        0x2D => Some(KeyCode::R),
+        0x1B => Some(KeyCode::S),
+        0x2C => Some(KeyCode::T),
+        0x3C => Some(KeyCode::U),
+        0x2A => Some(KeyCode::V),
+        0x1D => Some(KeyCode::W),
+        0x22 => Some(KeyCode::X),
+        0x35 => Some(KeyCode::Y),
+        0x1A => Some(KeyCode::Z),
+        0x45 => Some(KeyCode::Digit0),
+        0x16 => Some(KeyCode::Digit1),
+        0x1E => Some(KeyCode::Digit2),
+        0x26 => Some(KeyCode::Digit3),
+        0x25 => Some(KeyCode::Digit4),
+        0x2E => Some(KeyCode::Digit5),
+        0x36 => Some(KeyCode::Digit6),
+        0x3D => Some(KeyCode::Digit7),
+        0x3E => Some(KeyCode::Digit8),
+        0x46 => Some(KeyCode::Digit9),
+        0x5A => Some(KeyCode::Enter),
+        0x29 => Some(KeyCode::Space),
+        0x66 => Some(KeyCode::Backspace),
+        0x76 => Some(KeyCode::Escape),
+        _ => None,
+    }
+}
+
 pub struct KeyboardDriver {
     owner: ServiceId,
     capability: crate::capabilities::CapabilityHandle,
@@ -404,6 +534,46 @@ mod tests {
         assert_eq!(
             mouse.decode(&capabilities, input, [0x08, 5, 253]),
             Ok(RawInputEvent::MouseMoved { dx: 5, dy: -3 })
+        );
+    }
+
+    #[test]
+    fn physical_keyboard_decoder_emits_set1_key_down_events() {
+        let mut decoder = PhysicalKeyboardDecoder::new();
+        assert_eq!(
+            decoder.feed_raw_byte(0x39),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x39,
+                key: KeyCode::Space,
+            })
+        );
+        assert_eq!(
+            decoder.feed_raw_byte(0x0E),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x0E,
+                key: KeyCode::Backspace,
+            })
+        );
+    }
+
+    #[test]
+    fn physical_keyboard_decoder_emits_set2_key_down_and_ignores_release() {
+        let mut decoder = PhysicalKeyboardDecoder::new();
+        assert_eq!(
+            decoder.feed_raw_byte(0x29),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x29,
+                key: KeyCode::Space,
+            })
+        );
+        assert_eq!(decoder.feed_raw_byte(0xF0), None);
+        assert_eq!(decoder.feed_raw_byte(0x29), None);
+        assert_eq!(
+            decoder.feed_raw_byte(0x66),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x66,
+                key: KeyCode::Backspace,
+            })
         );
     }
 

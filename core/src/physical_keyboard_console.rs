@@ -4,7 +4,7 @@
 //! `KeyCode` surface already used by the kernel input path into bytes that the
 //! existing shell line editor understands.
 
-use crate::input_drivers::{KeyCode, scancode_to_keycode};
+use crate::input_drivers::{KeyCode, PhysicalKeyboardDecoder, RawInputEvent};
 
 #[cfg(all(not(test), feature = "physical-keyboard-console"))]
 use crate::{ps2, serial};
@@ -14,79 +14,23 @@ use core::cell::UnsafeCell;
 #[cfg(all(not(test), feature = "physical-keyboard-console"))]
 const POLL_DRAIN_LIMIT: usize = 16;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScanSetMode {
-    Unknown,
-    Set1,
-    Set2,
-}
-
 pub(crate) struct KeyboardConsoleDecoder {
-    mode: ScanSetMode,
-    release_prefix: bool,
-    extended_prefix: bool,
+    physical: PhysicalKeyboardDecoder,
 }
 
 impl KeyboardConsoleDecoder {
     pub(crate) const fn new() -> Self {
         Self {
-            mode: ScanSetMode::Unknown,
-            release_prefix: false,
-            extended_prefix: false,
+            physical: PhysicalKeyboardDecoder::new(),
         }
     }
 
     pub(crate) fn feed_raw_byte(&mut self, byte: u8) -> Option<u8> {
-        if self.consume_non_make_byte(byte) {
+        let event = self.physical.feed_raw_byte(byte)?;
+        let RawInputEvent::KeyPressed { key, .. } = event else {
             return None;
-        }
-        let key = self.decode_make_byte(byte)?;
+        };
         keycode_to_console_byte(key)
-    }
-
-    fn consume_non_make_byte(&mut self, byte: u8) -> bool {
-        if self.extended_prefix {
-            self.extended_prefix = false;
-            if byte == 0xF0 {
-                self.release_prefix = true;
-            }
-            return true;
-        }
-        if byte == 0xE0 {
-            self.extended_prefix = true;
-            return true;
-        }
-        if byte == 0xF0 {
-            self.release_prefix = true;
-            return true;
-        }
-        if self.release_prefix {
-            self.release_prefix = false;
-            return true;
-        }
-        if matches!(self.mode, ScanSetMode::Set1 | ScanSetMode::Unknown) && byte & 0x80 != 0 {
-            self.mode = ScanSetMode::Set1;
-            return true;
-        }
-        false
-    }
-
-    fn decode_make_byte(&mut self, byte: u8) -> Option<KeyCode> {
-        match self.mode {
-            ScanSetMode::Unknown => {
-                if let Some(key) = scancode_to_keycode(byte) {
-                    self.mode = ScanSetMode::Set1;
-                    return Some(key);
-                }
-                if let Some(key) = decode_set2_key(byte) {
-                    self.mode = ScanSetMode::Set2;
-                    return Some(key);
-                }
-                None
-            }
-            ScanSetMode::Set1 => scancode_to_keycode(byte),
-            ScanSetMode::Set2 => decode_set2_key(byte),
-        }
     }
 }
 
@@ -132,52 +76,6 @@ pub(crate) fn keycode_to_console_byte(key: KeyCode) -> Option<u8> {
         KeyCode::Enter => Some(b'\r'),
         KeyCode::Backspace => Some(0x08),
         KeyCode::Escape => None,
-    }
-}
-
-fn decode_set2_key(byte: u8) -> Option<KeyCode> {
-    match byte {
-        0x1C => Some(KeyCode::A),
-        0x32 => Some(KeyCode::B),
-        0x21 => Some(KeyCode::C),
-        0x23 => Some(KeyCode::D),
-        0x24 => Some(KeyCode::E),
-        0x2B => Some(KeyCode::F),
-        0x34 => Some(KeyCode::G),
-        0x33 => Some(KeyCode::H),
-        0x43 => Some(KeyCode::I),
-        0x3B => Some(KeyCode::J),
-        0x42 => Some(KeyCode::K),
-        0x4B => Some(KeyCode::L),
-        0x3A => Some(KeyCode::M),
-        0x31 => Some(KeyCode::N),
-        0x44 => Some(KeyCode::O),
-        0x4D => Some(KeyCode::P),
-        0x15 => Some(KeyCode::Q),
-        0x2D => Some(KeyCode::R),
-        0x1B => Some(KeyCode::S),
-        0x2C => Some(KeyCode::T),
-        0x3C => Some(KeyCode::U),
-        0x2A => Some(KeyCode::V),
-        0x1D => Some(KeyCode::W),
-        0x22 => Some(KeyCode::X),
-        0x35 => Some(KeyCode::Y),
-        0x1A => Some(KeyCode::Z),
-        0x45 => Some(KeyCode::Digit0),
-        0x16 => Some(KeyCode::Digit1),
-        0x1E => Some(KeyCode::Digit2),
-        0x26 => Some(KeyCode::Digit3),
-        0x25 => Some(KeyCode::Digit4),
-        0x2E => Some(KeyCode::Digit5),
-        0x36 => Some(KeyCode::Digit6),
-        0x3D => Some(KeyCode::Digit7),
-        0x3E => Some(KeyCode::Digit8),
-        0x46 => Some(KeyCode::Digit9),
-        0x5A => Some(KeyCode::Enter),
-        0x29 => Some(KeyCode::Space),
-        0x66 => Some(KeyCode::Backspace),
-        0x76 => Some(KeyCode::Escape),
-        _ => None,
     }
 }
 

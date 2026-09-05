@@ -7,7 +7,7 @@
 #[cfg(feature = "physical-input-event-diagnostic")]
 use crate::input_events::InputEventKind;
 use crate::{
-    input_drivers::{KeyCode, RawInputEvent},
+    input_drivers::{KeyCode, PhysicalKeyboardDecoder, RawInputEvent},
     input_events::{self, InputEvent},
 };
 
@@ -47,13 +47,6 @@ pub(crate) struct InputDiagnosticStep {
     pub(crate) result: InputDiagnosticResult,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ScanSetMode {
-    Unknown,
-    Set1,
-    Set2,
-}
-
 pub(crate) struct InputDiagnostic {
     text: [u8; TEXT_CAPACITY],
     text_len: usize,
@@ -61,9 +54,7 @@ pub(crate) struct InputDiagnostic {
     raw_len: usize,
     keys: [KeyCode; KEY_LOG_CAPACITY],
     key_len: usize,
-    mode: ScanSetMode,
-    release_prefix: bool,
-    extended_prefix: bool,
+    physical: PhysicalKeyboardDecoder,
     last_result: InputDiagnosticResult,
 }
 
@@ -76,9 +67,7 @@ impl InputDiagnostic {
             raw_len: 0,
             keys: [KeyCode::A; KEY_LOG_CAPACITY],
             key_len: 0,
-            mode: ScanSetMode::Unknown,
-            release_prefix: false,
-            extended_prefix: false,
+            physical: PhysicalKeyboardDecoder::new(),
             last_result: InputDiagnosticResult::Waiting,
         }
     }
@@ -91,25 +80,21 @@ impl InputDiagnostic {
                 result: InputDiagnosticResult::Accepted,
             };
         }
-        if self.consume_non_make_byte(byte) {
+        let Some(raw) = self.physical.feed_raw_byte(byte) else {
             self.last_result = InputDiagnosticResult::Waiting;
             return InputDiagnosticStep {
                 event: None,
                 result: InputDiagnosticResult::Waiting,
             };
-        }
-        let Some(key) = self.decode_make_byte(byte) else {
-            self.last_result = InputDiagnosticResult::Waiting;
-            return InputDiagnosticStep {
-                event: None,
-                result: InputDiagnosticResult::Waiting,
-            };
-        };
-        let raw = RawInputEvent::KeyPressed {
-            scancode: byte,
-            key,
         };
         let Ok(event) = input_events::normalize(raw) else {
+            self.last_result = InputDiagnosticResult::Waiting;
+            return InputDiagnosticStep {
+                event: None,
+                result: InputDiagnosticResult::Waiting,
+            };
+        };
+        let RawInputEvent::KeyPressed { key, .. } = raw else {
             self.last_result = InputDiagnosticResult::Waiting;
             return InputDiagnosticStep {
                 event: None,
@@ -155,47 +140,6 @@ impl InputDiagnostic {
         self.keys[KEY_LOG_CAPACITY - 1] = key;
     }
 
-    fn consume_non_make_byte(&mut self, byte: u8) -> bool {
-        if self.extended_prefix {
-            self.extended_prefix = false;
-            if byte == 0xF0 {
-                self.release_prefix = true;
-            }
-            return true;
-        }
-        if byte == 0xE0 {
-            self.extended_prefix = true;
-            return true;
-        }
-        if byte == 0xF0 {
-            self.release_prefix = true;
-            return true;
-        }
-        if self.release_prefix {
-            self.release_prefix = false;
-            return true;
-        }
-        byte & 0x80 != 0
-    }
-
-    fn decode_make_byte(&mut self, byte: u8) -> Option<KeyCode> {
-        match self.mode {
-            ScanSetMode::Unknown => {
-                if let Some(key) = decode_set1_key(byte) {
-                    self.mode = ScanSetMode::Set1;
-                    return Some(key);
-                }
-                if let Some(key) = decode_set2_key(byte) {
-                    self.mode = ScanSetMode::Set2;
-                    return Some(key);
-                }
-                None
-            }
-            ScanSetMode::Set1 => decode_set1_key(byte),
-            ScanSetMode::Set2 => decode_set2_key(byte),
-        }
-    }
-
     fn apply_key_event(&mut self, key: KeyCode) -> InputDiagnosticResult {
         self.push_key(key);
         match key {
@@ -226,32 +170,6 @@ impl InputDiagnostic {
         }
         self.text.copy_within(1..TEXT_CAPACITY, 0);
         self.text[TEXT_CAPACITY - 1] = byte;
-    }
-}
-
-fn decode_set1_key(byte: u8) -> Option<KeyCode> {
-    match byte {
-        0x11 => Some(KeyCode::W),
-        0x1E => Some(KeyCode::A),
-        0x25 => Some(KeyCode::K),
-        0x12 => Some(KeyCode::E),
-        0x1C => Some(KeyCode::Enter),
-        0x0E => Some(KeyCode::Backspace),
-        0x39 => Some(KeyCode::Space),
-        _ => None,
-    }
-}
-
-fn decode_set2_key(byte: u8) -> Option<KeyCode> {
-    match byte {
-        0x1D => Some(KeyCode::W),
-        0x1C => Some(KeyCode::A),
-        0x42 => Some(KeyCode::K),
-        0x24 => Some(KeyCode::E),
-        0x5A => Some(KeyCode::Enter),
-        0x66 => Some(KeyCode::Backspace),
-        0x29 => Some(KeyCode::Space),
-        _ => None,
     }
 }
 
