@@ -10,6 +10,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from typing import Callable
 
 from launcher_click import type_cursor_activation_sequence
 
@@ -34,6 +35,19 @@ def load_recurring_harness():
 RECURRING_HARNESS = load_recurring_harness()
 
 
+def load_qemu_runner():
+    path = ROOT / "scripts" / "run-qemu.py"
+    spec = importlib.util.spec_from_file_location("viewing_qemu_runner", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+QEMU_RUNNER = load_qemu_runner()
+
+
 PREFIX = "PYTHOS:CORE:"
 TRAVERSAL_MARKER = PREFIX + "VIEWING:TRAVERSAL_RELATIVE_MOTION"
 ACTIVATION_READY_MARKER = PREFIX + "SESSION_CONTROL:CURSOR_ACTIVATION_READY"
@@ -53,6 +67,22 @@ BACKGROUND_COLOR = (0, 0, 0)
 FOCUS_HALF_SPAN = 12
 FOCUS_ARM_LENGTH = 6
 FOCUS_THICKNESS = 2
+LEGACY_CURSOR_COLOR = (255, 255, 255)
+LEGACY_CURSOR_SPRITE = (
+    0b1000_0000,
+    0b1100_0000,
+    0b1110_0000,
+    0b1111_0000,
+    0b1111_1000,
+    0b1111_1100,
+    0b1111_1110,
+    0b1111_0000,
+    0b1101_1000,
+    0b1000_1100,
+    0b0000_1100,
+    0b0000_0110,
+)
+STATUS_TEXT_REGION = (16, 2, 16 + len("focus active") * 8, 2 + 8)
 
 
 def assert_viewing_serial(serial: str) -> tuple[int, int]:
@@ -250,6 +280,45 @@ def assert_focus_mark_ppm(data: bytes, focus_x: int, focus_y: int) -> None:
         offset = (y * width + x) * 3
         return tuple(pixels[offset : offset + 3])
 
+    white_pixels = {
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if pixel_at(x, y) == LEGACY_CURSOR_COLOR
+    }
+    cursor_bits = {
+        (column, row)
+        for row, bits in enumerate(LEGACY_CURSOR_SPRITE)
+        for column in range(8)
+        if bits & (0x80 >> column) != 0
+    }
+    candidate_origins = {
+        (x - column, y - row)
+        for x, y in white_pixels
+        for column, row in cursor_bits
+        if 0 <= x - column <= width - 8
+        and 0 <= y - row <= height - len(LEGACY_CURSOR_SPRITE)
+    }
+    status_left, status_top, status_right, status_bottom = STATUS_TEXT_REGION
+    for origin_x, origin_y in candidate_origins:
+        expected_cursor = {
+            (origin_x + column, origin_y + row) for column, row in cursor_bits
+        }
+        cursor_box_white = {
+            (x, y)
+            for x, y in white_pixels
+            if origin_x <= x < origin_x + 8
+            and origin_y <= y < origin_y + len(LEGACY_CURSOR_SPRITE)
+        }
+        wholly_in_status_text = all(
+            status_left <= x < status_right and status_top <= y < status_bottom
+            for x, y in expected_cursor
+        )
+        if cursor_box_white == expected_cursor and not wholly_in_status_text:
+            raise AssertionError(
+                f"legacy ADR 0053 cursor arrow remains at ({origin_x}, {origin_y})"
+            )
+
     if pixel_at(focus_x, focus_y) != BACKGROUND_COLOR:
         raise AssertionError("FocusMark center is not background")
     horizontal_gap = range(max(0, left), min(width, right + 1))
@@ -274,6 +343,15 @@ def assert_viewing_report_routes(serial: str) -> None:
                 f"report {ordinal} routes were traversal={traversal_count}, "
                 f"cursor={cursor_count}; expected {expected_traversal}, {expected_cursor}"
             )
+        if ordinal <= 14:
+            decode = group.find(RECURRING_HARNESS.PREFIX + "XHCI_BOOT_MOUSE_DECODE_READY")
+            route_marker = TRAVERSAL_MARKER if ordinal == 1 else CURSOR_MARKER
+            route = group.find(route_marker)
+            report_ready = group.find(RECURRING_HARNESS.REPORT_READY_MARKER)
+            if not 0 <= decode < route < report_ready:
+                raise AssertionError(
+                    f"report {ordinal} route did not follow decode and precede report-ready"
+                )
         if ordinal == 1:
             route = group.find(TRAVERSAL_MARKER)
             ready = group.find(ACTIVATION_READY_MARKER)
@@ -319,6 +397,33 @@ def read_serial_log() -> str:
     return SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
 
 
+def cleanup_runner_process(
+    process: subprocess.Popen[str],
+    terminate_timeout: float = 5.0,
+    request_qmp_quit: Callable[[], None] | None = None,
+    graceful_timeout: float = 50.0,
+) -> None:
+    """Ensure a spawned runner has terminated and been reaped."""
+    if process.poll() is not None:
+        return
+    if request_qmp_quit is not None:
+        try:
+            request_qmp_quit()
+        except (OSError, RuntimeError, ConnectionError):
+            pass
+        try:
+            process.wait(timeout=graceful_timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+    process.terminate()
+    try:
+        process.wait(timeout=terminate_timeout)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=terminate_timeout)
+
+
 def run_probe_boot() -> tuple[str, str]:
     for artifact in (SERIAL_LOG, SCREENDUMP):
         if artifact.exists():
@@ -361,44 +466,46 @@ def run_probe_boot() -> tuple[str, str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
-    activation_deadline = time.monotonic() + 50.0
-    while ACTIVATION_READY_MARKER not in read_serial_log():
-        if process.poll() is not None:
-            output, _ = process.communicate()
-            print(output)
-            raise AssertionError(
-                "QEMU runner exited before SESSION_CONTROL:CURSOR_ACTIVATION_READY"
-            )
-        if time.monotonic() >= activation_deadline:
-            try:
-                output, _ = process.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.terminate()
-                output, _ = process.communicate(timeout=5)
-            print(output)
-            raise AssertionError("timed out waiting for cursor activation readiness")
-        time.sleep(0.05)
-
-    type_cursor_activation_sequence()
     try:
-        output, _ = process.communicate(timeout=55)
-    except subprocess.TimeoutExpired as error:
-        process.terminate()
-        output, _ = process.communicate(timeout=5)
+        activation_deadline = time.monotonic() + 50.0
+        while ACTIVATION_READY_MARKER not in read_serial_log():
+            if process.poll() is not None:
+                output, _ = process.communicate()
+                print(output)
+                raise AssertionError(
+                    "QEMU runner exited before SESSION_CONTROL:CURSOR_ACTIVATION_READY"
+                )
+            if time.monotonic() >= activation_deadline:
+                raise AssertionError("timed out waiting for cursor activation readiness")
+            time.sleep(0.05)
+
+        try:
+            type_cursor_activation_sequence()
+        except (OSError, RuntimeError, ConnectionError) as error:
+            raise AssertionError(
+                f"cursor activation QMP sequence failed: {error}"
+            ) from error
+        try:
+            output, _ = process.communicate(timeout=55)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError("QEMU runner did not terminate after activation") from error
         print(output)
-        raise AssertionError("QEMU runner did not terminate after activation") from error
-    print(output)
-    if process.returncode != 0:
-        raise AssertionError(f"QEMU runner failed with {process.returncode}")
-    if output.count("QEMU_OUTCOME success") != 1:
-        raise AssertionError("QEMU runner did not report exactly one success outcome")
-    if "QEMU_OUTCOME timeout" in output or "usb mouse sequence incomplete" in output:
-        raise AssertionError("timeout or incomplete mouse sequence was classified as success")
-    if not SERIAL_LOG.exists():
-        raise AssertionError("QEMU runner did not create the COM1 serial log")
-    if not SCREENDUMP.exists():
-        raise AssertionError("QEMU runner did not create the FocusMark screendump")
-    return read_serial_log(), output
+        if process.returncode != 0:
+            raise AssertionError(f"QEMU runner failed with {process.returncode}")
+        if output.count("QEMU_OUTCOME success") != 1:
+            raise AssertionError("QEMU runner did not report exactly one success outcome")
+        if "QEMU_OUTCOME timeout" in output or "usb mouse sequence incomplete" in output:
+            raise AssertionError("timeout or incomplete mouse sequence was classified as success")
+        if not SERIAL_LOG.exists():
+            raise AssertionError("QEMU runner did not create the COM1 serial log")
+        if not SCREENDUMP.exists():
+            raise AssertionError("QEMU runner did not create the FocusMark screendump")
+        return read_serial_log(), output
+    finally:
+        cleanup_runner_process(
+            process,
+            request_qmp_quit=QEMU_RUNNER.request_qmp_quit,
+        )
 
 
 def main() -> int:
@@ -494,6 +601,34 @@ class ViewingInputOracleSelfTest(unittest.TestCase):
             pixels[offset : offset + 3] = bytes(FOCUS_COLOR)
         return f"P6\n{width} {height}\n255\n".encode("ascii") + bytes(pixels)
 
+    @classmethod
+    def ppm_with_focus_and_legacy_cursor(cls) -> bytes:
+        width = 41
+        header = f"P6\n{width} 31\n255\n".encode("ascii")
+        ppm = bytearray(cls.ppm_with_focus_pixels(cls.valid_focus_pixels()))
+        cursor_rows = (
+            0b1000_0000,
+            0b1100_0000,
+            0b1110_0000,
+            0b1111_0000,
+            0b1111_1000,
+            0b1111_1100,
+            0b1111_1110,
+            0b1111_0000,
+            0b1101_1000,
+            0b1000_1100,
+            0b0000_1100,
+            0b0000_0110,
+        )
+        for row, bits in enumerate(cursor_rows):
+            for column in range(8):
+                if bits & (0x80 >> column) == 0:
+                    continue
+                pixel_offset = ((15 + row) * width + 1 + column) * 3
+                data_offset = len(header) + pixel_offset
+                ppm[data_offset : data_offset + 3] = bytes((255, 255, 255))
+        return bytes(ppm)
+
     def test_valid_serial_semantics_pass(self) -> None:
         self.assertEqual(assert_viewing_serial(self.valid_serial()), (20, 15))
 
@@ -585,6 +720,11 @@ class ViewingInputOracleSelfTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_focus_mark_ppm(ppm, 21, 15)
 
+    def test_correct_focus_mark_plus_legacy_cursor_arrow_fails(self) -> None:
+        ppm = self.ppm_with_focus_and_legacy_cursor()
+        with self.assertRaises(AssertionError):
+            assert_focus_mark_ppm(ppm, 20, 15)
+
     def test_routes_are_tied_to_reports_one_through_fourteen(self) -> None:
         assert_viewing_report_routes(self.valid_report_route_serial())
 
@@ -605,6 +745,56 @@ class ViewingInputOracleSelfTest(unittest.TestCase):
         for label, malformed in cases.items():
             with self.subTest(case=label), self.assertRaises(AssertionError):
                 assert_viewing_report_routes(malformed)
+
+    def test_report_two_route_before_decode_or_after_report_ready_fails(self) -> None:
+        serial = self.valid_report_route_serial()
+        decode = RECURRING_HARNESS.PREFIX + "XHCI_BOOT_MOUSE_DECODE_READY"
+        report_two_ordinal = (
+            RECURRING_HARNESS.ORDINAL_MARKER + "0x0000000000000002"
+        )
+        report_three_ordinal = (
+            RECURRING_HARNESS.ORDINAL_MARKER + "0x0000000000000003"
+        )
+        report_two_ready = (
+            RECURRING_HARNESS.REPORT_READY_MARKER + "0x0000000000000002"
+        )
+        report_two_start = serial.index(report_two_ordinal)
+        report_two_end = serial.index(report_three_ordinal)
+        report_two = serial[report_two_start:report_two_end]
+        pre_decode_group = report_two.replace(CURSOR_MARKER + "\n", "", 1).replace(
+            decode,
+            CURSOR_MARKER + "\n" + decode,
+            1,
+        )
+        pre_decode = (
+            serial[:report_two_start] + pre_decode_group + serial[report_two_end:]
+        )
+        post_ready = serial.replace(CURSOR_MARKER + "\n", "", 1).replace(
+            report_two_ready,
+            report_two_ready + "\n" + CURSOR_MARKER,
+            1,
+        )
+        for label, malformed in {
+            "pre-decode": pre_decode,
+            "post-report-ready": post_ready,
+        }.items():
+            with self.subTest(case=label), self.assertRaises(AssertionError):
+                assert_viewing_report_routes(malformed)
+
+    def test_runner_cleanup_terminates_and_reaps_a_live_process(self) -> None:
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        try:
+            cleanup_runner_process(process, terminate_timeout=2.0)
+            self.assertIsNotNone(process.poll())
+        finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=2)
 
 
 def run_self_tests() -> int:
