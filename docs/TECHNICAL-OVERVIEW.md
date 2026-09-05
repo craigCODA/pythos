@@ -883,9 +883,12 @@ ADR 0088 adds the next opt-in bounded transport diagnostic,
 and event-consumer cycle state while accepting exactly sixteen sequential,
 single-in-flight reports. The 16-entry interrupt ring supplies 15 data TRBs
 plus a Toggle-Cycle Link TRB, so QEMU acceptance proves report indices
-`0..14,0`, cycles `1..1,0`, one transfer-ring wrap, at least one event-ring
-wrap, deterministic signed totals, and a left press followed by an adjacent
-release. The final framebuffer freezes at `reports 16 wrap 1` with
+`0..14,0`, cycles `1..1,0`, exactly one transfer-ring wrap, at least one
+event-ring wrap, deterministic signed totals, and a left press followed by an
+adjacent release. The event cursor is shared by setup command, control-
+transfer, and recurring transfer completions, so exactly one event wrap is not
+a stable acceptance rule; the recorded QEMU run observed exactly one. The
+final framebuffer freezes at `reports 16 wrap 1` with
 `frozen no cursor` and `no disk writes`. Typed driver, decode, or terminal-
 invariant failure stops without readiness. ADR 0088 status is **Accepted in
 QEMU; physical validation pending**. No recurring image has been deployed,

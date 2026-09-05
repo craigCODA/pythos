@@ -24,7 +24,7 @@ ADR 0087 decode feature. It uses one `XhciInterruptTransferProbeSession` and a
 strictly sequential single-in-flight loop:
 
 1. verify that no transfer is already in flight;
-2. prepare and publish one Normal TRB and one static report buffer;
+2. prepare and publish one Normal TRB and one static 4 KiB report buffer;
 3. ring the discovered interrupt-IN endpoint;
 4. accept the matching Transfer Event through the shared event consumer;
 5. copy and decode the received three- or four-byte prefix;
@@ -34,9 +34,12 @@ strictly sequential single-in-flight loop:
 The transfer producer owns `data_index`, `cycle`, and `wrap_count`. Reports 1
 through 15 use data indices `0..14` with cycle state 1. Crossing the Link TRB
 toggles the producer, and report 16 reuses data index 0 with cycle state 0.
-The event consumer independently owns `event_index` and `expected_cycle`,
-toggles its expected cycle when entry 15 advances to entry 0, and rejects stale
-cycle-state events. No seventeenth report is armed.
+The shared event consumer independently owns `event_index` and
+`expected_cycle`. That cursor consumes setup command, control-transfer, and
+recurring transfer events, toggles its expected cycle when entry 15 advances
+to entry 0, and rejects stale cycle-state events. Because setup events share
+the cursor, acceptance requires at least one event-consumer wrap; it does not
+require exactly one. No seventeenth report is armed.
 
 The terminal invariant requires all of the following: report count 16,
 completed-transfer count 16, and transfer wrap count 1. The result aggregates
@@ -71,7 +74,8 @@ emits exactly one:
 PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_RING_WRAP=0x0000000000000001
 ```
 
-After report 16 the accepted terminal order is:
+After report 16, the recorded QEMU run emitted this terminal order and these
+values:
 
 ```text
 PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_COUNT=0x0000000000000010
@@ -106,9 +110,10 @@ The harness built only the recurring feature path, detached the simulated boot
 USB, delayed mouse hotplug, and injected one deterministic QMP input action
 after each new armed marker. It observed ordinals `1..16`, indices
 `0..14,0`, cycles `1..1,0`, sixteen requested/armed/raw/transfer-ready/
-decode-ready/report-ready groups, one transfer wrap, one event wrap, the
-terminal values above, and exactly one readiness/no-write terminal. It ended
-with:
+decode-ready/report-ready groups and exactly one transfer wrap. The normative
+event-consumer requirement is at least one wrap; this recorded run observed
+exactly one. It also observed the terminal values above and exactly one
+readiness/no-write terminal. It ended with:
 
 ```text
 QEMU_OUTCOME success

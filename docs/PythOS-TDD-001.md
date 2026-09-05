@@ -1214,6 +1214,11 @@ the path emits
 `XHCI_INTERRUPT_TRANSFER_RING_WRAP=0x0000000000000001`; report 16 then begins
 at TRB index 0 with cycle 0.
 
+The event cursor is shared by setup command, control-transfer, and recurring
+transfer completions. Therefore the transfer-ring wrap count must be exactly
+one, while the event-ring consumer-wrap count must be at least one rather than
+exactly one.
+
 The recurring terminal marker order is:
 
 ```text
@@ -1232,6 +1237,10 @@ PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_IDENTITY_READY
 PYTHOS:CORE:USB_XHCI_PROBE:NO_DISK_WRITES
 PYTHOS:CORE:USB_XHCI_PROBE_READY
 ```
+
+The literal event-wrap value `1` above is the value observed by the recorded
+QEMU run, not an exact-count acceptance rule. The harness accepts any event
+consumer-wrap count greater than or equal to one.
 
 Run the ADR 0088 QEMU oracle with:
 
