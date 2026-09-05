@@ -73,7 +73,7 @@ authorization/evidence.
 
 ## Evidence
 
-Fresh evidence was collected on source commit
+The preceding full-matrix evidence was collected on source commit
 `a5a26329d800747cba76093c6e371b38f113d22b`.
 
 The bounded feature and predecessor QEMU oracles passed:
@@ -145,6 +145,35 @@ in commits `48af873` and `a5a2632`. The exact required command now passes on the
 same source commit as the QEMU matrix. The Python baseline remains non-green,
 so this QEMU acceptance does not make the branch fully green or merge-ready.
 
+The authorized final-review fix was verified on the final working tree based
+at `c346bbc23ae8856088f74c934a945122a5f47c2a`. The resulting single fix commit
+is recorded in the external current-state checkpoint and final fix report
+because a commit cannot contain its own hash. Fresh final-review results were:
+
+```text
+cargo fmt --check
+  passed
+cargo test -p pythos-core
+  729 passed; 0 failed
+cargo clippy -p pythos-core --target x86_64-unknown-none --features viewing-input-probe -- -D warnings
+  passed with zero warnings
+py -3 scripts/test-viewing-input-probe.py --self-test
+  17 passed; 0 failed
+  VIEWING_INPUT_PROBE_SELF_TEST_OK
+py -3 scripts/test-usb-xhci-boot-mouse-recurring-probe.py --self-test
+  4 passed; 0 failed
+py -3 scripts/test-viewing-input-probe.py
+  VIEWING_INPUT_PROBE_TEST_OK
+  QEMU_OUTCOME success
+```
+
+The live harness captured `target/viewing-input-activation-ready.ppm`
+immediately after `SESSION_CONTROL:CURSOR_ACTIVATION_READY` and before sending
+any activation key. Its independent literal-glyph oracle accepted only
+`wait activate` at `(16, 2)`, scale 1, in the presentation body color on black;
+the final PPM retained the exact FocusMark oracle at `(616, 332)`. The complete
+ADR 0088 sixteen-report, wrap, totals, button, and no-write oracle also passed.
+
 The final successful Viewing harness writes the ESP under `image/esp`, while
 the Task 8 hash commands name a nonexistent `target/esp`. The two literal
 `target/esp` lookups failed. The actual produced artifacts are:
@@ -153,21 +182,24 @@ the Task 8 hash commands name a nonexistent `target/esp`. The two literal
 image/esp/EFI/BOOT/BOOTX64.EFI
   SHA-256 085A02AA250050CB55B065B7842B09CDE5C087291ABD19D83FA05F6197918578
 image/esp/PYTHOS/PYTHCORE.ELF
-  SHA-256 EA9D53D008A9E0FECD5DFB2CB677EF8FDB2B5AC376B0592B3269393FB896B3AD
+  SHA-256 FAF37BBC5BFB0AE2EA4D87633A6BE26CF5C27BBAC72AB67232A1EE99834BE817
 target/viewing-input-probe-com1.log
-  SHA-256 FB940BE7D3B890BFDD3DC4DC9EA4682AEE4672736FD6E10B8CE5356C06AB421A
+  SHA-256 FCA7F2E921A1807A3DA57C3902BBC44FADE7F345B05877EBFEDD1C08EF19B884
+target/viewing-input-activation-ready.ppm
+  SHA-256 3245016B2196278C7973BAF71503B59313972C66AA1E75E787F2819B682C6C37
 target/viewing-input-probe.ppm
   SHA-256 A0F347A7D512301EDAD6A15805AC02CDE1929B331A70BC4D665922F5EF094968
 ```
 
 ## Consequences
 
-The semantic boundary and opt-in QEMU evidence are accepted in QEMU. The strict
-Viewing-feature Clippy gate is clean, and the external current-state checkpoint
-records this promotion. The repository-wide Python gate remains at its exact
-known unrelated Phase 13 baseline, so the branch is not fully green or
-merge-ready. The literal ESP evidence paths remain a documented harness-path
-deviation: `target/esp` does not exist and the generated ESP is `image/esp`.
+The semantic boundary, visible activation-ready frame, and opt-in QEMU evidence
+are accepted in QEMU. The strict Viewing-feature Clippy gate is clean, and the
+external current-state checkpoint records this promotion. The repository-wide
+Python gate remains at its exact known unrelated Phase 13 baseline, so the
+branch is not fully green or merge-ready. The literal ESP evidence paths remain
+a documented harness-path deviation: `target/esp` does not exist and the
+generated ESP is `image/esp`.
 
 No physical deployment or validation occurred. Physical Lenovo behavior,
 generic USB HID, built-in trackpad input, IRQ-driven USB input, hub support,

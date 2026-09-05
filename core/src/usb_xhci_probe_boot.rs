@@ -919,7 +919,9 @@ fn run_boot_mouse_recurring_probe(
                 traversal_routed = true;
                 serial::write_line("PYTHOS:CORE:VIEWING:TRAVERSAL_RELATIVE_MOTION");
                 if !cursor_activated {
-                    if let Err(failure) = wait_for_cursor_activation(&mut viewing_probe) {
+                    if let Err(failure) =
+                        wait_for_cursor_activation(framebuffer, &mut viewing_probe)
+                    {
                         return Err(viewing_recurring_error(
                             framebuffer,
                             Some(viewing_probe.snapshot()),
@@ -1040,10 +1042,15 @@ fn run_boot_mouse_recurring_probe(
 
 #[cfg(feature = "viewing-input-probe")]
 fn wait_for_cursor_activation(
+    framebuffer: &PythFramebufferInfo,
     probe: &mut ViewingInputProbe,
 ) -> Result<(), ViewingInputIntegrationFailure> {
     crate::ps2::initialize_keyboard_polling()
         .map_err(|_| ViewingInputIntegrationFailure::KeyboardUnavailable)?;
+    usb_xhci_probe_screen::render_viewing_input_activation_ready_frame(
+        framebuffer,
+        probe.snapshot(),
+    )?;
     serial::write_line("PYTHOS:CORE:SESSION_CONTROL:CURSOR_ACTIVATION_READY");
     loop {
         if let Some(byte) = crate::ps2::poll_raw_output_byte() {

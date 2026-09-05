@@ -1226,6 +1226,21 @@ pub fn render_viewing_input_success_frame(
     )
 }
 
+/// Render the visible one-way activation wait before the readiness marker is
+/// emitted. A render failure remains a typed higher-layer integration failure.
+#[cfg(any(test, feature = "viewing-input-probe"))]
+pub fn render_viewing_input_activation_ready_frame(
+    framebuffer_info: &PythFramebufferInfo,
+    snapshot: crate::viewing::ViewingSnapshot,
+) -> Result<(), crate::viewing_input_probe::ViewingInputIntegrationFailure> {
+    framebuffer::render_viewing_input_probe(
+        framebuffer_info,
+        snapshot,
+        crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation,
+    )
+    .map_err(|_| crate::viewing_input_probe::ViewingInputIntegrationFailure::Presentation)
+}
+
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
 pub fn render_boot_mouse_recurring_error(
     framebuffer_info: &PythFramebufferInfo,
@@ -1518,6 +1533,64 @@ mod tests {
             reserved_mask: 0,
         };
         (buffer, info)
+    }
+
+    fn traversal_waiting_snapshot(width: u32, height: u32) -> crate::viewing::ViewingSnapshot {
+        let mut probe = crate::viewing_input_probe::ViewingInputProbe::new(width, height).unwrap();
+        let route = probe
+            .observe_mouse_report(crate::input_drivers::UsbBootMouseReport {
+                buttons: 0,
+                dx: 1,
+                dy: -1,
+                auxiliary: Some(0),
+            })
+            .unwrap();
+        assert!(matches!(
+            route,
+            Some(crate::viewing::MotionRoute::Traversal(_))
+        ));
+        assert_eq!(
+            probe.presentation_status(),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation
+        );
+        probe.snapshot()
+    }
+
+    #[test]
+    fn viewing_activation_ready_frame_requests_waiting_for_activation() {
+        let (rendered, framebuffer) = test_framebuffer(128, 32);
+        let (expected, expected_framebuffer) = test_framebuffer(128, 32);
+        let (wrong_status, wrong_status_framebuffer) = test_framebuffer(128, 32);
+        let snapshot = traversal_waiting_snapshot(128, 32);
+
+        render_viewing_input_activation_ready_frame(&framebuffer, snapshot).unwrap();
+        framebuffer::render_viewing_input_probe(
+            &expected_framebuffer,
+            snapshot,
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation,
+        )
+        .unwrap();
+        framebuffer::render_viewing_input_probe(
+            &wrong_status_framebuffer,
+            snapshot,
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForTraversal,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, expected);
+        assert_ne!(rendered, wrong_status);
+    }
+
+    #[test]
+    fn viewing_activation_ready_frame_maps_invalid_framebuffer_to_presentation_failure() {
+        let (_buffer, mut framebuffer) = test_framebuffer(128, 32);
+        framebuffer.mapped_virtual_base = 0;
+        let snapshot = traversal_waiting_snapshot(128, 32);
+
+        assert_eq!(
+            render_viewing_input_activation_ready_frame(&framebuffer, snapshot),
+            Err(crate::viewing_input_probe::ViewingInputIntegrationFailure::Presentation)
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ from launcher_click import type_cursor_activation_sequence
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 SERIAL_LOG = TARGET / "viewing-input-probe-com1.log"
+ACTIVATION_READY_SCREENDUMP = TARGET / "viewing-input-activation-ready.ppm"
 SCREENDUMP = TARGET / "viewing-input-probe.ppm"
 USB_BOOT_SIM_IMAGE = TARGET / "pythos-viewing-input-probe-boot-sim.img"
 
@@ -83,6 +84,30 @@ LEGACY_CURSOR_SPRITE = (
     0b0000_0110,
 )
 STATUS_TEXT_REGION = (16, 2, 16 + len("focus active") * 8, 2 + 8)
+STATUS_BODY_COLOR = (230, 245, 235)
+ACTIVATION_STATUS_TEXT = "wait activate"
+ACTIVATION_STATUS_ORIGIN = (16, 2)
+# Hand-checked literal 8x8 rows. This expected mask is intentionally independent
+# of the Rust renderer and font source.
+STATUS_GLYPH_ROWS = {
+    " ": (0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00),
+    "a": (0x00, 0x00, 0x7C, 0x06, 0x7E, 0xC6, 0x7E, 0x00),
+    "c": (0x00, 0x00, 0x7C, 0xC6, 0xC0, 0xC6, 0x7C, 0x00),
+    "d": (0x06, 0x06, 0x7E, 0xC6, 0xC6, 0xC6, 0x7E, 0x00),
+    "e": (0x00, 0x00, 0x7C, 0xC6, 0xFE, 0xC0, 0x7C, 0x00),
+    "f": (0x38, 0x6C, 0x60, 0xF8, 0x60, 0x60, 0x60, 0x00),
+    "i": (0x30, 0x00, 0x70, 0x30, 0x30, 0x30, 0x78, 0x00),
+    "l": (0x70, 0x30, 0x30, 0x30, 0x30, 0x30, 0x78, 0x00),
+    "m": (0x00, 0x00, 0xCC, 0xFE, 0xFE, 0xD6, 0xC6, 0x00),
+    "n": (0x00, 0x00, 0xFC, 0xC6, 0xC6, 0xC6, 0xC6, 0x00),
+    "o": (0x00, 0x00, 0x7C, 0xC6, 0xC6, 0xC6, 0x7C, 0x00),
+    "p": (0x00, 0x00, 0xFC, 0xC6, 0xC6, 0xFC, 0xC0, 0xC0),
+    "s": (0x00, 0x00, 0x7E, 0xC0, 0x7C, 0x06, 0xFC, 0x00),
+    "t": (0x30, 0x30, 0xFC, 0x30, 0x30, 0x36, 0x1C, 0x00),
+    "u": (0x00, 0x00, 0xC6, 0xC6, 0xC6, 0xC6, 0x7E, 0x00),
+    "v": (0x00, 0x00, 0xC6, 0xC6, 0xC6, 0x6C, 0x38, 0x00),
+    "w": (0x00, 0x00, 0xC6, 0xC6, 0xD6, 0xFE, 0x6C, 0x00),
+}
 
 
 def assert_viewing_serial(serial: str) -> tuple[int, int]:
@@ -217,6 +242,56 @@ def parse_ppm(data: bytes) -> tuple[int, int, bytes]:
             f"PPM pixel data length {len(pixels)} does not match {expected_length}"
         )
     return width, height, pixels
+
+
+def assert_activation_ready_ppm(data: bytes) -> None:
+    """Require only the literal ``wait activate`` projection on black."""
+    width, height, pixels = parse_ppm(data)
+    required_width = ACTIVATION_STATUS_ORIGIN[0] + len(ACTIVATION_STATUS_TEXT) * 8
+    required_height = ACTIVATION_STATUS_ORIGIN[1] + 8
+    if width < required_width or height < required_height:
+        raise AssertionError(
+            "activation-ready screendump is too small for the exact status glyphs"
+        )
+
+    origin_x, origin_y = ACTIVATION_STATUS_ORIGIN
+    expected_status_pixels = {
+        (origin_x + character_index * 8 + column, origin_y + row)
+        for character_index, character in enumerate(ACTIVATION_STATUS_TEXT)
+        for row, bits in enumerate(STATUS_GLYPH_ROWS[character])
+        for column in range(8)
+        if bits & (0x80 >> column)
+    }
+
+    def pixel_at(x: int, y: int) -> tuple[int, int, int]:
+        offset = (y * width + x) * 3
+        return tuple(pixels[offset : offset + 3])
+
+    observed_status_pixels = {
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if pixel_at(x, y) == STATUS_BODY_COLOR
+    }
+    if observed_status_pixels != expected_status_pixels:
+        missing = len(expected_status_pixels - observed_status_pixels)
+        extra = len(observed_status_pixels - expected_status_pixels)
+        raise AssertionError(
+            f"activation-ready glyph mask mismatch: {missing} missing, {extra} extra"
+        )
+
+    unexpected_pixels = {
+        (x, y)
+        for y in range(height)
+        for x in range(width)
+        if (x, y) not in expected_status_pixels
+        and pixel_at(x, y) != BACKGROUND_COLOR
+    }
+    if unexpected_pixels:
+        raise AssertionError(
+            "activation-ready frame contains non-background pixels outside "
+            f"the exact status glyphs: {len(unexpected_pixels)}"
+        )
 
 
 def clipped_rectangle_pixels(
@@ -425,7 +500,7 @@ def cleanup_runner_process(
 
 
 def run_probe_boot() -> tuple[str, str]:
-    for artifact in (SERIAL_LOG, SCREENDUMP):
+    for artifact in (SERIAL_LOG, ACTIVATION_READY_SCREENDUMP, SCREENDUMP):
         if artifact.exists():
             artifact.unlink()
     command = [
@@ -478,6 +553,16 @@ def run_probe_boot() -> tuple[str, str]:
             if time.monotonic() >= activation_deadline:
                 raise AssertionError("timed out waiting for cursor activation readiness")
             time.sleep(0.05)
+
+        try:
+            QEMU_RUNNER.request_screendump(ACTIVATION_READY_SCREENDUMP.resolve())
+        except (OSError, RuntimeError, ConnectionError) as error:
+            raise AssertionError(
+                f"activation-ready QMP screendump failed: {error}"
+            ) from error
+        if not ACTIVATION_READY_SCREENDUMP.exists():
+            raise AssertionError("QEMU did not create the activation-ready screendump")
+        assert_activation_ready_ppm(ACTIVATION_READY_SCREENDUMP.read_bytes())
 
         try:
             type_cursor_activation_sequence()
@@ -601,6 +686,34 @@ class ViewingInputOracleSelfTest(unittest.TestCase):
             pixels[offset : offset + 3] = bytes(FOCUS_COLOR)
         return f"P6\n{width} {height}\n255\n".encode("ascii") + bytes(pixels)
 
+    @staticmethod
+    def status_text_pixels(text: str) -> set[tuple[int, int]]:
+        origin_x, origin_y = ACTIVATION_STATUS_ORIGIN
+        return {
+            (origin_x + character_index * 8 + column, origin_y + row)
+            for character_index, character in enumerate(text)
+            for row, bits in enumerate(STATUS_GLYPH_ROWS[character])
+            for column in range(8)
+            if bits & (0x80 >> column)
+        }
+
+    @classmethod
+    def ppm_with_status_text(
+        cls,
+        text: str,
+        extras: dict[tuple[int, int], tuple[int, int, int]] | None = None,
+    ) -> bytes:
+        width = 160
+        height = 40
+        pixels = bytearray(BACKGROUND_COLOR * (width * height))
+        for x, y in cls.status_text_pixels(text):
+            offset = (y * width + x) * 3
+            pixels[offset : offset + 3] = bytes(STATUS_BODY_COLOR)
+        for (x, y), color in (extras or {}).items():
+            offset = (y * width + x) * 3
+            pixels[offset : offset + 3] = bytes(color)
+        return f"P6\n{width} {height}\n255\n".encode("ascii") + bytes(pixels)
+
     @classmethod
     def ppm_with_focus_and_legacy_cursor(cls) -> bytes:
         width = 41
@@ -682,6 +795,33 @@ class ViewingInputOracleSelfTest(unittest.TestCase):
     def test_valid_four_separated_l_corners_pass(self) -> None:
         ppm = self.ppm_with_focus_pixels(self.valid_focus_pixels())
         assert_focus_mark_ppm(ppm, 20, 15)
+
+    def test_exact_activation_ready_status_frame_passes(self) -> None:
+        assert_activation_ready_ppm(self.ppm_with_status_text(ACTIVATION_STATUS_TEXT))
+
+    def test_blank_and_wrong_activation_status_frames_fail(self) -> None:
+        cases = {
+            "blank": self.ppm_with_status_text(""),
+            "old recurring move mouse once": self.ppm_with_status_text("move mouse once"),
+            "wait move": self.ppm_with_status_text("wait move"),
+            "focus active": self.ppm_with_status_text("focus active"),
+            "focus complete": self.ppm_with_status_text("focus complete"),
+            "focus failed": self.ppm_with_status_text("focus failed"),
+        }
+        for label, ppm in cases.items():
+            with self.subTest(frame=label), self.assertRaises(AssertionError):
+                assert_activation_ready_ppm(ppm)
+
+    def test_activation_ready_status_rejects_focus_mark_and_legacy_arrow_pixels(self) -> None:
+        cases = {
+            "FocusMark": {(80, 20): FOCUS_COLOR},
+            "legacy arrow": {(4, 20): LEGACY_CURSOR_COLOR, (4, 21): LEGACY_CURSOR_COLOR},
+        }
+        for label, extras in cases.items():
+            with self.subTest(frame=label), self.assertRaises(AssertionError):
+                assert_activation_ready_ppm(
+                    self.ppm_with_status_text(ACTIVATION_STATUS_TEXT, extras)
+                )
 
     def test_non_focus_mark_shapes_fail(self) -> None:
         valid = self.valid_focus_pixels()
