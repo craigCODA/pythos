@@ -91,6 +91,9 @@ physical-wake-diagnostic = []
 # Phase 6 cinematic frame, normalizes a fixed key set, and reports events; it is
 # not enabled by default and is not shell keyboard control.
 physical-input-event-diagnostic = []
+# Opt-in Viewing-input probe. It depends on recurring normalized boot-mouse
+# evidence and does not alter the default production boot path.
+viewing-input-probe = ["usb-xhci-boot-mouse-recurring-probe"]
 # Opt-in normal-boot physical keyboard console ingress. PythCore keeps i8042
 # port access in kernel mode and exposes only bounded console bytes through the
 # existing object-shell console syscall.
