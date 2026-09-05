@@ -3,7 +3,9 @@
 //! This module formats already-collected USB controller and xHCI register
 //! snapshots into fixed ASCII lines for machines without serial capture.
 
-#[cfg(feature = "usb-xhci-probe")]
+#[cfg(any(test, feature = "viewing-input-probe"))]
+use crate::fb_debug;
+#[cfg(any(test, feature = "usb-xhci-probe"))]
 use crate::framebuffer;
 #[cfg(any(test, feature = "usb-xhci-command-probe"))]
 use crate::usb_xhci_driver::{
@@ -15,7 +17,7 @@ use crate::usb_xhci_probe::{
     UsbController, UsbControllerKind, UsbMemoryBar, UsbProbeReport, XhciPortChange,
     XhciPortStatusSnapshot, XhciProbeError, XhciRegisterSnapshot,
 };
-#[cfg(feature = "usb-xhci-probe")]
+#[cfg(any(test, feature = "usb-xhci-probe"))]
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 const PROBE_SCREEN_MAX_LINES: usize = 14;
@@ -1208,6 +1210,22 @@ pub fn render_boot_mouse_recurring_probe(
     render_screen(framebuffer_info, screen)
 }
 
+/// Preserve the framebuffer-identity transition while making the completed
+/// Viewing projection the final visible success frame.
+#[cfg(any(test, feature = "viewing-input-probe"))]
+pub fn render_viewing_input_success_frame(
+    framebuffer_info: &PythFramebufferInfo,
+    identity_color: (u8, u8, u8),
+    snapshot: crate::viewing::ViewingSnapshot,
+) -> Result<(), ()> {
+    fb_debug::fill(framebuffer_info, identity_color);
+    framebuffer::render_viewing_input_probe(
+        framebuffer_info,
+        snapshot,
+        crate::viewing_input_probe::ViewingInputPresentationStatus::Complete,
+    )
+}
+
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
 pub fn render_boot_mouse_recurring_error(
     framebuffer_info: &PythFramebufferInfo,
@@ -1481,6 +1499,48 @@ fn bool_digit(value: bool) -> u8 {
 mod tests {
     use super::*;
     use crate::font;
+    use pythos_shared::boot_protocol::PythFramebufferInfo;
+
+    fn test_framebuffer(width: u32, height: u32) -> (Vec<u32>, PythFramebufferInfo) {
+        let len = (width as usize) * (height as usize);
+        let mut buffer = vec![0u32; len];
+        let info = PythFramebufferInfo {
+            physical_base: 0x1000_0000,
+            mapped_virtual_base: buffer.as_mut_ptr() as u64,
+            byte_length: (len as u64) * 4,
+            width,
+            height,
+            pixels_per_scanline: width,
+            pixel_format: pythos_shared::boot_protocol::PIXEL_FORMAT_RGB_RESERVED_8BIT,
+            red_mask: 0,
+            green_mask: 0,
+            blue_mask: 0,
+            reserved_mask: 0,
+        };
+        (buffer, info)
+    }
+
+    #[test]
+    fn viewing_success_frame_keeps_final_focus_mark_visible_after_identity_fill() {
+        let (buffer, framebuffer) = test_framebuffer(64, 64);
+        let snapshot = crate::viewing::ViewingSnapshot {
+            extent: crate::viewing::ViewingExtent::new(64, 64).unwrap(),
+            focus_mark: Some(crate::viewing::FocusMarkPosition { x: 32, y: 32 }),
+        };
+
+        render_viewing_input_success_frame(
+            &framebuffer,
+            crate::fb_debug::COLOR_HARDWARE_PROBE_EMMC_FOUND,
+            snapshot,
+        )
+        .unwrap();
+
+        let pixel = |x: usize, y: usize| buffer[y * 64 + x];
+        assert_ne!(pixel(20, 20), pixel(32, 32));
+        assert_eq!(pixel(20, 20), pixel(44, 20));
+        assert_eq!(pixel(20, 20), pixel(20, 44));
+        assert_eq!(pixel(20, 20), pixel(44, 44));
+    }
 
     fn recurring_endpoint_configuration() -> XhciEndpointConfigurationProbeResult {
         XhciEndpointConfigurationProbeResult {
