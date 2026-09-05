@@ -324,7 +324,7 @@ and where the boundary of the work still is.
 | ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0086 USB/xHCI one-shot interrupt transfer probe QEMU-accepted with one four-byte raw report `00 08 FC 00`, completion code `01`, exact event identity checks, and `NO_DISK_WRITES` | Physical interrupt-transfer acceptance, HID decoding, recurring reports, cursor movement, IRQ input, or trackpad support |
-| ADR 0089 opt-in Viewing input oracle passed in QEMU: Traversal default, one-way session cursor activation, exclusive FocusMark routing, and preserved ADR 0088 no-write evidence | ADR 0089 acceptance while the required Clippy gate is non-green; default boot cutover, deactivation, durable cursor state, or physical Lenovo acceptance |
+| ADR 0089 accepted in QEMU: opt-in Traversal default, one-way session cursor activation, exclusive FocusMark routing, preserved ADR 0088 no-write evidence, and a clean strict Viewing-feature Clippy gate | Physical validation; default boot cutover, deactivation, durable cursor state, or generic physical input support; the unrelated Phase 13 Python baseline remains non-green |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -482,8 +482,10 @@ alone routes motion between them. Presentation renders the supplied snapshot;
 it does not own input policy. The existing `launcher_screen` and
 `window_interaction` modules remain compatibility paths under ADR 0066, not the
 new semantic owner. The integration is opt-in and does not cut over normal
-boot. Its bounded QEMU oracle passes, but ADR 0089 acceptance is pending because
-the required repository Clippy gate is non-green; no physical claim follows.
+boot. ADR 0089 is accepted in QEMU after its bounded oracle and strict
+Viewing-feature Clippy gate passed. Physical validation remains pending, and
+the unrelated Phase 13 Python baseline means the branch is not fully green or
+merge-ready; no physical claim follows.
 
 Phase 6 adds a bounded cinematic boot/audio path using QEMU AC97 and an explicit
 no-audio fallback. The wake phrase is rendered and synchronized with the boot

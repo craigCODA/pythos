@@ -2,7 +2,7 @@
 
 Date: 2026-09-05
 
-Status: Verification blocked; QEMU oracle passes; physical validation pending
+Status: Accepted in QEMU; physical validation pending
 
 ## Context
 
@@ -74,7 +74,7 @@ authorization/evidence.
 ## Evidence
 
 Fresh evidence was collected on source commit
-`40801aec4dda223cb7413d370a09edf0af749c1c`.
+`a5a26329d800747cba76093c6e371b38f113d22b`.
 
 The bounded feature and predecessor QEMU oracles passed:
 
@@ -129,7 +129,7 @@ cargo test -p pythos-core
 py -3 -m unittest discover -s tests -p "test_*.py" -v
   116 tests; 2 failures; 1 error
 cargo clippy -p pythos-core --target x86_64-unknown-none --features viewing-input-probe -- -D warnings
-  failed with 19 deny-warnings errors
+  passed with zero warnings
 ```
 
 The Python result exactly reproduces the approved unrelated Phase 13 baseline:
@@ -140,38 +140,10 @@ FAIL  test_non_verify_package_context_provider_uses_retained_service
 FAIL  test_package_runtime_bootstrap_uses_launch_granted_import_capabilities
 ```
 
-The Clippy gate is non-green. Its 19 diagnostics are in production files
-unchanged by the `e9bf9689d66bb98e7d5ae878d4d0452780c19a98..40801aec`
-Viewing change range, but the Task 8 ruling requires the lint command itself to
-pass. Therefore this ADR is not marked Accepted in QEMU and the branch is not
-fully green or merge-ready.
-
-`git diff --quiet` for every diagnosed file across that range returned clean,
-and `git blame` at the approved base attributes each line to an earlier commit.
-All 19 diagnostics are therefore present in source-identical approved-base
-files; none was introduced by this branch:
-
-| File and line | Clippy lint | Approved-base blame |
-| --- | --- | --- |
-| `core/src/object_service_checkpoint.rs:346` | `needless_return` | `839df0ab` |
-| `core/src/object_service_checkpoint.rs:376` | `needless_return` | `80874f8b` |
-| `core/src/object_service_checkpoint.rs:420` | `needless_return` | `80874f8b` |
-| `core/src/package_candidate_store.rs:86` | `needless_return` | `daa00e65` |
-| `core/src/package_content_store.rs:441` | `wrong_self_convention` | `2d38d079` |
-| `core/src/package_service.rs:193` | `let_and_return` | `2905a26e` |
-| `core/src/package_service.rs:2089` | `collapsible_if` | `2905a26e` |
-| `core/src/package_service.rs:2650` | `too_many_arguments` | `991e06d7` |
-| `core/src/retained_services.rs:272` | `let_and_return` | `d4a66760` |
-| `core/src/syscall.rs:1080` | `needless_option_as_deref` | `d4a66760` |
-| `core/src/syscall.rs:1081` | `needless_option_as_deref` | `db7edc74` |
-| `core/src/syscall.rs:2022` | `let_and_return` | `4b673453` |
-| `core/src/syscall.rs:2045` | `let_and_return` | `4b673453` |
-| `core/src/syscall.rs:2064` | `let_and_return` | `4b673453` |
-| `core/src/syscall.rs:2077` | `let_and_return` | `4b673453` |
-| `core/src/task_service.rs:139` | `too_many_arguments` | `d4a66760` |
-| `core/src/task_service.rs:743` | `too_many_arguments` | `d4a66760` |
-| `core/src/usb_xhci_probe.rs:259` | `collapsible_if` | `0963bdf4` |
-| `core/src/usb_xhci_probe.rs:296` | `collapsible_if` | `0963bdf4` |
+The earlier 19-error Clippy blocker was cleared by the scoped cleanup recorded
+in commits `48af873` and `a5a2632`. The exact required command now passes on the
+same source commit as the QEMU matrix. The Python baseline remains non-green,
+so this QEMU acceptance does not make the branch fully green or merge-ready.
 
 The final successful Viewing harness writes the ESP under `image/esp`, while
 the Task 8 hash commands name a nonexistent `target/esp`. The two literal
@@ -181,20 +153,21 @@ the Task 8 hash commands name a nonexistent `target/esp`. The two literal
 image/esp/EFI/BOOT/BOOTX64.EFI
   SHA-256 085A02AA250050CB55B065B7842B09CDE5C087291ABD19D83FA05F6197918578
 image/esp/PYTHOS/PYTHCORE.ELF
-  SHA-256 40D5D9D0DC812D13FE4046A1602267069CBAE248A99D2063D88AB2DEAAE3A51A
+  SHA-256 EA9D53D008A9E0FECD5DFB2CB677EF8FDB2B5AC376B0592B3269393FB896B3AD
 target/viewing-input-probe-com1.log
-  SHA-256 AC9B0B4789022C79D75FCD48CC58E93F7798C89F838E294530F7A9342AA69897
+  SHA-256 FB940BE7D3B890BFDD3DC4DC9EA4682AEE4672736FD6E10B8CE5356C06AB421A
 target/viewing-input-probe.ppm
   SHA-256 A0F347A7D512301EDAD6A15805AC02CDE1929B331A70BC4D665922F5EF094968
 ```
 
 ## Consequences
 
-The semantic boundary and opt-in QEMU evidence are recorded without promoting
-the feature to accepted status. The repository-wide Python gate remains at its
-known unrelated Phase 13 baseline, the required Clippy gate is non-green, and
-the literal ESP evidence paths require reconciliation. The external current-
-state checkpoint is not advanced under the binding Task 8 ruling.
+The semantic boundary and opt-in QEMU evidence are accepted in QEMU. The strict
+Viewing-feature Clippy gate is clean, and the external current-state checkpoint
+records this promotion. The repository-wide Python gate remains at its exact
+known unrelated Phase 13 baseline, so the branch is not fully green or
+merge-ready. The literal ESP evidence paths remain a documented harness-path
+deviation: `target/esp` does not exist and the generated ESP is `image/esp`.
 
 No physical deployment or validation occurred. Physical Lenovo behavior,
 generic USB HID, built-in trackpad input, IRQ-driven USB input, hub support,

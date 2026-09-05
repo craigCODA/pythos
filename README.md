@@ -307,9 +307,11 @@ py -3 scripts/test-viewing-input-probe.py
 
 This is opt-in QEMU evidence, not default input, generic physical support, or
 physical Lenovo acceptance. Normal boot still uses the compatibility launcher,
-cursor activation is non-durable and has no deactivation behavior, and ADR
-0089 acceptance remains pending while the required Task 8 Clippy gate is
-non-green.
+and cursor activation is non-durable and has no deactivation behavior. ADR
+0089 is accepted in QEMU; physical validation remains pending. The strict
+Viewing-feature Clippy gate is clean, while the repository-wide Python suite
+still has the exact known unrelated Phase 13 baseline, so the branch is not
+fully green or merge-ready.
 
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input

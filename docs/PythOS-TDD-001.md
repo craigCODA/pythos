@@ -1310,14 +1310,14 @@ The fresh oracle passed with `VIEWING_INPUT_PROBE_TEST_OK` and
 `SESSION_CONTROL` markers, and the normal-fast-boot log retains the historical
 launcher markers. Historical Pointer/Window marker names remain unchanged.
 
-Task 8 acceptance is nevertheless pending. The required cross-target Clippy
-command failed with 19 deny-warnings diagnostics in files unchanged by the
-Viewing change range. The repository-wide Python command separately reproduced
-the known unrelated Phase 13 baseline of 116 tests with 2 failures and 1 error.
-Under the binding ruling ADR 0089 is not yet Accepted in QEMU, the branch is not
-fully green or merge-ready, and the external current-state checkpoint is not
-advanced. There is no default normal-boot cutover, durable cursor state, or
-physical Lenovo acceptance claim.
+ADR 0089 is accepted in QEMU; physical validation remains pending. The exact
+required cross-target Clippy command is clean after the scoped lint-cleanup
+follow-up, and the full USB/Viewing, milestone-1, normal-fast-boot, and
+persistence matrix passes. The repository-wide Python command separately
+reproduces the known unrelated Phase 13 baseline of 116 tests with 2 failures
+and 1 error, so the branch is not fully green or merge-ready. There is no
+default normal-boot cutover, durable cursor state, or physical Lenovo acceptance
+claim.
 
 The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
 milestone success marker unchanged, then renders the captured transcript and
