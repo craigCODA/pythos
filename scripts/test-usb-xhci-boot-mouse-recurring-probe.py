@@ -201,13 +201,25 @@ def assert_base_marker_order(serial: str) -> None:
         raise AssertionError("expected exactly one recurring sequence target marker")
     if extract_single_hex(serial, SEQUENCE_TARGET_MARKER) != 16:
         raise AssertionError("recurring sequence target was not sixteen reports")
-    target_position = serial.find(SEQUENCE_TARGET_MARKER, cursor)
-    if target_position == -1:
+    target = re.search(
+        re.escape(SEQUENCE_TARGET_MARKER) + r"0x([0-9A-Fa-f]+)", serial[cursor:]
+    )
+    if target is None:
         raise AssertionError("recurring sequence target did not follow endpoint setup")
-    cursor = target_position + len(SEQUENCE_TARGET_MARKER)
-    first_ordinal = serial.find(ORDINAL_MARKER, cursor)
-    if first_ordinal == -1:
+    first_ordinal = re.search(
+        re.escape(ORDINAL_MARKER) + r"0x([0-9A-Fa-f]+)", serial[cursor:]
+    )
+    if first_ordinal is None:
         raise AssertionError("first recurring report did not follow endpoint setup")
+    target_position = cursor + target.start()
+    target_end = cursor + target.end()
+    first_ordinal_position = cursor + first_ordinal.start()
+    if target_position > first_ordinal_position:
+        raise AssertionError("recurring sequence target did not precede ordinal one")
+    if int(first_ordinal.group(1), 16) != 1:
+        raise AssertionError("first recurring report ordinal was not one")
+    if serial[target_end:first_ordinal_position].strip():
+        raise AssertionError("recurring sequence target was not immediately before ordinal one")
 
 
 def assert_report_groups(serial: str) -> None:
@@ -379,6 +391,7 @@ class RecurringOracleRegressionTest(unittest.TestCase):
     def test_sequence_target_is_required_exactly_once_before_ordinal_one(self) -> None:
         target = PREFIX + "XHCI_BOOT_MOUSE_SEQUENCE_TARGET=0x0000000000000010"
         ordinal = ORDINAL_MARKER + "0x0000000000000001"
+        ordinal_two = ORDINAL_MARKER + "0x0000000000000002"
         prerequisite = self.prerequisite_serial()
 
         with self.assertRaises(AssertionError):
@@ -387,6 +400,14 @@ class RecurringOracleRegressionTest(unittest.TestCase):
             assert_base_marker_order(prerequisite + "\n" + target + "\n" + target + "\n" + ordinal)
         with self.assertRaises(AssertionError):
             assert_base_marker_order(prerequisite + "\n" + ordinal + "\n" + target)
+        with self.assertRaises(AssertionError):
+            assert_base_marker_order(
+                prerequisite + "\n" + ordinal + "\n" + target + "\n" + ordinal_two
+            )
+        with self.assertRaises(AssertionError):
+            assert_base_marker_order(
+                prerequisite + "\n" + target + "\nPYTHOS:CORE:INTERVENING\n" + ordinal
+            )
 
         assert_base_marker_order(prerequisite + "\n" + target + "\n" + ordinal)
 

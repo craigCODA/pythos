@@ -80,7 +80,8 @@ Every member of the repeated report marker group must occur exactly sixteen
 times in the complete COM1 transcript. Extra occurrences outside the
 ordinal-delimited groups, including before ordinal 1 or after the terminal
 fields, fail acceptance. The sequence-target marker must occur exactly once
-after endpoint setup and before ordinal 1.
+after endpoint setup and immediately before ordinal 1; only whitespace may
+separate the complete target marker/value from the ordinal marker.
 
 After report 16, the recorded QEMU run emitted this terminal order and these
 values:
@@ -138,6 +139,13 @@ screen tests passed, and all 15 marker-action/runner tests passed. The failure
 cases cover late driver, decode, and terminal-invariant results and prove none
 can satisfy the terminal-readiness policy or oracle.
 
+A narrow follow-up regression then proved the oracle still accepted the target
+between report ordinals 1 and 2, as well as a non-whitespace marker between the
+target and ordinal 1. The corrected oracle now requires the first ordinal after
+endpoint setup to be 1 and the target to be immediately adjacent apart from
+whitespace. All four oracle self-tests and all eight marker-action tests passed,
+and the complete recurring QEMU probe passed again on that exact oracle.
+
 The same final tree retained QEMU acceptance for endpoint configuration, the
 one-shot raw interrupt report, and the one-shot decoded report; normal boot
 ended with `BOOT_TEST_OK` / `QEMU_OUTCOME success`; persistent storage ended
@@ -159,7 +167,7 @@ log have these SHA-256 values:
 ```text
 image/esp/EFI/BOOT/BOOTX64.EFI                         085A02AA250050CB55B065B7842B09CDE5C087291ABD19D83FA05F6197918578
 image/esp/PYTHOS/PYTHCORE.ELF                          717390EBD77EE896C188830E60AA2D60E29107469295D855519094203CED46BC
-target/usb-xhci-boot-mouse-recurring-probe-com1.log    2C1D67DFB42BBB0CFE8CCF70E2AB38E233950838A2ABAFBCF9745B374A30EA20
+target/usb-xhci-boot-mouse-recurring-probe-com1.log    C5F16ADBC17E266EFCEC2CDFF210D0E35A609E22091A865E82FE6F5E565AE1CA
 ```
 
 The final COM1 log is 35,346 bytes. It contains the sequence target exactly
