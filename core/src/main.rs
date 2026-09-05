@@ -199,6 +199,8 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+mod viewing;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
