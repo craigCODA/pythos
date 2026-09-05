@@ -256,19 +256,19 @@ impl StableConnectedPortGate {
         after: XhciPortStatusSnapshot,
     ) -> Option<XhciPortChange> {
         if let Some(mut candidate) = self.candidate {
-            if let Some(port) = port_with_number(after, candidate.port_number) {
-                if port.portsc & XHCI_PORTSC_CURRENT_CONNECT_STATUS != 0 {
-                    candidate.after_portsc = port.portsc;
-                    candidate.after_portpmsc = port.portpmsc;
-                    self.candidate = Some(candidate);
-                    self.connected_samples = self.connected_samples.saturating_add(1);
-                    if self.connected_samples >= self.required_samples {
-                        self.candidate = None;
-                        self.connected_samples = 0;
-                        return Some(candidate);
-                    }
-                    return None;
+            if let Some(port) = port_with_number(after, candidate.port_number)
+                && port.portsc & XHCI_PORTSC_CURRENT_CONNECT_STATUS != 0
+            {
+                candidate.after_portsc = port.portsc;
+                candidate.after_portpmsc = port.portpmsc;
+                self.candidate = Some(candidate);
+                self.connected_samples = self.connected_samples.saturating_add(1);
+                if self.connected_samples >= self.required_samples {
+                    self.candidate = None;
+                    self.connected_samples = 0;
+                    return Some(candidate);
                 }
+                return None;
             }
             self.candidate = None;
             self.connected_samples = 0;
@@ -293,10 +293,10 @@ fn port_with_number(
 ) -> Option<XhciPortRegisterSnapshot> {
     let mut index = 0usize;
     while index < usize::from(snapshot.captured_ports) && index < XHCI_PORT_SNAPSHOT_LIMIT {
-        if let Some(port) = snapshot.port_at(index) {
-            if port.port_number == port_number {
-                return Some(port);
-            }
+        if let Some(port) = snapshot.port_at(index)
+            && port.port_number == port_number
+        {
+            return Some(port);
         }
         index += 1;
     }

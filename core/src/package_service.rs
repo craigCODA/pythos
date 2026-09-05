@@ -46,7 +46,7 @@ use pythos_shared::{
         PACKAGE_INSTALL_RESOURCE_ID, PACKAGE_INSTALL_RIGHT, PackageRuntimeSchemaBindingV0,
         PackageStatus,
     },
-    package_format::{ContentEntryV0, PackageArtifactV0, PackageFormatError},
+    package_format::{PackageArtifactV0, PackageFormatError},
     pyth_tig::opcode::{RESOURCE_OBJECT_WORKSPACE, RIGHTS_CREATE, RIGHTS_QUERY},
 };
 
@@ -183,14 +183,13 @@ fn restore_retained_package_service_from_device(
         service.restore_from_storage(device).map(|_| ())
     })
     .ok_or(PackageStatus::BadRequest)??;
-    let reconciled = crate::retained_services::with_object_service(|object_service| {
+    crate::retained_services::with_object_service(|object_service| {
         with_retained_package_service_for_phase13(|package_service| {
             package_service.reconcile_schema_references_from_object_service(object_service)
         })
         .ok_or(PackageStatus::BadRequest)?
     })
-    .map_err(|_| PackageStatus::RegistryRecoveryDenied)?;
-    reconciled
+    .map_err(|_| PackageStatus::RegistryRecoveryDenied)?
 }
 
 #[cfg(test)]
@@ -797,32 +796,28 @@ impl<'a> PackageService<'a> {
             self.staged_registry.copy_from_committed(&self.registry);
             self.staged_registry
                 .begin_candidate_generation(self.next_transaction_id)?;
-            self.staged_registry
-                .add_package_record(PackageRegistryPackageRecord::new(
-                    package.object_id.raw(),
-                    package.revision,
-                    release_digest,
-                    PackageStatus::Ok as u16,
-                ))?;
-            self.staged_registry
-                .add_schema_record(PackageRegistrySchemaRecord::new(
-                    schema.object_id.raw(),
-                    schema.revision,
-                    package.object_id.raw(),
-                    descriptor_entry.content_index,
-                    descriptor_entry.sha256,
-                ))?;
+            let package_record = PackageRegistryPackageRecord::new(
+                package.object_id.raw(),
+                package.revision,
+                release_digest,
+                PackageStatus::Ok as u16,
+            );
+            let schema_record = PackageRegistrySchemaRecord::new(
+                schema.object_id.raw(),
+                schema.revision,
+                package.object_id.raw(),
+                descriptor_entry.content_index,
+                descriptor_entry.sha256,
+            );
+            self.staged_registry.add_package_record(package_record)?;
+            self.staged_registry.add_schema_record(schema_record)?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
             add_manifest_exports_and_requirements_to_registry(
                 artifact,
                 &mut self.staged_registry,
-                package.object_id.raw(),
-                package.revision,
-                release_digest,
-                schema.object_id.raw(),
-                schema.revision,
-                descriptor_entry,
+                package_record,
+                schema_record,
             )?;
 
             self.content_store
@@ -997,32 +992,28 @@ impl<'a> PackageService<'a> {
             self.staged_registry.copy_from_committed(&self.registry);
             self.staged_registry
                 .begin_candidate_generation(self.next_transaction_id)?;
-            self.staged_registry
-                .add_package_record(PackageRegistryPackageRecord::new(
-                    package.object_id.raw(),
-                    package.revision,
-                    release_digest,
-                    PackageStatus::Ok as u16,
-                ))?;
-            self.staged_registry
-                .add_schema_record(PackageRegistrySchemaRecord::new(
-                    schema.object_id.raw(),
-                    schema.revision,
-                    package.object_id.raw(),
-                    descriptor_entry.content_index,
-                    descriptor_entry.sha256,
-                ))?;
+            let package_record = PackageRegistryPackageRecord::new(
+                package.object_id.raw(),
+                package.revision,
+                release_digest,
+                PackageStatus::Ok as u16,
+            );
+            let schema_record = PackageRegistrySchemaRecord::new(
+                schema.object_id.raw(),
+                schema.revision,
+                package.object_id.raw(),
+                descriptor_entry.content_index,
+                descriptor_entry.sha256,
+            );
+            self.staged_registry.add_package_record(package_record)?;
+            self.staged_registry.add_schema_record(schema_record)?;
             self.content_store
                 .add_staged_records_to_registry(&self.staged_content, &mut self.staged_registry)?;
             add_manifest_exports_and_requirements_to_registry(
                 artifact,
                 &mut self.staged_registry,
-                package.object_id.raw(),
-                package.revision,
-                release_digest,
-                schema.object_id.raw(),
-                schema.revision,
-                descriptor_entry,
+                package_record,
+                schema_record,
             )?;
             let candidate_snapshot = candidate_object_service
                 .encode_candidate_snapshot()
@@ -1156,7 +1147,7 @@ impl<'a> PackageService<'a> {
             .as_ref()
             .ok_or(PackageStatus::BadRequest)?;
         let persisted_content_store = prepared_content_store
-            .from_validated_candidate_registry(
+            .reconstruct_from_validated_candidate_registry(
                 &persisted_registry,
                 persisted_content,
                 prepared_content,
@@ -2086,12 +2077,12 @@ impl<'a> PackageService<'a> {
         };
         if let Some(object_service) = authoritative_object_service {
             self.reconcile_schema_references_from_object_service(object_service)?;
-        } else if selected_object_snapshot_available {
-            if let Some(snapshot) = self.restored_object_snapshot {
-                let selected_object_service =
-                    ObjectService::from_snapshot(&snapshot).map_err(map_object_error)?;
-                self.reconcile_schema_references_from_object_service(&selected_object_service)?;
-            }
+        } else if selected_object_snapshot_available
+            && let Some(snapshot) = self.restored_object_snapshot
+        {
+            let selected_object_service =
+                ObjectService::from_snapshot(&snapshot).map_err(map_object_error)?;
+            self.reconcile_schema_references_from_object_service(&selected_object_service)?;
         }
         Ok(PackageRecoveryReport {
             published_world_selected: true,
@@ -2650,12 +2641,8 @@ fn create_schema_or_rollback<'a>(
 fn add_manifest_exports_and_requirements_to_registry(
     artifact: PackageArtifactV0<'_>,
     registry: &mut PackageRegistry,
-    package_object_id: u64,
-    package_revision: u64,
-    release_digest: [u8; 32],
-    schema_object_id: u64,
-    schema_revision: u64,
-    descriptor_entry: ContentEntryV0,
+    package_record: PackageRegistryPackageRecord,
+    schema_record: PackageRegistrySchemaRecord,
 ) -> Result<(), PackageStatus> {
     let manifest = artifact.manifest();
     let mut index = 0u32;
@@ -2679,15 +2666,15 @@ fn add_manifest_exports_and_requirements_to_registry(
                 PACKAGE_LOCATOR_ROOT_OBJECT_ID,
                 package_locator,
                 export_name,
-                package_object_id,
-                package_revision,
-                release_digest,
+                package_record.package_object_id,
+                package_record.installed_revision,
+                package_record.release_digest,
                 export_kind,
                 content_index,
                 entrypoint,
-                schema_object_id,
-                schema_revision,
-                descriptor_entry.sha256,
+                schema_record.schema_object_id,
+                schema_record.schema_revision,
+                schema_record.descriptor_digest,
             )?;
             registry.add_export_record(export)?;
         }

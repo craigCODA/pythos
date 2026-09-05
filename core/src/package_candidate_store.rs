@@ -83,9 +83,9 @@ pub fn read_candidate_registry_generation_into(
 ) -> Result<(), PackageStatus> {
     #[cfg(not(test))]
     {
-        return with_registry_snapshot_scratch(|bytes| {
+        with_registry_snapshot_scratch(|bytes| {
             read_candidate_registry_generation_into_bytes(device, expected, registry, bytes)
-        });
+        })
     }
 
     #[cfg(test)]
