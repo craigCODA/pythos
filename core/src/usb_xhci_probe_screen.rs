@@ -722,6 +722,8 @@ pub enum UsbBootMouseRecurringFailure {
     Driver(crate::usb_xhci_driver::XhciDriverError),
     Decode(crate::input_drivers::InputDriverError),
     TerminalInvariant,
+    #[cfg(any(test, feature = "viewing-input-probe"))]
+    Viewing(crate::viewing_input_probe::ViewingInputIntegrationFailure),
 }
 
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
@@ -809,7 +811,11 @@ pub fn build_boot_mouse_recurring_error_screen(
 ) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
-    push_text(&mut screen, "xhci input error");
+    match failure {
+        #[cfg(any(test, feature = "viewing-input-probe"))]
+        UsbBootMouseRecurringFailure::Viewing(_) => push_text(&mut screen, "viewing input error"),
+        _ => push_text(&mut screen, "xhci input error"),
+    }
     push_text(&mut screen, "no disk writes");
     if let Some(controller) = select_controller(report) {
         push_bdf(&mut screen, controller);
@@ -840,8 +846,41 @@ pub fn build_boot_mouse_recurring_error_screen(
         UsbBootMouseRecurringFailure::TerminalInvariant => {
             push_text(&mut screen, "terminal invariant")
         }
+        #[cfg(any(test, feature = "viewing-input-probe"))]
+        UsbBootMouseRecurringFailure::Viewing(failure) => {
+            push_viewing_input_failure(&mut screen, failure)
+        }
     }
     screen
+}
+
+#[cfg(any(test, feature = "viewing-input-probe"))]
+fn push_viewing_input_failure(
+    screen: &mut ProbeScreen,
+    failure: crate::viewing_input_probe::ViewingInputIntegrationFailure,
+) {
+    use crate::viewing_input_probe::{ViewingInputIntegrationFailure, ViewingInputProbeError};
+
+    let text = match failure {
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::EmptyExtent) => {
+            "viewing extent"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::InputNormalization) => {
+            "input normalization"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::WrongRoute) => {
+            "viewing route"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingTraversalMotion) => {
+            "traversal missing"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingCursorMotion) => {
+            "cursor motion missing"
+        }
+        ViewingInputIntegrationFailure::KeyboardUnavailable => "keyboard unavailable",
+        ViewingInputIntegrationFailure::Presentation => "presentation failed",
+    };
+    push_text(screen, text);
 }
 
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
@@ -1674,6 +1713,9 @@ mod tests {
                 crate::input_drivers::InputDriverError::BadUsbBootMouseReport,
             ),
             UsbBootMouseRecurringFailure::TerminalInvariant,
+            UsbBootMouseRecurringFailure::Viewing(
+                crate::viewing_input_probe::ViewingInputIntegrationFailure::KeyboardUnavailable,
+            ),
         ];
         for failure in failures {
             assert!(!boot_mouse_recurring_terminal_ready(
@@ -1681,6 +1723,58 @@ mod tests {
                 Some(failure),
                 true,
             ));
+        }
+    }
+
+    #[test]
+    fn recurring_error_screen_identifies_viewing_failure_as_higher_layer() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = XhciPortChange {
+            port_number: 5,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+        let progress = crate::usb_xhci_driver::XhciInterruptTransferProgress {
+            completed_reports: 1,
+            next_trb_index: 1,
+            next_cycle: true,
+            transfer_wrap_count: 0,
+            event_index: 5,
+            event_cycle: true,
+            event_wrap_count: 0,
+        };
+        let summary = crate::input_drivers::UsbBootMouseSequenceSummary::new();
+
+        let screen = build_boot_mouse_recurring_error_screen(
+            &report,
+            port_status,
+            change,
+            progress,
+            summary,
+            UsbBootMouseRecurringFailure::Viewing(
+                crate::viewing_input_probe::ViewingInputIntegrationFailure::KeyboardUnavailable,
+            ),
+        );
+
+        assert_eq!(screen.line(1), Some("viewing input error"));
+        assert_eq!(
+            screen.line(screen.line_count() - 1),
+            Some("keyboard unavailable")
+        );
+        for index in 0..screen.line_count() {
+            assert!(!screen.line(index).unwrap().contains("stage interrupt"));
         }
     }
 

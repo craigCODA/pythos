@@ -129,7 +129,8 @@ pub fn initialize() -> Result<(), Ps2Error> {
 #[cfg(any(
     feature = "physical-wake-diagnostic",
     feature = "physical-input-event-diagnostic",
-    feature = "physical-keyboard-console"
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
 ))]
 pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
     write_command(CMD_DISABLE_PORT1)?;
@@ -164,7 +165,8 @@ pub fn initialize_keyboard_polling() -> Result<(), Ps2Error> {
 #[cfg(any(
     feature = "physical-wake-diagnostic",
     feature = "physical-input-event-diagnostic",
-    feature = "physical-keyboard-console"
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
 ))]
 pub fn poll_raw_output_byte() -> Option<u8> {
     if inb(PS2_STATUS_COMMAND_PORT) & STATUS_OUTPUT_FULL == 0 {

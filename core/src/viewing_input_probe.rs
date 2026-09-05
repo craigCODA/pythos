@@ -36,10 +36,45 @@ pub enum ViewingInputIntegrationFailure {
     Presentation,
 }
 
+impl ViewingInputIntegrationFailure {
+    pub const fn marker(self) -> &'static str {
+        match self {
+            Self::Probe(ViewingInputProbeError::EmptyExtent) => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:EMPTY_EXTENT"
+            }
+            Self::Probe(ViewingInputProbeError::InputNormalization) => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:INPUT_NORMALIZATION"
+            }
+            Self::Probe(ViewingInputProbeError::WrongRoute) => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:WRONG_ROUTE"
+            }
+            Self::Probe(ViewingInputProbeError::MissingTraversalMotion) => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:MISSING_TRAVERSAL_MOTION"
+            }
+            Self::Probe(ViewingInputProbeError::MissingCursorMotion) => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:MISSING_CURSOR_MOTION"
+            }
+            Self::KeyboardUnavailable => {
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:KEYBOARD_UNAVAILABLE"
+            }
+            Self::Presentation => "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:PRESENTATION",
+        }
+    }
+}
+
 impl From<ViewingInputProbeError> for ViewingInputIntegrationFailure {
     fn from(error: ViewingInputProbeError) -> Self {
         Self::Probe(error)
     }
+}
+
+pub const fn viewing_input_terminal_ready(
+    traversal_routed: bool,
+    cursor_activated: bool,
+    cursor_routed: bool,
+    focus_mark_rendered: bool,
+) -> bool {
+    traversal_routed && cursor_activated && cursor_routed && focus_mark_rendered
 }
 
 pub struct ViewingInputProbe {
@@ -312,5 +347,55 @@ mod tests {
             ViewingInputIntegrationFailure::from(ViewingInputProbeError::MissingCursorMotion),
             ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingCursorMotion)
         );
+    }
+
+    #[test]
+    fn integration_failures_emit_stable_non_driver_markers() {
+        let cases = [
+            (
+                ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::EmptyExtent),
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:EMPTY_EXTENT",
+            ),
+            (
+                ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::InputNormalization),
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:INPUT_NORMALIZATION",
+            ),
+            (
+                ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::WrongRoute),
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:WRONG_ROUTE",
+            ),
+            (
+                ViewingInputIntegrationFailure::Probe(
+                    ViewingInputProbeError::MissingTraversalMotion,
+                ),
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:MISSING_TRAVERSAL_MOTION",
+            ),
+            (
+                ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingCursorMotion),
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:MISSING_CURSOR_MOTION",
+            ),
+            (
+                ViewingInputIntegrationFailure::KeyboardUnavailable,
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:KEYBOARD_UNAVAILABLE",
+            ),
+            (
+                ViewingInputIntegrationFailure::Presentation,
+                "PYTHOS:CORE:VIEWING_INPUT_PROBE_ERROR:PRESENTATION",
+            ),
+        ];
+
+        for (failure, expected) in cases {
+            assert_eq!(failure.marker(), expected);
+            assert!(!failure.marker().contains("XHCI_DRIVER_ERROR"));
+        }
+    }
+
+    #[test]
+    fn terminal_readiness_requires_both_routes_activation_and_render() {
+        assert!(viewing_input_terminal_ready(true, true, true, true));
+        assert!(!viewing_input_terminal_ready(false, true, true, true));
+        assert!(!viewing_input_terminal_ready(true, false, true, true));
+        assert!(!viewing_input_terminal_ready(true, true, false, true));
+        assert!(!viewing_input_terminal_ready(true, true, true, false));
     }
 }

@@ -9,14 +9,30 @@ use crate::memory::{physical::PhysicalMemory, r#virtual};
 #[cfg(feature = "usb-xhci-command-probe")]
 use crate::usb_xhci_driver;
 use crate::{fb_debug, serial, usb_xhci_probe, usb_xhci_probe_screen};
+#[cfg(feature = "viewing-input-probe")]
+use crate::{
+    framebuffer,
+    viewing::MotionRoute,
+    viewing_input_probe::{
+        ViewingInputIntegrationFailure, ViewingInputPresentationStatus, ViewingInputProbe,
+        ViewingInputProbeKeyboardStep, viewing_input_terminal_ready,
+    },
+};
 use pythos_shared::boot_protocol::PythBootInfo;
+#[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
 #[derive(Clone, Copy)]
 struct UsbBootMouseRecurringResult {
+    #[cfg(not(feature = "viewing-input-probe"))]
     endpoint: usb_xhci_driver::XhciEndpointConfigurationProbeResult,
+    #[cfg(not(feature = "viewing-input-probe"))]
     progress: usb_xhci_driver::XhciInterruptTransferProgress,
+    #[cfg(not(feature = "viewing-input-probe"))]
     summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+    #[cfg(feature = "viewing-input-probe")]
+    viewing_terminal_ready: bool,
 }
 
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
@@ -176,6 +192,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                                             match run_boot_mouse_recurring_probe(
                                                 snapshot,
                                                 change.port_number,
+                                                &boot_info.framebuffer,
                                             ) {
                                                 Ok(result) => {
                                                     xhci_boot_mouse_recurring_result = Some(result);
@@ -342,7 +359,46 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         fb_debug::COLOR_HARDWARE_PROBE_NO_STORAGE
     };
     fb_debug::fill(&boot_info.framebuffer, final_color);
-    #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-boot-mouse-recurring-probe",
+        feature = "viewing-input-probe"
+    ))]
+    let render_result = match (
+        xhci_boot_mouse_recurring_result,
+        xhci_boot_mouse_recurring_error,
+        xhci_port_status,
+        xhci_port_change,
+    ) {
+        (Some(_), _, _, _) => Ok(()),
+        (None, Some(error), Some(port_status), Some(change)) => {
+            usb_xhci_probe_screen::render_boot_mouse_recurring_error(
+                &boot_info.framebuffer,
+                &report,
+                port_status,
+                change,
+                error.progress,
+                error.summary,
+                error.failure,
+            )
+        }
+        (None, _, Some(port_status), Some(change)) => usb_xhci_probe_screen::render_swap_change(
+            &boot_info.framebuffer,
+            &report,
+            port_status,
+            change,
+        ),
+        _ => usb_xhci_probe_screen::render(
+            &boot_info.framebuffer,
+            &report,
+            xhci_snapshot,
+            xhci_port_status,
+            xhci_error,
+        ),
+    };
+    #[cfg(all(
+        feature = "usb-xhci-boot-mouse-recurring-probe",
+        not(feature = "viewing-input-probe")
+    ))]
     let render_result = match (
         xhci_boot_mouse_recurring_result,
         xhci_boot_mouse_recurring_error,
@@ -683,14 +739,27 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         xhci_boot_mouse_recurring_error.map(|error| error.failure),
         render_result.is_ok(),
     );
+    #[cfg(feature = "viewing-input-probe")]
+    let viewing_terminal_ready = recurring_terminal_ready
+        && xhci_boot_mouse_recurring_result
+            .map(|result| result.viewing_terminal_ready)
+            .unwrap_or(false);
     if render_result.is_ok() {
         serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_IDENTITY_READY");
     } else {
         serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_IDENTITY_FAILED");
     }
     serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE:NO_DISK_WRITES");
-    #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
+    #[cfg(all(
+        feature = "usb-xhci-boot-mouse-recurring-probe",
+        not(feature = "viewing-input-probe")
+    ))]
     if recurring_terminal_ready {
+        serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE_READY");
+    }
+    #[cfg(feature = "viewing-input-probe")]
+    if viewing_terminal_ready {
+        serial::write_line("PYTHOS:CORE:VIEWING_INPUT_PROBE_READY");
         serial::write_line("PYTHOS:CORE:USB_XHCI_PROBE_READY");
     }
     #[cfg(not(feature = "usb-xhci-boot-mouse-recurring-probe"))]
@@ -705,8 +774,30 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 fn run_boot_mouse_recurring_probe(
     registers: usb_xhci_probe::XhciRegisterSnapshot,
     port_number: u8,
+    framebuffer: &PythFramebufferInfo,
 ) -> Result<UsbBootMouseRecurringResult, UsbBootMouseRecurringError> {
     let mut summary = crate::input_drivers::UsbBootMouseSequenceSummary::new();
+    #[cfg(feature = "viewing-input-probe")]
+    let mut viewing_probe = match ViewingInputProbe::new(framebuffer.width, framebuffer.height) {
+        Ok(probe) => probe,
+        Err(error) => {
+            return Err(viewing_recurring_error(
+                framebuffer,
+                None,
+                empty_recurring_progress(),
+                summary,
+                error.into(),
+            ));
+        }
+    };
+    #[cfg(feature = "viewing-input-probe")]
+    let mut traversal_routed = false;
+    #[cfg(feature = "viewing-input-probe")]
+    let mut cursor_activated = false;
+    #[cfg(feature = "viewing-input-probe")]
+    let mut cursor_routed = false;
+    #[cfg(not(feature = "viewing-input-probe"))]
+    let _ = framebuffer;
     let mut session =
         match usb_xhci_driver::XhciInterruptTransferProbeSession::begin(registers, port_number) {
             Ok(session) => session,
@@ -779,6 +870,54 @@ fn run_boot_mouse_recurring_probe(
         };
         emit_boot_mouse_decode(decoded);
         summary.observe(decoded);
+        #[cfg(feature = "viewing-input-probe")]
+        match viewing_probe.observe_mouse_report(decoded) {
+            Ok(Some(MotionRoute::Traversal(_))) => {
+                traversal_routed = true;
+                serial::write_line("PYTHOS:CORE:VIEWING:TRAVERSAL_RELATIVE_MOTION");
+                if !cursor_activated {
+                    if let Err(failure) = wait_for_cursor_activation(&mut viewing_probe) {
+                        return Err(viewing_recurring_error(
+                            framebuffer,
+                            Some(viewing_probe.snapshot()),
+                            session.progress(),
+                            summary,
+                            failure,
+                        ));
+                    }
+                    cursor_activated = true;
+                }
+            }
+            Ok(Some(MotionRoute::CursorFocus(_))) => {
+                cursor_routed = true;
+                serial::write_line("PYTHOS:CORE:VIEWING:CURSOR_RELATIVE_MOTION");
+                if framebuffer::render_viewing_input_probe(
+                    framebuffer,
+                    viewing_probe.snapshot(),
+                    viewing_probe.presentation_status(),
+                )
+                .is_err()
+                {
+                    return Err(viewing_recurring_error(
+                        framebuffer,
+                        Some(viewing_probe.snapshot()),
+                        session.progress(),
+                        summary,
+                        ViewingInputIntegrationFailure::Presentation,
+                    ));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                return Err(viewing_recurring_error(
+                    framebuffer,
+                    Some(viewing_probe.snapshot()),
+                    session.progress(),
+                    summary,
+                    error.into(),
+                ));
+            }
+        }
         serial::write_hex_u64(
             "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_READY=",
             u64::from(ordinal),
@@ -806,11 +945,122 @@ fn run_boot_mouse_recurring_probe(
     }
 
     emit_boot_mouse_recurring_summary(progress, summary);
-    Ok(UsbBootMouseRecurringResult {
+    #[cfg(feature = "viewing-input-probe")]
+    let result = {
+        let final_snapshot = match viewing_probe.finish() {
+            Ok(snapshot) => snapshot,
+            Err(error) => {
+                return Err(viewing_recurring_error(
+                    framebuffer,
+                    Some(viewing_probe.snapshot()),
+                    progress,
+                    summary,
+                    error.into(),
+                ));
+            }
+        };
+        let Some(focus_mark) = final_snapshot.focus_mark else {
+            return Err(viewing_recurring_error(
+                framebuffer,
+                Some(final_snapshot),
+                progress,
+                summary,
+                crate::viewing_input_probe::ViewingInputProbeError::MissingCursorMotion.into(),
+            ));
+        };
+        if framebuffer::render_viewing_input_probe(
+            framebuffer,
+            final_snapshot,
+            ViewingInputPresentationStatus::Complete,
+        )
+        .is_err()
+        {
+            return Err(viewing_recurring_error(
+                framebuffer,
+                Some(final_snapshot),
+                progress,
+                summary,
+                ViewingInputIntegrationFailure::Presentation,
+            ));
+        }
+        let terminal_ready =
+            viewing_input_terminal_ready(traversal_routed, cursor_activated, cursor_routed, true);
+        if !terminal_ready {
+            return Err(viewing_recurring_error(
+                framebuffer,
+                Some(final_snapshot),
+                progress,
+                summary,
+                crate::viewing_input_probe::ViewingInputProbeError::WrongRoute.into(),
+            ));
+        }
+        emit_viewing_focus_mark(focus_mark);
+        UsbBootMouseRecurringResult {
+            viewing_terminal_ready: terminal_ready,
+        }
+    };
+    #[cfg(not(feature = "viewing-input-probe"))]
+    let result = UsbBootMouseRecurringResult {
         endpoint,
         progress,
         summary,
-    })
+    };
+    Ok(result)
+}
+
+#[cfg(feature = "viewing-input-probe")]
+fn wait_for_cursor_activation(
+    probe: &mut ViewingInputProbe,
+) -> Result<(), ViewingInputIntegrationFailure> {
+    crate::ps2::initialize_keyboard_polling()
+        .map_err(|_| ViewingInputIntegrationFailure::KeyboardUnavailable)?;
+    serial::write_line("PYTHOS:CORE:SESSION_CONTROL:CURSOR_ACTIVATION_READY");
+    loop {
+        if let Some(byte) = crate::ps2::poll_raw_output_byte() {
+            match probe.observe_keyboard_byte(byte)? {
+                ViewingInputProbeKeyboardStep::Waiting => {}
+                ViewingInputProbeKeyboardStep::Activated => {
+                    serial::write_line("PYTHOS:CORE:SESSION_CONTROL:CURSOR_ACTIVATED");
+                    return Ok(());
+                }
+            }
+        }
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(feature = "viewing-input-probe")]
+fn viewing_recurring_error(
+    framebuffer: &PythFramebufferInfo,
+    snapshot: Option<crate::viewing::ViewingSnapshot>,
+    progress: usb_xhci_driver::XhciInterruptTransferProgress,
+    summary: crate::input_drivers::UsbBootMouseSequenceSummary,
+    failure: ViewingInputIntegrationFailure,
+) -> UsbBootMouseRecurringError {
+    serial::write_line(failure.marker());
+    if let Some(snapshot) = snapshot {
+        let _ = framebuffer::render_viewing_input_probe(
+            framebuffer,
+            snapshot,
+            ViewingInputPresentationStatus::Failed,
+        );
+    }
+    UsbBootMouseRecurringError {
+        progress,
+        summary,
+        failure: usb_xhci_probe_screen::UsbBootMouseRecurringFailure::Viewing(failure),
+    }
+}
+
+#[cfg(feature = "viewing-input-probe")]
+fn emit_viewing_focus_mark(focus_mark: crate::viewing::FocusMarkPosition) {
+    serial::write_str("PYTHOS:CORE:VIEWING:FOCUS_MARK_X=");
+    serial::write_dec_u64_value(u64::from(focus_mark.x));
+    serial::write_str("\r\n");
+    serial::write_str("PYTHOS:CORE:VIEWING:FOCUS_MARK_Y=");
+    serial::write_dec_u64_value(u64::from(focus_mark.y));
+    serial::write_str("\r\n");
+    serial::write_line("PYTHOS:CORE:VIEWING:FOCUS_MARK_READY");
 }
 
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
