@@ -1267,10 +1267,10 @@ counts, and late-failure contract run with:
 py -3 scripts\test-usb-xhci-boot-mouse-recurring-probe.py --self-test
 ```
 
-ADR 0088 records target-specific physical acceptance on the Lenovo 81VS with
-the Dell/PixArt `1022:7914` mouse. Generic USB/HID support, other devices or
-controllers, hubs, IRQ-driven input, hot-unplug recovery, and ADR 0089 Viewing
-behavior remain outside that evidence.
+ADR 0088 records target-specific physical acceptance on the Lenovo `81VS`
+using AMD xHCI `1022:7914` with the Dell/PixArt `413c:301a` boot mouse. Generic
+USB/HID support, other devices or controllers, hubs, IRQ-driven input,
+hot-unplug recovery, and ADR 0089 Viewing behavior remain outside that evidence.
 
 ## ADR 0089 Viewing Input Routing Acceptance
 
