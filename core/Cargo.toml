@@ -19,6 +19,57 @@ evidence-terminal = ["verify"]
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []
+# `usb-xhci-probe` builds a no-write USB-controller diagnostic image. It scans
+# PCI config space for USB controllers, reads xHCI header registers only, and
+# then halts.
+usb-xhci-probe = []
+# `usb-xhci-port-probe` extends the xHCI diagnostic with read-only extended
+# capability and port-status register snapshots. It still does not reset the
+# controller, allocate rings, enumerate devices, parse HID, or touch storage.
+usb-xhci-port-probe = ["usb-xhci-probe"]
+# `usb-xhci-swap-probe` renders a post-boot USB swap prompt, then polls the
+# read-only xHCI port-status snapshot for a bounded hotplug change. It still
+# does not reset the controller, claim ownership, enumerate USB, parse HID, or
+# touch storage.
+usb-xhci-swap-probe = ["usb-xhci-port-probe"]
+# `usb-xhci-command-probe` is the first write/DMA xHCI driver diagnostic. It
+# depends on the swap probe's connected-port evidence, then initializes the
+# controller command/event rings and proves a bounded Enable Slot completion.
+# It still does not address a USB device, configure endpoints, parse HID, move
+# a cursor, enable USB interrupts, or touch storage.
+usb-xhci-command-probe = ["usb-xhci-swap-probe"]
+# `usb-xhci-address-probe` extends the command-ring diagnostic by constructing
+# xHCI input/output contexts and issuing one Address Device command for the
+# selected hotplugged root-port device. It still does not parse descriptors,
+# configure non-control endpoints, parse HID, move a cursor, or touch storage.
+usb-xhci-address-probe = ["usb-xhci-command-probe"]
+# `usb-xhci-descriptor-probe` extends the address diagnostic with one EP0
+# GET_DESCRIPTOR(Device) control transfer. It still does not configure
+# non-control endpoints, parse HID reports, move a cursor, or touch storage.
+usb-xhci-descriptor-probe = ["usb-xhci-address-probe"]
+# `usb-xhci-configuration-probe` adds bounded EP0 reads for the standard
+# configuration, interface, and interrupt-IN endpoint descriptors. It does not
+# set a configuration, configure endpoints, parse HID reports, poll input,
+# move a cursor, enable USB interrupts, or touch storage.
+usb-xhci-configuration-probe = ["usb-xhci-descriptor-probe"]
+# `usb-xhci-endpoint-configuration-probe` builds the discovered interrupt-IN
+# endpoint context, requires Configure Endpoint success, then sends the USB
+# SET_CONFIGURATION request. It does not queue or poll an interrupt transfer,
+# parse HID reports, move a cursor, enable USB interrupts, or touch storage.
+usb-xhci-endpoint-configuration-probe = ["usb-xhci-configuration-probe"]
+# `usb-xhci-interrupt-transfer-probe` queues exactly one Normal TRB on the
+# configured interrupt-IN endpoint and captures one raw report. It does not
+# decode HID semantics, move a cursor, recur, enable USB interrupts, or touch
+# storage.
+usb-xhci-interrupt-transfer-probe = ["usb-xhci-endpoint-configuration-probe"]
+# `usb-xhci-boot-mouse-decode-probe` interprets the standard three-byte USB
+# boot-mouse prefix from the one captured report and retains an optional fourth
+# byte as raw auxiliary evidence. It still queues only one report, does not move
+# a cursor, does not recur, and does not touch storage.
+usb-xhci-boot-mouse-decode-probe = ["usb-xhci-interrupt-transfer-probe"]
+# Sixteen single-in-flight boot-mouse reports prove one transfer-ring wrap and
+# aggregate state only. No cursor, wheel semantics, IRQ input, or storage.
+usb-xhci-boot-mouse-recurring-probe = ["usb-xhci-boot-mouse-decode-probe"]
 # `hardware-probe-emmc-write` is an explicit destructive test image. It depends
 # on `hardware-probe` and writes one fixed sacrificial eMMC sector.
 hardware-probe-emmc-write = ["hardware-probe"]
@@ -44,6 +95,9 @@ physical-input-event-diagnostic = []
 # port access in kernel mode and exposes only bounded console bytes through the
 # existing object-shell console syscall.
 physical-keyboard-console = []
+# Opt-in normal boot framebuffer breadcrumbs for serial-less physical hardware
+# diagnosis. This does not change default boot behavior.
+normal-boot-diagnostic = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

@@ -3,10 +3,17 @@
 // The hardware-probe feature intentionally exits after early PCI inventory.
 // Most of PythCore remains in the crate but is unreachable in that diagnostic
 // image, so suppress unused warnings only for that non-test build.
-#![cfg_attr(all(not(test), feature = "hardware-probe"), allow(unused))]
+#![cfg_attr(
+    all(not(test), any(feature = "hardware-probe", feature = "usb-xhci-probe")),
+    allow(unused)
+)]
 
 #[cfg(all(feature = "verify", feature = "hardware-probe"))]
 compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
+#[cfg(all(feature = "verify", feature = "usb-xhci-probe"))]
+compile_error!("features `verify` and `usb-xhci-probe` are mutually exclusive");
+#[cfg(all(feature = "hardware-probe", feature = "usb-xhci-probe"))]
+compile_error!("features `hardware-probe` and `usb-xhci-probe` are mutually exclusive");
 #[cfg(all(feature = "pyth-tig-default", feature = "legacy-shell"))]
 compile_error!("features `pyth-tig-default` and `legacy-shell` are mutually exclusive");
 #[cfg(all(feature = "phase13-package-test", not(feature = "verify")))]
@@ -15,6 +22,15 @@ compile_error!("feature `phase13-package-test` requires `verify`");
 compile_error!("feature `physical-wake-diagnostic` requires `verify`");
 #[cfg(all(feature = "physical-input-event-diagnostic", not(feature = "verify")))]
 compile_error!("feature `physical-input-event-diagnostic` requires `verify`");
+#[cfg(all(
+    feature = "normal-boot-diagnostic",
+    any(
+        feature = "verify",
+        feature = "hardware-probe",
+        feature = "usb-xhci-probe"
+    )
+))]
+compile_error!("feature `normal-boot-diagnostic` requires normal boot");
 
 mod architecture;
 mod audio;
@@ -51,6 +67,12 @@ mod launcher_screen;
 mod memory;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
+#[cfg(any(
+    test,
+    feature = "normal-boot-diagnostic",
+    all(not(test), not(feature = "verify"), not(feature = "hardware-probe"))
+))]
+mod normal_boot_diagnostic;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_init;
 mod object_browser;
@@ -162,6 +184,14 @@ mod task_context;
 mod task_service;
 mod tasks;
 mod typed_object_format;
+#[cfg(any(test, feature = "usb-xhci-command-probe"))]
+mod usb_xhci_driver;
+#[cfg(any(test, feature = "usb-xhci-probe"))]
+mod usb_xhci_probe;
+#[cfg(all(not(test), feature = "usb-xhci-probe"))]
+mod usb_xhci_probe_boot;
+#[cfg(any(test, feature = "usb-xhci-probe"))]
+mod usb_xhci_probe_screen;
 mod user_copy;
 mod user_elf;
 mod user_mode;
@@ -252,9 +282,21 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     serial::write_line("PYTHOS:CORE:IDT_READY");
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_IDT);
     serial::write_line("PYTHOS:CORE:EXCEPTIONS_DIAGNOSTIC_READY");
+    #[cfg(all(
+        not(test),
+        feature = "normal-boot-diagnostic",
+        not(feature = "verify"),
+        not(feature = "hardware-probe")
+    ))]
+    normal_boot_diagnostic::report(
+        &boot_info.framebuffer,
+        normal_boot_diagnostic::NormalBootDiagnosticStage::CoreReady,
+    );
 
     #[cfg(all(not(test), feature = "hardware-probe"))]
     hardware_probe_boot::run(boot_info, &mut physical_memory);
+    #[cfg(all(not(test), feature = "usb-xhci-probe"))]
+    usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
     // boot branches away before it, near the end of this function.
@@ -307,33 +349,22 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(not(feature = "sdhci-emmc-backend"))]
         let sdhci_emmc_mmio = None;
 
-        #[cfg(feature = "evidence-terminal")]
-        let evidence_log_mapping = memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
+        let mut kernel_address_space_options =
+            memory::r#virtual::KernelAddressSpaceBuildOptions::new();
+        kernel_address_space_options.hda_mmio = hda_mmio;
+        kernel_address_space_options.ahci_mmio = ahci_mmio;
+        kernel_address_space_options.sdhci_emmc_mmio = sdhci_emmc_mmio;
 
         #[cfg(feature = "evidence-terminal")]
+        {
+            kernel_address_space_options.evidence_log_mapping =
+                memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
+        }
+
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
-            hda_mmio,
-            ahci_mmio,
-            sdhci_emmc_mmio,
-            None,
-            evidence_log_mapping,
-        ) {
-            Ok(address_space) => address_space,
-            Err(_) => {
-                serial::write_line("PYTHOS:PANIC");
-                qemu_exit::panic();
-            }
-        };
-        #[cfg(not(feature = "evidence-terminal"))]
-        let address_space = match memory::r#virtual::KernelAddressSpace::build(
-            &mut physical_memory,
-            boot_info,
-            hda_mmio,
-            ahci_mmio,
-            sdhci_emmc_mmio,
-            None,
+            kernel_address_space_options,
         ) {
             Ok(address_space) => address_space,
             Err(_) => {

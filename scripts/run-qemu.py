@@ -21,6 +21,7 @@ DEFAULT_ISO = ROOT / "target" / "pythos.iso"
 DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
 DEFAULT_STORAGE_IMAGE = ROOT / "target" / "pythos-store.img"
 DEFAULT_EMMC_IMAGE = ROOT / "target" / "pythos-emmc.img"
+DEFAULT_XHCI_USB_STORAGE_IMAGE = ROOT / "target" / "pythos-xhci-usb-storage.img"
 DEFAULT_STORAGE_SIZE_BYTES = 16 * 1024 * 1024
 DEFAULT_EMMC_SIZE_BYTES = 32 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 20.0
@@ -110,6 +111,7 @@ def find_ovmf(explicit: str | None) -> str:
 
 
 QMP_PORT = 4488
+USB_MOUSE_SEQUENCE_LENGTH = 16
 
 
 def read_qmp_message(sock_file) -> dict:
@@ -122,41 +124,158 @@ def read_qmp_message(sock_file) -> dict:
             return message
 
 
-def request_screendump(path: Path) -> None:
+def run_qmp_commands(commands: tuple[dict, ...]) -> None:
     with socket.create_connection(("127.0.0.1", QMP_PORT), timeout=5) as sock:
         sock_file = sock.makefile("rw", encoding="utf-8", newline="\n")
         read_qmp_message(sock_file)
-        for command in (
-            {"execute": "qmp_capabilities"},
+        for command in ({"execute": "qmp_capabilities"},) + commands:
+            sock_file.write(json.dumps(command) + "\n")
+            sock_file.flush()
+            reply = read_qmp_message(sock_file)
+            if "error" in reply:
+                raise RuntimeError(f"QMP error: {reply['error']}")
+
+
+def request_screendump(path: Path) -> None:
+    run_qmp_commands(
+        (
             {
                 "execute": "screendump",
                 "arguments": {"filename": str(path), "format": "ppm"},
             },
-        ):
-            sock_file.write(json.dumps(command) + "\n")
-            sock_file.flush()
-            reply = read_qmp_message(sock_file)
-            if "error" in reply:
-                raise RuntimeError(f"QMP error: {reply['error']}")
+        )
+    )
 
 
 def request_qmp_quit() -> None:
-    with socket.create_connection(("127.0.0.1", QMP_PORT), timeout=5) as sock:
-        sock_file = sock.makefile("rw", encoding="utf-8", newline="\n")
-        read_qmp_message(sock_file)
-        for command in (
-            {"execute": "qmp_capabilities"},
-            {"execute": "quit"},
-        ):
-            sock_file.write(json.dumps(command) + "\n")
-            sock_file.flush()
-            reply = read_qmp_message(sock_file)
-            if "error" in reply:
-                raise RuntimeError(f"QMP error: {reply['error']}")
+    run_qmp_commands(({"execute": "quit"},))
+
+
+def request_usb_mouse_hotplug(port: str) -> None:
+    run_qmp_commands(
+        (
+            {
+                "execute": "device_add",
+                "arguments": {
+                    "driver": "usb-mouse",
+                    "id": "pythos_hotplug_mouse",
+                    "bus": "pythos_xhci.0",
+                    "port": port,
+                },
+            },
+        )
+    )
+
+
+def request_usb_mouse_movement() -> None:
+    run_qmp_commands(
+        (
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {"type": "rel", "data": {"axis": "x", "value": 8}},
+                        {"type": "rel", "data": {"axis": "y", "value": -4}},
+                    ]
+                },
+            },
+        )
+    )
+
+
+def usb_mouse_sequence_events(step: int) -> list[dict]:
+    if 0 <= step < 14:
+        return [
+            {"type": "rel", "data": {"axis": "x", "value": 8}},
+            {"type": "rel", "data": {"axis": "y", "value": -4}},
+        ]
+    if step == 14:
+        return [{"type": "btn", "data": {"button": "left", "down": True}}]
+    if step == 15:
+        return [{"type": "btn", "data": {"button": "left", "down": False}}]
+    raise ValueError(f"usb mouse sequence step {step} is outside 0..15")
+
+
+def next_marker_sequence_step(observed: int, sent: int, limit: int) -> int | None:
+    if limit <= 0:
+        raise ValueError("marker sequence limit must be positive")
+    if observed < 0 or sent < 0 or sent > limit:
+        raise ValueError("marker sequence counts are invalid")
+    if observed == sent:
+        return None
+    if observed == sent + 1 and sent < limit:
+        return sent
+    raise ValueError(
+        f"marker sequence mismatch: observed {observed}, sent {sent}, limit {limit}"
+    )
+
+
+def request_usb_mouse_sequence_step(step: int) -> None:
+    events = usb_mouse_sequence_events(step)
+    run_qmp_commands(
+        (
+            {
+                "execute": "input-send-event",
+                "arguments": {"events": events},
+            },
+        )
+    )
+
+
+def advance_marker_sequence_step(
+    observed: int,
+    sent: int,
+    limit: int,
+    send_step,
+) -> int:
+    step = next_marker_sequence_step(observed, sent, limit)
+    if step is None:
+        return sent
+    send_step(step)
+    return sent + 1
+
+
+def sequence_completion_outcome(
+    outcome: QemuOutcome,
+    sequence_requested: bool,
+    sent: int,
+    limit: int,
+) -> QemuOutcome:
+    if (
+        outcome == QemuOutcome.SUCCESS
+        and sequence_requested
+        and sent != limit
+    ):
+        return QemuOutcome.RESET
+    return outcome
+
+
+def request_device_removal(device_id: str) -> None:
+    run_qmp_commands(
+        (
+            {
+                "execute": "device_del",
+                "arguments": {"id": device_id},
+            },
+        )
+    )
 
 
 def read_serial_log(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+
+
+def marker_delay_ready(
+    marker_seen_at: float | None,
+    marker_present: bool,
+    delay_seconds: float,
+    now: float,
+) -> tuple[bool, float | None]:
+    if not marker_present:
+        return False, marker_seen_at
+    if marker_seen_at is None:
+        marker_seen_at = now
+    return now >= marker_seen_at + delay_seconds, marker_seen_at
 
 
 def ensure_storage_image(path: Path, size_bytes: int = DEFAULT_STORAGE_SIZE_BYTES) -> None:
@@ -231,6 +350,64 @@ def main() -> int:
         default=DEFAULT_EMMC_IMAGE,
         help="storage image for --emmc; created if missing",
     )
+    parser.add_argument(
+        "--xhci",
+        action="store_true",
+        help="attach a qemu-xhci PCI USB controller",
+    )
+    parser.add_argument(
+        "--usb-mouse",
+        action="store_true",
+        help="attach a USB mouse to the qemu-xhci controller",
+    )
+    parser.add_argument(
+        "--xhci-usb-storage",
+        action="store_true",
+        help="attach a removable USB storage device to the qemu-xhci controller",
+    )
+    parser.add_argument(
+        "--xhci-usb-storage-image",
+        type=Path,
+        default=DEFAULT_XHCI_USB_STORAGE_IMAGE,
+        help="storage image for --xhci-usb-storage",
+    )
+    parser.add_argument(
+        "--xhci-usb-storage-port",
+        default="1",
+        help="qemu-xhci port for --xhci-usb-storage",
+    )
+    parser.add_argument(
+        "--remove-usb-device-after-marker",
+        help="QMP-remove the USB device id after this serial marker appears",
+    )
+    parser.add_argument(
+        "--remove-usb-device-id",
+        default="pythos_boot_usb",
+        help="QMP device id to remove for --remove-usb-device-after-marker",
+    )
+    parser.add_argument(
+        "--hotplug-usb-mouse-after-marker",
+        help="QMP hotplug a USB mouse after this serial marker appears",
+    )
+    parser.add_argument(
+        "--hotplug-usb-mouse-port",
+        default="1",
+        help="qemu-xhci port for --hotplug-usb-mouse-after-marker",
+    )
+    parser.add_argument(
+        "--hotplug-usb-mouse-delay",
+        type=float,
+        default=0.0,
+        help="seconds to wait after the hotplug marker before adding the USB mouse",
+    )
+    parser.add_argument(
+        "--move-usb-mouse-after-marker",
+        help="QMP-inject one relative mouse movement after this serial marker appears",
+    )
+    parser.add_argument(
+        "--sequence-usb-mouse-after-marker",
+        help="QMP-inject fourteen mouse movements then left press/release for marker occurrences",
+    )
     parser.add_argument("--kill-after-marker")
     parser.add_argument(
         "--allow-reboot",
@@ -249,12 +426,36 @@ def main() -> int:
         raise SystemExit("--ahci-storage-image requires --ahci")
     if args.emmc and not args.sdhci:
         raise SystemExit("--emmc requires --sdhci")
+    if args.usb_mouse and not args.xhci:
+        raise SystemExit("--usb-mouse requires --xhci")
+    if args.xhci_usb_storage and not args.xhci:
+        raise SystemExit("--xhci-usb-storage requires --xhci")
+    if args.remove_usb_device_after_marker and not args.xhci:
+        raise SystemExit("--remove-usb-device-after-marker requires --xhci")
+    if args.hotplug_usb_mouse_after_marker and not args.xhci:
+        raise SystemExit("--hotplug-usb-mouse-after-marker requires --xhci")
+    if args.move_usb_mouse_after_marker and not args.xhci:
+        raise SystemExit("--move-usb-mouse-after-marker requires --xhci")
+    if args.sequence_usb_mouse_after_marker and not args.xhci:
+        raise SystemExit("--sequence-usb-mouse-after-marker requires --xhci")
+    if args.move_usb_mouse_after_marker and args.sequence_usb_mouse_after_marker:
+        raise SystemExit(
+            "--move-usb-mouse-after-marker and --sequence-usb-mouse-after-marker are mutually exclusive"
+        )
+    if args.usb_mouse and args.hotplug_usb_mouse_after_marker:
+        raise SystemExit("--usb-mouse and --hotplug-usb-mouse-after-marker are mutually exclusive")
+    if args.hotplug_usb_mouse_delay < 0:
+        raise SystemExit("--hotplug-usb-mouse-delay must be non-negative")
+    if args.hotplug_usb_mouse_delay and not args.hotplug_usb_mouse_after_marker:
+        raise SystemExit(
+            "--hotplug-usb-mouse-delay requires --hotplug-usb-mouse-after-marker"
+        )
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
 
-    command = [
-        qemu,
+    command = [qemu]
+    command += [
         "-machine",
         "q35",
         "-cpu",
@@ -350,6 +551,30 @@ def main() -> int:
                 "-device",
                 "emmc,drive=pythos_emmc,bus=sd-bus",
             ]
+    if args.xhci:
+        command += [
+            "-device",
+            "qemu-xhci,id=pythos_xhci,bus=pcie.0,addr=0x7",
+        ]
+        if args.usb_mouse:
+            command += [
+                "-device",
+                "usb-mouse,bus=pythos_xhci.0,port=1",
+            ]
+        if args.xhci_usb_storage:
+            ensure_storage_image(args.xhci_usb_storage_image)
+            command += [
+                "-drive",
+                (
+                    "if=none,id=pythos_xhci_usb_store,format=raw,readonly=on,"
+                    f"file={args.xhci_usb_storage_image}"
+                ),
+                "-device",
+                (
+                    "usb-storage,id=pythos_boot_usb,drive=pythos_xhci_usb_store,"
+                    f"bus=pythos_xhci.0,port={args.xhci_usb_storage_port},bootindex=-1"
+                ),
+            ]
     if not args.no_virtio_blk:
         ensure_storage_image(args.storage_image)
         command += [
@@ -368,11 +593,77 @@ def main() -> int:
     screendump_pending = args.screendump is not None
     timed_out = False
     requested_quit = False
+    hotplug_done = False
+    hotplug_error = None
+    hotplug_marker_seen_at = None
+    remove_done = False
+    remove_error = None
+    mouse_move_done = False
+    mouse_move_error = None
+    mouse_sequence_steps_sent = 0
+    mouse_sequence_error = None
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 break
             serial = read_serial_log(args.serial_log)
+            if (
+                args.remove_usb_device_after_marker
+                and not remove_done
+                and args.remove_usb_device_after_marker in serial
+            ):
+                try:
+                    request_device_removal(args.remove_usb_device_id)
+                except (OSError, RuntimeError, ConnectionError) as error:
+                    remove_error = error
+                    print(f"usb device removal failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
+                remove_done = True
+            hotplug_ready, hotplug_marker_seen_at = marker_delay_ready(
+                hotplug_marker_seen_at,
+                bool(
+                    args.hotplug_usb_mouse_after_marker
+                    and args.hotplug_usb_mouse_after_marker in serial
+                ),
+                args.hotplug_usb_mouse_delay,
+                time.monotonic(),
+            )
+            if args.hotplug_usb_mouse_after_marker and not hotplug_done and hotplug_ready:
+                try:
+                    request_usb_mouse_hotplug(args.hotplug_usb_mouse_port)
+                except (OSError, RuntimeError, ConnectionError) as error:
+                    hotplug_error = error
+                    print(f"usb mouse hotplug failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
+                hotplug_done = True
+            if (
+                args.move_usb_mouse_after_marker
+                and not mouse_move_done
+                and args.move_usb_mouse_after_marker in serial
+            ):
+                try:
+                    request_usb_mouse_movement()
+                except (OSError, RuntimeError, ConnectionError) as error:
+                    mouse_move_error = error
+                    print(f"usb mouse movement failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
+                mouse_move_done = True
+            if args.sequence_usb_mouse_after_marker:
+                try:
+                    mouse_sequence_steps_sent = advance_marker_sequence_step(
+                        serial.count(args.sequence_usb_mouse_after_marker),
+                        mouse_sequence_steps_sent,
+                        USB_MOUSE_SEQUENCE_LENGTH,
+                        request_usb_mouse_sequence_step,
+                    )
+                except (OSError, RuntimeError, ConnectionError, ValueError) as error:
+                    mouse_sequence_error = error
+                    print(f"usb mouse sequence failed: {error}", file=sys.stderr)
+                    process.terminate()
+                    break
             if args.kill_after_marker and args.kill_after_marker in serial:
                 process.kill()
                 process.wait(timeout=2)
@@ -421,7 +712,27 @@ def main() -> int:
         timed_out,
         success_marker=args.success_marker,
     )
+    final_outcome = sequence_completion_outcome(
+        outcome,
+        bool(args.sequence_usb_mouse_after_marker),
+        mouse_sequence_steps_sent,
+        USB_MOUSE_SEQUENCE_LENGTH,
+    )
+    if final_outcome != outcome and mouse_sequence_error is None:
+        print(
+            "usb mouse sequence incomplete: "
+            f"sent {mouse_sequence_steps_sent} of {USB_MOUSE_SEQUENCE_LENGTH}",
+            file=sys.stderr,
+        )
+    outcome = final_outcome
     print(f"QEMU_OUTCOME {outcome.value}")
+    if (
+        hotplug_error is not None
+        or remove_error is not None
+        or mouse_move_error is not None
+        or mouse_sequence_error is not None
+    ):
+        return SCRIPT_EXIT_CODES[QemuOutcome.RESET.value]
     if args.expect_outcome and outcome.value != args.expect_outcome:
         print(
             f"expected QEMU outcome {args.expect_outcome}, got {outcome.value}",

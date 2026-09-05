@@ -58,6 +58,239 @@ to bounded keyboard bytes for letters, digits, Space, Enter, and Backspace.
 events and verifies the object-shell help output over COM2. Physical shell
 input on hardware remains pending.
 
+ADR 0077 adds an opt-in normal boot hardware diagnostic after the first
+hardware boot of the merged ADR 0076 image reached a plain white screen. With
+`normal-boot-diagnostic`, PythCore renders visible `stage NN` breadcrumbs at
+normal boot boundaries while preserving the default boot path.
+`scripts/test-normal-boot-diagnostic.py` verifies in QEMU that this diagnostic
+image still reaches the launcher, enters the shell, and accepts `help` through
+the existing console path. The first target boot of this diagnostic reached
+`stage 19` / `init error`; the refined target boot reached `stage 19` /
+`init block dev`. That narrows the current physical failure to block-device
+initialization. The no-write `hardware-probe` follow-up, QEMU-accepted through
+`scripts/test-hardware-probe.py`, identified the target storage path as O2
+Micro `1217:8620` SDHCI/eMMC at BDF `01:00.0`, class/subclass/prog-if
+`08 05 01`, BAR0 `0x00000000E8B01000`, with read-only LBA0 evidence
+(`csum 000006F9`, `bytes 0000000C`) and `no disk writes`. The follow-up QEMU
+harness `scripts/test-normal-boot-diagnostic-sdhci-emmc.py` verifies normal
+boot diagnostic plus `sdhci-emmc-backend`, requires
+`DEVICE_SELECTED_SDHCI_EMMC`, enters ring 3, and accepts `help`. Physical
+normal boot over this backend is now photo-backed to `stage 37` / `ring3 enter`
+on the current target. The candidate image was written to the verified `P:` USB
+ESP target on 2026-08-28, and a 2026-08-29 photo shows the `ring3 enter`
+diagnostic panel while the launcher tile remains visible as retained
+framebuffer content. This does not prove trackpad input, framebuffer terminal
+output, physical shell input, or durable eMMC persistence.
+
+ADR 0078 adds an opt-in no-write USB/xHCI register probe for the next pointer
+layer. Linux reconnaissance on the current target identified the external
+Dell/PixArt USB mouse (`413c:301a`) behind AMD xHCI `1022:7914` at `00:10.0`,
+BAR0 `0x00000000E8C68000`, while the built-in trackpad is I2C HID
+`ELAN0666:00 04F3:304B`, not PS/2. `scripts/test-usb-xhci-probe.py` is
+QEMU-accepted with `qemu-xhci`: it requires explicit BAR0 mapping into
+PythCore page tables, xHCI header-register reads, framebuffer identity,
+`NO_DISK_WRITES`, and `PYTHOS:CORE:USB_XHCI_PROBE_READY`. The QEMU-accepted
+candidate was copied to the verified `P:` USB ESP target on 2026-08-30 without
+formatting; source-to-target readback reported
+`USB_XHCI_PROBE_VERIFY_OK files:8 bytes:3814456`, with deployed core SHA-256
+`479588E4268C65E6F03EECAEF0534D7D5F4ADEEF9EBA0B1DD50D3549BF67D0AA`. On
+2026-08-31, a physical photo from that target shows `xhci regs`,
+`no disk writes`, BDF `00 10 00`, vendor/device `1022 7914`,
+class/subclass/prog-if `0C 03 30`, BAR0 `00000000E8C68000`, CAPLENGTH `20`,
+HCIVERSION `0100`, HCSPARAMS1 `08000820`, HCCPARAMS1 `014040C3`, and USBSTS
+`00000009`. This proves physical xHCI register reachability for the target
+controller, not USB enumeration, HID parsing, mouse movement, trackpad support,
+IRQ input, or DMA rings.
+
+ADR 0079 adds the next opt-in no-write USB/xHCI port-status probe. The
+`usb-xhci-port-probe` feature depends on `usb-xhci-probe` and keeps ADR 0078's
+header-register behavior available unchanged. When enabled, PythCore also
+decodes max ports, decodes the xHCI extended-capability pointer, scans for USB
+Legacy Support ownership semaphores, and reads up to eight `PORTSC`/`PORTPMSC`
+pairs. `scripts/test-usb-xhci-port-probe.py` attaches a QEMU USB mouse behind
+`qemu-xhci` and requires `XHCI_PORT_STATUS_READY` plus `NO_DISK_WRITES`. The
+accepted QEMU run reported max ports `8`, port register base `0x440`, xECP byte
+offset `0x20`, no legacy-support capability, and port 5 `PORTSC` `0x00000E03`.
+The candidate was copied to the verified `P:` USB ESP target on 2026-08-31
+without formatting or a delete pass; source-to-target readback reported
+`USB_XHCI_PORT_VERIFY_OK files:8 bytes:3840440`, with deployed core SHA-256
+`447D1F9CA8D97F8000F0905566628AE3B959C212E4E2B33C558220E436D94320`. This is
+the port-observation layer before xHCI ownership transfer, rings, enumeration,
+HID parsing, or cursor movement.
+
+ADR 0080 adds `usb-xhci-swap-probe` for single-port physical testing. The image
+renders `swap mouse now` after the initial read-only port snapshot, then polls
+the same mapped xHCI port-status registers after the boot USB can be removed.
+The first physical attempt exposed that the earlier first-change rule accepted
+the boot-USB detach before the mouse was inserted. The corrected probe now
+rebases after non-connect changes and finishes only on a disconnected-to-connected
+`PORTSC` transition. The QEMU harness
+`scripts/test-usb-xhci-swap-probe.py` attaches simulated USB storage, removes
+it after `SWAP_READY`, waits for `XHCI_SWAP_POLL_IGNORED_CHANGE`, QMP-hotplugs
+a USB mouse, and requires `XHCI_SWAP_POLL_CHANGED` plus `NO_DISK_WRITES`. The
+accepted QEMU run observed ignored detach on port 1, then port 5 changing from
+`PORTSC 0x000002A0` to `0x00020EE1`. The corrected candidate was copied to the
+verified `P:` USB ESP target without formatting or a delete pass;
+source-to-target readback reported
+`USB_XHCI_SWAP_CONNECT_VERIFY_OK files:8 bytes:3857656`, with deployed core
+SHA-256
+`A11B480D37A0C0299B4D6D96080C506C533BC0D1E3492CE1876C3F4F1A269BFE`. A
+physical video still from the corrected image shows `xhci swap`, `chg p5`,
+`was sc 000002A0`, and `now sc 000202E1` after the boot USB was removed and
+the external mouse was inserted. This solves only the boot-USB/mouse-port swap
+observation problem; it is not xHCI ownership transfer, USB enumeration, HID
+parsing, or cursor movement.
+
+ADR 0081 adds `usb-xhci-command-probe`, the first opt-in write/DMA xHCI driver
+diagnostic. It depends on the ADR 0080 swap-port evidence, maps a bounded MMIO
+window for the operational, runtime, and doorbell registers, resets and starts
+the controller, configures static page-aligned DCBAA, scratchpad, command ring,
+event ring, and ERST buffers, resets the selected connected root port, then
+proves a No-op Command and Enable Slot command completion through the event
+ring. The QEMU harness `scripts/test-usb-xhci-command-probe.py` simulates
+boot-USB detach and later mouse hotplug, then requires
+`XHCI_COMMAND_RING_READY`, `XHCI_EVENT_RING_READY`,
+`XHCI_NOOP_COMMAND_COMPLETE`, `XHCI_ENABLE_SLOT_READY`, `NO_DISK_WRITES`, and
+`QEMU_OUTCOME success`. The accepted QEMU run returned completion code `1` for
+both commands and slot id `1` with `XHCI_SCRATCHPAD_COUNT=0`. The first
+physical command-ring attempt reached `xhci cmd err` with `err 00000006`,
+mapped to unsupported scratchpad buffers. The refreshed diagnostic supports a
+static 32-buffer scratchpad pool and was deployed to the verified `P:` USB ESP
+target without formatting or deleting preserved root files; readback reported
+`USB_XHCI_SCRATCHPAD_VERIFY_OK files:8 bytes:3949296`, with deployed core
+SHA-256
+`5E65C5A697A443369CB9AAC11E4AADAB7A26888B920EC89F43BEC5F33CF8CC44`. On
+2026-09-01, the target rendered the expected `xhci cmd` success panel: BDF
+`00 10 00`, vendor/device `1022 7914`, port `06`, slot `01`, No-op completion
+code `01`, Enable Slot completion code `01`, `USBSTS 00000000`,
+`PORTSC 00220603`, scratchpad count `08`, and `no disk writes`. The photo
+SHA-256 is
+`534B40C205D3BC4FE43F8BF0CBF6D0EFA0687E7F19E247BE08C94F818664AC52`. This is
+QEMU plus photo-backed physical command-ring acceptance, not USB addressing,
+descriptor reads, HID parsing, endpoint polling, interrupt-driven input, cursor
+movement, or trackpad support.
+
+ADR 0082 adds `usb-xhci-address-probe`, the next opt-in xHCI driver diagnostic.
+It depends on the command-ring path, prepares xHCI input/output contexts and an
+endpoint-0 transfer ring, supports both 32-byte and 64-byte context layouts,
+selects the default-control max-packet size from the reset port speed, issues
+one Address Device command, and reports completion code, assigned address, slot
+state, EP0 state, port speed, context size, and `NO_DISK_WRITES`. The QEMU
+harness `scripts/test-usb-xhci-address-probe.py` returned Address Device
+completion code `1`, device address `1`, slot state `2`, EP0 state `1`, context
+size `32`, and max packet size `64`, then emitted
+`USB_XHCI_ADDRESS_PROBE_TEST_OK` / `QEMU_OUTCOME success`. The image was copied
+to the verified `P:` Lexar D70E USB ESP target without formatting or deleting
+preserved root files; readback reported
+`USB_XHCI_ADDRESS_VERIFY_OK files:8 bytes:3977256`, with deployed core SHA-256
+`E666859BFEE4FE6162690F3D8860E24992492441F859AEE6C8F4FC14DDBC3D53`. On
+2026-09-01, the physical target rendered `xhci addr`, `no disk writes`, BDF
+`00 10 00`, vendor/device `1022 7914`, port `05`, slot `01`, No-op completion
+code `01`, Enable Slot completion code `01`, Address Device completion code
+`01`, device address `01`, slot state `02`, EP0 state `01`, speed `02`,
+context size `32`, max packet size `0008`, `PORTSC 00220A03`, and scratchpad
+count `08`. The photo SHA-256 is
+`8A4D2D6D8F74AEE88D2B535F4447CBDC338E590944F0D8130E7B6FD6476A6D5A`. This is
+QEMU plus photo-backed physical USB Address Device acceptance. HID parsing,
+endpoint polling, cursor movement, and trackpad support remain pending.
+
+ADR 0083 adds `usb-xhci-descriptor-probe`, the next opt-in xHCI diagnostic.
+After Address Device succeeds, it queues one EP0 `GET_DESCRIPTOR(Device)`
+control transfer, reads the 18-byte device descriptor from a static DMA buffer,
+and renders the descriptor completion code plus parsed fields while preserving
+`NO_DISK_WRITES`. `scripts/test-usb-xhci-descriptor-probe.py` passed with
+descriptor completion code `1`, length `18`, descriptor type `1`, USB BCD
+`0200`, class/subclass/protocol `00 00 00`, MPS0 `64`, VID/PID `0627:0001`,
+configuration count `1`, `USB_XHCI_DESCRIPTOR_PROBE_TEST_OK`, and
+`QEMU_OUTCOME success`. The descriptor image was deployed to the verified `P:`
+Lexar D70E USB ESP target without formatting or deleting preserved report
+files; readback reported `USB_XHCI_DESCRIPTOR_VERIFY_OK files:8 bytes:3996680`
+and deployed core SHA-256
+`CFE2381F38DA91E11A31F021B315B4B12C030DB3F296C8B591BA6DF0A5289924`. The
+returned Linux Mint field-kit archive
+`docs/evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz` confirmed the
+target Dell/PixArt mouse descriptor expected on physical boot: VID/PID
+`413c:301a`, USB BCD `0200`, device BCD `0100`, MPS0 `8`, configuration count
+`1`, HID boot mouse interface `03/01/02`, interrupt IN endpoint `0x81`, max
+packet size `4`, interval `10`. The physical descriptor boot is now
+photo-backed: the preserved frame
+`docs/evidence/2026-09-01-physical-usb-xhci-device-descriptor-success.png`
+shows `xhci desc`, `no disk writes`, BDF `00 10 00`, vendor/device
+`1022 7914`, port `05`, slot `01`, Address Device CC `01`, descriptor CC
+`01`, length `12`, type `01`, USB BCD `0200`, device BCD `0100`,
+class/subclass/protocol `00 00 00`, MPS0 `008`, configuration count `01`,
+VID/PID `413C 301A`, and scratchpad count `08`; SHA-256
+`4204994560727C63A8F631A05CCECFA68C3FC20189E12A2834E621327FDA61B6`. This is
+QEMU descriptor evidence, deployment evidence, Linux target mapping, and
+photo-backed physical descriptor acceptance. Configuration descriptor reads,
+HID parsing, endpoint polling, cursor movement, and trackpad support remain
+pending.
+
+ADR 0084 adds `usb-xhci-configuration-probe` as a bounded opt-in extension.
+It reads and validates the nine-byte configuration header, caps
+`wTotalLength` at 256 bytes, reads exactly that total, and walks standard
+configuration, interface, and endpoint descriptors. The accepted QEMU mouse
+reported total length `34`, one configuration and interface, boot-mouse
+`03/01/02`, interrupt-IN endpoint `0x81`, attributes `0x03`, max packet `4`,
+and interval `7`. The harness emitted
+`USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
+`NO_DISK_WRITES`. The exact image was deployed and booted on the Lenovo `81VS`.
+The physical sequence reached `swap mouse now`, detected the post-removal mouse
+connect on port `06`, then rendered generic timeout error `0x0F`. Because that
+error was shared by every command and control-transfer wait, the first attempt
+does not prove how far the configuration flow progressed. The refreshed image
+adds distinct No-op, Enable Slot, Address Device, Device Descriptor,
+configuration-header, and full-configuration timeout identities with readable
+framebuffer stage text plus the visible boot-source ID `diag cfg stage1`. It
+was deployed to the re-identified Lexar D70E with 8-of-8 source-to-target
+hashes matching and 111 unrelated files preserved. The 2026-09-03 Lenovo retry
+displayed that ID, then physically completed Address Device, Device Descriptor,
+configuration header, and full configuration transfers with completion code
+`01`. The Dell/PixArt result is total length `34`, value `1`, one interface,
+boot mouse `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, and
+interval `10`. The feature still does not activate the configuration or
+endpoint and does not parse or poll HID reports.
+
+ADR 0085 adds `usb-xhci-endpoint-configuration-probe` as the next bounded
+opt-in layer. It maps interrupt-IN endpoint `0x81` to DCI 3, prepares a
+separate page-aligned transfer ring with only its Link TRB, issues xHCI
+Configure Endpoint, and sends USB `SET_CONFIGURATION(1)` on endpoint 0 only
+after command success. QEMU reported Configure Endpoint CC `01`,
+SET_CONFIGURATION CC `01`, configured slot state `03`, configured endpoint
+state `01`, `USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`,
+`QEMU_OUTCOME success`, and `NO_DISK_WRITES`. The harness rejects any
+interrupt-transfer, HID-report, or cursor marker. The eight-file image was
+deployed to the re-identified Lexar D70E with full source-to-target hash
+readback; all 111 unrelated files remained byte-identical. The 2026-09-03
+Lenovo `81VS` run then physically completed the transition on AMD `1022:7914`,
+port `05`, slot `01`: endpoint `0x81`, DCI 3, interval encoding `06`, Configure
+Endpoint CC `01`, `SET_CONFIGURATION` CC `01`, configured Slot state `03`, and
+configured Endpoint state `01`. The framebuffer retained `no disk writes` and
+`no interrupt poll`. The mouse illuminated, confirming port power only; no
+input report was requested or observed.
+
+ADR 0086 adds `usb-xhci-interrupt-transfer-probe` as the first bounded raw
+input transfer. It owns one dedicated report buffer and one Normal TRB, rings
+DCI 3 once, accepts only Success or Short Packet, validates the event's TRB
+pointer/slot/endpoint/residual fields, captures at most eight received bytes,
+and halts. QEMU injection of `x=8`, `y=-4` produced `00 08 FC 00`, completion
+code `01`, exact requested/actual/captured length `4`, framebuffer success,
+`NO_DISK_WRITES`, and `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`. The
+2026-09-04 Lenovo run physically accepted the same one-report boundary with
+raw bytes `00 FE 00 00`.
+
+ADR 0087 adds `usb-xhci-boot-mouse-decode-probe`. It decodes standard
+left/right/middle bits and signed X/Y from exactly one three- or four-byte boot
+mouse report, maps movement to `RawInputEvent::MouseMoved`, and retains byte
+four as raw `aux` evidence rather than claiming wheel semantics. QEMU decoded
+`00 08 FC 00` as buttons `00`, X `+8`, Y `-4`, auxiliary `00`, emitted
+`XHCI_BOOT_MOUSE_DECODE_READY`, retained `NO_DISK_WRITES`, and halted after one
+report. On the Lenovo `81VS`, the user then observed `btn 00 l0 r0 m0`, signed
+`dx -007 dy -007`, and `aux 00`. The phone lost power before a photograph could
+be recorded, so that physical acceptance is transcription-backed rather than
+media-backed. Recurring reports, button transitions, and cursor behavior remain
+unproven.
+
 This is not a README and not a setup guide. It is the external-facing technical
 account of what the current repository proves, how those claims are verified,
 and where the boundary of the work still is.
@@ -81,6 +314,16 @@ and where the boundary of the work still is.
 | ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic USB HID, trackpad, IRQ-driven input, or broad keyboard support |
 | ADR 0075 physical input event diagnostic QEMU-accepted and operator-accepted for a fixed space/backspace/wake sequence | Shell input, framebuffer terminal, or generic keyboard support |
 | ADR 0076 physical keyboard console ingress QEMU-accepted for `help` through the existing shell syscall | Physical acceptance of shell input, punctuation/modifier layout, USB HID, trackpad, or IRQ-driven input |
+| ADR 0077 normal boot diagnostic QEMU-accepted through launcher and shell input; refined target diagnostic boot reached `stage 19` / `init block dev`; no-write probe identified/read O2 Micro `1217:8620` SDHCI/eMMC; QEMU normal diagnostic with `sdhci-emmc-backend` selects SDHCI/eMMC and enters the shell; physical photo shows deployed normal SDHCI/eMMC candidate reached `stage 37` / `ring3 enter` | Physical eMMC durability, physical shell input, working trackpad/pointer input, visible framebuffer terminal output, or broad hardware support |
+| ADR 0078 USB/xHCI register probe QEMU-accepted and photo-backed on AMD `1022:7914` xHCI, with no disk writes | USB enumeration, HID parsing, mouse movement, trackpad support, IRQ input, DMA rings, or broad USB support |
+| ADR 0079 USB/xHCI port-status probe QEMU-accepted with a QEMU USB mouse attached and `NO_DISK_WRITES` | Physical port-status proof, xHCI ownership transfer, USB enumeration, HID parsing, mouse movement, IRQ input, or DMA rings |
+| ADR 0080 USB/xHCI swap-port probe QEMU-accepted with simulated storage detach, ignored non-connect event, later QMP mouse connect, deployed to the verified USB ESP, and video-backed on physical port 5 connect | xHCI ownership transfer, USB enumeration, HID parsing, mouse movement, IRQ input, or DMA rings |
+| ADR 0081 USB/xHCI command-ring diagnostic QEMU-accepted through No-op and Enable Slot command completions with static DMA rings; scratchpad-enabled image deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows No-op CC `01`, Enable Slot CC `01`, slot `01`, scratchpad count `08`, and `no disk writes` | Descriptor reads, endpoint setup, HID parsing, mouse movement, IRQ input, or trackpad support |
+| ADR 0082 USB/xHCI Address Device probe QEMU-accepted with input/output contexts, Address Device CC `1`, assigned address `1`, slot state `2`, EP0 state `1`, and `NO_DISK_WRITES`; deployed to the verified USB ESP; physical frame on AMD `1022:7914` shows Address Device CC `01`, device address `01`, slot state `02`, EP0 state `01`, speed `02`, MPS `0008`, and `no disk writes` | Descriptor reads, endpoint setup beyond EP0 context, HID parsing, mouse movement, IRQ input, or trackpad support |
+| ADR 0083 USB/xHCI Device Descriptor probe QEMU-accepted with one EP0 `GET_DESCRIPTOR(Device)` transfer and deployed to the verified USB ESP; Linux Mint field-kit evidence maps the physical Dell/PixArt mouse descriptor as `413c:301a`, MPS0 `8`, HID boot mouse `03/01/02`, endpoint `0x81`; physical frame on AMD `1022:7914` shows descriptor CC `01`, length `12`, type `01`, USB BCD `0200`, MPS `008`, VID/PID `413C 301A`, and `no disk writes` | Configuration descriptor reads, HID parsing, mouse movement, IRQ input, or trackpad support |
+| ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
+| ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
+| ADR 0086 USB/xHCI one-shot interrupt transfer probe QEMU-accepted with one four-byte raw report `00 08 FC 00`, completion code `01`, exact event identity checks, and `NO_DISK_WRITES` | Physical interrupt-transfer acceptance, HID decoding, recurring reports, cursor movement, IRQ input, or trackpad support |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -412,11 +655,294 @@ where the observed hardware/audio/storage state selects different truthful
 branches. The modeled physical stream closes exactly at 313 markers and CRC
 `176F4C6E`.
 
+On 2026-08-28, the no-write `hardware-probe` payload on the current USB boot
+target rendered `emmc read`, `no disk writes`, count `0000000000000002`, BDF
+`01 00 00`, vendor/device `1217 8620`, class/subclass/prog-if `08 05 01`, BAR0
+`00000000E8B01000`, OCR `C0FF8080`, LBA0 `00000000`, first word `00000000`,
+checksum `000006F9`, and `bytes 0000000C`. That proves read-only SDHCI/eMMC
+controller/card access on this target. It does not prove normal boot writes,
+object-store persistence, or shell entry on the physical machine.
+
+On 2026-08-29, the deployed normal diagnostic plus `sdhci-emmc-backend` image
+reached `stage 37` / `ring3 enter` on the same current target. The physical
+photo still shows the `Enter Shell` launcher tile because the framebuffer keeps
+pre-handoff pixels after ring-3 entry. That proves photo-backed physical
+ring-3 handoff for this deployed candidate, but not trackpad input, visible
+shell I/O, physical shell input, or durable eMMC persistence.
+
+On 2026-08-30, the no-write USB/xHCI register probe was QEMU-accepted and
+deployed to the same verified `P:` USB ESP target. The QEMU run selected
+`qemu-xhci`, mapped BAR0 `0x000000C000000000` into the PythCore device window
+at `0xFFFFC00010040000`, read the xHCI capability and operational header
+registers, rendered framebuffer identity, and emitted `NO_DISK_WRITES`. The
+Linux reconnaissance archive for the physical target identifies the external
+USB mouse behind AMD xHCI `1022:7914` at `00:10.0`.
+
+On 2026-08-31, the physical target rendered the xHCI register panel with BDF
+`00 10 00`, vendor/device `1022 7914`, class/subclass/prog-if `0C 03 30`, BAR0
+`00000000E8C68000`, CAPLENGTH `20`, HCIVERSION `0100`, HCSPARAMS1 `08000820`,
+HCCPARAMS1 `014040C3`, and USBSTS `00000009`. The photo SHA-256 is
+`EF950D8A3B9804635C99BDF04C49026A87912F79E2FDC13A393FAA21CF0481C8`. This
+proves the no-write physical xHCI controller/register reachability layer.
+
+On 2026-08-31, the next QEMU-only USB/xHCI port-status probe passed with
+`usb-xhci-port-probe`. The harness attached a QEMU USB mouse to `qemu-xhci`,
+read max ports `8`, port register base `0x440`, xECP byte offset `0x20`, no
+legacy-support capability, and port 5 `PORTSC` `0x00000E03`, then emitted
+`XHCI_PORT_STATUS_READY`, `NO_DISK_WRITES`, and `USB_XHCI_PROBE_READY`. The
+candidate was then copied to the verified `P:` USB ESP target with
+`USB_XHCI_PORT_VERIFY_OK files:8 bytes:3840440`; deployed core SHA-256 is
+`447D1F9CA8D97F8000F0905566628AE3B959C212E4E2B33C558220E436D94320`. Physical
+one-shot ADR 0079 port-status evidence for AMD `1022:7914` is still pending;
+the corrected ADR 0080 swap-connect result is recorded below.
+
+On 2026-08-31, the swap-friendly USB/xHCI port-status probe passed with
+`usb-xhci-swap-probe`. The first physical attempt showed the previous build
+rendered its final panel as soon as the boot USB was unplugged, before the
+mouse was inserted. The corrected harness now boots with `qemu-xhci`, starts
+with simulated USB storage attached, removes it after `SWAP_READY`, verifies
+`XHCI_SWAP_POLL_IGNORED_CHANGE`, hotplugs a QEMU USB mouse through QMP, and
+observes port 5 change from `PORTSC` `0x000002A0` to `0x00020EE1` before
+emitting `XHCI_SWAP_POLL_CHANGED`, `NO_DISK_WRITES`, and
+`USB_XHCI_PROBE_READY`. The corrected candidate was then copied to the verified
+`P:` USB ESP target with
+`USB_XHCI_SWAP_CONNECT_VERIFY_OK files:8 bytes:3857656`; deployed core SHA-256
+is `A11B480D37A0C0299B4D6D96080C506C533BC0D1E3492CE1876C3F4F1A269BFE`.
+
+The corrected physical image then kept polling after boot-USB detach and
+rendered the final swap panel only after the external USB mouse was inserted.
+The retained still
+`docs/evidence/2026-08-31-physical-usb-xhci-swap-port.jpg` shows `xhci swap`,
+`chg p5`, `was sc 000002A0`, and `now sc 000202E1`; SHA-256 is
+`20B2CCA74EB8FD23080943FB368147F3D56A884A09F753479A9E4D5FF9A038E8`. This is
+physical port-connect evidence on AMD `1022:7914`, not USB input support.
+
+On 2026-09-01, the first write/DMA USB/xHCI command-ring diagnostic passed in
+QEMU with `usb-xhci-command-probe`. The harness repeated the ADR 0080
+detach/connect sequence, then reset and started the controller, configured
+static page-aligned DCBAA, command-ring, event-ring, and ERST buffers, reset
+connected port 5, completed a No-op Command with completion code `1`, completed
+Enable Slot with completion code `1`, returned slot id `1`, rendered
+framebuffer identity, emitted `XHCI_SCRATCHPAD_COUNT=0`, emitted
+`NO_DISK_WRITES`, and ended with `USB_XHCI_COMMAND_PROBE_TEST_OK` /
+`QEMU_OUTCOME success`.
+
+The first physical command-ring boot reached `xhci cmd err` with
+`err 00000006` after detecting the mouse on port 5, from `PORTSC 000002A0` to
+`000202E1`; SHA-256 for the preserved frame is
+`A6D6271A065EA3B6547A28F69CCFDD37484F10B4266105A980255D2B1B24CB2E`. That error
+maps to `UnsupportedScratchpadBuffers`, because the first driver image rejected
+controllers with nonzero scratchpad count.
+
+The scratchpad-enabled command-ring image was then deployed on 2026-09-01 to
+the verified `P:` USB ESP target, Disk 2 Lexar D70E USB, serial
+`1026R51254700477`, MBR active FAT32 `PYTHOS_ESP`, not Windows boot/system. The
+deployment did not format the drive or delete preserved root files;
+source-to-target readback reported
+`USB_XHCI_SCRATCHPAD_VERIFY_OK files:8 bytes:3949296`. The deployed
+`P:\PYTHOS\PYTHCORE.ELF` SHA-256 is
+`5E65C5A697A443369CB9AAC11E4AADAB7A26888B920EC89F43BEC5F33CF8CC44`.
+
+The scratchpad-enabled physical boot then rendered `xhci cmd`, `no disk
+writes`, BDF `00 10 00`, vendor/device `1022 7914`, port `06`, slot `01`,
+No-op completion code `01`, Enable Slot completion code `01`, `USBSTS
+00000000`, `PORTSC 00220603`, and scratchpad count `08`. The retained frame
+`docs/evidence/2026-09-01-physical-usb-xhci-command-ring-success.png` has
+SHA-256
+`534B40C205D3BC4FE43F8BF0CBF6D0EFA0687E7F19E247BE08C94F818664AC52`. This is
+physical command-ring acceptance on AMD `1022:7914`, not USB addressing or
+HID/cursor support.
+
+The next bounded step, `usb-xhci-address-probe`, is recorded by ADR 0082. It
+prepares xHCI input/output device contexts, an endpoint-0 transfer ring, and a
+DCBAA slot entry, then issues one Address Device command after Enable Slot.
+`scripts/test-usb-xhci-address-probe.py` passed with
+`USB_XHCI_ADDRESS_PROBE_TEST_OK` / `QEMU_OUTCOME success`; QEMU reported
+Address Device completion code `1`, device address `1`, slot state `2`, EP0
+state `1`, context size `32`, port speed `3`, max packet size `64`, and
+`NO_DISK_WRITES`. The deployable address image was copied to the verified `P:`
+USB ESP target with no format and no delete pass. Source-to-target readback
+reported `USB_XHCI_ADDRESS_VERIFY_OK files:8 bytes:3977256`; the deployed
+`P:\PYTHOS\PYTHCORE.ELF` SHA-256 is
+`E666859BFEE4FE6162690F3D8860E24992492441F859AEE6C8F4FC14DDBC3D53`.
+
+The physical target then rendered `xhci addr`, `no disk writes`, BDF
+`00 10 00`, vendor/device `1022 7914`, port `05`, slot `01`, No-op CC `01`,
+Enable Slot CC `01`, Address Device CC `01`, device address `01`, slot state
+`02`, EP0 state `01`, speed `02`, context size `32`, max packet size `0008`,
+`PORTSC 00220A03`, and scratchpad count `08`. The retained frame
+`docs/evidence/2026-09-01-physical-usb-xhci-address-device-success.png` has
+SHA-256
+`8A4D2D6D8F74AEE88D2B535F4447CBDC338E590944F0D8130E7B6FD6476A6D5A`. Physical
+Address Device is now accepted on this target; HID/cursor support remains
+pending.
+
+The next bounded step, `usb-xhci-descriptor-probe`, is recorded by ADR 0083.
+It reuses the Address Device result, queues one EP0 control transfer for
+`GET_DESCRIPTOR(Device)`, polls the event ring for the Status Stage transfer
+event, reads the 18-byte device descriptor from a static DMA buffer, and
+renders the parsed descriptor fields. `scripts/test-usb-xhci-descriptor-probe.py`
+passed with `USB_XHCI_DESCRIPTOR_PROBE_TEST_OK` / `QEMU_OUTCOME success`; QEMU
+reported descriptor completion code `1`, length `18`, type `1`, USB BCD
+`0200`, class/subclass/protocol `00 00 00`, max packet size `64`, VID/PID
+`0627:0001`, device BCD `0000`, configuration count `1`, and
+`NO_DISK_WRITES`. The deployable descriptor image was copied to the verified
+`P:` USB ESP target with no format and no delete pass. Source-to-target
+readback reported `USB_XHCI_DESCRIPTOR_VERIFY_OK files:8 bytes:3996680`; the
+deployed `P:\PYTHOS\PYTHCORE.ELF` SHA-256 is
+`CFE2381F38DA91E11A31F021B315B4B12C030DB3F296C8B591BA6DF0A5289924`.
+
+The returned Linux Mint field-kit run `run-20260901-033724` anchors the
+physical mouse expectation for the deployed descriptor image. The archived
+tarball `docs/evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz` has SHA-256
+`528058762026647AFA2D5FD94E6086128C6B4EDD88CE60880C573294AFA3006B`. Linux
+observed the Dell/PixArt mouse as `/sys/bus/usb/devices/2-1`, VID/PID
+`413c:301a`, low speed, USB BCD `0200`, max packet size `8`, device BCD
+`0100`, manufacturer index `1`, product index `2`, serial index `0`,
+configuration count `1`, HID boot mouse interface `03/01/02`, and interrupt IN
+endpoint `0x81` with max packet size `4` and interval `10`. The built-in
+trackpad remains separate I2C HID `ELAN0666:00 04F3:304B` at ACPI path
+`\_SB_.I2CD.TPDD`.
+
+ADR 0083 is QEMU descriptor evidence plus deployment evidence, and now has
+photo-backed physical descriptor acceptance on the AMD `1022:7914` target. The
+preserved frame
+`docs/evidence/2026-09-01-physical-usb-xhci-device-descriptor-success.png`
+shows `xhci desc`, `no disk writes`, BDF `00 10 00`, vendor/device
+`1022 7914`, port `05`, slot `01`, Address Device CC `01`, descriptor CC
+`01`, length `12`, type `01`, USB BCD `0200`, device BCD `0100`,
+class/subclass/protocol `00 00 00`, MPS0 `008`, configuration count `01`,
+VID/PID `413C 301A`, and scratchpad count `08`; SHA-256
+`4204994560727C63A8F631A05CCECFA68C3FC20189E12A2834E621327FDA61B6`.
+
+ADR 0084 is the next bounded discovery layer. The
+`usb-xhci-configuration-probe` feature reuses the addressed slot and endpoint
+0, advances three control TDs without wrapping the 16-entry ring, first reads
+the fixed configuration header, validates a maximum 256-byte `wTotalLength`,
+then reads exactly that total. The parser walks checked standard descriptors
+and records interface plus interrupt-IN endpoint metadata. The accepted run
+reported header and full transfer completion code `1`, total length `34`,
+configuration value `1`, interface count `1`, HID boot mouse `03/01/02`,
+endpoint `0x81`, attributes `0x03`, max packet `4`, and interval `7`; it ended
+with `USB_XHCI_CONFIGURATION_PROBE_TEST_OK`, `QEMU_OUTCOME success`, and
+`NO_DISK_WRITES`. The image was deployed to the verified Lexar USB. On the
+Lenovo `81VS`, the operator followed the required wide-USB handoff: the first
+frame captured `swap mouse now` and the frozen initial port snapshot; after
+removing that boot USB and inserting the Dell/PixArt mouse, the second frame
+captured port `06` changing from `000002A0` to `000202E1`, followed by `xhci
+cfg err`, `no disk writes`, and generic error `0000000F`. Since `0x0F` covered
+all command and transfer waits, that attempt is a physical connect-plus-timeout
+result, not configuration-descriptor success. The staged follow-up assigns
+codes `0x2C..0x31` and readable labels to the six possible waits. The refreshed
+8-file image was copied to the re-identified Lexar D70E without formatting or
+deleting files; 4,042,520 bytes matched source hashes and all 111 unrelated
+files remained byte-identical. The next image added `diag cfg stage1` and was
+deployed with core SHA-256
+`689276371BD5A69CB567D2E204022C8F86747F25FD276336BE0FABFD6907DDAD`.
+On 2026-09-03 the Lenovo displayed that exact marker, then rendered `xhci cfg`
+success on port `05`, slot `01`: Address Device, Device Descriptor,
+configuration header, and full configuration completion codes were all `01`;
+total length was `34`, value `1`, one configuration and interface, HID boot
+mouse `03/01/02`, endpoint `0x81`, attributes `0x03`, max packet `4`, and the
+device-specific interval `10` previously recorded by Linux. This closes the
+physical configuration-descriptor boundary for this target and mouse only.
+
+ADR 0085 is the next bounded activation layer. The
+`usb-xhci-endpoint-configuration-probe` feature consumes the accepted endpoint
+metadata, maps endpoint `0x81` to DCI 3, creates a separate 16-entry static
+interrupt ring with no Normal TRB, and builds a fresh Input Context for the
+Slot and DCI 3 contexts. It requires Configure Endpoint completion code `1`
+before submitting the no-data USB `SET_CONFIGURATION(1)` TD on endpoint 0.
+The accepted QEMU run reached configured Slot state `3` and Endpoint state `1`,
+then halted with `NO_DISK_WRITES`, `QEMU_OUTCOME success`, and
+`USB_XHCI_ENDPOINT_CONFIGURATION_PROBE_TEST_OK`. Its oracle rejects an
+interrupt transfer, HID report, or cursor marker. At the ADR 0085 boundary, the
+configured interrupt ring was not polled.
+The exact image was deployed on the verified Lexar D70E: eight files and
+4,077,208 bytes matched source hashes, while 111 unrelated files were preserved
+byte-identically. The Lenovo `81VS` physical frame then showed `xhci ep cfg`,
+AMD `1022:7914` at BDF `00:10.0`, port `05`, slot `01`, endpoint `0x81`, DCI 3,
+interval encoding `06`, Configure Endpoint and `SET_CONFIGURATION` completion
+codes `01`, configured Slot state `03`, configured Endpoint state `01`, and all
+four prerequisite address/descriptor completion codes `01`. It also showed
+`no disk writes` and `no interrupt poll`. The illuminated mouse establishes
+power, not an interrupt transfer or HID report; that physical run did not poll
+the configured interrupt ring.
+
+ADR 0086 then proves one raw interrupt-IN report, and ADR 0087 decodes one
+three- or four-byte report without routing it into the normal input service.
+The Lenovo `81VS` ADR 0087 evidence is now media-backed for two distinct
+one-shot observations: motion `btn 00 / dx -007 / dy -007 / aux 00`, and a
+dock-topology left state `btn 01 l1 r0 m0`. A later neutral state after release
+of a button held before device attachment is only a neutral snapshot; it does
+not prove PythOS observed a release transition because no earlier pressed
+report was accepted in that boot.
+
+ADR 0088 adds the next opt-in bounded transport diagnostic,
+`usb-xhci-boot-mouse-recurring-probe`. It maintains explicit transfer-producer
+and event-consumer cycle state while accepting exactly sixteen sequential,
+single-in-flight reports. The 16-entry interrupt ring supplies 15 data TRBs
+plus a Toggle-Cycle Link TRB, so QEMU acceptance proves report indices
+`0..14,0`, cycles `1..1,0`, exactly one transfer-ring wrap, at least one
+event-ring wrap, deterministic signed totals, and a left press followed by an
+adjacent release. The event cursor is shared by setup command, control-
+transfer, and recurring transfer completions, so exactly one event wrap is not
+a stable acceptance rule; the recorded QEMU run observed exactly one. The
+final framebuffer freezes at `reports 16 wrap 1` with
+`frozen no cursor` and `no disk writes`. Typed driver, decode, or terminal-
+invariant failure stops without readiness. The hash-verified image was deployed
+to the Lexar D70E while preserving 108 unrelated files. The Lenovo `81VS` and
+Dell/PixArt mouse then reached the successful panel on port 6 with `reports 16
+wrap 1`, `seen 01 rel 01`, X total `-61`, Y total `-82`, `frozen no cursor`,
+and `no disk writes`. ADR 0088 status is **Accepted in QEMU and on this
+Lenovo/Dell-PixArt target**. This target-specific result does not establish
+generic physical support, a physical COM1 transcript or event-ring wrap count,
+cursor movement, click actions, wheel semantics, normal input routing, IRQ
+input, hub support, hot-unplug recovery, a second transfer-ring wrap, or PythOS
+storage writes.
+
+Because the target can boot Linux Mint from eMMC, the USB/input discovery
+workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
+The script stages itself into `~/pythos-field-kit`, collects PCI, xHCI, USB,
+HID, I2C, ACPI, input-event, block-device, and `dmesg` evidence under
+`~/pythos-field-kit-runs`, and can copy the generated tarball back to the
+mounted `PYTHOS_ESP` volume. It does not format disks, install PythOS to eMMC,
+deploy boot files, or write PCI/xHCI registers. See
+`docs/linux-mint-field-kit.md` for the operator workflow.
+
 See:
 
 - [Physical SDHCI/eMMC Phase 10 evidence](milestones/2026-08-01-physical-emmc-phase10.md)
 - [2026-08-08 physical evidence-terminal validation](evidence/2026-08-08-physical-evidence-terminal.md)
 - [ADR 0074 physical wake diagnostic](decisions/0074-physical-wake-diagnostic.md)
+- [ADR 0078 USB xHCI register probe](decisions/0078-usb-xhci-register-probe.md)
+- [ADR 0079 USB xHCI port-status probe](decisions/0079-usb-xhci-port-status-probe.md)
+- [ADR 0080 USB xHCI swap-port probe](decisions/0080-usb-xhci-swap-port-probe.md)
+- [ADR 0081 USB xHCI command-ring driver diagnostic](decisions/0081-usb-xhci-command-ring-driver.md)
+- [ADR 0082 USB xHCI Address Device probe](decisions/0082-usb-xhci-address-device-probe.md)
+- [ADR 0083 USB xHCI Device Descriptor probe](decisions/0083-usb-xhci-device-descriptor-probe.md)
+- [ADR 0084 USB xHCI Configuration Descriptor probe](decisions/0084-usb-xhci-configuration-descriptor-probe.md)
+- [ADR 0085 USB xHCI Endpoint Configuration probe](decisions/0085-usb-xhci-endpoint-configuration-probe.md)
+- [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
+- [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
+- [ADR 0088 USB xHCI recurring boot-mouse probe](decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
+- [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
+- [2026-09-04 physical ADR 0088 recurring report](evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
+- [Linux Mint field kit](linux-mint-field-kit.md)
+- [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
+- [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)
+- [2026-08-31 physical USB/xHCI register probe frame](evidence/2026-08-31-physical-usb-xhci-register-probe.png)
+- [2026-08-31 physical USB/xHCI swap-port connect frame](evidence/2026-08-31-physical-usb-xhci-swap-port.jpg)
+- [2026-09-01 physical USB/xHCI command scratchpad error frame](evidence/2026-09-01-physical-usb-xhci-command-scratchpad-error.png)
+- [2026-09-01 physical USB/xHCI command-ring success frame](evidence/2026-09-01-physical-usb-xhci-command-ring-success.png)
+- [2026-09-01 physical USB/xHCI Address Device success frame](evidence/2026-09-01-physical-usb-xhci-address-device-success.png)
+- [2026-09-01 physical USB/xHCI Device Descriptor success frame](evidence/2026-09-01-physical-usb-xhci-device-descriptor-success.png)
+- [2026-09-02 physical ADR 0084 swap-ready frame](evidence/2026-09-02-physical-usb-xhci-configuration-swap-ready.jpg)
+- [2026-09-02 physical ADR 0084 generic-timeout frame](evidence/2026-09-02-physical-usb-xhci-configuration-timeout.jpg)
+- [2026-09-03 physical ADR 0084 identified swap-ready frame](evidence/2026-09-03-physical-usb-xhci-configuration-stage1-swap-ready.png)
+- [2026-09-03 physical ADR 0084 configuration success frame](evidence/2026-09-03-physical-usb-xhci-configuration-success.png)
+- [2026-09-03 physical ADR 0085 endpoint-configuration success frame](evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg)
+- [2026-09-01 Linux Mint USB mouse map archive](evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 
 This is a target-specific physical result, not a generic hardware-support claim.
 
@@ -455,6 +981,18 @@ python scripts\test-evidence-terminal.py
 python scripts\test-physical-wake-diagnostic.py
 python scripts\test-physical-input-event-diagnostic.py
 python scripts\test-physical-keyboard-console.py
+python scripts\test-normal-boot-diagnostic.py
+python scripts\test-normal-boot-diagnostic-sdhci-emmc.py
+python scripts\test-usb-xhci-probe.py
+python scripts\test-usb-xhci-port-probe.py
+python scripts\test-usb-xhci-swap-probe.py
+python scripts\test-usb-xhci-command-probe.py
+python scripts\test-usb-xhci-address-probe.py
+python scripts\test-usb-xhci-descriptor-probe.py
+python scripts\test-usb-xhci-configuration-probe.py
+python scripts\test-usb-xhci-endpoint-configuration-probe.py
+python scripts\test-usb-xhci-interrupt-transfer-probe.py
+python scripts\test-usb-xhci-boot-mouse-decode-probe.py
 ```
 
 The persistent-storage harness boots, persists typed object state, reboots
@@ -480,6 +1018,7 @@ implemented or not claimed:
 * SMP;
 * broad physical hardware support;
 * generic SDHCI/eMMC support;
+* durable physical eMMC persistence through the object/package path;
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * POSIX paths as authoritative object identity;
@@ -487,6 +1026,7 @@ implemented or not claimed:
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
+* physical interrupt transfers or HID report polling;
 * physical interactive object-shell use through built-in keyboard or trackpad;
 * punctuation/modifier keyboard layout or framebuffer terminal input;
 * a requirement that physical and QEMU evidence transcripts be bit-identical;
@@ -528,6 +1068,11 @@ make narrower but stronger claims:
   operator-reported physical acceptance on the current USB boot target;
 * ADR 0076's opt-in physical keyboard console ingress is QEMU-accepted for
   typing `help` through the existing object-shell console syscall;
+* the USB/xHCI diagnostic stack advances through separately evidenced layers:
+  physical register reachability, physical swap-port connect observation,
+  physical command-ring completion, physical Address Device, Device Descriptor,
+  and Configuration Descriptor completion, followed by QEMU-only endpoint and
+  device configuration that deliberately stops before input polling;
 * the Phase 8 boundary proves bad-pointer containment, copied capability
   denial, and hardware-resource denial at the syscall gate;
 * PythTIG packages are verified before ring-3 entry and compared across
@@ -583,6 +1128,13 @@ docs/decisions/0073-phase-13-package-lifecycle-and-schema-extensibility.md
 docs/decisions/0074-physical-wake-diagnostic.md
 docs/decisions/0075-physical-input-event-diagnostic.md
 docs/decisions/0076-physical-keyboard-console-ingress.md
+docs/decisions/0077-normal-boot-hardware-diagnostic.md
+docs/decisions/0078-usb-xhci-register-probe.md
+docs/decisions/0079-usb-xhci-port-status-probe.md
+docs/decisions/0080-usb-xhci-swap-port-probe.md
+docs/decisions/0081-usb-xhci-command-ring-driver.md
+docs/decisions/0082-usb-xhci-address-device-probe.md
+docs/decisions/0083-usb-xhci-device-descriptor-probe.md
 ```
 
 Verification entry points:
@@ -598,6 +1150,15 @@ scripts/test-evidence-terminal.py
 scripts/test-physical-wake-diagnostic.py
 scripts/test-physical-input-event-diagnostic.py
 scripts/test-physical-keyboard-console.py
+scripts/test-normal-boot-diagnostic.py
+scripts/test-normal-boot-diagnostic-sdhci-emmc.py
+scripts/test-usb-xhci-probe.py
+scripts/test-usb-xhci-port-probe.py
+scripts/test-usb-xhci-swap-probe.py
+scripts/test-usb-xhci-command-probe.py
+scripts/test-usb-xhci-address-probe.py
+scripts/test-usb-xhci-descriptor-probe.py
+scripts/test-usb-xhci-configuration-probe.py
 tests/boot_core_handoff.py
 tests/test_qemu_exit.py
 tests/test_boot_marker_contract.py

@@ -388,6 +388,26 @@ pub fn render_hardware_probe_lines(
     Ok(())
 }
 
+/// Render the opt-in normal boot diagnostic screen used on serial-less
+/// hardware. The code and label are deliberately split into separate draw calls
+/// so callers can use static strings without heap formatting.
+#[cfg(any(test, feature = "normal-boot-diagnostic"))]
+pub(crate) fn render_normal_boot_diagnostic(
+    framebuffer: &PythFramebufferInfo,
+    stage_code: &str,
+    stage_label: &str,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    let panel_height = surface.height.min(228);
+    surface.fill_rect(0, 0, surface.width, panel_height, PROBE_PANEL_BACKGROUND);
+    surface.draw_text(32, 32, 3, "normal boot diag", PROBE_PANEL_TITLE)?;
+    surface.draw_text(32, 96, 2, "stage", PROBE_PANEL_BODY)?;
+    surface.draw_text(144, 96, 2, stage_code, PROBE_PANEL_TITLE)?;
+    surface.draw_text(32, 132, 2, stage_label, PROBE_PANEL_BODY)?;
+    surface.draw_text(32, 180, 2, "if stuck send photo", PROBE_PANEL_BODY)?;
+    Ok(())
+}
+
 #[cfg(any(test, feature = "physical-wake-diagnostic"))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PhysicalWakeStatus {
@@ -1146,6 +1166,14 @@ mod tests {
     fn render_hardware_probe_lines_draws_title_and_detail_text() {
         let (buffer, info) = test_framebuffer(800, 600);
         render_hardware_probe_lines(&info, &["PythOS", "sdhci emmc"]).unwrap();
+
+        assert!(buffer.iter().any(|&pixel| pixel != 0));
+    }
+
+    #[test]
+    fn render_normal_boot_diagnostic_draws_stage_text() {
+        let (buffer, info) = test_framebuffer(800, 600);
+        render_normal_boot_diagnostic(&info, "17", "block select").unwrap();
 
         assert!(buffer.iter().any(|&pixel| pixel != 0));
     }

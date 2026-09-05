@@ -8,7 +8,10 @@
 
 use crate::block_device::{self, BlockDeviceInfo};
 use crate::memory::physical::PhysicalMemory;
-use crate::memory::r#virtual::{KernelAddressSpace, RetainedUserAddressSpace, UserAddressSpace};
+use crate::memory::r#virtual::{
+    KernelAddressSpace, KernelAddressSpaceBuildOptions, RetainedUserAddressSpace, UserAddressSpace,
+};
+use crate::normal_boot_diagnostic::{self, NormalBootDiagnosticStage};
 #[cfg(feature = "pyth-tig-default")]
 use crate::pyth_graph_loader;
 #[cfg(feature = "pythtig-phase2-test")]
@@ -247,13 +250,17 @@ pub fn initialize_normal_substrate(
     // its own fresh page-table frames. The verify path relies on the same
     // ordering (see `pythcore_entry`): build kernel + user address spaces,
     // then activate only the kernel one.
+    diag(boot_info, NormalBootDiagnosticStage::LoadShell);
     let shell_manifest = runtime_loader::load_named_user_program(boot_info, b"shell.elf")
         .map_err(|_| NormalInitError::ShellProgram)?;
     let shell_image =
         user_elf::validate(shell_manifest.elf()).map_err(|_| NormalInitError::ShellProgram)?;
+    diag(boot_info, NormalBootDiagnosticStage::ShellValid);
+    diag(boot_info, NormalBootDiagnosticStage::BootPage);
     let bootstrap_frame = physical_memory
         .allocate_zeroed_page()
         .map_err(|_| NormalInitError::ShellBootstrap)?;
+    diag(boot_info, NormalBootDiagnosticStage::ProbeAhci);
     let ahci_controller = block_device::probe_ahci();
     let ahci_mmio = ahci_controller.map(|c| {
         (
@@ -262,6 +269,8 @@ pub fn initialize_normal_substrate(
             block_device::AHCI_MMIO_LEN,
         )
     });
+    #[cfg(feature = "sdhci-emmc-backend")]
+    diag(boot_info, NormalBootDiagnosticStage::ProbeSdhci);
     #[cfg(feature = "sdhci-emmc-backend")]
     let sdhci_emmc_controller = match crate::sdhci_emmc::probe_controller() {
         Ok(controller) => Some(controller),
@@ -278,16 +287,16 @@ pub fn initialize_normal_substrate(
     });
     #[cfg(not(feature = "sdhci-emmc-backend"))]
     let sdhci_emmc_mmio = None;
-    let kernel_address_space = KernelAddressSpace::build(
-        physical_memory,
-        boot_info,
-        None,
-        ahci_mmio,
-        sdhci_emmc_mmio,
-        Some(bootstrap_frame),
-    )
-    .map_err(|_| NormalInitError::Memory)?;
+    diag(boot_info, NormalBootDiagnosticStage::KernelMap);
+    let mut kernel_address_space_options = KernelAddressSpaceBuildOptions::new();
+    kernel_address_space_options.ahci_mmio = ahci_mmio;
+    kernel_address_space_options.sdhci_emmc_mmio = sdhci_emmc_mmio;
+    kernel_address_space_options.shell_bootstrap_frame = Some(bootstrap_frame);
+    let kernel_address_space =
+        KernelAddressSpace::build(physical_memory, boot_info, kernel_address_space_options)
+            .map_err(|_| NormalInitError::Memory)?;
     let supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
+    diag(boot_info, NormalBootDiagnosticStage::ShellMap);
     let (shell_address_space, loaded_shell) =
         UserAddressSpace::build_with_user_elf_bootstrap_and_supervisor_mappings(
             physical_memory,
@@ -331,12 +340,16 @@ pub fn initialize_normal_substrate(
         stack_region: user_stacks::regions()[0],
     };
     #[cfg(feature = "pyth-tig-default")]
+    diag(boot_info, NormalBootDiagnosticStage::SessionPkg);
+    #[cfg(feature = "pyth-tig-default")]
     let session_manager_service_package = admit_default_service_package(
         boot_info,
         ServiceKind::SessionManager,
         pyth_service_supervisor::SESSION_MANAGER_GRAPH_NAME,
         pyth_service_supervisor::SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
     )?;
+    #[cfg(feature = "pyth-tig-default")]
+    diag(boot_info, NormalBootDiagnosticStage::StewardPkg);
     #[cfg(feature = "pyth-tig-default")]
     let task_steward_service_package = admit_default_service_package(
         boot_info,
@@ -530,10 +543,12 @@ pub fn initialize_normal_substrate(
     // 6. Mapped length: the full active early-core address surface is mapped.
     // 7. Concurrency: single-core execution with interrupts disabled.
     // 8. Violation: a broken mapping faults immediately after the CR3 switch.
+    diag(boot_info, NormalBootDiagnosticStage::ActivateRoot);
     unsafe {
         kernel_address_space.activate();
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:MEMORY_VM_READY");
+    diag(boot_info, NormalBootDiagnosticStage::KernelActive);
     #[cfg(feature = "sdhci-emmc-backend")]
     let sdhci_emmc_device = match sdhci_emmc_controller {
         Some(controller) => Some(
@@ -547,25 +562,31 @@ pub fn initialize_normal_substrate(
     // covers the user address-space construction proved just above.
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:RING3_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::Timer);
     initialize_interrupts_timer_and_clock().map_err(|_| NormalInitError::InterruptsTimer)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:INTERRUPTS_TIMER_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::TaskProcess);
     initialize_task_process_and_kernel_stack_state(boot_info)
         .map_err(|_| NormalInitError::TaskProcess)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:TASK_PROCESS_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::Syscall);
     syscall::initialize();
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SYSCALL_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::UserStacks);
     initialize_guarded_user_stack_pool().map_err(|_| NormalInitError::UserStacks)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:USER_STACKS_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::BlockSelect);
     #[cfg(feature = "sdhci-emmc-backend")]
     let block_device_selection = block_device::select_device_with_sdhci_emmc(sdhci_emmc_device);
     #[cfg(not(feature = "sdhci-emmc-backend"))]
     let block_device_selection = block_device::select_device();
     let block_device = block_device_selection.map_err(|_| NormalInitError::BlockDevice)?;
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY");
+    diag(boot_info, NormalBootDiagnosticStage::BlockReady);
 
     Ok(NormalBootSubstrate {
         kernel_address_space,
@@ -612,6 +633,11 @@ pub fn initialize_normal_substrate(
         #[cfg(feature = "pythtig-phase2-test")]
         pyth_native_task_steward_runtime_launch,
     })
+}
+
+#[inline(always)]
+fn diag(boot_info: &PythBootInfo, stage: NormalBootDiagnosticStage) {
+    normal_boot_diagnostic::report(&boot_info.framebuffer, stage);
 }
 
 #[cfg(not(test))]

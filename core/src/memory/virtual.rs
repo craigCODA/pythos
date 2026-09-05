@@ -166,56 +166,44 @@ pub struct KernelAddressSpace {
     root_table_phys: u64,
 }
 
-impl KernelAddressSpace {
-    #[cfg(feature = "evidence-terminal")]
-    pub fn build(
-        allocator: &mut PhysicalMemory,
-        boot_info: &PythBootInfo,
-        hda_mmio: Option<(u64, u64, u64)>,
-        ahci_mmio: Option<(u64, u64, u64)>,
-        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
-        shell_bootstrap_frame: Option<u64>,
-        evidence_log_mapping: Option<(u64, u64, u64)>,
-    ) -> Result<Self, VmError> {
-        Self::build_inner(
-            allocator,
-            boot_info,
-            hda_mmio,
-            ahci_mmio,
-            sdhci_emmc_mmio,
-            shell_bootstrap_frame,
-            evidence_log_mapping,
-        )
-    }
+pub type PhysicalDeviceMapping = (u64, u64, u64);
 
-    #[cfg(not(feature = "evidence-terminal"))]
+#[derive(Clone, Copy, Default)]
+pub struct KernelAddressSpaceBuildOptions {
+    pub hda_mmio: Option<PhysicalDeviceMapping>,
+    pub ahci_mmio: Option<PhysicalDeviceMapping>,
+    pub sdhci_emmc_mmio: Option<PhysicalDeviceMapping>,
+    pub xhci_mmio: Option<PhysicalDeviceMapping>,
+    pub shell_bootstrap_frame: Option<u64>,
+    pub evidence_log_mapping: Option<PhysicalDeviceMapping>,
+}
+
+impl KernelAddressSpaceBuildOptions {
+    pub const fn new() -> Self {
+        Self {
+            hda_mmio: None,
+            ahci_mmio: None,
+            sdhci_emmc_mmio: None,
+            xhci_mmio: None,
+            shell_bootstrap_frame: None,
+            evidence_log_mapping: None,
+        }
+    }
+}
+
+impl KernelAddressSpace {
     pub fn build(
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
-        hda_mmio: Option<(u64, u64, u64)>,
-        ahci_mmio: Option<(u64, u64, u64)>,
-        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
-        shell_bootstrap_frame: Option<u64>,
+        options: KernelAddressSpaceBuildOptions,
     ) -> Result<Self, VmError> {
-        Self::build_inner(
-            allocator,
-            boot_info,
-            hda_mmio,
-            ahci_mmio,
-            sdhci_emmc_mmio,
-            shell_bootstrap_frame,
-            None,
-        )
+        Self::build_inner(allocator, boot_info, options)
     }
 
     fn build_inner(
         allocator: &mut PhysicalMemory,
         boot_info: &PythBootInfo,
-        hda_mmio: Option<(u64, u64, u64)>,
-        ahci_mmio: Option<(u64, u64, u64)>,
-        sdhci_emmc_mmio: Option<(u64, u64, u64)>,
-        shell_bootstrap_frame: Option<u64>,
-        evidence_log_mapping: Option<(u64, u64, u64)>,
+        options: KernelAddressSpaceBuildOptions,
     ) -> Result<Self, VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         map_kernel_segments(&mut tables)?;
@@ -248,7 +236,7 @@ impl KernelAddressSpace {
             boot_info.framebuffer.byte_length,
             PTE_WRITE | PTE_NO_EXECUTE,
         )?;
-        if let Some((phys, virt, len)) = evidence_log_mapping {
+        if let Some((phys, virt, len)) = options.evidence_log_mapping {
             tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
         }
         // ADR 0048: map the runtime-discovered HDA controller MMIO into the
@@ -256,13 +244,13 @@ impl KernelAddressSpace {
         // Note: this HDA mapping predates PTE_CACHE_DISABLE and has the same
         // latent cacheable-MMIO gap the AHCI mapping below fixes; left as-is,
         // out of scope for ADR 0054 (see that ADR's follow-up risk note).
-        if let Some((phys, virt, len)) = hda_mmio {
+        if let Some((phys, virt, len)) = options.hda_mmio {
             tables.map_physical_range(virt, phys, len, PTE_WRITE | PTE_NO_EXECUTE)?;
         }
         // ADR 0054: map the runtime-discovered AHCI controller's ABAR into the
         // kernel device window, uncacheable: device registers reflect live
         // hardware state and must never be served from a stale cache line.
-        if let Some((phys, virt, len)) = ahci_mmio {
+        if let Some((phys, virt, len)) = options.ahci_mmio {
             tables.map_physical_range(
                 virt,
                 phys,
@@ -272,7 +260,7 @@ impl KernelAddressSpace {
         }
         // ADR 0062: map the selected SDHCI/eMMC BAR0 window uncacheable for
         // synchronous polling PIO. The backend does not enable DMA/ADMA.
-        if let Some((phys, virt, len)) = sdhci_emmc_mmio {
+        if let Some((phys, virt, len)) = options.sdhci_emmc_mmio {
             tables.map_physical_range(
                 virt,
                 phys,
@@ -280,7 +268,18 @@ impl KernelAddressSpace {
                 PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
             )?;
         }
-        if let Some(frame) = shell_bootstrap_frame {
+        // Probe-only USB/xHCI BAR mapping. The diagnostic reads the register
+        // header only; it does not reset the controller, allocate rings, enable
+        // interrupts, or enumerate devices.
+        if let Some((phys, virt, len)) = options.xhci_mmio {
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
+        }
+        if let Some(frame) = options.shell_bootstrap_frame {
             tables.map_physical_range(frame, frame, PAGE_SIZE, PTE_WRITE | PTE_NO_EXECUTE)?;
         }
         tables.reserve_late_frame_scratch_alias()?;

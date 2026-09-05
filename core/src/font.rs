@@ -538,6 +538,16 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
             0b1100_0000,
             0b1100_0000,
         ],
+        b'q' => [
+            0,
+            0,
+            0b0111_1110,
+            0b1100_0110,
+            0b1100_0110,
+            0b0111_1110,
+            0b0000_0110,
+            0b0000_0110,
+        ],
         b'r' => [
             0,
             0,
@@ -618,6 +628,16 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
             0b1111_1100,
             0,
         ],
+        b'z' => [
+            0,
+            0,
+            0b1111_1110,
+            0b0000_1100,
+            0b0011_1000,
+            0b0110_0000,
+            0b1111_1110,
+            0,
+        ],
         b':' => [
             0,
             0b0011_0000,
@@ -629,6 +649,16 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
             0,
         ],
         b'_' => [0, 0, 0, 0, 0, 0, 0, 0b1111_1110],
+        b'+' => [
+            0,
+            0,
+            0b0011_0000,
+            0b0011_0000,
+            0b1111_1100,
+            0b0011_0000,
+            0b0011_0000,
+            0,
+        ],
         b'-' => [0, 0, 0, 0b1111_1100, 0, 0, 0, 0],
         b'/' => [
             0b0000_0110,
@@ -691,6 +721,19 @@ mod tests {
     fn terminal_glyphs_cover_marker_charset() {
         for byte in b"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789:_-/ >" {
             assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
+        }
+    }
+
+    #[test]
+    fn recurring_probe_screens_have_fixed_boot_glyphs() {
+        let screens = [
+            &b"PythOSxhci mouse sequenceno disk writesbdfvidport slotep dcireports wraplast l r mseen relsumx + sumy -aux presentfrozen no cursor0123456789ABCDEF"[..],
+            &b"PythOSxhci input errorno disk writesbdfvidchg pdonenext cycleseen relerrstage interrupt indecode invalidterminal invariant0123456789ABCDEF"[..],
+        ];
+        for screen in screens {
+            for byte in screen {
+                assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
+            }
         }
     }
 }

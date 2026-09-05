@@ -6,6 +6,7 @@
 //! then enters `shell.elf` as the persistent ring-3 program.
 
 use crate::memory::physical::PhysicalMemory;
+use crate::normal_boot_diagnostic::{self, InitErrorDiagnostic, NormalBootDiagnosticStage};
 #[cfg(feature = "physical-keyboard-console")]
 use crate::physical_keyboard_console;
 #[cfg(feature = "pythtig-phase2-test")]
@@ -31,14 +32,20 @@ use pythos_shared::object_shell_abi::{
 #[cfg(not(test))]
 pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemory) -> ! {
     serial::write_line("PYTHOS:CORE:NORMAL_BOOT:FAST_PATH");
+    diag(boot_info, NormalBootDiagnosticStage::NormalEnter);
     let substrate = match normal_init::initialize_normal_substrate(boot_info, physical_memory) {
         Ok(substrate) => substrate,
-        Err(_) => {
+        Err(error) => {
+            normal_boot_diagnostic::report_init_error(
+                &boot_info.framebuffer,
+                InitErrorDiagnostic::from(error),
+            );
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
     };
     let _ = &substrate.kernel_address_space;
+    diag(boot_info, NormalBootDiagnosticStage::SubstrateReady);
     #[cfg(feature = "pythtig-phase2-test")]
     let pyth_graph_mode =
         match pyth_runtime_launch::read_and_clear_pyth_graph_control_sector(substrate.block_device)
@@ -50,26 +57,33 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 qemu_exit::panic();
             }
         };
+    diag(boot_info, NormalBootDiagnosticStage::StoreRestore);
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
+        diag(boot_info, NormalBootDiagnosticStage::StoreError);
         serial::write_line("PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED");
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }
+    diag(boot_info, NormalBootDiagnosticStage::PkgRestore);
     if package_service::initialize_package_service_from_device(substrate.block_device).is_err() {
+        diag(boot_info, NormalBootDiagnosticStage::PkgError);
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::Services);
     match pyth_service_supervisor::normal_program() {
         NormalProgram::PythServices => {
             if run_selected_pyth_services(&substrate).is_err() {
+                diag(boot_info, NormalBootDiagnosticStage::ServiceError);
                 serial::write_line("PYTHOS:PANIC");
                 qemu_exit::panic();
             }
         }
         NormalProgram::LegacyShell => {}
     }
+    diag(boot_info, NormalBootDiagnosticStage::ServicesReady);
 
     #[cfg(feature = "pythtig-phase2-test")]
     match pyth_graph_mode {
@@ -234,9 +248,11 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         pyth_runtime_launch::PythGraphBootMode::DefaultShell => {}
     }
 
+    diag(boot_info, NormalBootDiagnosticStage::Com2);
     serial::init_com2();
     serial::write_line("PYTHOS:CORE:COM2_READY");
 
+    diag(boot_info, NormalBootDiagnosticStage::Cinematic);
     if play_boot_cinematic_and_audio(&boot_info.framebuffer).is_err() {
         serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SKIPPED");
     }
@@ -246,9 +262,11 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     // PS/2 controller itself fails to come up (e.g. a QEMU profile without
     // PS/2 emulated), degrade to auto-launching immediately rather than
     // hanging normal boot forever waiting for input nothing can deliver.
+    diag(boot_info, NormalBootDiagnosticStage::Launcher);
     let _ = framebuffer::render_launcher_screen(&boot_info.framebuffer, 0, 0);
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:LAUNCHER_READY");
     if ps2::initialize().is_ok() {
+        diag(boot_info, NormalBootDiagnosticStage::Ps2Wait);
         if launcher_screen::run_until_click(&boot_info.framebuffer).is_err() {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
@@ -260,25 +278,32 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     {
         if ps2::initialize_keyboard_polling().is_ok() {
             physical_keyboard_console::mark_ready();
+            diag(boot_info, NormalBootDiagnosticStage::KeyboardReady);
         } else {
             physical_keyboard_console::mark_ps2_init_failed();
+            diag(boot_info, NormalBootDiagnosticStage::KeyboardFailed);
         }
     }
 
+    diag(boot_info, NormalBootDiagnosticStage::ShellProcess);
     let shell_process = match build_shell_process(&substrate.shell_launch) {
         Ok(process) => process,
         Err(_) => {
+            diag(boot_info, NormalBootDiagnosticStage::ShellError);
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
     };
     if retained_services::bind_shell_process(shell_process).is_err() {
+        diag(boot_info, NormalBootDiagnosticStage::ShellError);
         serial::write_line("PYTHOS:PANIC");
         qemu_exit::panic();
     }
+    diag(boot_info, NormalBootDiagnosticStage::Bootstrap);
     let bootstrap = match build_bootstrap_block(shell_process) {
         Ok(block) => block,
         Err(_) => {
+            diag(boot_info, NormalBootDiagnosticStage::ShellError);
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
@@ -287,6 +312,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
 
     serial::write_line("PYTHOS:CORE:NORMAL_SERVICES_READY");
     serial::write_line("PYTHOS:CORE:NORMAL_BOOT_ALIVE");
+    diag(boot_info, NormalBootDiagnosticStage::Ring3Enter);
 
     // SAFETY:
     // 1. Invariant: the retained shell address space maps validated shell ELF
@@ -311,6 +337,11 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         substrate.shell_launch.user_stack_top(),
         substrate.shell_launch.bootstrap_user_ptr,
     );
+}
+
+#[inline(always)]
+fn diag(boot_info: &PythBootInfo, stage: NormalBootDiagnosticStage) {
+    normal_boot_diagnostic::report(&boot_info.framebuffer, stage);
 }
 
 #[cfg(not(test))]
