@@ -1174,6 +1174,80 @@ Phase 10 `concurrent-write-safety` requires `PYTHOS:CORE:CONCURRENT_WRITE:SERIAL
 
 Phase 10 `storage-adversarial-suite` requires `PYTHOS:CORE:STORAGE_ADVERSARIAL:CREATE_DELETE_CYCLE` after `PYTHOS:CORE:CONCURRENT_WRITE_SAFETY_READY`, `PYTHOS:CORE:STORAGE_ADVERSARIAL:OUT_OF_QUOTA_DENIED` after the create/delete marker, `PYTHOS:CORE:STORAGE_ADVERSARIAL:DYNAMIC_TORN_WRITE_RECOVERED` after the out-of-quota marker, `PYTHOS:CORE:STORAGE_ADVERSARIAL_SUITE_READY` after the dynamic torn-write marker, `PYTHOS:CORE:PHASE_10_COMPLETE` after the adversarial-ready marker, and `PYTHOS:CORE:PHASE_10_COMPLETE` before `PYTHOS:CORE:FRAMEBUFFER_READY`.
 
+## ADR 0088 Recurring USB xHCI Boot-Mouse Acceptance
+
+The opt-in `usb-xhci-boot-mouse-recurring-probe` path runs exactly sixteen
+single-in-flight interrupt-IN captures. Its transfer-ring data indices are
+`0..14,0`; reports 1 through 15 use cycle 1 and report 16 uses cycle 0 after
+the single Link-TRB crossing. Every report must emit its ordinal, TRB
+index/cycle, armed/completion/raw evidence, decoded values, and matching
+report-ready ordinal before the next report is injected.
+
+The sequence begins with
+`PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_SEQUENCE_TARGET=0x0000000000000010`.
+For each ordinal 1 through 16, the repeated marker order is:
+
+```text
+XHCI_BOOT_MOUSE_REPORT_ORDINAL=
+XHCI_INTERRUPT_TRANSFER_TRB_INDEX=
+XHCI_INTERRUPT_TRANSFER_CYCLE=
+XHCI_INTERRUPT_TRANSFER_REQUESTED=
+XHCI_INTERRUPT_TRANSFER_ARMED
+XHCI_INTERRUPT_TRANSFER_CC=
+XHCI_INTERRUPT_TRANSFER_ACTUAL=
+XHCI_INTERRUPT_TRANSFER_CAPTURED=
+XHCI_INTERRUPT_TRANSFER_RAW=
+XHCI_INTERRUPT_TRANSFER_READY
+XHCI_BOOT_MOUSE_BUTTONS=
+XHCI_BOOT_MOUSE_DX_I8=
+XHCI_BOOT_MOUSE_DY_I8=
+XHCI_BOOT_MOUSE_AUX_PRESENT=
+XHCI_BOOT_MOUSE_AUX=
+XHCI_BOOT_MOUSE_EVENT_READY
+XHCI_BOOT_MOUSE_DECODE_READY
+XHCI_BOOT_MOUSE_REPORT_READY=
+```
+
+All names in that repeated group carry the
+`PYTHOS:CORE:USB_XHCI_PROBE:` prefix. Immediately after report 15 readiness,
+the path emits
+`XHCI_INTERRUPT_TRANSFER_RING_WRAP=0x0000000000000001`; report 16 then begins
+at TRB index 0 with cycle 0.
+
+The recurring terminal marker order is:
+
+```text
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_REPORT_COUNT=0x0000000000000010
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DX_TOTAL_I32=0x0000000000000070
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_DY_TOTAL_I32=0x00000000FFFFFFC8
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_BUTTONS_LAST=0x0000000000000000
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_PRESSED_SEEN=0x0000000000000001
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_RELEASED_AFTER_PRESSED=0x0000000000000001
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_SEQUENCE_AUX_PRESENT=0x0000000000000001
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_SEQUENCE_AUX_LAST=0x0000000000000000
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_WRAP_COUNT=0x0000000000000001
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_EVENT_RING_WRAP_COUNT=0x0000000000000001
+PYTHOS:CORE:USB_XHCI_PROBE:XHCI_BOOT_MOUSE_RECURRING_READY
+PYTHOS:CORE:USB_XHCI_PROBE:FRAMEBUFFER_IDENTITY_READY
+PYTHOS:CORE:USB_XHCI_PROBE:NO_DISK_WRITES
+PYTHOS:CORE:USB_XHCI_PROBE_READY
+```
+
+Run the ADR 0088 QEMU oracle with:
+
+```powershell
+py -3 scripts\test-usb-xhci-boot-mouse-recurring-probe.py
+```
+
+It requires sixteen ordered groups, indices `0..14,0`, cycles `1..1,0`, one
+transfer-ring wrap, at least one event-ring wrap, deterministic movement
+totals, left press and adjacent release evidence, a frozen no-cursor panel,
+the no-write marker, `QEMU_OUTCOME success`, and
+`USB_XHCI_BOOT_MOUSE_RECURRING_PROBE_TEST_OK`. It rejects timeout, panic,
+typed driver/decode/terminal failure, cursor/input-service markers, storage
+writes, duplicate terminals, and marker-count or ordering violations. This is
+QEMU acceptance only; physical validation remains pending.
+
 The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
 milestone success marker unchanged, then renders the captured transcript and
 emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final terminal frame

@@ -26,9 +26,9 @@ The configured USB device was the previously established Dell/PixArt
 `413c:301a` boot mouse with interrupt-IN endpoint `0x81`, DCI 3, and maximum
 packet size 4.
 
-## Visible Result
+## Visible Results
 
-The user directly transcribed these final framebuffer lines:
+The first retained physical screenshot shows the motion result:
 
 ```text
 btn 00 l0 r0 m0
@@ -36,38 +36,66 @@ dx -007 dy -007
 aux 00
 ```
 
-The screen's lowercase `l0` left-button field was initially transcribed as
-`10`, which is visually plausible in the fixed boot font. The source renders
-the literal field as `l0`.
+```text
+C:\Users\NeverAMoment\Desktop\Screenshot 2026-09-04 112914.png
+SHA-256 5E31E4BF9E5E6571E2A11BB5B86023B3475EC8135747CB339246B262C1A8B4AE
+```
 
-The phone lost power before a photograph or video could be taken. There is no
-serial capture from this physical machine. The evidence is therefore direct
-user observation plus exact transcription, not media-backed observation.
+The screen's lowercase `l0` left-button field can resemble `10` in the fixed
+boot font. The source renders the literal field as `l0`.
+
+The second retained screenshot shows a separate dock-topology left-button
+state with no movement:
+
+```text
+btn 01 l1 r0 m0
+dx 000 dy 000
+aux 00
+
+C:\Users\NeverAMoment\Desktop\Screenshot 2026-09-04 142212.png
+SHA-256 6990E21E42BB2CA3B347DA9B8E81A60C3572E21408737A20AEF328E211149D31
+```
+
+A later one-shot boot showed a neutral state after the operator released a
+button that had already been held before attachment. That observation does not
+prove that PythOS observed a release transition: no preceding pressed report
+was accepted in that boot, so there is no accepted pressed state in the same
+sequence against which to compare the neutral sample.
+
+Both named screenshot files were rehashed during the ADR 0088 checkpoint and
+matched the recorded SHA-256 values. There is no COM1 serial capture from this
+physical machine.
 
 ## Last Proven Layer
 
-One physically received USB boot-mouse report reached the ADR 0087 semantic
-decoder and rendered clear button state, signed negative X/Y movement, and the
-raw `aux` byte on the Lenovo.
+Physical USB boot-mouse reports reached the ADR 0087 semantic decoder and
+rendered signed movement and a left-button state in separate one-shot Lenovo
+boots. They do not form a recurring sequence.
+
 ## Interpretation
 
 What is proven:
 
 - The QEMU-accepted ADR 0087 kernel was deployed with hash readback.
 - The Lenovo reached the successful decoded-report panel.
-- Button bits decoded clear as `00` / left 0 / right 0 / middle 0.
+- Button bits decoded clear as `00` / left 0 / right 0 / middle 0 in the
+  motion screenshot.
 - Both movement bytes decoded as signed values of `-7`.
 - The optional fourth byte was retained as raw `aux 00`.
+- A separate dock-topology screenshot decoded `btn 01 l1 r0 m0` with zero
+  movement.
 - The boundary stopped after one report without cursor integration.
 
 What is not proven:
 
-- Independent photographic or video confirmation of this run.
 - A physical COM1 serial marker sequence.
 - A second or recurring interrupt transfer.
-- Button transitions, wheel semantics, normal launcher input, or cursor motion.
+- A PythOS-observed release transition: the later neutral observation had no
+  preceding accepted pressed report in the same boot.
+- Click semantics, wheel semantics, normal launcher input, or cursor motion.
 - Generic support beyond this Lenovo/controller/mouse combination.
 
 Next slice:
 
-- A separately approved recurring-report boundary before any cursor integration.
+- Physically validate the separately approved ADR 0088 recurring-report image
+  before any cursor integration.

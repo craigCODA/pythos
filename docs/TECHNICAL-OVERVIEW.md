@@ -869,6 +869,30 @@ four prerequisite address/descriptor completion codes `01`. It also showed
 power, not an interrupt transfer or HID report; that physical run did not poll
 the configured interrupt ring.
 
+ADR 0086 then proves one raw interrupt-IN report, and ADR 0087 decodes one
+three- or four-byte report without routing it into the normal input service.
+The Lenovo `81VS` ADR 0087 evidence is now media-backed for two distinct
+one-shot observations: motion `btn 00 / dx -007 / dy -007 / aux 00`, and a
+dock-topology left state `btn 01 l1 r0 m0`. A later neutral state after release
+of a button held before device attachment is only a neutral snapshot; it does
+not prove PythOS observed a release transition because no earlier pressed
+report was accepted in that boot.
+
+ADR 0088 adds the next opt-in bounded transport diagnostic,
+`usb-xhci-boot-mouse-recurring-probe`. It maintains explicit transfer-producer
+and event-consumer cycle state while accepting exactly sixteen sequential,
+single-in-flight reports. The 16-entry interrupt ring supplies 15 data TRBs
+plus a Toggle-Cycle Link TRB, so QEMU acceptance proves report indices
+`0..14,0`, cycles `1..1,0`, one transfer-ring wrap, at least one event-ring
+wrap, deterministic signed totals, and a left press followed by an adjacent
+release. The final framebuffer freezes at `reports 16 wrap 1` with
+`frozen no cursor` and `no disk writes`. Typed driver, decode, or terminal-
+invariant failure stops without readiness. ADR 0088 status is **Accepted in
+QEMU; physical validation pending**. No recurring image has been deployed,
+and this evidence does not establish physical DMA/controller behavior, cursor
+movement, wheel/click semantics, normal input routing, IRQ input, hub support,
+hot-unplug recovery, a second ring wrap, or writes.
+
 Because the target can boot Linux Mint from eMMC, the USB/input discovery
 workflow now uses `scripts/linux-usb-mouse-map.sh` as a Mint-side field kit.
 The script stages itself into `~/pythos-field-kit`, collects PCI, xHCI, USB,
@@ -893,7 +917,8 @@ See:
 - [ADR 0085 USB xHCI Endpoint Configuration probe](decisions/0085-usb-xhci-endpoint-configuration-probe.md)
 - [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
-- [2026-09-04 physical ADR 0087 transcription report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
+- [ADR 0088 USB xHCI recurring boot-mouse probe](decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
+- [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
 - [2026-08-28 no-write hardware-probe SDHCI/eMMC read frame](evidence/2026-08-28-hardware-probe-o2micro-emmc-read.jpg)
 - [2026-08-29 normal SDHCI/eMMC ring-3 handoff frame](evidence/2026-08-29-normal-sdhci-ring3-enter.jpg)

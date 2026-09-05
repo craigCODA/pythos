@@ -2,7 +2,7 @@
 
 Date: 2026-09-04
 
-Status: Accepted in QEMU and user-observed on Lenovo 81VS; no physical media capture
+Status: Accepted in QEMU and physically observed on Lenovo 81VS
 
 ## Context
 
@@ -90,8 +90,8 @@ buttons `00`, X `-2`, Y `0`, auxiliary `00`, and constructs
 
 Physical acceptance followed on 2026-09-04 on the same Lenovo `81VS`, AMD xHCI
 `1022:7914`, and Dell/PixArt mouse path used for ADR 0086. The deployed
-`PYTHCORE.ELF` matched the QEMU-accepted SHA-256 above. The user directly
-transcribed these final decoded-panel lines:
+`PYTHCORE.ELF` matched the QEMU-accepted SHA-256 above. The first retained
+physical screenshot records this decoded motion panel:
 
 ```text
 btn 00 l0 r0 m0
@@ -99,18 +99,40 @@ dx -007 dy -007
 aux 00
 ```
 
-The user's phone lost power before a photograph or video could be recorded, so
-this physical acceptance is explicitly user-observed and transcription-backed,
-not media-backed. The lowercase `l0` is the literal left-button field rendered
-by the source; it can resemble `10` in the fixed boot font. No firmware-setting
-change was reported. The probe retained its one-report, no-cursor, and no-disk-
-write boundary; the separately authorized USB deployment replaced eight boot
-image files and preserved 111 unrelated files byte-for-byte.
+```text
+C:\Users\NeverAMoment\Desktop\Screenshot 2026-09-04 112914.png
+SHA-256 5E31E4BF9E5E6571E2A11BB5B86023B3475EC8135747CB339246B262C1A8B4AE
+```
+
+The second retained screenshot records a separate dock-topology boot with a
+left-button state and zero movement:
+
+```text
+btn 01 l1 r0 m0
+dx 000 dy 000
+aux 00
+
+C:\Users\NeverAMoment\Desktop\Screenshot 2026-09-04 142212.png
+SHA-256 6990E21E42BB2CA3B347DA9B8E81A60C3572E21408737A20AEF328E211149D31
+```
+
+A later boot showed a neutral state after the operator released a button that
+had already been held before attachment. That observation does **not** prove a
+PythOS-observed release transition: no preceding pressed report was accepted
+in that boot, so the one-shot decoder had no earlier accepted state to compare.
+
+Both screenshot hashes were reverified from the named files during the ADR
+0088 documentation checkpoint. The lowercase `l0` is the literal left-button
+field rendered by the source; it can resemble `10` in the fixed boot font. No
+firmware-setting change was reported. The probe retained its one-report,
+no-cursor, and no-disk-write boundary; the separately authorized USB deployment
+replaced eight boot image files and preserved 111 unrelated files byte-for-byte.
 
 ## Consequences
 
-PythOS now has a QEMU-accepted and user-observed Lenovo-accepted semantic bridge
-from one validated xHCI report to its existing typed mouse-movement
-representation while preserving the one-report safety boundary. Recurring
-transfers, button-transition tracking, and visible cursor movement remain
-later, separately approved boundaries.
+PythOS now has a QEMU-accepted and screenshot-backed Lenovo-accepted semantic
+bridge from one validated xHCI report to its existing typed mouse-movement
+representation while preserving the one-report safety boundary. ADR 0088 adds
+a separately gated recurring-report diagnostic that is accepted in QEMU but
+still awaits physical validation. Normal input routing and visible cursor
+movement remain later, separately approved boundaries.

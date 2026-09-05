@@ -270,6 +270,25 @@ completion code `01`, `USB_XHCI_INTERRUPT_TRANSFER_PROBE_TEST_OK`,
 `QEMU_OUTCOME success`, and `NO_DISK_WRITES`. This is not HID decoding,
 recurring input, cursor movement, shell input, or physical acceptance.
 
+ADR 0087 adds a distinct bounded USB boot-mouse decoder over that one-shot raw
+report. On the Lenovo `81VS`, the retained physical screenshots show one motion
+sample (`btn 00`, `dx -007`, `dy -007`, `aux 00`) and, in the dock topology,
+one left-button state (`btn 01 l1 r0 m0`). A later neutral state after releasing
+a button held before attachment does not prove a PythOS-observed release
+transition because that boot accepted no preceding pressed report. The
+one-shot boundary still has no cursor, wheel semantics, or normal input routing.
+
+ADR 0088 adds `usb-xhci-boot-mouse-recurring-probe`. It sequentially captures
+exactly sixteen single-in-flight reports on the 15-data-plus-Link interrupt
+ring, proving QEMU transfer indices `0..14,0`, cycles `1..1,0`, one transfer
+wrap, one event-ring wrap, deterministic motion totals, and an observed left
+press followed by release. The final panel is frozen and explicitly says
+`frozen no cursor`; it retains `NO_DISK_WRITES`. The fresh harness ended with
+`USB_XHCI_BOOT_MOUSE_RECURRING_PROBE_TEST_OK` and `QEMU_OUTCOME success`.
+Status is **Accepted in QEMU; physical validation pending**. It does not add a
+cursor, wheel/click semantics, normal input-event routing, IRQ USB input, hub
+support, hot-unplug recovery, a second ring wrap, or storage writes.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths
@@ -304,6 +323,9 @@ Current-state references:
 - [ADR 0084: USB xHCI Configuration Descriptor probe](docs/decisions/0084-usb-xhci-configuration-descriptor-probe.md)
 - [ADR 0085: USB xHCI Endpoint Configuration probe](docs/decisions/0085-usb-xhci-endpoint-configuration-probe.md)
 - [ADR 0086: USB xHCI one-shot interrupt transfer probe](docs/decisions/0086-usb-xhci-interrupt-transfer-probe.md)
+- [ADR 0087: USB xHCI one-shot boot-mouse decode probe](docs/decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
+- [ADR 0088: USB xHCI recurring boot-mouse probe](docs/decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
+- [Physical ADR 0087 boot-mouse decode report](docs/evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)
