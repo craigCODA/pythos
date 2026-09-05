@@ -725,6 +725,15 @@ pub enum UsbBootMouseRecurringFailure {
 }
 
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
+pub fn boot_mouse_recurring_terminal_ready(
+    success: bool,
+    failure: Option<UsbBootMouseRecurringFailure>,
+    final_render_ok: bool,
+) -> bool {
+    success && failure.is_none() && final_render_ok
+}
+
+#[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
 pub fn build_boot_mouse_recurring_probe_screen(
     report: &crate::usb_xhci_probe::UsbProbeReport,
     endpoint: crate::usb_xhci_driver::XhciEndpointConfigurationProbeResult,
@@ -1649,6 +1658,30 @@ mod tests {
             assert!(!line.contains("sequence"));
         }
         assert_screen_uses_fixed_boot_font(&screen);
+    }
+
+    #[test]
+    fn recurring_terminal_ready_requires_success_without_any_late_failure() {
+        assert!(boot_mouse_recurring_terminal_ready(true, None, true));
+        assert!(!boot_mouse_recurring_terminal_ready(false, None, true));
+        assert!(!boot_mouse_recurring_terminal_ready(true, None, false));
+
+        let failures = [
+            UsbBootMouseRecurringFailure::Driver(
+                crate::usb_xhci_driver::XhciDriverError::InterruptTransferTimeout,
+            ),
+            UsbBootMouseRecurringFailure::Decode(
+                crate::input_drivers::InputDriverError::BadUsbBootMouseReport,
+            ),
+            UsbBootMouseRecurringFailure::TerminalInvariant,
+        ];
+        for failure in failures {
+            assert!(!boot_mouse_recurring_terminal_ready(
+                true,
+                Some(failure),
+                true,
+            ));
+        }
     }
 
     #[test]

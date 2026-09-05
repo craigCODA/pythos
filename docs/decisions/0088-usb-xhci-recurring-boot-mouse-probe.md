@@ -50,7 +50,9 @@ and transfer/event wrap counts.
 Failures remain typed as an xHCI driver error, boot-mouse decode error, or
 terminal-invariant error. Any failure stops immediately, preserves the last
 progress/summary for the framebuffer error panel, and does not emit recurring
-or overall readiness.
+or overall readiness. Overall readiness is gated on a successful recurring
+result, absence of any recurring failure, and successful final-result render;
+rendering an error panel successfully is not probe success.
 
 This boundary does not move or draw a cursor, interpret the auxiliary byte as
 a wheel, recognize clicks, route input into the normal input-event service or
@@ -73,6 +75,12 @@ emits exactly one:
 ```text
 PYTHOS:CORE:USB_XHCI_PROBE:XHCI_INTERRUPT_TRANSFER_RING_WRAP=0x0000000000000001
 ```
+
+Every member of the repeated report marker group must occur exactly sixteen
+times in the complete COM1 transcript. Extra occurrences outside the
+ordinal-delimited groups, including before ordinal 1 or after the terminal
+fields, fail acceptance. The sequence-target marker must occur exactly once
+after endpoint setup and before ordinal 1.
 
 After report 16, the recorded QEMU run emitted this terminal order and these
 values:
@@ -120,11 +128,29 @@ QEMU_OUTCOME success
 USB_XHCI_BOOT_MOUSE_RECURRING_PROBE_TEST_OK
 ```
 
+The final review fix wave first proved the missing contracts RED. The focused
+Rust test failed to compile because the terminal-readiness gate did not exist.
+The four focused Python oracle tests produced 34 expected failures: missing or
+misordered target acceptance, repeated-marker extras before and after the
+ordinal window, and terminal-invariant false acceptance. After the minimal
+fix, the gate test passed, all four Python oracle tests passed, all 22 USB probe
+screen tests passed, and all 15 marker-action/runner tests passed. The failure
+cases cover late driver, decode, and terminal-invariant results and prove none
+can satisfy the terminal-readiness policy or oracle.
+
 The same final tree retained QEMU acceptance for endpoint configuration, the
 one-shot raw interrupt report, and the one-shot decoded report; normal boot
 ended with `BOOT_TEST_OK` / `QEMU_OUTCOME success`; persistent storage ended
 with `PERSISTENT_STORAGE_TEST_OK` and its required success outcomes; and all
-697 PythCore host tests passed.
+698 PythCore host tests passed. The prescribed `py -3 -m pytest tests` could
+not start because the installed Python 3.14 has no `pytest`; stdlib discovery
+reproduced the same two failures and one error in 116 Phase 13-oriented tests
+recorded before this fix wave.
+
+Both static scanners passed their own self-tests. The repository scan retained
+the recorded baseline totals of 219 scanner-unrecognized unsafe-comment sites
+and four bounded-poll findings; this wave added no unsafe line and no scanner
+finding.
 
 The final recurring harness rebuilt `image/esp`. The repository does not
 produce a `target/esp` directory; the freshly verified build outputs and COM1
@@ -132,9 +158,13 @@ log have these SHA-256 values:
 
 ```text
 image/esp/EFI/BOOT/BOOTX64.EFI                         085A02AA250050CB55B065B7842B09CDE5C087291ABD19D83FA05F6197918578
-image/esp/PYTHOS/PYTHCORE.ELF                          974490964C5AB48AE711694D8ECCD92121C28A9A0A33CE5630EEF919B0FDD096
-target/usb-xhci-boot-mouse-recurring-probe-com1.log    C83D79B4E17CE155A57102FE048597AD1E8E4354681D2E32550A0C9082FE94E6
+image/esp/PYTHOS/PYTHCORE.ELF                          717390EBD77EE896C188830E60AA2D60E29107469295D855519094203CED46BC
+target/usb-xhci-boot-mouse-recurring-probe-com1.log    2C1D67DFB42BBB0CFE8CCF70E2AB38E233950838A2ABAFBCF9745B374A30EA20
 ```
+
+The final COM1 log is 35,346 bytes. It contains the sequence target exactly
+once before ordinal 1, exactly sixteen global occurrences of every repeated
+group marker, and zero driver, decode, or terminal-invariant failure markers.
 
 This is QEMU xHCI evidence only. No recurring image has been deployed to USB
 and no physical recurring report sequence has been accepted.

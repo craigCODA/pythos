@@ -1209,7 +1209,10 @@ XHCI_BOOT_MOUSE_REPORT_READY=
 ```
 
 All names in that repeated group carry the
-`PYTHOS:CORE:USB_XHCI_PROBE:` prefix. Immediately after report 15 readiness,
+`PYTHOS:CORE:USB_XHCI_PROBE:` prefix. Every repeated name must occur exactly
+sixteen times across the complete COM1 transcript, not merely once within each
+ordinal-delimited group. An extra occurrence before ordinal 1 or after the
+terminal fields is a failed acceptance. Immediately after report 15 readiness,
 the path emits
 `XHCI_INTERRUPT_TRANSFER_RING_WRAP=0x0000000000000001`; report 16 then begins
 at TRB index 0 with cycle 0.
@@ -1254,8 +1257,17 @@ totals, left press and adjacent release evidence, a frozen no-cursor panel,
 the no-write marker, `QEMU_OUTCOME success`, and
 `USB_XHCI_BOOT_MOUSE_RECURRING_PROBE_TEST_OK`. It rejects timeout, panic,
 typed driver/decode/terminal failure, cursor/input-service markers, storage
-writes, duplicate terminals, and marker-count or ordering violations. This is
-QEMU acceptance only; physical validation remains pending.
+writes, duplicate terminals, and marker-count or ordering violations. A
+driver, decode, or terminal-invariant failure must suppress
+`PYTHOS:CORE:USB_XHCI_PROBE_READY` even when the error framebuffer renders
+successfully. Focused host regressions for the target/order, global repeated
+counts, and late-failure contract run with:
+
+```powershell
+py -3 scripts\test-usb-xhci-boot-mouse-recurring-probe.py --self-test
+```
+
+This is QEMU acceptance only; physical validation remains pending.
 
 The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
 milestone success marker unchanged, then renders the captured transcript and
