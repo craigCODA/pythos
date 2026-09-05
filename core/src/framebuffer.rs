@@ -1021,77 +1021,45 @@ impl Surface {
 
     #[cfg(any(test, feature = "viewing-input-probe"))]
     fn draw_focus_mark(&self, position: FocusMarkPosition) {
-        let x = u64::from(position.x);
-        let y = u64::from(position.y);
-        let left = x.saturating_sub(FOCUS_MARK_HALF_SPAN);
-        let top = y.saturating_sub(FOCUS_MARK_HALF_SPAN);
-        let right = x.saturating_add(FOCUS_MARK_HALF_SPAN);
-        let bottom = y.saturating_add(FOCUS_MARK_HALF_SPAN);
-        let right_arm_start = right
-            .saturating_add(1)
-            .saturating_sub(FOCUS_MARK_ARM_LENGTH);
-        let bottom_arm_start = bottom
-            .saturating_add(1)
-            .saturating_sub(FOCUS_MARK_ARM_LENGTH);
-        let right_edge_start = right.saturating_add(1).saturating_sub(FOCUS_MARK_THICKNESS);
-        let bottom_edge_start = bottom
-            .saturating_add(1)
-            .saturating_sub(FOCUS_MARK_THICKNESS);
+        let x = i64::from(position.x);
+        let y = i64::from(position.y);
+        let half_span = FOCUS_MARK_HALF_SPAN as i64;
+        let arm_length = FOCUS_MARK_ARM_LENGTH as i64;
+        let thickness = FOCUS_MARK_THICKNESS as i64;
+        let left = x - half_span;
+        let top = y - half_span;
+        let right = x + half_span;
+        let bottom = y + half_span;
+        let right_arm_start = right + 1 - arm_length;
+        let bottom_arm_start = bottom + 1 - arm_length;
+        let right_edge_start = right + 1 - thickness;
+        let bottom_edge_start = bottom + 1 - thickness;
+
+        self.fill_focus_rect(left, top, arm_length, thickness);
+        self.fill_focus_rect(left, top, thickness, arm_length);
+        self.fill_focus_rect(right_arm_start, top, arm_length, thickness);
+        self.fill_focus_rect(right_edge_start, top, thickness, arm_length);
+        self.fill_focus_rect(left, bottom_edge_start, arm_length, thickness);
+        self.fill_focus_rect(left, bottom_arm_start, thickness, arm_length);
+        self.fill_focus_rect(right_arm_start, bottom_edge_start, arm_length, thickness);
+        self.fill_focus_rect(right_edge_start, bottom_arm_start, thickness, arm_length);
+    }
+
+    #[cfg(any(test, feature = "viewing-input-probe"))]
+    fn fill_focus_rect(&self, x: i64, y: i64, width: i64, height: i64) {
+        let right = x.saturating_add(width).min(self.width as i64);
+        let bottom = y.saturating_add(height).min(self.height as i64);
+        let left = x.max(0);
+        let top = y.max(0);
+        if left >= right || top >= bottom {
+            return;
+        }
 
         self.fill_rect(
-            left,
-            top,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            left,
-            top,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            right_arm_start,
-            top,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            right_edge_start,
-            top,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            left,
-            bottom_edge_start,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            left,
-            bottom_arm_start,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            right_arm_start,
-            bottom_edge_start,
-            FOCUS_MARK_ARM_LENGTH,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_COLOR,
-        );
-        self.fill_rect(
-            right_edge_start,
-            bottom_arm_start,
-            FOCUS_MARK_THICKNESS,
-            FOCUS_MARK_ARM_LENGTH,
+            left as u64,
+            top as u64,
+            (right - left) as u64,
+            (bottom - top) as u64,
             FOCUS_MARK_COLOR,
         );
     }
@@ -1276,29 +1244,31 @@ mod tests {
 
     #[test]
     fn focus_mark_clips_at_the_top_left_edge() {
-        let (buffer, info) = test_framebuffer(8, 8);
+        let (buffer, info) = test_framebuffer(16, 16);
         render_viewing_input_probe(
             &info,
-            active_viewing_snapshot(8, 8, 0, 0),
+            active_viewing_snapshot(16, 16, 0, 0),
             crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
         )
         .unwrap();
 
-        assert!(pixel_set(&buffer, 8, 0, 0));
-        assert_eq!(focus_color_pixel_count(&buffer), 24);
+        assert!(pixel_set(&buffer, 16, 12, 12));
+        assert!(!pixel_set(&buffer, 16, 0, 0));
+        assert_eq!(focus_color_pixel_count(&buffer), 20);
     }
 
     #[test]
     fn focus_mark_clips_at_the_bottom_right_edge() {
-        let (buffer, info) = test_framebuffer(8, 8);
+        let (buffer, info) = test_framebuffer(16, 16);
         render_viewing_input_probe(
             &info,
-            active_viewing_snapshot(8, 8, 7, 7),
+            active_viewing_snapshot(16, 16, 15, 15),
             crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
         )
         .unwrap();
 
-        assert!(pixel_set(&buffer, 8, 0, 0));
+        assert!(pixel_set(&buffer, 16, 3, 3));
+        assert!(!pixel_set(&buffer, 16, 15, 15));
         assert_eq!(focus_color_pixel_count(&buffer), 20);
     }
 
