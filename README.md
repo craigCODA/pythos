@@ -295,6 +295,22 @@ click action and draws no cursor. It does not establish generic USB HID,
 wheel/click semantics, normal input-event routing, IRQ USB input, hub support,
 hot-unplug recovery, a second ring wrap, or storage writes.
 
+ADR 0089 records `Viewing` as the semantic parent above device-neutral
+relative motion. The opt-in probe proves Traversal routing before the exact
+one-way `Space Space Backspace Backspace` activation sequence, then exclusive
+cursor/FocusMark routing while preserving ADR 0088's bounded recurring xHCI
+and no-write evidence. Run its QEMU evidence oracle with:
+
+```powershell
+py -3 scripts/test-viewing-input-probe.py
+```
+
+This is opt-in QEMU evidence, not default input, generic physical support, or
+physical Lenovo acceptance. Normal boot still uses the compatibility launcher,
+cursor activation is non-durable and has no deactivation behavior, and ADR
+0089 acceptance remains pending while the required Task 8 Clippy gate is
+non-green.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths
@@ -331,6 +347,7 @@ Current-state references:
 - [ADR 0086: USB xHCI one-shot interrupt transfer probe](docs/decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [ADR 0087: USB xHCI one-shot boot-mouse decode probe](docs/decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088: USB xHCI recurring boot-mouse probe](docs/decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
+- [ADR 0089: Viewing input routing foundation](docs/decisions/0089-viewing-input-routing-foundation.md)
 - [Physical ADR 0087 boot-mouse decode report](docs/evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Physical ADR 0088 recurring boot-mouse report](docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)

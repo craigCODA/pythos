@@ -1269,6 +1269,56 @@ py -3 scripts\test-usb-xhci-boot-mouse-recurring-probe.py --self-test
 
 This is QEMU acceptance only; physical validation remains pending.
 
+## ADR 0089 Viewing Input Routing Acceptance
+
+ADR 0089 defines `Viewing` as the semantic owner above normalized input. One
+`ViewingState` for the current session owns the non-durable
+`CursorFeatureState`. Root/session control recognizes the exact no-timeout
+`Space Space Backspace Backspace` key-down sequence and dispatches a one-way,
+idempotent `ActivateCursorFeature` command. There is no toggle, deactivation,
+Escape, click-away, timeout, or other exit behavior.
+
+`RelativeMotion` is device-neutral. Viewing routes it exclusively to neutral
+Traversal by default and to Cursor/FocusMark after activation. Traversal is
+not a camera, place, Project Hall, or Task Hall implementation. Presentation
+renders only the supplied snapshot as four separated L corners with an empty
+center; it is not an arrow, dot, or crosshair.
+
+The opt-in `viewing-input-probe` composes this boundary above ADR 0088 while
+preserving its exact sixteen-report recurring xHCI evidence and
+`NO_DISK_WRITES`. Its fresh QEMU oracle emits, in semantic order:
+
+```text
+PYTHOS:CORE:VIEWING:TRAVERSAL_RELATIVE_MOTION
+PYTHOS:CORE:SESSION_CONTROL:CURSOR_ACTIVATION_READY
+PYTHOS:CORE:SESSION_CONTROL:CURSOR_ACTIVATED
+PYTHOS:CORE:VIEWING:CURSOR_RELATIVE_MOTION
+PYTHOS:CORE:VIEWING:FOCUS_MARK_X=616
+PYTHOS:CORE:VIEWING:FOCUS_MARK_Y=332
+PYTHOS:CORE:VIEWING:FOCUS_MARK_READY
+PYTHOS:CORE:VIEWING_INPUT_PROBE_READY
+```
+
+Run the bounded oracle with:
+
+```powershell
+py -3 scripts\test-viewing-input-probe.py
+```
+
+The fresh oracle passed with `VIEWING_INPUT_PROBE_TEST_OK` and
+`QEMU_OUTCOME success`; all four predecessor logs contain zero `VIEWING` or
+`SESSION_CONTROL` markers, and the normal-fast-boot log retains the historical
+launcher markers. Historical Pointer/Window marker names remain unchanged.
+
+Task 8 acceptance is nevertheless pending. The required cross-target Clippy
+command failed with 19 deny-warnings diagnostics in files unchanged by the
+Viewing change range. The repository-wide Python command separately reproduced
+the known unrelated Phase 13 baseline of 116 tests with 2 failures and 1 error.
+Under the binding ruling ADR 0089 is not yet Accepted in QEMU, the branch is not
+fully green or merge-ready, and the external current-state checkpoint is not
+advanced. There is no default normal-boot cutover, durable cursor state, or
+physical Lenovo acceptance claim.
+
 The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
 milestone success marker unchanged, then renders the captured transcript and
 emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final terminal frame
