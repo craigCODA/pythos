@@ -740,16 +740,20 @@ fn is_user_frame(cs: u64, ss: u64) -> bool {
 #[cfg(not(test))]
 fn jump_to_kernel_recovery(recovery_rip: u64, recovery_rsp: u64) -> ! {
     // SAFETY:
-    // 1. Invariant: `recovery_rsp` is the saved stack pointer inside
-    //    `ring3_enter_abi`, and `recovery_rip` is its internal recovery label.
-    // 2. Established by: `prepare_ring3_return_abi` was called by
-    //    `ring3_enter_abi` immediately before `iretq` to user mode.
+    // 1. Invariant: `recovery_rsp` is the saved stack pointer inside either
+    //    `ring3_enter_abi` or `ring3_enter_with_args_abi`, and `recovery_rip`
+    //    is that entry symbol's matching internal recovery label.
+    // 2. Established by: either finite entry symbol calls
+    //    `prepare_ring3_return_abi` immediately before `iretq` to user mode.
     // 3. Lifetime: the assembly frame remains live until this jump resumes it.
     // 4. Pointer ownership: this restores the kernel-owned stack to its saved
     //    position; no Rust references survive across the jump.
-    // 5. Alignment: the saved stack pointer is the aligned assembly frame.
-    // 6. Mapped length: the saved frame covers three pushed registers and the
-    //    caller return address.
+    // 5. Alignment: both finite entry symbols save a 16-byte-aligned kernel
+    //    call frame before passing its stack pointer to the preparation ABI.
+    // 6. Mapped length: `ring3_enter_abi` resumes its three saved registers
+    //    plus caller return address (32 bytes); `ring3_enter_with_args_abi`
+    //    resumes one alignment slot, six saved callee-saved registers, and its
+    //    caller return address (64 bytes).
     // 7. Concurrency: single-core one-shot ring-3 proof.
     // 8. Violation: a bad RIP/RSP would jump to unmapped code or corrupt stack.
     unsafe {
@@ -858,6 +862,22 @@ mod tests {
 
         process_context::bind_current_process(process);
         USER_RETURNED.store(true, Ordering::SeqCst);
+        assert_eq!(
+            finish_dynamic_process_breakpoint_test(0),
+            Err(UserModeError::DidNotReturn)
+        );
+        assert!(process_context::current_caller().is_err());
+
+        process_context::bind_current_process(process);
+        USER_RETURNED.store(false, Ordering::SeqCst);
+        assert_eq!(
+            finish_dynamic_process_breakpoint_test(1),
+            Err(UserModeError::DidNotReturn)
+        );
+        assert!(process_context::current_caller().is_err());
+
+        process_context::bind_current_process(process);
+        USER_RETURNED.store(false, Ordering::SeqCst);
         assert_eq!(
             finish_dynamic_process_breakpoint_test(0),
             Err(UserModeError::DidNotReturn)
