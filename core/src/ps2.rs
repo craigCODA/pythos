@@ -5,14 +5,13 @@
 //! the first module in the tree that performs real input-device port I/O;
 //! `input_drivers.rs`/`input_events.rs` are decode-only proofs fed
 //! already-supplied bytes, with no hardware access of their own.
-// Only `handle_keyboard_interrupt`/`handle_mouse_interrupt` are called from
-// `normal_boot.rs`'s only caller, `interrupts.rs` (unconditionally, in both
-// boot paths). `initialize`/`poll_event` and everything else are wired in by
-// `normal_boot.rs` itself (ADR 0053, Task D) and `normal_boot` is compiled
-// out entirely under `--features verify` (see `main.rs`'s `mod normal_boot`
-// gate), so the verify build sees most of this module as unused; the host
-// `cargo test` build never calls the hardware-facing functions at all, only
-// the pure decode/state-machine logic exercised by this file's own tests.
+// `normal_boot.rs` calls `initialize`; IRQ dispatch calls only the keyboard
+// and mouse top halves. Both producers publish device-neutral raw events to
+// `session_input`, whose compatibility consumer is the launcher screen.
+// `normal_boot` is compiled out entirely under `--features verify` (see
+// `main.rs`'s `mod normal_boot` gate), so the verify build sees most of this
+// module as unused; host tests exercise only the pure decoder/state-machine
+// logic below.
 #![cfg_attr(any(test, feature = "verify"), allow(dead_code))]
 
 use core::arch::asm;
@@ -387,6 +386,18 @@ fn inb(port: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    static SHARED_INPUT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn shared_input_test_guard() -> MutexGuard<'static, ()> {
+        // A failing assertion poisons `Mutex`; keep subsequent independent
+        // tests serialized and able to report their own outcomes instead of
+        // cascading through `PoisonError`.
+        SHARED_INPUT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
 
     fn drain_published_events() {
         while session_input::try_read_compatibility().unwrap().is_some() {}
@@ -394,6 +405,7 @@ mod tests {
 
     #[test]
     fn mouse_assembler_emits_move_for_a_complete_packet() {
+        let _guard = shared_input_test_guard();
         // Drain anything a prior test in this process might have left
         // queued, and reset the shared assembler state - `MOUSE_ASSEMBLER`
         // and the session-input compatibility queue are shared across the test binary, so
@@ -421,6 +433,7 @@ mod tests {
 
     #[test]
     fn mouse_assembler_emits_button_transition_on_change() {
+        let _guard = shared_input_test_guard();
         drain_published_events();
         // SAFETY (test-only): reset shared static state so this test is
         // independent of ordering against other tests in the same binary.
@@ -444,6 +457,7 @@ mod tests {
 
     #[test]
     fn mouse_assembler_resynchronizes_on_invalid_byte0() {
+        let _guard = shared_input_test_guard();
         drain_published_events();
         unsafe {
             *MOUSE_ASSEMBLER.0.get() = MouseAssemblerState {
