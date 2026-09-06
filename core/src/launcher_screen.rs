@@ -17,8 +17,8 @@ use crate::framebuffer::{
     self, LAUNCHER_TILE_HEIGHT, LAUNCHER_TILE_WIDTH, LAUNCHER_TILE_X, LAUNCHER_TILE_Y,
 };
 use crate::input_drivers::RawInputEvent;
-use crate::ps2;
 use crate::serial;
+use crate::session_input;
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -26,7 +26,7 @@ pub enum LauncherError {
     Render,
 }
 
-/// Busy-poll `ps2::poll_event()` until a left-click lands inside the
+/// Busy-poll the compatibility input consumer until a left-click lands inside the
 /// launcher tile, redrawing the cursor on every drained mouse-move event.
 /// This is a temporary, CPU-consuming pattern accepted for this slice — the
 /// same class of exception the object-shell plan already granted COM2's
@@ -37,7 +37,7 @@ pub fn run_until_click(framebuffer: &PythFramebufferInfo) -> Result<(), Launcher
     let mut cursor_x: i64 = 0;
     let mut cursor_y: i64 = 0;
     loop {
-        match ps2::poll_event() {
+        match session_input::try_read_compatibility().unwrap_or(None) {
             Some(RawInputEvent::MouseMoved { dx, dy }) => {
                 cursor_x = clamp(cursor_x + i64::from(dx), 0, width.saturating_sub(1));
                 cursor_y = clamp(cursor_y + i64::from(dy), 0, height.saturating_sub(1));

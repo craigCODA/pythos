@@ -17,10 +17,12 @@
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(not(test))]
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::architecture::x86_64::interrupts;
 use crate::input_drivers::{RawInputEvent, mouse_byte0_is_valid, scancode_to_keycode};
+use crate::session_input;
 
 const PS2_DATA_PORT: u16 = 0x60;
 const PS2_STATUS_COMMAND_PORT: u16 = 0x64;
@@ -191,7 +193,7 @@ pub fn handle_keyboard_interrupt() {
     }
     let scancode = inb(PS2_DATA_PORT);
     if let Some(key) = scancode_to_keycode(scancode) {
-        QUEUE.push(RawInputEvent::KeyPressed { scancode, key });
+        let _ = session_input::publish(RawInputEvent::KeyPressed { scancode, key });
     }
 }
 
@@ -211,83 +213,6 @@ pub fn handle_mouse_interrupt() {
 static KEYBOARD_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static MOUSE_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
-
-/// Drain one queued input event, if any. Called from normal (non-interrupt)
-/// context — `launcher_screen.rs`'s poll loop (ADR 0053, Task D).
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn poll_event() -> Option<RawInputEvent> {
-    QUEUE.pop()
-}
-
-const QUEUE_CAPACITY: usize = 16;
-
-/// Single-producer (the keyboard/mouse IRQ handlers, which run serialized on
-/// this single core and never re-enter each other or themselves), single-
-/// consumer (`poll_event`, called from normal kernel-mode context) ring
-/// buffer. Interrupt-context handlers must stay allocation-free and fast;
-/// this is a fixed-size array with atomic head/tail indices, no heap use.
-struct EventQueue {
-    slots: UnsafeCell<[Option<RawInputEvent>; QUEUE_CAPACITY]>,
-    head: AtomicUsize,
-    tail: AtomicUsize,
-}
-
-// SAFETY:
-// 1. Invariant: `slots` is mutated only by `push` (IRQ context, one core, no
-//    handler nesting) and `pop` (normal context); the atomic head/tail pair
-//    ensures a push and a concurrent pop never touch the same slot index at
-//    the same time.
-// 2. Established by: ADR 0051's single-core constraint and the PIC's serial
-//    interrupt delivery on this platform.
-// 3. Lifetime: `QUEUE` is a static with `'static` lifetime.
-// 4. Pointer ownership: this module exclusively owns the queue.
-// 5. Alignment: `UnsafeCell<[Option<RawInputEvent>; N]>` preserves the
-//    array's alignment.
-// 6. Mapped length: exactly `QUEUE_CAPACITY` slots are ever indexed, each
-//    index taken modulo that capacity.
-// 7. Concurrency: single boot CPU; the producer only runs inside an
-//    interrupt handler, which cannot itself be interrupted by another
-//    instance of itself.
-// 8. Violation: concurrent unsynchronized access could tear an `Option`
-//    write/read, corrupting queued events.
-unsafe impl Sync for EventQueue {}
-
-static QUEUE: EventQueue = EventQueue {
-    slots: UnsafeCell::new([None; QUEUE_CAPACITY]),
-    head: AtomicUsize::new(0),
-    tail: AtomicUsize::new(0),
-};
-
-impl EventQueue {
-    fn push(&self, event: RawInputEvent) {
-        let tail = self.tail.load(Ordering::Relaxed);
-        let next = (tail + 1) % QUEUE_CAPACITY;
-        if next == self.head.load(Ordering::Acquire) {
-            // Full: drop the event rather than overwrite an unread slot or
-            // block interrupt context.
-            return;
-        }
-        // SAFETY: see the `EventQueue`/`unsafe impl Sync` block above -
-        // `tail` is owned exclusively by the single producer at this point.
-        unsafe {
-            (*self.slots.get())[tail] = Some(event);
-        }
-        self.tail.store(next, Ordering::Release);
-    }
-
-    fn pop(&self) -> Option<RawInputEvent> {
-        let head = self.head.load(Ordering::Relaxed);
-        if head == self.tail.load(Ordering::Acquire) {
-            return None;
-        }
-        // SAFETY: see the `EventQueue`/`unsafe impl Sync` block above -
-        // `head` is owned exclusively by the single consumer at this point.
-        let event = unsafe { (*self.slots.get())[head].take() };
-        self.head
-            .store((head + 1) % QUEUE_CAPACITY, Ordering::Release);
-        event
-    }
-}
 
 #[derive(Clone, Copy)]
 enum MouseStage {
@@ -353,12 +278,12 @@ impl MouseAssembler {
                 let left_down = byte0 & 0x01 != 0;
                 if left_down != state.left_down {
                     state.left_down = left_down;
-                    QUEUE.push(RawInputEvent::MouseButton { left: left_down });
+                    let _ = session_input::publish(RawInputEvent::MouseButton { left: left_down });
                 }
                 let dx = byte1 as i8;
                 let dy = byte as i8;
                 if dx != 0 || dy != 0 {
-                    QUEUE.push(RawInputEvent::MouseMoved { dx, dy });
+                    let _ = session_input::publish(RawInputEvent::MouseMoved { dx, dy });
                 }
             }
         }
@@ -463,13 +388,17 @@ fn inb(port: u16) -> u8 {
 mod tests {
     use super::*;
 
+    fn drain_published_events() {
+        while session_input::try_read_compatibility().unwrap().is_some() {}
+    }
+
     #[test]
     fn mouse_assembler_emits_move_for_a_complete_packet() {
         // Drain anything a prior test in this process might have left
         // queued, and reset the shared assembler state - `MOUSE_ASSEMBLER`
-        // and `QUEUE` are statics shared across the whole test binary, so
+        // and the session-input compatibility queue are shared across the test binary, so
         // tests in this module cannot assume a fresh `left_down: false`.
-        while QUEUE.pop().is_some() {}
+        drain_published_events();
         // SAFETY (test-only): see the other tests in this module for the
         // same reset pattern.
         unsafe {
@@ -484,15 +413,15 @@ mod tests {
         MOUSE_ASSEMBLER.feed((-3i8) as u8); // dy
 
         assert_eq!(
-            QUEUE.pop(),
+            session_input::try_read_compatibility().unwrap(),
             Some(RawInputEvent::MouseMoved { dx: 5, dy: -3 })
         );
-        assert_eq!(QUEUE.pop(), None);
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
     }
 
     #[test]
     fn mouse_assembler_emits_button_transition_on_change() {
-        while QUEUE.pop().is_some() {}
+        drain_published_events();
         // SAFETY (test-only): reset shared static state so this test is
         // independent of ordering against other tests in the same binary.
         unsafe {
@@ -506,13 +435,16 @@ mod tests {
         MOUSE_ASSEMBLER.feed(0);
         MOUSE_ASSEMBLER.feed(0);
 
-        assert_eq!(QUEUE.pop(), Some(RawInputEvent::MouseButton { left: true }));
-        assert_eq!(QUEUE.pop(), None);
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::MouseButton { left: true })
+        );
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
     }
 
     #[test]
     fn mouse_assembler_resynchronizes_on_invalid_byte0() {
-        while QUEUE.pop().is_some() {}
+        drain_published_events();
         unsafe {
             *MOUSE_ASSEMBLER.0.get() = MouseAssemblerState {
                 stage: MouseStage::Byte0,
@@ -528,26 +460,9 @@ mod tests {
         MOUSE_ASSEMBLER.feed(0);
 
         assert_eq!(
-            QUEUE.pop(),
+            session_input::try_read_compatibility().unwrap(),
             Some(RawInputEvent::MouseMoved { dx: 2, dy: 0 })
         );
-    }
-
-    #[test]
-    fn event_queue_drops_events_when_full_without_panicking() {
-        let queue = EventQueue {
-            slots: UnsafeCell::new([None; QUEUE_CAPACITY]),
-            head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
-        };
-        for _ in 0..QUEUE_CAPACITY + 4 {
-            queue.push(RawInputEvent::MouseMoved { dx: 1, dy: 1 });
-        }
-        let mut popped = 0;
-        while queue.pop().is_some() {
-            popped += 1;
-        }
-        assert_eq!(popped, QUEUE_CAPACITY - 1);
     }
 
     #[test]

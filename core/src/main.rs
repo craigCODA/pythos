@@ -165,6 +165,7 @@ mod service_manager;
 mod service_runtimes;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod session_controls;
+mod session_input;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
