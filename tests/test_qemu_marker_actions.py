@@ -19,7 +19,85 @@ def load_run_qemu_module():
     return module
 
 
+def load_launcher_click_module():
+    path = ROOT / "scripts" / "launcher_click.py"
+    spec = importlib.util.spec_from_file_location("launcher_click", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load launcher_click.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 class QemuMarkerActionTest(unittest.TestCase):
+    def test_session_input_bridge_sequence_is_exact_keyboard_then_relative_motion(self) -> None:
+        launcher_click = load_launcher_click_module()
+        commands: list[dict] = []
+
+        class FakeSocket:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def makefile(self, *_args, **_kwargs):
+                return self
+
+            def readline(self):
+                return "{\"QMP\": {}}\n"
+
+        original_connection = launcher_click.socket.create_connection
+        original_qmp_send = launcher_click._qmp_send
+        original_sleep = launcher_click.time.sleep
+        try:
+            launcher_click.socket.create_connection = lambda *_args, **_kwargs: FakeSocket()
+            launcher_click._qmp_send = lambda _file, _sock, command: commands.append(command) or {}
+            launcher_click.time.sleep = lambda _seconds: None
+            launcher_click.type_session_input_bridge_sequence()
+        finally:
+            launcher_click.socket.create_connection = original_connection
+            launcher_click._qmp_send = original_qmp_send
+            launcher_click.time.sleep = original_sleep
+
+        input_events = [
+            command["arguments"]["events"]
+            for command in commands
+            if command["execute"] == "input-send-event"
+        ]
+        self.assertEqual(len(input_events), 9)
+        self.assertEqual(
+            [
+                event[0]["data"]["key"]["data"]
+                for event in input_events[:8]
+            ],
+            ["spc", "spc", "spc", "spc", "backspace", "backspace", "backspace", "backspace"],
+        )
+        self.assertEqual(
+            [event[0]["data"]["down"] for event in input_events[:8]],
+            [True, False, True, False, True, False, True, False],
+        )
+        self.assertEqual(
+            [
+                event[0]["data"]["key"]["data"]
+                for event in input_events[:8]
+                if event[0]["data"]["down"]
+            ],
+            ["spc", "spc", "backspace", "backspace"],
+        )
+        self.assertEqual(
+            input_events[8],
+            [
+                {"type": "rel", "data": {"axis": "x", "value": 7}},
+                {"type": "rel", "data": {"axis": "y", "value": -7}},
+            ],
+        )
+        self.assertTrue(all(event[0]["type"] == "key" for event in input_events[:8]))
+        self.assertTrue(all(event["type"] != "btn" for events in input_events for event in events))
+        self.assertEqual(
+            {command["execute"] for command in commands},
+            {"qmp_capabilities", "input-send-event"},
+        )
     def test_marker_delay_waits_until_the_deadline(self) -> None:
         run_qemu = load_run_qemu_module()
 

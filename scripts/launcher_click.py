@@ -170,6 +170,41 @@ def type_cursor_activation_sequence(
     )
 
 
+def send_relative_mouse_motion(
+    dx: int, dy: int, qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Send one exact relative-motion event over QMP."""
+    with socket.create_connection(("127.0.0.1", qmp_port), timeout=timeout) as sock:
+        sock_file = sock.makefile("r", encoding="utf-8", newline="\n")
+        sock_file.readline()  # greeting
+        _qmp_send(sock_file, sock, {"execute": "qmp_capabilities"})
+        _qmp_send(
+            sock_file,
+            sock,
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {"type": "rel", "data": {"axis": "x", "value": dx}},
+                        {"type": "rel", "data": {"axis": "y", "value": dy}},
+                    ]
+                },
+            },
+        )
+
+
+def type_session_input_bridge_sequence(
+    qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Inject the five transport-proof events without buttons or USB devices."""
+    press_qcode_keys(
+        ["spc", "spc", "backspace", "backspace"],
+        qmp_port=qmp_port,
+        timeout=timeout,
+    )
+    send_relative_mouse_motion(7, -7, qmp_port=qmp_port, timeout=timeout)
+
+
 def click_launcher_tile(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
     """Move the emulated PS/2 mouse into the launcher tile and click it.
 
