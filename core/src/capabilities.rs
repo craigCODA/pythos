@@ -30,6 +30,24 @@ pub struct CapabilityHandle {
     generation: u32,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CapabilityGrant {
+    Created(CapabilityHandle),
+    Existing(CapabilityHandle),
+}
+
+impl CapabilityGrant {
+    pub const fn handle(self) -> CapabilityHandle {
+        match self {
+            Self::Created(handle) | Self::Existing(handle) => handle,
+        }
+    }
+
+    pub const fn is_created(self) -> bool {
+        matches!(self, Self::Created(_))
+    }
+}
+
 impl CapabilityHandle {
     pub const fn from_parts(slot: u32, generation: u32) -> Self {
         Self { slot, generation }
@@ -94,6 +112,17 @@ impl CapabilityTable {
         resource: ResourceId,
         rights: RightsMask,
     ) -> Result<CapabilityHandle, CapabilityError> {
+        Ok(self
+            .grant_with_provenance(holder, resource, rights)?
+            .handle())
+    }
+
+    pub fn grant_with_provenance(
+        &mut self,
+        holder: ServiceId,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> Result<CapabilityGrant, CapabilityError> {
         if let Some((slot, entry)) = self.entries.iter().enumerate().find_map(|(slot, entry)| {
             entry.and_then(|entry| {
                 if entry.state == CapabilityState::Active
@@ -107,10 +136,10 @@ impl CapabilityTable {
                 }
             })
         }) {
-            return Ok(CapabilityHandle {
+            return Ok(CapabilityGrant::Existing(CapabilityHandle {
                 slot: slot as u32,
                 generation: entry.generation,
-            });
+            }));
         }
         let slot = self
             .entries
@@ -128,7 +157,7 @@ impl CapabilityTable {
             generation: handle.generation,
             state: CapabilityState::Active,
         });
-        Ok(handle)
+        Ok(CapabilityGrant::Created(handle))
     }
 
     pub fn validate(
@@ -393,6 +422,26 @@ mod tests {
                 RightsMask::new(RightsMask::WRITE)
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn grant_provenance_distinguishes_a_new_handle_from_a_reused_handle() {
+        let mut identities = ServiceIdentityTable::new();
+        let holder = identities.register_task(TaskId::new(35)).unwrap();
+        let mut table = CapabilityTable::new();
+
+        assert_eq!(
+            table
+                .grant_with_provenance(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)
+                .unwrap(),
+            CapabilityGrant::Created(CapabilityHandle::from_parts(0, 1))
+        );
+        assert_eq!(
+            table
+                .grant_with_provenance(holder, PROOF_RESOURCE_ID, PROOF_RIGHTS)
+                .unwrap(),
+            CapabilityGrant::Existing(CapabilityHandle::from_parts(0, 1))
         );
     }
 }
