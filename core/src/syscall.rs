@@ -39,6 +39,7 @@ use crate::retained_services::{self, RetainedServiceError};
 #[cfg(not(test))]
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
+use crate::session_input::{self, SessionInputError};
 #[cfg(any(
     test,
     all(
@@ -53,23 +54,12 @@ use crate::task_context::TaskContextEvent;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use crate::task_service::{self, TaskServiceError};
 use crate::tasks::TaskId;
-use crate::user_copy::UserCopyError;
-#[cfg(any(
-    test,
-    all(not(test), not(feature = "verify")),
-    all(not(test), feature = "phase13-package-test")
-))]
-use crate::user_copy::{UserCopyAccess, UserCopyMap};
+use crate::user_copy::{UserCopyAccess, UserCopyError, UserCopyMap};
 use crate::user_mode;
 use crate::value_validation::{HostCallResult, UntrustedRuntimeValue};
 #[cfg(not(test))]
 use core::arch::{asm, global_asm};
 use core::cell::UnsafeCell;
-#[cfg(any(
-    test,
-    all(not(test), not(feature = "verify")),
-    all(not(test), feature = "phase13-package-test")
-))]
 use core::mem::{align_of, size_of};
 #[cfg(any(
     test,
@@ -135,6 +125,10 @@ use pythos_shared::pyth_runtime_abi::{
     GRAPH_RESULT_UNIT, GraphExitRecord,
 };
 use pythos_shared::pyth_runtime_abi::{SYSCALL_PYTH_GRAPH_EXIT, SYSCALL_PYTH_GRAPH_LOG};
+use pythos_shared::session_input_abi::{
+    SESSION_INPUT_RESOURCE_ID, SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT,
+    SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1,
+};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::task_abi::{
     MAX_TASK_PROPOSAL_RESULTS, OP_ABANDON_TASK, OP_APPEND_TASK_EVENT, OP_APPROVE_PROPOSAL,
@@ -145,7 +139,7 @@ use pythos_shared::task_abi::{
 };
 
 pub const SYSCALL_ABI_MAJOR: u16 = 1;
-pub const SYSCALL_ABI_MINOR: u16 = 0;
+pub const SYSCALL_ABI_MINOR: u16 = 1;
 pub const SYSCALL_ABI_INFO: u64 = 0x5059_0000;
 pub const SYSCALL_SYSTEM_LOG_PROOF: u64 = 0x5059_0001;
 
@@ -167,6 +161,8 @@ const IPC_SYSCALL_RESOURCE: ResourceId = ResourceId::new(0x5359_5343_4950_4300);
 const HARDWARE_PORT_RESOURCE: ResourceId = ResourceId::new(0x4841_5244_504F_5254);
 const CONSOLE_COM2_RESOURCE: ResourceId = ResourceId::new(0x434F_4D32_434F_4E00);
 const SYSTEM_CONTROL_RESOURCE: ResourceId = ResourceId::new(0x5359_5354_4354_524C);
+const USER_VIRT_MIN: u64 = 0x0020_0000;
+const USER_VIRT_MAX: u64 = 0x0000_8000_0000_0000;
 #[cfg(any(
     test,
     all(
@@ -241,6 +237,7 @@ pub enum SyscallError {
     Ipc(IpcError),
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
+    SessionInput(SessionInputError),
     UserCopy(UserCopyError),
     #[cfg(any(
         test,
@@ -292,6 +289,7 @@ enum SyscallDispatchKind {
     PythGraphLog,
     PythGraphExit,
     PackageContext,
+    SessionInputTryRead,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -370,6 +368,14 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         dispatch_kind: SyscallDispatchKind::TaskRequest,
     },
     SyscallEntry {
+        number: SYSCALL_SESSION_INPUT_TRY_READ,
+        name: "SYSCALL_SESSION_INPUT_TRY_READ",
+        introduced_major: 1,
+        introduced_minor: 1,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::SessionInputTryRead,
+    },
+    SyscallEntry {
         number: SYSCALL_PYTH_GRAPH_LOG,
         name: "SYSCALL_PYTH_GRAPH_LOG",
         introduced_major: 1,
@@ -416,6 +422,12 @@ impl From<PermissionError> for SyscallError {
 impl From<ProcessContextError> for SyscallError {
     fn from(error: ProcessContextError) -> Self {
         Self::ProcessContext(error)
+    }
+}
+
+impl From<SessionInputError> for SyscallError {
+    fn from(error: SessionInputError) -> Self {
+        Self::SessionInput(error)
     }
 }
 
@@ -639,6 +651,7 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::PythGraphLog => dispatch_pyth_graph_log(args),
         SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
         SyscallDispatchKind::PackageContext => dispatch_package_context(args),
+        SyscallDispatchKind::SessionInputTryRead => dispatch_session_input_try_read(args),
     }
 }
 
@@ -720,6 +733,38 @@ pub fn grant_system_control_capability(
     Ok(pack_syscall_capability(handle))
 }
 
+/// Grants the sole session-input capability and binds its holder to the
+/// device-neutral queue while producers are quiescent.
+pub fn bind_session_input_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    bind_session_input_capability_with(process, session_input::bind_session_consumer_quiescent)
+}
+
+fn bind_session_input_capability_with(
+    process: ActiveUserProcess,
+    bind_session_consumer: impl FnOnce(ServiceId) -> Result<(), SessionInputError>,
+) -> Result<PackedCapability, SyscallError> {
+    with_syscall_capabilities(|table| {
+        let handle = table.grant(
+            process.service_id(),
+            ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+            RightsMask::new(RightsMask::INPUT),
+        )?;
+        if let Err(error) = bind_session_consumer(process.service_id()) {
+            table.revoke(handle)?;
+            return Err(SyscallError::SessionInput(error));
+        }
+        Ok(pack_syscall_capability(handle))
+    })
+}
+
+// The Session Manager composition slice calls this exported bootstrap hook;
+// retain the function item in this delivery-only slice without invoking a
+// producer-side bind from an unrelated syscall path.
+const _: fn(ActiveUserProcess) -> Result<PackedCapability, SyscallError> =
+    bind_session_input_capability;
+
 #[cfg(any(
     test,
     all(
@@ -783,6 +828,59 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     {
         Ok(console_read_result(None, || None))
     }
+}
+
+fn dispatch_session_input_try_read(args: SyscallArgs) -> Result<u64, SyscallError> {
+    dispatch_session_input_try_read_with(args, session_input::try_read_session)
+}
+
+fn dispatch_session_input_try_read_with(
+    args: SyscallArgs,
+    try_read_session: impl FnOnce(ServiceId) -> Result<Option<SessionInputEventV1>, SessionInputError>,
+) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    let input_resource = ResourceId::new(SESSION_INPUT_RESOURCE_ID);
+    let input_right = RightsMask::new(RightsMask::INPUT);
+    validate_syscall_capability(
+        caller,
+        PackedCapability::from_raw(args.arg0),
+        input_resource,
+        input_right,
+    )?;
+    if args.arg2 != size_of::<SessionInputEventV1>() as u64 {
+        return Err(SyscallError::BadResult);
+    }
+    if args.arg3 != 0 || args.arg4 != 0 {
+        return Err(SyscallError::BadResult);
+    }
+    validate_session_input_output(
+        &caller.copy_map(),
+        args.arg1,
+        args.arg2,
+        align_of::<SessionInputEventV1>(),
+        UserCopyAccess::Write,
+    )?;
+    let Some(event) = try_read_session(caller.service_id())? else {
+        return Ok(SESSION_INPUT_RESULT_EMPTY);
+    };
+    let output = args.arg1 as *mut SessionInputEventV1;
+    // SAFETY:
+    // 1. Invariant: `output` names exactly one writable SessionInputEventV1
+    //    in the active caller's user copy map.
+    // 2. Established by: capability validation, exact ABI length and reserved
+    //    argument checks, alignment, canonical user-range, and writable-map
+    //    validation above all complete before the reader can dequeue.
+    // 3. Lifetime: `event` is copied by value and `output` is used only for
+    //    this synchronous syscall copy-out.
+    // 4. Pointer ownership: the caller owns the mapped output memory; PythCore
+    //    writes one record without retaining the pointer.
+    // 5. Alignment: validate_user_buffer checked SessionInputEventV1 alignment.
+    // 6. Mapped length: validation checked exactly size_of::<SessionInputEventV1>().
+    // 7. Concurrency: one syscall executes at a time in this slice and the
+    //    output mapping remains valid for the syscall duration.
+    // 8. Violation: stale copy-map state could write unrelated user memory.
+    unsafe { output.write(event) };
+    Ok(SESSION_INPUT_RESULT_EVENT)
 }
 
 fn console_read_result(
@@ -1491,6 +1589,29 @@ fn validate_user_buffer(
         return Err(SyscallError::BadResult);
     }
     copy_map.validate_range(ptr, len, access)?;
+    Ok(())
+}
+
+fn validate_session_input_output(
+    copy_map: &UserCopyMap,
+    ptr: u64,
+    len: u64,
+    alignment: usize,
+    access: UserCopyAccess,
+) -> Result<(), SyscallError> {
+    if !is_aligned(ptr, alignment) {
+        return Err(SyscallError::BadResult);
+    }
+    validate_canonical_user_range(ptr, len)?;
+    copy_map.validate_range(ptr, len, access)?;
+    Ok(())
+}
+
+fn validate_canonical_user_range(ptr: u64, len: u64) -> Result<(), SyscallError> {
+    let end = ptr.checked_add(len).ok_or(SyscallError::BadResult)?;
+    if ptr < USER_VIRT_MIN || end > USER_VIRT_MAX {
+        return Err(SyscallError::BadResult);
+    }
     Ok(())
 }
 
@@ -2341,13 +2462,6 @@ fn validate_syscall_capability(
     Ok(())
 }
 
-#[cfg(any(
-    test,
-    all(
-        not(test),
-        any(not(feature = "verify"), feature = "phase13-package-test")
-    )
-))]
 const fn pack_syscall_capability(handle: CapabilityHandle) -> PackedCapability {
     PackedCapability::from_parts(handle.slot(), handle.generation())
 }
@@ -2356,11 +2470,6 @@ const fn unpack_syscall_capability(capability: PackedCapability) -> CapabilityHa
     CapabilityHandle::from_parts(capability.slot(), capability.generation())
 }
 
-#[cfg(any(
-    test,
-    all(not(test), not(feature = "verify")),
-    all(not(test), feature = "phase13-package-test")
-))]
 const fn is_aligned(ptr: u64, alignment: usize) -> bool {
     ptr != 0 && ptr.is_multiple_of(alignment as u64)
 }
@@ -2527,7 +2636,7 @@ pub fn run_boundary_capability_self_test() -> Result<BoundaryCapabilityProof, Sy
 }
 
 pub fn run_general_abi_self_test() -> Result<GeneralSyscallAbiProof, SyscallError> {
-    if SYSCALL_ABI_MAJOR != 1 || SYSCALL_ABI_MINOR != 0 {
+    if SYSCALL_ABI_MAJOR != 1 || SYSCALL_ABI_MINOR != 1 {
         return Err(SyscallError::BadResult);
     }
     if validate_syscall_table(SYSCALL_TABLE).is_err() {
@@ -2676,6 +2785,10 @@ mod tests {
         PackageDefinedObjectCreateV0, PackageRuntimeSchemaBindingV0, PackageStatus,
         SYSCALL_PACKAGE_CONTEXT,
     };
+    use pythos_shared::session_input_abi::{
+        SESSION_INPUT_RESOURCE_ID, SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT,
+        SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1,
+    };
     use pythos_shared::task_abi::{
         MAX_TASK_PROPOSAL_RESULTS, OP_APPEND_TASK_EVENT, OP_CREATE_PROPOSAL, OP_CREATE_TASK,
         OP_LIST_PROPOSALS, OP_READ_ACTIVE_TASK, TASK_ABI_MAJOR, TASK_ABI_MINOR, TaskEventInput,
@@ -2683,6 +2796,7 @@ mod tests {
     };
 
     static EXPECTED_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static SESSION_INPUT_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn syscall_star_value_selects_kernel_and_ring3_segments() {
@@ -2707,9 +2821,274 @@ mod tests {
     #[test]
     fn abi_version_and_info_result_are_stable() {
         assert_eq!(SYSCALL_ABI_MAJOR, 1);
-        assert_eq!(SYSCALL_ABI_MINOR, 0);
+        assert_eq!(SYSCALL_ABI_MINOR, 1);
         assert_eq!(SYSCALL_ABI_INFO, 0x5059_0000);
-        assert_eq!(abi_info_result(), 0x5059_0001_0000);
+        assert_eq!(abi_info_result(), 0x5059_0001_0001);
+    }
+
+    #[test]
+    fn session_input_syscall_is_registry_version_1_1() {
+        assert_eq!(SYSCALL_ABI_MAJOR, 1);
+        assert_eq!(SYSCALL_ABI_MINOR, 1);
+        let entry = lookup_syscall(SYSCALL_SESSION_INPUT_TRY_READ).unwrap();
+        assert_eq!((entry.introduced_major, entry.introduced_minor), (1, 1));
+        assert!(!entry.proof_only);
+    }
+
+    #[test]
+    fn session_input_syscall_denial_keeps_the_pending_event_unread() {
+        #[derive(Clone, Copy)]
+        enum Denial {
+            MissingCaller,
+            ForgedSlot,
+            StaleGeneration,
+            WrongHolder,
+            WrongResource,
+            MissingInputRight,
+        }
+
+        let _process_guard = process_context_test_lock();
+        let _session_guard = session_input_syscall_test_lock();
+        let process = session_input_process();
+        let intruder = session_input_intruder_process();
+        let event = session_input_test_event();
+        for (denial, expected) in [
+            (
+                Denial::MissingCaller,
+                SyscallError::ProcessContext(ProcessContextError::NoActiveProcess),
+            ),
+            (
+                Denial::ForgedSlot,
+                SyscallError::Capability(CapabilityError::InvalidHandle),
+            ),
+            (
+                Denial::StaleGeneration,
+                SyscallError::Capability(CapabilityError::InvalidHandle),
+            ),
+            (
+                Denial::WrongHolder,
+                SyscallError::Capability(CapabilityError::WrongHolder),
+            ),
+            (
+                Denial::WrongResource,
+                SyscallError::Capability(CapabilityError::WrongResource),
+            ),
+            (
+                Denial::MissingInputRight,
+                SyscallError::Capability(CapabilityError::MissingRights),
+            ),
+        ] {
+            reset_syscall_capabilities_for_test();
+            let mut output = Box::new(session_input_sentinel());
+            let mut copy_map = UserCopyMap::new();
+            map_value(&mut copy_map, &*output, true, true);
+            let capability = match denial {
+                Denial::MissingCaller => PackedCapability::from_raw(0),
+                Denial::ForgedSlot => PackedCapability::from_parts(31, 1),
+                Denial::StaleGeneration => with_syscall_capabilities(|table| {
+                    let handle = table
+                        .grant(
+                            process.service_id(),
+                            ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                            RightsMask::new(RightsMask::INPUT),
+                        )
+                        .unwrap();
+                    table.revoke(handle).unwrap();
+                    pack_syscall_capability(handle)
+                }),
+                Denial::WrongHolder => grant_session_input_for_test(
+                    process,
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                    RightsMask::new(RightsMask::INPUT),
+                ),
+                Denial::WrongResource => grant_session_input_for_test(
+                    process,
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID ^ 1),
+                    RightsMask::new(RightsMask::INPUT),
+                ),
+                Denial::MissingInputRight => grant_session_input_for_test(
+                    process,
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                    RightsMask::new(RightsMask::READ),
+                ),
+            };
+            match denial {
+                Denial::MissingCaller => process_context::clear_current_process(),
+                Denial::WrongHolder => {
+                    process_context::bind_current_process(intruder.with_copy_map(copy_map));
+                }
+                _ => process_context::bind_current_process(process.with_copy_map(copy_map)),
+            }
+
+            let mut pending = Some(event);
+            let mut reader_calls = 0;
+            assert_eq!(
+                dispatch_session_input_try_read_with(
+                    session_input_args(capability, &mut output, session_input_event_len()),
+                    |_| {
+                        reader_calls += 1;
+                        Ok(pending.take())
+                    },
+                ),
+                Err(expected)
+            );
+            assert_eq!(reader_calls, 0);
+            assert_eq!(pending, Some(event));
+            assert_eq!(*output, session_input_sentinel());
+        }
+        process_context::clear_current_process();
+    }
+
+    #[test]
+    fn session_input_syscall_rejects_bad_output_shapes_before_dequeue() {
+        #[derive(Clone, Copy)]
+        enum Shape {
+            WrongLength,
+            NonzeroArg3,
+            NonzeroArg4,
+            Misaligned,
+            ReadOnly,
+            OutOfMap,
+            NonCanonicalMapped,
+        }
+
+        let _process_guard = process_context_test_lock();
+        let _session_guard = session_input_syscall_test_lock();
+        let process = session_input_process();
+        let event = session_input_test_event();
+        for shape in [
+            Shape::WrongLength,
+            Shape::NonzeroArg3,
+            Shape::NonzeroArg4,
+            Shape::Misaligned,
+            Shape::ReadOnly,
+            Shape::OutOfMap,
+            Shape::NonCanonicalMapped,
+        ] {
+            reset_syscall_capabilities_for_test();
+            let capability = grant_session_input_for_test(
+                process,
+                ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                RightsMask::new(RightsMask::INPUT),
+            );
+            let mut output = Box::new(session_input_sentinel());
+            let mut copy_map = UserCopyMap::new();
+            let mut args = session_input_args(capability, &mut output, session_input_event_len());
+            match shape {
+                Shape::WrongLength => {
+                    args.arg2 -= 1;
+                    map_value(&mut copy_map, &*output, true, true);
+                }
+                Shape::NonzeroArg3 => {
+                    args.arg3 = 1;
+                    map_value(&mut copy_map, &*output, true, true);
+                }
+                Shape::NonzeroArg4 => {
+                    args.arg4 = 1;
+                    map_value(&mut copy_map, &*output, true, true);
+                }
+                Shape::Misaligned => {
+                    args.arg1 += 1;
+                    copy_map
+                        .add_mapping(args.arg1, session_input_event_len(), true, true)
+                        .unwrap();
+                }
+                Shape::ReadOnly => map_value(&mut copy_map, &*output, true, false),
+                Shape::OutOfMap => {}
+                Shape::NonCanonicalMapped => {
+                    args.arg1 = USER_VIRT_MAX;
+                    copy_map
+                        .add_mapping(args.arg1, session_input_event_len(), true, true)
+                        .unwrap();
+                }
+            }
+            process_context::bind_current_process(process.with_copy_map(copy_map));
+
+            let mut pending = Some(event);
+            let mut reader_calls = 0;
+            assert!(
+                dispatch_session_input_try_read_with(args, |_| {
+                    reader_calls += 1;
+                    Ok(pending.take())
+                })
+                .is_err()
+            );
+            assert_eq!(reader_calls, 0);
+            assert_eq!(pending, Some(event));
+            assert_eq!(*output, session_input_sentinel());
+        }
+        process_context::clear_current_process();
+    }
+
+    #[test]
+    fn session_input_syscall_returns_empty_without_writing_and_copies_one_exact_event() {
+        let _process_guard = process_context_test_lock();
+        let _session_guard = session_input_syscall_test_lock();
+        let process = session_input_process();
+        reset_syscall_capabilities_for_test();
+        let capability = grant_session_input_for_test(
+            process,
+            ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+            RightsMask::new(RightsMask::INPUT),
+        );
+        let mut output = Box::new(session_input_sentinel());
+        let mut copy_map = UserCopyMap::new();
+        map_value(&mut copy_map, &*output, true, true);
+        process_context::bind_current_process(process.with_copy_map(copy_map));
+        let args = session_input_args(capability, &mut output, session_input_event_len());
+
+        assert_eq!(
+            dispatch_session_input_try_read_with(args, |_| Ok(None)),
+            Ok(SESSION_INPUT_RESULT_EMPTY)
+        );
+        assert_eq!(*output, session_input_sentinel());
+
+        let event = session_input_test_event();
+        assert_eq!(
+            dispatch_session_input_try_read_with(args, |_| Ok(Some(event))),
+            Ok(SESSION_INPUT_RESULT_EVENT)
+        );
+        assert_eq!(*output, event);
+        process_context::clear_current_process();
+    }
+
+    #[test]
+    fn session_input_denial_revokes_the_grant_when_binding_fails() {
+        let _session_guard = session_input_syscall_test_lock();
+        let process = session_input_process();
+        reset_syscall_capabilities_for_test();
+
+        assert_eq!(
+            bind_session_input_capability_with(process, |_| Err(SessionInputError::AlreadyBound)),
+            Err(SyscallError::SessionInput(SessionInputError::AlreadyBound))
+        );
+        assert_eq!(
+            with_syscall_capabilities(|table| {
+                table.validate(
+                    process.service_id(),
+                    CapabilityHandle::from_parts(0, 1),
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                    RightsMask::new(RightsMask::INPUT),
+                )
+            }),
+            Err(CapabilityError::InvalidHandle)
+        );
+
+        reset_syscall_capabilities_for_test();
+        let capability = bind_session_input_capability_with(process, |holder| {
+            assert_eq!(holder, process.service_id());
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(
+            validate_syscall_capability(
+                process,
+                capability,
+                ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                RightsMask::new(RightsMask::INPUT),
+            ),
+            Ok(())
+        );
     }
 
     #[test]
@@ -4335,5 +4714,77 @@ mod tests {
             arg3: 0,
             arg4: 0,
         }
+    }
+
+    fn session_input_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(ServiceId::from_raw(0x5059_5345_5353_0001), 0x1350, 0x0001)
+    }
+
+    fn session_input_intruder_process() -> ActiveUserProcess {
+        ActiveUserProcess::new(ServiceId::from_raw(0x5059_5345_5353_0002), 0x1350, 0x0002)
+    }
+
+    const fn session_input_event_len() -> u64 {
+        size_of::<SessionInputEventV1>() as u64
+    }
+
+    const fn session_input_sentinel() -> SessionInputEventV1 {
+        SessionInputEventV1 {
+            sequence: 0xAAAA_AAAA_AAAA_AAAA,
+            kind: 0xBBBB,
+            source: 0xCCCC,
+            flags: 0xDDDD_DDDD,
+            value0: -11,
+            value1: -22,
+            reserved0: u64::MAX,
+            reserved1: u64::MAX,
+        }
+    }
+
+    const fn session_input_test_event() -> SessionInputEventV1 {
+        SessionInputEventV1 {
+            sequence: 42,
+            kind: 3,
+            source: 2,
+            flags: 1,
+            value0: -4,
+            value1: 7,
+            reserved0: 0,
+            reserved1: 0,
+        }
+    }
+
+    fn session_input_args(
+        capability: PackedCapability,
+        output: &mut SessionInputEventV1,
+        output_len: u64,
+    ) -> SyscallArgs {
+        SyscallArgs {
+            number: SYSCALL_SESSION_INPUT_TRY_READ,
+            arg0: capability.raw(),
+            arg1: output as *mut SessionInputEventV1 as u64,
+            arg2: output_len,
+            arg3: 0,
+            arg4: 0,
+        }
+    }
+
+    fn grant_session_input_for_test(
+        process: ActiveUserProcess,
+        resource: ResourceId,
+        rights: RightsMask,
+    ) -> PackedCapability {
+        with_syscall_capabilities(|table| {
+            table
+                .grant(process.service_id(), resource, rights)
+                .map(pack_syscall_capability)
+                .unwrap()
+        })
+    }
+
+    fn session_input_syscall_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        SESSION_INPUT_SYSCALL_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
     }
 }
