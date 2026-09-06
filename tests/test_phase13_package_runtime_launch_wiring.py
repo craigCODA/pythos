@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from phase13_cargo_behavior import run_exact_core_test
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SYSCALL_RS = ROOT / "core" / "src" / "syscall.rs"
@@ -61,21 +63,9 @@ class Phase13PackageRuntimeLaunchWiringTests(unittest.TestCase):
         self.assertIn("&mut physical_memory", main_source)
         self.assertIn("phase13_supervisor_mappings", main_source)
 
-    def test_package_runtime_bootstrap_uses_launch_granted_import_capabilities(self):
-        """Break caught: runtime validates launch grants then replaces them with fresh host grants."""
-        launch_source = read(PYTH_RUNTIME_LAUNCH_RS)
-        package_prepare_start = launch_source.index("pub fn prepare_package_pyth_runtime_launch")
-        helper_start = launch_source.index("fn prepare_pyth_launch_with_package")
-        package_prepare = launch_source[package_prepare_start:helper_start]
-
-        self.assertIn(
-            "let import_capabilities = package_launch_import_capabilities",
-            package_prepare,
-        )
-        self.assertIn("Some(import_capabilities)", package_prepare)
-        self.assertIn(
-            "package_import_capabilities: Option<PythGraphImportCapabilities>",
-            launch_source,
+    def test_package_runtime_bootstrap_preserves_launch_grants_by_import_slot(self):
+        run_exact_core_test(
+            "pyth_runtime_launch::tests::package_launch_runtime::package_launch_bootstrap_preserves_object_workspace_grants_by_import_slot"
         )
 
     def test_package_launch_validation_and_runtime_syscall_use_same_capability_table(self):
