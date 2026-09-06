@@ -64,6 +64,16 @@ class Phase13PackageRuntimeLaunchWiringTests(unittest.TestCase):
         self.assertIn("phase13_supervisor_mappings", main_source)
 
     def test_package_runtime_bootstrap_preserves_launch_grants_by_import_slot(self):
+        launch_source = read(PYTH_RUNTIME_LAUNCH_RS)
+        wrapper_start = launch_source.index("pub fn prepare_package_pyth_runtime_launch(")
+        wrapper_end = launch_source.index("fn prepare_pyth_launch_with_package(", wrapper_start)
+        production_wrapper = compact(launch_source[wrapper_start:wrapper_end])
+
+        self.assertIn(
+            "letimport_capabilities=package_launch_import_capabilities(verified,graph_import_grants)?;",
+            production_wrapper,
+        )
+        self.assertEqual(production_wrapper.count("Some(import_capabilities)"), 1)
         run_exact_core_test(
             "pyth_runtime_launch::tests::package_launch_runtime::package_launch_bootstrap_preserves_object_workspace_grants_by_import_slot"
         )

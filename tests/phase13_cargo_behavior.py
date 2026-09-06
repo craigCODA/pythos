@@ -14,6 +14,8 @@ def run_exact_core_test(test_name: str) -> None:
             "test",
             "-p",
             "pythos-core",
+            "--bin",
+            "pythcore",
             test_name,
             "--",
             "--exact",
@@ -30,7 +32,9 @@ def run_exact_core_test(test_name: str) -> None:
         raise AssertionError(result.stdout)
 
     expected = f"test {test_name} ... ok"
-    if expected not in result.stdout:
+    execution_count = result.stdout.count(expected)
+    if execution_count != 1:
         raise AssertionError(
-            f"cargo reported success without executing {test_name!r}:\n{result.stdout}"
+            f"cargo reported success with {execution_count} executions of "
+            f"{test_name!r}, expected exactly one:\n{result.stdout}"
         )

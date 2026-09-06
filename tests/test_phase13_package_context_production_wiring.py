@@ -13,6 +13,10 @@ def source(path: str) -> str:
     return (CORE_SRC / path).read_text(encoding="utf-8")
 
 
+def compact(text: str) -> str:
+    return "".join(text.split())
+
+
 def cfg_block_before_mod(module_name: str) -> str:
     lines = source("main.rs").splitlines()
     needle = f"mod {module_name};"
@@ -51,6 +55,17 @@ class Phase13PackageContextProductionWiringTests(unittest.TestCase):
                 self.assertIn(PRODUCTION_CFG, cfg_block_before_mod(module))
 
     def test_package_context_syscall_uses_retained_service_behavior(self):
+        text = source("syscall.rs")
+        provider_start = text.index("fn package_runtime_schema_binding(")
+        cfg_start = text.rfind("#[cfg", 0, provider_start)
+        provider_end = text.index("\n#[cfg(", provider_start)
+        production_provider = text[cfg_start:provider_end]
+
+        self.assertIn(compact(PRODUCTION_CFG), compact(production_provider))
+        self.assertEqual(production_provider.count("fn package_runtime_schema_binding("), 1)
+        self.assertIn(
+            "with_retained_package_service_for_phase13", production_provider
+        )
         run_exact_core_test(
             "syscall::tests::package_context_syscall_uses_phase13_retained_package_service"
         )
