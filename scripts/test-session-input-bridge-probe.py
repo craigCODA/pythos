@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import os
+import re
 import signal
 import socket
 import subprocess
@@ -11,7 +12,12 @@ import sys
 import threading
 import time
 import unittest
+from dataclasses import dataclass
 from pathlib import Path
+
+if sys.platform == "win32":
+    import ctypes
+    from ctypes import wintypes
 
 import launcher_click
 
@@ -23,6 +29,7 @@ QEMU_TIMEOUT_SECONDS = 45.0
 COM2_CONNECT_TIMEOUT_SECONDS = 20.0
 COM2_READ_TIMEOUT_SECONDS = 15.0
 DRAIN_SECONDS = 0.25
+POSIX_SIGKILL = getattr(signal, "SIGKILL", 9)
 
 COM1_MARKERS = (
     "PYTHOS:CORE:SESSION_INPUT_BRIDGE:COM2_READY",
@@ -48,6 +55,93 @@ COM2_MARKERS = (
 )
 
 
+if sys.platform == "win32":
+    class _JobBasicLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("per_process_user_time_limit", ctypes.c_longlong),
+            ("per_job_user_time_limit", ctypes.c_longlong),
+            ("limit_flags", wintypes.DWORD),
+            ("minimum_working_set_size", ctypes.c_size_t),
+            ("maximum_working_set_size", ctypes.c_size_t),
+            ("active_process_limit", wintypes.DWORD),
+            ("affinity", ctypes.c_size_t),
+            ("priority_class", wintypes.DWORD),
+            ("scheduling_class", wintypes.DWORD),
+        ]
+
+    class _IoCounters(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_ulonglong) for name in (
+            "read_operation_count", "write_operation_count", "other_operation_count",
+            "read_transfer_count", "write_transfer_count", "other_transfer_count",
+        )]
+
+    class _JobExtendedLimitInformation(ctypes.Structure):
+        _fields_ = [
+            ("basic_limit_information", _JobBasicLimitInformation),
+            ("io_info", _IoCounters),
+            ("process_memory_limit", ctypes.c_size_t),
+            ("job_memory_limit", ctypes.c_size_t),
+            ("peak_process_memory_used", ctypes.c_size_t),
+            ("peak_job_memory_used", ctypes.c_size_t),
+        ]
+
+    class WindowsJob:
+        _KILL_ON_JOB_CLOSE = 0x00002000
+        _EXTENDED_LIMIT_INFORMATION = 9
+
+        def __init__(self, process: subprocess.Popen[str]) -> None:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            self._close_handle = kernel32.CloseHandle
+            self._terminate_job = kernel32.TerminateJobObject
+            self._handle = kernel32.CreateJobObjectW(None, None)
+            if not self._handle:
+                raise OSError(ctypes.get_last_error(), "CreateJobObjectW failed")
+            info = _JobExtendedLimitInformation()
+            info.basic_limit_information.limit_flags = self._KILL_ON_JOB_CLOSE
+            if not kernel32.SetInformationJobObject(
+                self._handle,
+                self._EXTENDED_LIMIT_INFORMATION,
+                ctypes.byref(info),
+                ctypes.sizeof(info),
+            ):
+                self.close()
+                raise OSError(ctypes.get_last_error(), "SetInformationJobObject failed")
+            if not kernel32.AssignProcessToJobObject(self._handle, process._handle):
+                self.close()
+                raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
+
+        def terminate(self) -> None:
+            if self._handle:
+                self._terminate_job(self._handle, 1)
+
+        def close(self) -> None:
+            if self._handle:
+                self._close_handle(self._handle)
+                self._handle = None
+else:
+    WindowsJob = None
+
+
+@dataclass
+class RunnerHandle:
+    process: subprocess.Popen[str]
+    process_group: int | None
+    job: WindowsJob | None
+
+
+def spawn_runner_process(command: list[str], **popen_kwargs: object) -> RunnerHandle:
+    process = subprocess.Popen(
+        command,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        **popen_kwargs,
+    )
+    if sys.platform == "win32":
+        return RunnerHandle(process, None, WindowsJob(process))
+    return RunnerHandle(process, os.getpgid(process.pid), None)
+
+
 class AcceptanceTimeline:
     """One observer-owned ordering record for COM1, COM2, and harness phases."""
 
@@ -59,33 +153,41 @@ class AcceptanceTimeline:
         with self._lock:
             self.events.append((source, value))
 
-    def count(self, value: str) -> int:
+    def count(self, source: str, value: str) -> int:
         with self._lock:
-            return sum(event_value == value for _source, event_value in self.events)
+            return self.events.count((source, value))
 
-    def index(self, value: str) -> int:
+    def index(self, source: str, value: str) -> int:
         with self._lock:
-            return self._index_unlocked(value)
+            return self._index_unlocked(source, value)
 
-    def _index_unlocked(self, value: str) -> int:
-        for index, (_source, event_value) in enumerate(self.events):
-            if event_value == value:
+    def _index_unlocked(self, source: str, value: str) -> int:
+        for index, event in enumerate(self.events):
+            if event == (source, value):
                 return index
-        raise AssertionError(f"timeline missing {value!r}")
+        raise AssertionError(f"timeline missing {(source, value)!r}")
 
-    def move_before(self, value: str, before: str) -> None:
+    def move_after(self, source: str, value: str, before_source: str, before_value: str) -> None:
         with self._lock:
-            source, moved_value = self.events.pop(self._index_unlocked(value))
-            self.events.insert(self._index_unlocked(before) + 1, (source, moved_value))
+            moved = self.events.pop(self._index_unlocked(source, value))
+            self.events.insert(
+                self._index_unlocked(before_source, before_value) + 1, moved
+            )
 
-    def assert_before(self, before: str, after: str) -> None:
+    def assert_before(
+        self, before_source: str, before_value: str, after_source: str, after_value: str
+    ) -> None:
         with self._lock:
-            before_count = sum(value == before for _source, value in self.events)
-            after_count = sum(value == after for _source, value in self.events)
+            before_count = self.events.count((before_source, before_value))
+            after_count = self.events.count((after_source, after_value))
             if before_count != 1 or after_count != 1:
-                raise AssertionError(f"timeline must contain one {before!r} and one {after!r}")
-            if self._index_unlocked(before) >= self._index_unlocked(after):
-                raise AssertionError(f"timeline order violation: {before!r} must precede {after!r}")
+                raise AssertionError(
+                    f"timeline must contain one {(before_source, before_value)!r} and one {(after_source, after_value)!r}"
+                )
+            if self._index_unlocked(before_source, before_value) >= self._index_unlocked(after_source, after_value):
+                raise AssertionError(
+                    f"timeline order violation: {(before_source, before_value)!r} must precede {(after_source, after_value)!r}"
+                )
 
 
 def complete_lines(text: str) -> list[str]:
@@ -94,20 +196,20 @@ def complete_lines(text: str) -> list[str]:
 
 def assert_cross_channel_timeline(timeline: AcceptanceTimeline) -> None:
     required_edges = (
-        (COM1_MARKERS[3], COM2_MARKERS[0]),
-        (COM2_MARKERS[0], "QMP_INJECTION_STARTED"),
-        ("QMP_INJECTION_STARTED", COM1_MARKERS[4]),
-        ("QMP_INJECTION_STARTED", COM1_MARKERS[5]),
-        (COM1_MARKERS[4], "G_SENT"),
-        (COM1_MARKERS[5], "G_SENT"),
-        ("G_SENT", COM2_MARKERS[1]),
-        (COM2_MARKERS[-1], COM1_MARKERS[6]),
-        (COM1_MARKERS[6], COM1_MARKERS[-1]),
-        (COM1_MARKERS[-1], "QEMU_OUTCOME success"),
-        (COM2_MARKERS[-1], "QEMU_OUTCOME success"),
+        ("COM1", COM1_MARKERS[3], "COM2", COM2_MARKERS[0]),
+        ("COM2", COM2_MARKERS[0], "HARNESS", "QMP_INJECTION_STARTED"),
+        ("HARNESS", "QMP_INJECTION_STARTED", "COM1", COM1_MARKERS[4]),
+        ("HARNESS", "QMP_INJECTION_STARTED", "COM1", COM1_MARKERS[5]),
+        ("COM1", COM1_MARKERS[4], "HARNESS", "G_SENT"),
+        ("COM1", COM1_MARKERS[5], "HARNESS", "G_SENT"),
+        ("HARNESS", "G_SENT", "COM2", COM2_MARKERS[1]),
+        ("COM2", COM2_MARKERS[-1], "COM1", COM1_MARKERS[6]),
+        ("COM1", COM1_MARKERS[6], "COM1", COM1_MARKERS[-1]),
+        ("COM1", COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
+        ("COM2", COM2_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
     )
-    for before, after in required_edges:
-        timeline.assert_before(before, after)
+    for before_source, before, after_source, after in required_edges:
+        timeline.assert_before(before_source, before, after_source, after)
 
 
 def assert_exact_ordered_markers(transcript: str, markers: tuple[str, ...], channel: str) -> None:
@@ -127,7 +229,8 @@ def assert_no_failure_markers(transcript: str, channel: str) -> None:
     for line in complete_lines(transcript):
         if line == COM1_MARKERS[7]:
             continue
-        if any(marker in line for marker in ("GAP", "ERROR", "PYTHOS:PANIC", "DISK_WRITE")):
+        normalized = "_".join(filter(None, re.split(r"[^A-Z0-9]+", line.upper())))
+        if any(marker in line for marker in ("GAP", "ERROR", "PYTHOS:PANIC")) or "DISK_WRITE" in normalized:
             raise AssertionError(f"{channel}: forbidden evidence line {line!r}")
 
 
@@ -148,14 +251,13 @@ def assert_qemu_success(output: str) -> None:
 
 
 def assert_session_input_acceptance(
-    com1: str, com2: str, qemu_output: str, timeline: AcceptanceTimeline | None = None
+    com1: str, com2: str, qemu_output: str, timeline: AcceptanceTimeline
 ) -> None:
     """Accept only the complete, ordered, non-error Slice 1 transcript."""
     assert_com1_transcript(com1)
     assert_com2_transcript(com2)
     assert_qemu_success(qemu_output)
-    if timeline is not None:
-        assert_cross_channel_timeline(timeline)
+    assert_cross_channel_timeline(timeline)
 
 
 def run(command: list[str]) -> None:
@@ -276,20 +378,25 @@ class Com2Collector:
         self.timeline = timeline
         self.captured = bytearray()
         self.remainder = b""
+        self.complete_lines: list[str] = []
         self.sock.settimeout(0.25)
 
     def _record_complete_lines(self, chunk: bytes) -> None:
         parts = (self.remainder + chunk).split(b"\n")
         self.remainder = parts.pop()
         for line in parts:
-            self.timeline.record("COM2", line.rstrip(b"\r").decode("utf-8", errors="replace"))
+            complete = line.rstrip(b"\r").decode("utf-8", errors="replace")
+            self.complete_lines.append(complete)
+            self.timeline.record("COM2", complete)
 
     def read_until(self, marker: bytes, timeout: float, poll_com1) -> bytes:
+        start = len(self.captured)
+        marker_line = marker.decode("utf-8")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             poll_com1()
-            if marker in self.captured:
-                return bytes(self.captured)
+            if marker_line in self.complete_lines:
+                return bytes(self.captured[start:])
             try:
                 chunk = self.sock.recv(512)
             except socket.timeout:
@@ -299,8 +406,8 @@ class Com2Collector:
             self.captured.extend(chunk)
             self._record_complete_lines(chunk)
             poll_com1()
-            if marker in self.captured:
-                return bytes(self.captured)
+            if marker_line in self.complete_lines:
+                return bytes(self.captured[start:])
         raise AssertionError(f"timed out waiting for COM2 {marker!r}: {bytes(self.captured)!r}")
 
 
@@ -318,6 +425,20 @@ def wait_for_com1_marker(
     raise AssertionError(f"timed out waiting for COM1 marker {marker}")
 
 
+def wait_for_com1_markers(
+    process: subprocess.Popen[str], capture: RunnerCapture, serial: SerialTail, markers: tuple[str, ...], timeout: float
+) -> None:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        serial.poll()
+        if all(marker in serial.lines for marker in markers):
+            return
+        if process.poll() is not None:
+            raise AssertionError(f"QEMU exited before input IRQ evidence: {capture.text()}")
+        time.sleep(0.01)
+    raise AssertionError(f"timed out waiting for COM1 IRQ evidence {markers!r}")
+
+
 def connect_com2(timeout: float) -> socket.socket:
     deadline = time.monotonic() + timeout
     last_error: OSError | None = None
@@ -330,51 +451,36 @@ def connect_com2(timeout: float) -> socket.socket:
     raise AssertionError(f"could not connect COM2 before readiness: {last_error}")
 
 
-def cleanup_runner_process(process: subprocess.Popen[str], terminate_timeout: float = 5.0) -> None:
-    """Terminate and reap the runner and its QEMU child on every platform."""
-    process_group: int | None = None
-    if sys.platform != "win32":
-        try:
-            process_group = os.getpgid(process.pid)
-        except ProcessLookupError:
-            pass
-    if process.poll() is None:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-        else:
-            if process_group is not None:
-                try:
-                    os.killpg(process_group, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+def cleanup_posix_process_group(process, process_group: int, terminate_timeout: float) -> None:
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
     try:
         process.wait(timeout=terminate_timeout)
     except subprocess.TimeoutExpired:
-        if sys.platform == "win32":
-            subprocess.run(
-                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-            process.kill()
+        pass
+    try:
+        os.killpg(process_group, POSIX_SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
+def cleanup_runner_process(runner: RunnerHandle, terminate_timeout: float = 5.0) -> None:
+    """Terminate and reap the runner and its QEMU child on every platform."""
+    process = runner.process
+    if sys.platform != "win32" and runner.process_group is not None:
+        cleanup_posix_process_group(process, runner.process_group, terminate_timeout)
+    elif process.poll() is None:
+        if runner.job is not None:
+            runner.job.terminate()
         else:
-            if process_group is not None:
-                try:
-                    os.killpg(process_group, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
+            process.kill()
         process.wait(timeout=terminate_timeout)
-    if sys.platform != "win32" and process_group is not None:
-        try:
-            os.killpg(process_group, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    else:
+        process.wait(timeout=terminate_timeout)
+    if runner.job is not None:
+        runner.job.close()
 
 
 def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
@@ -389,10 +495,9 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
         "--expect-outcome", "success",
     ]
     print("+ " + " ".join(command), flush=True)
-    process = subprocess.Popen(
-        command, cwd=ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        **popen_kwargs,
-    )
+    popen_kwargs["cwd"] = ROOT
+    runner = spawn_runner_process(command, **popen_kwargs)
+    process = runner.process
     timeline = AcceptanceTimeline()
     serial = SerialTail(SERIAL_LOG, timeline)
     capture = RunnerCapture(process, timeline)
@@ -418,7 +523,13 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
                 if process.poll() is not None:
                     raise AssertionError(f"QEMU exited during input injection: {capture.text()}")
                 time.sleep(0.01)
-            serial.poll()
+            wait_for_com1_markers(
+                process,
+                capture,
+                serial,
+                (COM1_MARKERS[4], COM1_MARKERS[5]),
+                COM2_READ_TIMEOUT_SECONDS,
+            )
             timeline.record("HARNESS", "G_SENT")
             com2.sendall(b"G")
             after_input = collector.read_until(
@@ -437,14 +548,14 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
         assert_qemu_success(qemu_output)
         result = (
             serial.transcript(),
-            (before_input + after_input).decode("utf-8", errors="replace"),
+            bytes(collector.captured).decode("utf-8", errors="replace"),
             qemu_output,
             timeline,
         )
     except BaseException as error:
         captured_error = error
     finally:
-        cleanup_runner_process(process)
+        cleanup_runner_process(runner)
     qemu_output = capture.finish()
     if qemu_output:
         print(qemu_output, end="")
@@ -462,7 +573,7 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
     def valid_com2(self) -> str:
         return "\n".join(COM2_MARKERS)
 
-    def valid_timeline(self):
+    def valid_timeline(self) -> AcceptanceTimeline:
         timeline = AcceptanceTimeline()
         timeline.record("COM1", COM1_MARKERS[3])
         timeline.record("COM2", COM2_MARKERS[0])
@@ -479,20 +590,14 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         return timeline
 
     @staticmethod
-    def spawn_runner(code: str) -> tuple[subprocess.Popen[str], RunnerCapture]:
+    def spawn_runner(code: str) -> tuple[RunnerHandle, RunnerCapture]:
         popen_kwargs: dict[str, object] = {}
         if sys.platform != "win32":
             popen_kwargs["start_new_session"] = True
-        process = subprocess.Popen(
-            [sys.executable, "-u", "-c", code],
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            **popen_kwargs,
-        )
-        capture = RunnerCapture(process, AcceptanceTimeline())
+        runner = spawn_runner_process([sys.executable, "-u", "-c", code], **popen_kwargs)
+        capture = RunnerCapture(runner.process, AcceptanceTimeline())
         capture.start()
-        return process, capture
+        return runner, capture
 
     @staticmethod
     def process_alive(pid: int) -> bool:
@@ -530,6 +635,7 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 self.valid_com1() if com1 is None else com1,
                 self.valid_com2() if com2 is None else com2,
                 outcome,
+                self.valid_timeline(),
             )
 
     def test_valid_dual_channel_transcript_passes(self) -> None:
@@ -537,24 +643,114 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             self.valid_com1(), self.valid_com2(), "QEMU_OUTCOME success", self.valid_timeline()
         )
 
+    def test_strict_acceptance_requires_a_timeline(self) -> None:
+        with self.assertRaises(TypeError):
+            assert_session_input_acceptance(
+                self.valid_com1(), self.valid_com2(), "QEMU_OUTCOME success"  # type: ignore[call-arg]
+            )
+
+    def test_com2_split_lines_return_only_new_deltas_and_runner_replay_is_not_com1(self) -> None:
+        class ChunkSocket:
+            def __init__(self, chunks: list[bytes]) -> None:
+                self.chunks = chunks
+                self.receives = 0
+
+            def settimeout(self, _timeout: float) -> None:
+                pass
+
+            def recv(self, _size: int) -> bytes:
+                self.receives += 1
+                return self.chunks.pop(0)
+
+        timeline = self.valid_timeline()
+        # A runner replay is retained as diagnostics, never a second COM1 marker source.
+        for marker in COM1_MARKERS:
+            timeline.record("RUNNER_STDOUT", marker)
+        socket_chunks = [
+            COM2_MARKERS[0].encode() + b"\r\n",
+            b"\r\n".join(marker.encode() for marker in COM2_MARKERS[1:]) + b"\r\n",
+        ]
+        socket = ChunkSocket(socket_chunks)
+        collector = Com2Collector(socket, AcceptanceTimeline())
+        first = collector.read_until(COM2_MARKERS[0].encode(), 1, lambda: None)
+        second = collector.read_until(COM2_MARKERS[-1].encode(), 1, lambda: None)
+        self.assertEqual(socket.receives, 2)
+        self.assertEqual(first, COM2_MARKERS[0].encode() + b"\r\n")
+        self.assertNotIn(COM2_MARKERS[0].encode(), second)
+        self.assertEqual(bytes(collector.captured).count(COM2_MARKERS[0].encode()), 1)
+        assert_session_input_acceptance(
+            self.valid_com1(), bytes(collector.captured).decode(), "QEMU_OUTCOME success", timeline
+        )
+
+    def test_com2_does_not_accept_a_split_marker_before_its_newline(self) -> None:
+        class ChunkSocket:
+            def __init__(self) -> None:
+                self.chunks = [COM2_MARKERS[0].encode(), b"\r\n"]
+                self.receives = 0
+
+            def settimeout(self, _timeout: float) -> None:
+                pass
+
+            def recv(self, _size: int) -> bytes:
+                self.receives += 1
+                return self.chunks.pop(0)
+
+        socket = ChunkSocket()
+        collector = Com2Collector(socket, AcceptanceTimeline())
+        self.assertEqual(
+            collector.read_until(COM2_MARKERS[0].encode(), 1, lambda: None),
+            COM2_MARKERS[0].encode() + b"\r\n",
+        )
+        self.assertEqual(socket.receives, 2)
+
+    def test_com1_event_during_com2_receive_cannot_be_observed_after_terminal_ready(self) -> None:
+        timeline = AcceptanceTimeline()
+        for source, marker in (
+            ("COM1", COM1_MARKERS[3]),
+            ("COM2", COM2_MARKERS[0]),
+            ("HARNESS", "QMP_INJECTION_STARTED"),
+            ("COM1", COM1_MARKERS[4]),
+            ("COM1", COM1_MARKERS[5]),
+            ("HARNESS", "G_SENT"),
+        ):
+            timeline.record(source, marker)
+
+        class ReceiveRaceSocket:
+            def settimeout(self, _timeout: float) -> None:
+                pass
+
+            def recv(self, _size: int) -> bytes:
+                timeline.record("COM1", COM1_MARKERS[6])
+                return b"\r\n".join(marker.encode() for marker in COM2_MARKERS[1:]) + b"\r\n"
+
+        collector = Com2Collector(ReceiveRaceSocket(), timeline)
+        collector.read_until(COM2_MARKERS[-1].encode(), 1, lambda: None)
+        timeline.record("COM1", COM1_MARKERS[7])
+        timeline.record("COM1", COM1_MARKERS[8])
+        timeline.record("RUNNER", "QEMU_OUTCOME success")
+        with self.assertRaises(AssertionError):
+            assert_session_input_acceptance(
+                self.valid_com1(), bytes(collector.captured).decode(), "QEMU_OUTCOME success", timeline
+            )
+
     def test_cross_channel_timeline_edges_reject_every_reversal(self) -> None:
         required_edges = (
-            (COM1_MARKERS[3], COM2_MARKERS[0]),
-            (COM2_MARKERS[0], "QMP_INJECTION_STARTED"),
-            ("QMP_INJECTION_STARTED", COM1_MARKERS[4]),
-            ("QMP_INJECTION_STARTED", COM1_MARKERS[5]),
-            (COM1_MARKERS[4], "G_SENT"),
-            (COM1_MARKERS[5], "G_SENT"),
-            ("G_SENT", COM2_MARKERS[1]),
-            (COM2_MARKERS[-1], COM1_MARKERS[6]),
-            (COM1_MARKERS[6], COM1_MARKERS[-1]),
-            (COM1_MARKERS[-1], "QEMU_OUTCOME success"),
-            (COM2_MARKERS[-1], "QEMU_OUTCOME success"),
+            ("COM1", COM1_MARKERS[3], "COM2", COM2_MARKERS[0]),
+            ("COM2", COM2_MARKERS[0], "HARNESS", "QMP_INJECTION_STARTED"),
+            ("HARNESS", "QMP_INJECTION_STARTED", "COM1", COM1_MARKERS[4]),
+            ("HARNESS", "QMP_INJECTION_STARTED", "COM1", COM1_MARKERS[5]),
+            ("COM1", COM1_MARKERS[4], "HARNESS", "G_SENT"),
+            ("COM1", COM1_MARKERS[5], "HARNESS", "G_SENT"),
+            ("HARNESS", "G_SENT", "COM2", COM2_MARKERS[1]),
+            ("COM2", COM2_MARKERS[-1], "COM1", COM1_MARKERS[6]),
+            ("COM1", COM1_MARKERS[6], "COM1", COM1_MARKERS[-1]),
+            ("COM1", COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
+            ("COM2", COM2_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
         )
-        for before, after in required_edges:
-            with self.subTest(before=before, after=after):
+        for before_source, before, after_source, after in required_edges:
+            with self.subTest(before=(before_source, before), after=(after_source, after)):
                 timeline = self.valid_timeline()
-                timeline.move_before(before, after)
+                timeline.move_after(before_source, before, after_source, after)
                 with self.assertRaises(AssertionError):
                     assert_session_input_acceptance(
                         self.valid_com1(), self.valid_com2(), "QEMU_OUTCOME success", timeline
@@ -584,6 +780,8 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             "PYTHOS:PANIC",
             "PYTHOS:CORE:DISK_WRITE_ATTEMPT",
             "PYTHOS:CORE:HARDWARE_PROBE:DISK_WRITE_TEST_ARMED",
+            "PYTHOS:CORE:DISK:WRITE",
+            "PYTHOS:CORE:DISK-WRITE",
         ):
             with self.subTest(marker=marker):
                 self.assert_rejected(com2=self.valid_com2() + "\n" + marker)
@@ -626,26 +824,28 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         self.assertEqual(commands[6], [sys.executable, "scripts/build-image.py", "--kernel", str(kernel), "--session-input-probe-elf", str(probe)])
 
     def test_runner_capture_reaps_success_and_retains_diagnostics(self) -> None:
-        process, capture = self.spawn_runner("print('runner success diagnostic', flush=True)")
+        runner, capture = self.spawn_runner("print('runner success diagnostic', flush=True)")
+        process = runner.process
         try:
             process.wait(timeout=2)
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
             self.assertIn("runner success diagnostic", capture.finish(timeout=2))
             self.assertIsNotNone(process.poll())
         finally:
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
 
     def test_runner_capture_retains_com2_qmp_failure_diagnostics_after_tree_cleanup(self) -> None:
-        process, capture = self.spawn_runner(
+        runner, capture = self.spawn_runner(
             "import time; print('QMP failed after COM2 connect', flush=True); time.sleep(60)"
         )
+        process = runner.process
         try:
             capture.wait_for("QMP failed after COM2 connect", 2)
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
             self.assert_stopped(process)
             self.assertIn("QMP failed after COM2 connect", capture.finish(timeout=2))
         finally:
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
 
     def test_timeout_cleanup_kills_runner_group_and_child(self) -> None:
         child_code = (
@@ -657,11 +857,12 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             f"child=subprocess.Popen([sys.executable, '-u', '-c', {child_code!r}]); "
             "print('timeout child pid=' + str(child.pid), flush=True); time.sleep(60)"
         )
-        process, capture = self.spawn_runner(parent_code)
+        runner, capture = self.spawn_runner(parent_code)
+        process = runner.process
         try:
             capture.wait_for("timeout child pid=", 2)
             child_pid = int(capture.text().split("timeout child pid=", 1)[1].splitlines()[0])
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
             self.assert_stopped(process)
             deadline = time.monotonic() + 2.0
             while self.process_alive(child_pid) and time.monotonic() < deadline:
@@ -669,7 +870,51 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             self.assertFalse(self.process_alive(child_pid), f"surviving runner child {child_pid}")
             self.assertIn("timeout child pid=", capture.finish(timeout=2))
         finally:
-            cleanup_runner_process(process, terminate_timeout=0.2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
+
+    def test_cleanup_uses_stored_posix_group_after_parent_exit(self) -> None:
+        class ExitedProcess:
+            def poll(self):
+                return 0
+
+            def wait(self, timeout: float):
+                self.timeout = timeout
+                return 0
+
+        calls: list[tuple[int, int]] = []
+        had_killpg = hasattr(os, "killpg")
+        original_killpg = getattr(os, "killpg", None)
+        try:
+            os.killpg = lambda pgid, sig: calls.append((pgid, sig))
+            cleanup_posix_process_group(ExitedProcess(), 4242, 0.1)
+        finally:
+            if had_killpg:
+                os.killpg = original_killpg
+            else:
+                del os.killpg
+        self.assertEqual(calls, [(4242, signal.SIGTERM), (4242, POSIX_SIGKILL)])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
+    def test_windows_job_cleans_child_after_parent_has_exited(self) -> None:
+        child_pid: int | None = None
+        runner, capture = self.spawn_runner(
+            "import subprocess,sys,time; child=subprocess.Popen([sys.executable, '-u', '-c', 'import time; time.sleep(60)']); "
+            "print('exited parent child pid=' + str(child.pid), flush=True)"
+        )
+        try:
+            capture.wait_for("exited parent child pid=", 2)
+            child_pid = int(capture.text().split("exited parent child pid=", 1)[1].splitlines()[0])
+            runner.process.wait(timeout=2)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
+            deadline = time.monotonic() + 2.0
+            while self.process_alive(child_pid) and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(self.process_alive(child_pid), f"surviving exited-parent child {child_pid}")
+            self.assertIn("exited parent child pid=", capture.finish(timeout=2))
+        finally:
+            if child_pid is not None and self.process_alive(child_pid):
+                subprocess.run(["taskkill", "/F", "/PID", str(child_pid)], check=False)
+            cleanup_runner_process(runner, terminate_timeout=0.2)
 
 
 def run_self_tests() -> int:

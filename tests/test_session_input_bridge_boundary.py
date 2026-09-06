@@ -38,9 +38,91 @@ def feature_dependencies(cargo: dict, feature_name: str) -> tuple[str, ...] | No
 
 
 def strip_rust_comments_and_strings(source: str) -> str:
-    without_block_comments = re.sub(r"/\*.*?\*/", "", source, flags=re.DOTALL)
-    without_line_comments = re.sub(r"//[^\n]*", "", without_block_comments)
-    return re.sub(r'"(?:\\.|[^"\\])*"', '""', without_line_comments)
+    """Preserve code/newlines while masking Rust comments and literal bodies."""
+    output: list[str] = []
+    index = 0
+
+    def mask(text: str) -> str:
+        return "".join("\n" if char == "\n" else " " for char in text)
+
+    while index < len(source):
+        if source.startswith("//", index):
+            end = source.find("\n", index)
+            end = len(source) if end < 0 else end
+            output.append(mask(source[index:end]))
+            index = end
+            continue
+        if source.startswith("/*", index):
+            start = index
+            depth = 1
+            index += 2
+            while index < len(source) and depth:
+                if source.startswith("/*", index):
+                    depth += 1
+                    index += 2
+                elif source.startswith("*/", index):
+                    depth -= 1
+                    index += 2
+                else:
+                    index += 1
+            output.append(mask(source[start:index]))
+            continue
+        raw_start = index
+        if source.startswith("br", index) or source.startswith("rb", index):
+            index += 2
+        elif source.startswith("r", index):
+            index += 1
+        else:
+            raw_start = -1
+        if raw_start >= 0:
+            hashes = 0
+            while index < len(source) and source[index] == "#":
+                hashes += 1
+                index += 1
+            if index < len(source) and source[index] == '"':
+                index += 1
+                closing = '"' + ("#" * hashes)
+                end = source.find(closing, index)
+                index = len(source) if end < 0 else end + len(closing)
+                output.append(mask(source[raw_start:index]))
+                continue
+            output.append(source[raw_start])
+            index = raw_start + 1
+            continue
+        if source.startswith('b"', index) or source[index] == '"':
+            start = index
+            index += 2 if source.startswith('b"', index) else 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                elif source[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            output.append(mask(source[start:index]))
+            continue
+        if source[index] == "'":
+            end = index + 1
+            while end < len(source) and source[end] != "\n":
+                if source[end] == "\\":
+                    end += 2
+                elif source[end] == "'":
+                    end += 1
+                    output.append(mask(source[index:end]))
+                    index = end
+                    break
+                else:
+                    end += 1
+            else:
+                output.append(source[index])
+                index += 1
+            if index == end:
+                continue
+            continue
+        output.append(source[index])
+        index += 1
+    return "".join(output)
 
 
 def rust_dependency_statements(source: str) -> list[str]:
@@ -68,6 +150,24 @@ def dependency_components(statement: str) -> set[str]:
 
 
 class SessionInputBridgeBoundaryTest(unittest.TestCase):
+    def test_rust_lexer_ignores_nested_comments_and_raw_literal_prose(self) -> None:
+        source = '''
+            /* outer /* use viewing::State; */ still comment */
+            const TEXT: &str = r###"use usb::Device; \"quoted\""###;
+            const BYTE_TEXT: &[u8] = br##"mod framebuffer;"##;
+            const LETTER: char = '\\'';
+            use core::fmt;
+        '''
+        self.assertEqual(rust_dependency_statements(source), ["core::fmt"])
+        self.assertEqual(declared_rust_symbols(source), set())
+
+    def test_rust_lexer_exposes_real_forbidden_import_and_declaration(self) -> None:
+        source = "use viewing::State;\nstruct FocusMark;"
+        self.assertEqual(rust_dependency_statements(source), ["viewing::State"])
+        self.assertEqual(declared_rust_symbols(source), {"FocusMark"})
+        self.assertTrue(dependency_components("viewing::State") & FORBIDDEN_MODULES)
+        self.assertTrue(declared_rust_symbols(source) & FORBIDDEN_DECLARATIONS)
+
     def test_probe_feature_direction_is_verify_only_when_task7_composes_it(self) -> None:
         core = cargo_document(ROOT / "core" / "Cargo.toml")
         dependencies = feature_dependencies(core, FEATURE_NAME)
