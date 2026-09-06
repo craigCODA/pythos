@@ -177,6 +177,19 @@ mod tests {
             assert!(EventSequenceValidator::new().accept(mutation).is_err());
         }
 
+        for reserved0 in [true, false] {
+            let mut reserved = event(41, EXPECTED[0]);
+            if reserved0 {
+                reserved.reserved0 = 1;
+            } else {
+                reserved.reserved1 = 1;
+            }
+            assert_eq!(
+                EventSequenceValidator::new().accept(reserved),
+                Err(EventValidationError::Reserved)
+            );
+        }
+
         let mut order = EventSequenceValidator::new();
         assert_eq!(order.accept(event(41, EXPECTED[0])), Ok(1));
         assert_eq!(

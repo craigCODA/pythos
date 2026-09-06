@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
@@ -42,12 +43,101 @@ def normalize(command: list[object]) -> list[str]:
 
 
 class BuildOrchestrationTest(unittest.TestCase):
+    def test_relative_probe_identity_is_resolved_once_before_any_packaging_mutation(self) -> None:
+        module = load_script("build-image.py")
+
+        def invoke(verifier_returncode: int, probe_argument: str) -> list[tuple[str, object]]:
+            events: list[tuple[str, object]] = []
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir) / "repository"
+                caller = Path(temp_dir) / "caller"
+                root.mkdir()
+                caller.mkdir()
+                loader = caller / "BOOTX64.EFI"
+                kernel = caller / "PYTHCORE.ELF"
+                root_probe = root / "probe.elf"
+                caller_probe = caller / "probe.elf"
+                for path, content in (
+                    (loader, b"loader"),
+                    (kernel, b"kernel"),
+                    (root_probe, b"root-probe"),
+                    (caller_probe, b"caller-probe"),
+                ):
+                    path.write_bytes(content)
+
+                def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                    events.append(("verify", normalize(command)))
+                    return subprocess.CompletedProcess(command, verifier_returncode)
+
+                def package(*args: object) -> bytes:
+                    events.append(("package", args[-1]))
+                    return b"pak"
+
+                def mkdir(*_args: object, **_kwargs: object) -> None:
+                    events.append(("mkdir", None))
+
+                previous_cwd = Path.cwd()
+                try:
+                    os.chdir(caller)
+                    with unittest.mock.patch.object(module, "ROOT", root), unittest.mock.patch.object(
+                        module, "ESP", caller / "esp"
+                    ), unittest.mock.patch.object(module, "build_default_init_pak", side_effect=package), unittest.mock.patch.object(
+                        module.shutil, "copy2", side_effect=lambda *_args: events.append(("copy", None))
+                    ), unittest.mock.patch.object(
+                        module, "write_binary_if_changed", side_effect=lambda *_args: events.append(("write", None))
+                    ), unittest.mock.patch.object(Path, "mkdir", side_effect=mkdir), unittest.mock.patch.object(
+                        subprocess, "run", side_effect=verify
+                    ), unittest.mock.patch.object(
+                        sys,
+                        "argv",
+                        [
+                            str(module.__file__),
+                            "--loader",
+                            str(loader),
+                            "--kernel",
+                            str(kernel),
+                            "--session-input-probe-elf",
+                            probe_argument,
+                        ],
+                    ):
+                        if verifier_returncode == 0 and probe_argument == "probe.elf":
+                            self.assertEqual(module.main(), 0)
+                            packaged = next(value for kind, value in events if kind == "package")
+                            events.append(
+                                (
+                                    "identity",
+                                    (
+                                        Path(events[0][1][-1]).samefile(caller_probe),
+                                        Path(packaged).samefile(caller_probe),
+                                    ),
+                                )
+                            )
+                        else:
+                            with self.assertRaises(SystemExit):
+                                module.main()
+                finally:
+                    os.chdir(previous_cwd)
+            return events
+
+        success = invoke(0, "probe.elf")
+        self.assertEqual(success[0][0], "verify")
+        verified = success[0][1][-1]
+        packaged = next(value for kind, value in success if kind == "package")
+        self.assertTrue(Path(verified).is_absolute())
+        self.assertTrue(Path(packaged).is_absolute())
+        self.assertEqual(next(value for kind, value in success if kind == "identity"), (True, True))
+        self.assertTrue(all(kind != "verify" for kind, _value in success[1:]))
+
+        failure = invoke(1, "probe.elf")
+        self.assertEqual([kind for kind, _value in failure], ["verify"])
+
+        missing = invoke(0, "missing.elf")
+        self.assertEqual(missing, [])
+
     def test_probe_elf_verification_precedes_packaging_and_failure_short_circuits(self) -> None:
         module = load_script("build-image.py")
 
-        def invoke(
-            verifier_returncode: int, include_probe: bool
-        ) -> tuple[list[tuple[str, object]], str]:
+        def invoke(verifier_returncode: int, include_probe: bool) -> list[tuple[str, object]]:
             events: list[tuple[str, object]] = []
             with tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
@@ -90,24 +180,24 @@ class BuildOrchestrationTest(unittest.TestCase):
                     else:
                         with self.assertRaises(SystemExit):
                             module.main()
-            return events, str(probe).replace("\\", "/")
+            return events
 
-        default, _default_probe = invoke(1, False)
+        default = invoke(1, False)
         self.assertTrue(all(kind != "verify" for kind, _value in default))
 
-        success, success_probe = invoke(0, True)
+        success = invoke(0, True)
         self.assertEqual(success[0][0], "verify")
         self.assertEqual(
             success[0][1][-2:],
-            ["--elf", success_probe],
+            ["--elf", success[0][1][-1]],
         )
         self.assertTrue(all(kind != "verify" for kind, _value in success[1:]))
         self.assertTrue(any(kind in {"mkdir", "copy", "write"} for kind, _value in success[1:]))
 
-        failure, failure_probe = invoke(1, True)
+        failure = invoke(1, True)
         self.assertEqual(len(failure), 1)
         self.assertEqual(failure[0][0], "verify")
-        self.assertEqual(failure[0][1][-2:], ["--elf", failure_probe])
+        self.assertEqual(failure[0][1][-2:], ["--elf", failure[0][1][-1]])
 
     def test_session_input_probe_build_is_isolated_and_uses_its_own_linker(self) -> None:
         module = load_script("build-session-input-probe.py")

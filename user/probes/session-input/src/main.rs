@@ -1,19 +1,19 @@
-#![cfg_attr(not(any(test, clippy)), no_std)]
-#![cfg_attr(not(any(test, clippy)), no_main)]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 use core::panic::PanicInfo;
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 use pythos_shared::{
     capability_abi::PackedCapability,
     session_input_abi::{
         SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT, SessionInputEventV1,
     },
 };
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 use pythos_user_session_input_probe::{EventSequenceValidator, syscalls};
 
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
     let input = PackedCapability::from_raw(input_raw);
@@ -87,7 +87,7 @@ pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
     }
 }
 
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 fn sentinel_event() -> SessionInputEventV1 {
     SessionInputEventV1 {
         sequence: 0xA5A5_A5A5_A5A5_A5A5,
@@ -101,7 +101,7 @@ fn sentinel_event() -> SessionInputEventV1 {
     }
 }
 
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 fn error(console: PackedCapability) -> ! {
     syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:ERROR\r\n");
     loop {
@@ -109,7 +109,7 @@ fn error(console: PackedCapability) -> ! {
     }
 }
 
-#[cfg(not(any(test, clippy)))]
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     loop {
@@ -117,5 +117,5 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
     }
 }
 
-#[cfg(any(test, clippy))]
+#[cfg(test)]
 fn main() {}

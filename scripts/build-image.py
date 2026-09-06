@@ -625,6 +625,16 @@ def verify_session_input_probe_elf(path: Path) -> None:
         raise SystemExit("session input probe ELF verification failed")
 
 
+def resolve_session_input_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing session input probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"session input probe ELF is not a file: {resolved}")
+    return resolved
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
@@ -645,8 +655,10 @@ def main() -> int:
     kernel = args.kernel
     if not kernel.exists():
         raise SystemExit(f"missing kernel: {kernel}")
+    session_input_probe_elf = None
     if args.session_input_probe_elf is not None:
-        verify_session_input_probe_elf(args.session_input_probe_elf)
+        session_input_probe_elf = resolve_session_input_probe_elf(args.session_input_probe_elf)
+        verify_session_input_probe_elf(session_input_probe_elf)
 
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
@@ -669,7 +681,7 @@ def main() -> int:
                 parse_phase13_package_source_spec(source)
                 for source in args.phase13_package_source
             ],
-            args.session_input_probe_elf,
+            session_input_probe_elf,
         ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
