@@ -251,6 +251,12 @@ pub(crate) fn scancode_to_keycode(scancode: u8) -> Option<KeyCode> {
     }
 }
 
+#[cfg(any(
+    test,
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
+))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PhysicalScanSet {
     Unknown,
@@ -262,12 +268,24 @@ enum PhysicalScanSet {
 ///
 /// The decoder owns scan-set selection and release/extended-prefix
 /// suppression. Higher layers retain their own policy for accepted keys.
+#[cfg(any(
+    test,
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
+))]
 pub(crate) struct PhysicalKeyboardDecoder {
     mode: PhysicalScanSet,
     release_prefix: bool,
     extended_prefix: bool,
 }
 
+#[cfg(any(
+    test,
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
+))]
 impl PhysicalKeyboardDecoder {
     pub(crate) const fn new() -> Self {
         Self {
@@ -335,6 +353,12 @@ impl PhysicalKeyboardDecoder {
     }
 }
 
+#[cfg(any(
+    test,
+    feature = "physical-input-event-diagnostic",
+    feature = "physical-keyboard-console",
+    feature = "viewing-input-probe"
+))]
 fn decode_set2_key(byte: u8) -> Option<KeyCode> {
     match byte {
         0x1C => Some(KeyCode::A),

@@ -42,12 +42,6 @@ pub struct RelativeMotion {
     pub dy: i8,
 }
 
-impl RelativeMotion {
-    pub const fn is_zero(self) -> bool {
-        self.dx == 0 && self.dy == 0
-    }
-}
-
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputEventKind {
     KeyDown(KeyCode),
