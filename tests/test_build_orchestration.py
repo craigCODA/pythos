@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -41,6 +42,73 @@ def normalize(command: list[object]) -> list[str]:
 
 
 class BuildOrchestrationTest(unittest.TestCase):
+    def test_probe_elf_verification_precedes_packaging_and_failure_short_circuits(self) -> None:
+        module = load_script("build-image.py")
+
+        def invoke(
+            verifier_returncode: int, include_probe: bool
+        ) -> tuple[list[tuple[str, object]], str]:
+            events: list[tuple[str, object]] = []
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                loader = root / "BOOTX64.EFI"
+                kernel = root / "PYTHCORE.ELF"
+                probe = root / "session-input-probe.elf"
+                for path in (loader, kernel, probe):
+                    path.write_bytes(b"artifact")
+
+                def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                    events.append(("verify", normalize(command)))
+                    return subprocess.CompletedProcess(command, verifier_returncode)
+
+                def mkdir(*args: object, **_kwargs: object) -> None:
+                    events.append(("mkdir", None))
+
+                arguments = [
+                    str(module.__file__),
+                    "--loader",
+                    str(loader),
+                    "--kernel",
+                    str(kernel),
+                ]
+                if include_probe:
+                    arguments.extend(["--session-input-probe-elf", str(probe)])
+
+                with unittest.mock.patch.object(module, "ESP", root / "esp"), unittest.mock.patch.object(
+                    module, "build_default_init_pak", return_value=b"pak"
+                ), unittest.mock.patch.object(module.shutil, "copy2", side_effect=lambda *_args: events.append(("copy", None))), unittest.mock.patch.object(
+                    module, "write_binary_if_changed", side_effect=lambda *_args: events.append(("write", None))
+                ), unittest.mock.patch.object(Path, "mkdir", side_effect=mkdir), unittest.mock.patch.object(
+                    subprocess, "run", side_effect=verify
+                ), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    arguments,
+                ):
+                    if verifier_returncode == 0 or not include_probe:
+                        self.assertEqual(module.main(), 0)
+                    else:
+                        with self.assertRaises(SystemExit):
+                            module.main()
+            return events, str(probe).replace("\\", "/")
+
+        default, _default_probe = invoke(1, False)
+        self.assertTrue(all(kind != "verify" for kind, _value in default))
+
+        success, success_probe = invoke(0, True)
+        self.assertEqual(success[0][0], "verify")
+        self.assertEqual(
+            success[0][1][-2:],
+            ["--elf", success_probe],
+        )
+        self.assertTrue(all(kind != "verify" for kind, _value in success[1:]))
+        self.assertTrue(any(kind in {"mkdir", "copy", "write"} for kind, _value in success[1:]))
+
+        failure, failure_probe = invoke(1, True)
+        self.assertEqual(len(failure), 1)
+        self.assertEqual(failure[0][0], "verify")
+        self.assertEqual(failure[0][1][-2:], ["--elf", failure_probe])
+
     def test_session_input_probe_build_is_isolated_and_uses_its_own_linker(self) -> None:
         module = load_script("build-session-input-probe.py")
         calls: list[tuple[list[object], dict[str, object]]] = []

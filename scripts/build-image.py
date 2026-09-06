@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import importlib.util
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -614,6 +616,15 @@ def write_binary_if_changed(path: Path, content: bytes) -> None:
     path.write_bytes(content)
 
 
+def verify_session_input_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("session input probe ELF verification failed")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
@@ -634,6 +645,8 @@ def main() -> int:
     kernel = args.kernel
     if not kernel.exists():
         raise SystemExit(f"missing kernel: {kernel}")
+    if args.session_input_probe_elf is not None:
+        verify_session_input_probe_elf(args.session_input_probe_elf)
 
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"

@@ -67,10 +67,10 @@ impl EventSequenceValidator {
         if event.reserved0 != 0 || event.reserved1 != 0 {
             return Err(EventValidationError::Reserved);
         }
-        if let Some(next_sequence) = self.next_sequence {
-            if event.sequence != next_sequence {
-                return Err(EventValidationError::Sequence);
-            }
+        if let Some(next_sequence) = self.next_sequence
+            && event.sequence != next_sequence
+        {
+            return Err(EventValidationError::Sequence);
         }
         if !matches_expected(event, EXPECTED[self.next_ordinal]) {
             return Err(EventValidationError::Shape);
@@ -79,6 +79,12 @@ impl EventSequenceValidator {
         self.next_sequence = Some(event.sequence.wrapping_add(1));
         self.next_ordinal += 1;
         Ok(self.next_ordinal)
+    }
+}
+
+impl Default for EventSequenceValidator {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -135,24 +141,19 @@ mod tests {
     fn accepts_only_the_exact_five_event_delivery() {
         let mut validator = EventSequenceValidator::new();
         for (ordinal, expected) in EXPECTED.into_iter().enumerate() {
-            assert_eq!(validator.accept(event(41 + ordinal as u64, expected)), Ok(ordinal + 1));
+            assert_eq!(
+                validator.accept(event(41 + ordinal as u64, expected)),
+                Ok(ordinal + 1)
+            );
         }
     }
 
     #[test]
     fn rejects_event_shape_mutations() {
         let mutations = [
-            event(41, EXPECTED[2]),
             {
                 let mut value = event(41, EXPECTED[0]);
                 value.kind = SESSION_INPUT_KIND_MOUSE_BUTTON_STATE;
-                value
-            },
-            event(41, ExpectedEvent::motion(0, 0)),
-            event(41, ExpectedEvent::motion(7, 7)),
-            {
-                let mut value = event(41, EXPECTED[0]);
-                value.reserved0 = 1;
                 value
             },
             {
@@ -175,6 +176,29 @@ mod tests {
         for mutation in mutations {
             assert!(EventSequenceValidator::new().accept(mutation).is_err());
         }
+
+        let mut order = EventSequenceValidator::new();
+        assert_eq!(order.accept(event(41, EXPECTED[0])), Ok(1));
+        assert_eq!(
+            order.accept(event(42, EXPECTED[2])),
+            Err(EventValidationError::Shape)
+        );
+        assert_eq!(order.accept(event(42, EXPECTED[1])), Ok(2));
+
+        for motion in [ExpectedEvent::motion(0, 0), ExpectedEvent::motion(7, 7)] {
+            let mut validator = EventSequenceValidator::new();
+            for (ordinal, expected) in EXPECTED[..4].iter().copied().enumerate() {
+                assert_eq!(
+                    validator.accept(event(41 + ordinal as u64, expected)),
+                    Ok(ordinal + 1)
+                );
+            }
+            assert_eq!(
+                validator.accept(event(45, motion)),
+                Err(EventValidationError::Shape)
+            );
+            assert_eq!(validator.accept(event(45, EXPECTED[4])), Ok(5));
+        }
     }
 
     #[test]
@@ -189,7 +213,11 @@ mod tests {
 
         let mut completed = EventSequenceValidator::new();
         for (ordinal, expected) in EXPECTED.into_iter().enumerate() {
-            assert!(completed.accept(event(41 + ordinal as u64, expected)).is_ok());
+            assert!(
+                completed
+                    .accept(event(41 + ordinal as u64, expected))
+                    .is_ok()
+            );
         }
         assert!(completed.accept(event(46, EXPECTED[0])).is_err());
     }
@@ -199,7 +227,10 @@ mod tests {
         let mut validator = EventSequenceValidator::new();
         for (ordinal, expected) in EXPECTED.into_iter().enumerate() {
             assert_eq!(
-                validator.accept(event(u64::MAX.wrapping_sub(3).wrapping_add(ordinal as u64), expected)),
+                validator.accept(event(
+                    u64::MAX.wrapping_sub(3).wrapping_add(ordinal as u64),
+                    expected
+                )),
                 Ok(ordinal + 1)
             );
         }

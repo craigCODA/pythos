@@ -1,7 +1,7 @@
 use core::{arch::asm, mem::size_of};
 use pythos_shared::{
-    object_shell_abi::{NO_BYTE, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE},
     capability_abi::PackedCapability,
+    object_shell_abi::{NO_BYTE, SYSCALL_CONSOLE_READ_BYTE, SYSCALL_CONSOLE_WRITE_BYTE},
     session_input_abi::{SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1},
 };
 
@@ -36,13 +36,24 @@ fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) 
 
 pub fn write_str(console: PackedCapability, text: &str) {
     for byte in text.bytes() {
-        syscall5(SYSCALL_CONSOLE_WRITE_BYTE, console.raw(), u64::from(byte), 0, 0, 0);
+        syscall5(
+            SYSCALL_CONSOLE_WRITE_BYTE,
+            console.raw(),
+            u64::from(byte),
+            0,
+            0,
+            0,
+        );
     }
 }
 
 pub fn read_byte(console: PackedCapability) -> Option<u8> {
     let result = syscall5(SYSCALL_CONSOLE_READ_BYTE, console.raw(), 0, 0, 0, 0);
-    if result == NO_BYTE { None } else { Some(result as u8) }
+    if result == NO_BYTE {
+        None
+    } else {
+        Some(result as u8)
+    }
 }
 
 pub fn try_read(input: PackedCapability, output: &mut SessionInputEventV1) -> u64 {

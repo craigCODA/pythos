@@ -1,17 +1,19 @@
-#![cfg_attr(not(test), no_std)]
-#![cfg_attr(not(test), no_main)]
+#![cfg_attr(not(any(test, clippy)), no_std)]
+#![cfg_attr(not(any(test, clippy)), no_main)]
 
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 use core::panic::PanicInfo;
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 use pythos_shared::{
     capability_abi::PackedCapability,
-    session_input_abi::{SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT, SessionInputEventV1},
+    session_input_abi::{
+        SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT, SessionInputEventV1,
+    },
 };
-#[cfg(not(test))]
-use pythos_user_session_input_probe::{syscalls, EventSequenceValidator};
+#[cfg(not(any(test, clippy)))]
+use pythos_user_session_input_probe::{EventSequenceValidator, syscalls};
 
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
     let input = PackedCapability::from_raw(input_raw);
@@ -29,10 +31,16 @@ pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
     let mut forged_output = sentinel;
     let forged = PackedCapability::from_parts(input.slot(), input.generation() ^ 1);
     let forged_result = syscalls::try_read(forged, &mut forged_output);
-    if forged_result == SESSION_INPUT_RESULT_EVENT || forged_result == SESSION_INPUT_RESULT_EMPTY || forged_output != sentinel {
+    if forged_result == SESSION_INPUT_RESULT_EVENT
+        || forged_result == SESSION_INPUT_RESULT_EMPTY
+        || forged_output != sentinel
+    {
         error(console);
     }
-    syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:FORGED_DENIED_OUTPUT_UNCHANGED\r\n");
+    syscalls::write_str(
+        console,
+        "PYTHOS:SESSION_INPUT_PROBE:FORGED_DENIED_OUTPUT_UNCHANGED\r\n",
+    );
 
     let mut validator = EventSequenceValidator::new();
     while !validator.is_complete() {
@@ -40,11 +48,22 @@ pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
         match syscalls::try_read(input, &mut event) {
             SESSION_INPUT_RESULT_EMPTY => core::hint::spin_loop(),
             SESSION_INPUT_RESULT_EVENT => match validator.accept(event) {
-                Ok(1) => syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_1_SPACE\r\n"),
-                Ok(2) => syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_2_SPACE\r\n"),
-                Ok(3) => syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_3_BACKSPACE\r\n"),
-                Ok(4) => syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_4_BACKSPACE\r\n"),
-                Ok(5) => syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_5_RELATIVE_MOTION\r\n"),
+                Ok(1) => {
+                    syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_1_SPACE\r\n")
+                }
+                Ok(2) => {
+                    syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_2_SPACE\r\n")
+                }
+                Ok(3) => {
+                    syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_3_BACKSPACE\r\n")
+                }
+                Ok(4) => {
+                    syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:EVENT_4_BACKSPACE\r\n")
+                }
+                Ok(5) => syscalls::write_str(
+                    console,
+                    "PYTHOS:SESSION_INPUT_PROBE:EVENT_5_RELATIVE_MOTION_DX_7_DY_NEG_7\r\n",
+                ),
                 _ => error(console),
             },
             _ => error(console),
@@ -68,7 +87,7 @@ pub extern "C" fn _start(input_raw: u64, console_raw: u64) -> ! {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 fn sentinel_event() -> SessionInputEventV1 {
     SessionInputEventV1 {
         sequence: 0xA5A5_A5A5_A5A5_A5A5,
@@ -82,7 +101,7 @@ fn sentinel_event() -> SessionInputEventV1 {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 fn error(console: PackedCapability) -> ! {
     syscalls::write_str(console, "PYTHOS:SESSION_INPUT_PROBE:ERROR\r\n");
     loop {
@@ -90,7 +109,7 @@ fn error(console: PackedCapability) -> ! {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(any(test, clippy)))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     loop {
@@ -98,5 +117,5 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, clippy))]
 fn main() {}
