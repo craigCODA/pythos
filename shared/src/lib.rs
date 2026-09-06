@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod boot_protocol;
+pub mod capability_abi;
 pub mod evidence_log;
 pub mod init_bundle;
 pub mod init_pak;
@@ -15,6 +16,7 @@ pub mod pyth_runtime_abi;
 pub mod pyth_tig;
 pub mod qemu_exit;
 pub mod runtime_payload;
+pub mod session_input_abi;
 pub mod sha256;
 pub mod task_abi;
 pub mod user_program_manifest;
