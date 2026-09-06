@@ -49,6 +49,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-session-input-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
+
+[[package]]
 name = "pythos-user-shell"
 version = "0.1.0"
 dependencies = [

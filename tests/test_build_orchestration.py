@@ -4,6 +4,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 
@@ -40,6 +41,64 @@ def normalize(command: list[object]) -> list[str]:
 
 
 class BuildOrchestrationTest(unittest.TestCase):
+    def test_session_input_probe_build_is_isolated_and_uses_its_own_linker(self) -> None:
+        module = load_script("build-session-input-probe.py")
+        calls: list[tuple[list[object], dict[str, object]]] = []
+        module.subprocess.call = lambda command, **kwargs: calls.append((command, kwargs)) or 0
+
+        target_dir = ROOT / "target" / "probe-test"
+        with unittest.mock.patch.object(sys, "argv", [str(module.__file__), "--target-dir", str(target_dir)]):
+            self.assertEqual(module.main(), 0)
+
+        command, kwargs = calls[0]
+        normalized = normalize(command)
+        self.assertIn("--target-dir", normalized)
+        self.assertEqual(normalized[normalized.index("--target-dir") + 1], str(target_dir).replace("\\", "/"))
+        self.assertIn("session-input/linker.ld", str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/"))
+
+    def test_session_input_probe_opt_in_record_has_exact_identity_and_default_stays_unchanged(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "probe.elf"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"probe")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                opted_in = module.build_default_init_pak(session_input_probe_elf=probe)
+
+                expected_default = module.build_init_pak(
+                    module.build_init_bundle(
+                        [
+                            (module.INIT_BUNDLE_RUNTIME_TYPE, b"runtime"),
+                            (
+                                module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                                module.build_named_user_program(
+                                    b"shell.elf", module.SHELL_PRINCIPAL_ID, b"shell"
+                                ),
+                            ),
+                            (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\xCC\xF4")),
+                            (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\x0F\x0B\xF4")),
+                            (
+                                module.INIT_BUNDLE_USER_ELF_TYPE,
+                                module.build_user_elf_payload(
+                                    b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4"
+                                ),
+                            ),
+                            (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4")),
+                        ]
+                    )
+                )
+
+        self.assertEqual(default, expected_default)
+        self.assertNotIn(b"session-input-probe.elf", default)
+        self.assertIn(b"session-input-probe.elf", opted_in)
+        self.assertIn(module.SESSION_INPUT_PROBE_PRINCIPAL_ID.to_bytes(8, "little"), opted_in)
+        self.assertIn(module.digest64(b"probe").to_bytes(8, "little"), opted_in)
+
     def assert_shell_build_verify_before_packaging(
         self, commands: list[list[object]], packaging_script: str
     ) -> None:
