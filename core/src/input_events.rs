@@ -37,12 +37,15 @@ pub enum InputSource {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RelativeMotion {
+    pub dx: i8,
+    pub dy: i8,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InputEventKind {
     KeyDown(KeyCode),
-    PointerDelta {
-        dx: i8,
-        dy: i8,
-    },
+    RelativeMotion(RelativeMotion),
     /// A left mouse button state transition (ADR 0053).
     PointerButton {
         left: bool,
@@ -91,7 +94,7 @@ pub fn normalize(raw: RawInputEvent) -> Result<InputEvent, InputEventError> {
         }),
         RawInputEvent::MouseMoved { dx, dy } => Ok(InputEvent {
             source: InputSource::Mouse,
-            kind: InputEventKind::PointerDelta { dx, dy },
+            kind: InputEventKind::RelativeMotion(RelativeMotion { dx, dy }),
         }),
         RawInputEvent::MouseButton { left } => Ok(InputEvent {
             source: InputSource::Mouse,
@@ -148,7 +151,7 @@ pub fn run_self_test() -> Result<(), InputEventError> {
     if mouse_event
         != (InputEvent {
             source: InputSource::Mouse,
-            kind: InputEventKind::PointerDelta { dx: 5, dy: -3 },
+            kind: InputEventKind::RelativeMotion(RelativeMotion { dx: 5, dy: -3 }),
         })
     {
         return Err(InputEventError::BadNormalization);
@@ -164,7 +167,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn raw_driver_events_normalize_to_typed_input_events() {
+    fn raw_keyboard_event_normalizes_to_key_down() {
         assert_eq!(
             normalize(RawInputEvent::KeyPressed {
                 scancode: 0x1E,
@@ -175,11 +178,15 @@ mod tests {
                 kind: InputEventKind::KeyDown(KeyCode::A),
             })
         );
+    }
+
+    #[test]
+    fn raw_mouse_motion_normalizes_without_pointer_semantics() {
         assert_eq!(
             normalize(RawInputEvent::MouseMoved { dx: 5, dy: -3 }),
             Ok(InputEvent {
                 source: InputSource::Mouse,
-                kind: InputEventKind::PointerDelta { dx: 5, dy: -3 },
+                kind: InputEventKind::RelativeMotion(RelativeMotion { dx: 5, dy: -3 }),
             })
         );
     }
@@ -208,7 +215,7 @@ mod tests {
             ),
             Ok(InputEvent {
                 source: InputSource::Mouse,
-                kind: InputEventKind::PointerDelta { dx: 1, dy: 1 },
+                kind: InputEventKind::RelativeMotion(RelativeMotion { dx: 1, dy: 1 }),
             })
         );
     }

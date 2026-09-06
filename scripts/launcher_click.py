@@ -160,6 +160,16 @@ def type_physical_input_event_sequence(
     )
 
 
+def type_cursor_activation_sequence(
+    qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    press_qcode_keys(
+        ["spc", "spc", "backspace", "backspace"],
+        qmp_port=qmp_port,
+        timeout=timeout,
+    )
+
+
 def click_launcher_tile(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:
     """Move the emulated PS/2 mouse into the launcher tile and click it.
 

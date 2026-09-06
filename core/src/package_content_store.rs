@@ -437,7 +437,7 @@ impl<'a> PackageContentStore<'a> {
         self.persisted_device = source.persisted_device;
     }
 
-    pub fn from_validated_candidate_registry(
+    pub fn reconstruct_from_validated_candidate_registry(
         &self,
         registry: &PackageRegistry,
         validated_content: PackageContentCommit,

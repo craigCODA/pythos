@@ -8,6 +8,11 @@
 use crate::font;
 #[cfg(any(test, feature = "physical-input-event-diagnostic"))]
 use crate::input_drivers::KeyCode;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+use crate::{
+    viewing::{FocusMarkPosition, ViewingSnapshot},
+    viewing_input_probe::ViewingInputPresentationStatus,
+};
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
     PythFramebufferInfo,
@@ -76,6 +81,24 @@ const PROBE_PANEL_BODY: Rgb = Rgb {
     green: 245,
     blue: 235,
 };
+#[cfg(any(test, feature = "viewing-input-probe"))]
+const FOCUS_MARK_COLOR: Rgb = Rgb {
+    red: 255,
+    green: 96,
+    blue: 208,
+};
+#[cfg(any(test, feature = "viewing-input-probe"))]
+const VIEWING_INPUT_BACKGROUND: Rgb = Rgb {
+    red: 0,
+    green: 0,
+    blue: 0,
+};
+#[cfg(any(test, feature = "viewing-input-probe"))]
+const FOCUS_MARK_HALF_SPAN: u64 = 12;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+const FOCUS_MARK_ARM_LENGTH: u64 = 6;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+const FOCUS_MARK_THICKNESS: u64 = 2;
 // Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
 // is a dark vertical gradient through these stops so the wake text and sigil
 // read against a cinematic backdrop rather than a flat fill.
@@ -386,6 +409,41 @@ pub fn render_hardware_probe_lines(
     }
 
     Ok(())
+}
+
+/// Render the opt-in Viewing-input projection from its read-only snapshot.
+/// Input decoding and route selection have already occurred before this
+/// boundary; this function only clears and projects the supplied state.
+#[cfg(any(test, feature = "viewing-input-probe"))]
+pub(crate) fn render_viewing_input_probe(
+    framebuffer: &PythFramebufferInfo,
+    snapshot: ViewingSnapshot,
+    status: ViewingInputPresentationStatus,
+) -> Result<(), ()> {
+    let surface = Surface::new(framebuffer)?;
+    surface.clear(VIEWING_INPUT_BACKGROUND);
+    surface.draw_text(
+        16,
+        2,
+        1,
+        viewing_input_status_text(status),
+        PROBE_PANEL_BODY,
+    )?;
+    if let Some(position) = snapshot.focus_mark {
+        surface.draw_focus_mark(position);
+    }
+    Ok(())
+}
+
+#[cfg(any(test, feature = "viewing-input-probe"))]
+fn viewing_input_status_text(status: ViewingInputPresentationStatus) -> &'static str {
+    match status {
+        ViewingInputPresentationStatus::WaitingForTraversal => "wait move",
+        ViewingInputPresentationStatus::WaitingForActivation => "wait activate",
+        ViewingInputPresentationStatus::Active => "focus active",
+        ViewingInputPresentationStatus::Complete => "focus complete",
+        ViewingInputPresentationStatus::Failed => "focus failed",
+    }
 }
 
 /// Render the opt-in normal boot diagnostic screen used on serial-less
@@ -961,6 +1019,51 @@ impl Surface {
         }
     }
 
+    #[cfg(any(test, feature = "viewing-input-probe"))]
+    fn draw_focus_mark(&self, position: FocusMarkPosition) {
+        let x = i64::from(position.x);
+        let y = i64::from(position.y);
+        let half_span = FOCUS_MARK_HALF_SPAN as i64;
+        let arm_length = FOCUS_MARK_ARM_LENGTH as i64;
+        let thickness = FOCUS_MARK_THICKNESS as i64;
+        let left = x - half_span;
+        let top = y - half_span;
+        let right = x + half_span;
+        let bottom = y + half_span;
+        let right_arm_start = right + 1 - arm_length;
+        let bottom_arm_start = bottom + 1 - arm_length;
+        let right_edge_start = right + 1 - thickness;
+        let bottom_edge_start = bottom + 1 - thickness;
+
+        self.fill_focus_rect(left, top, arm_length, thickness);
+        self.fill_focus_rect(left, top, thickness, arm_length);
+        self.fill_focus_rect(right_arm_start, top, arm_length, thickness);
+        self.fill_focus_rect(right_edge_start, top, thickness, arm_length);
+        self.fill_focus_rect(left, bottom_edge_start, arm_length, thickness);
+        self.fill_focus_rect(left, bottom_arm_start, thickness, arm_length);
+        self.fill_focus_rect(right_arm_start, bottom_edge_start, arm_length, thickness);
+        self.fill_focus_rect(right_edge_start, bottom_arm_start, thickness, arm_length);
+    }
+
+    #[cfg(any(test, feature = "viewing-input-probe"))]
+    fn fill_focus_rect(&self, x: i64, y: i64, width: i64, height: i64) {
+        let right = x.saturating_add(width).min(self.width as i64);
+        let bottom = y.saturating_add(height).min(self.height as i64);
+        let left = x.max(0);
+        let top = y.max(0);
+        if left >= right || top >= bottom {
+            return;
+        }
+
+        self.fill_rect(
+            left as u64,
+            top as u64,
+            (right - left) as u64,
+            (bottom - top) as u64,
+            FOCUS_MARK_COLOR,
+        );
+    }
+
     /// Blit the fixed cursor-arrow sprite at `(x, y)` (its top-left corner).
     /// Only set bits are painted — unset bits are transparent, leaving
     /// whatever was already drawn underneath.
@@ -1079,6 +1182,107 @@ mod tests {
 
     fn pixel_set(buffer: &[u32], width: u32, x: u64, y: u64) -> bool {
         buffer[(y * u64::from(width) + x) as usize] != 0
+    }
+
+    fn active_viewing_snapshot(
+        width: u32,
+        height: u32,
+        x: u32,
+        y: u32,
+    ) -> crate::viewing::ViewingSnapshot {
+        crate::viewing::ViewingSnapshot {
+            extent: crate::viewing::ViewingExtent::new(width, height).unwrap(),
+            focus_mark: Some(crate::viewing::FocusMarkPosition { x, y }),
+        }
+    }
+
+    fn inactive_viewing_snapshot(width: u32, height: u32) -> crate::viewing::ViewingSnapshot {
+        crate::viewing::ViewingSnapshot {
+            extent: crate::viewing::ViewingExtent::new(width, height).unwrap(),
+            focus_mark: None,
+        }
+    }
+
+    fn focus_color_pixel_count(buffer: &[u32]) -> usize {
+        let focus_color = encode_rgb(&test_framebuffer(1, 1).1, FOCUS_MARK_COLOR);
+        buffer.iter().filter(|&&pixel| pixel == focus_color).count()
+    }
+
+    #[test]
+    fn focus_mark_draws_four_separated_corners_with_empty_center() {
+        let (buffer, info) = test_framebuffer(64, 64);
+        let snapshot = active_viewing_snapshot(64, 64, 32, 32);
+        render_viewing_input_probe(
+            &info,
+            snapshot,
+            crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
+        )
+        .unwrap();
+
+        assert!(pixel_set(&buffer, 64, 20, 20));
+        assert!(pixel_set(&buffer, 64, 44, 20));
+        assert!(pixel_set(&buffer, 64, 20, 44));
+        assert!(pixel_set(&buffer, 64, 44, 44));
+        assert!(!pixel_set(&buffer, 64, 32, 32));
+        assert!(!pixel_set(&buffer, 64, 32, 20));
+        assert!(!pixel_set(&buffer, 64, 20, 32));
+    }
+
+    #[test]
+    fn inactive_viewing_snapshot_draws_no_focus_mark_pixels() {
+        let (buffer, info) = test_framebuffer(64, 64);
+        render_viewing_input_probe(
+            &info,
+            inactive_viewing_snapshot(64, 64),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForTraversal,
+        )
+        .unwrap();
+
+        assert!(!pixel_set(&buffer, 64, 32, 32));
+        assert_eq!(focus_color_pixel_count(&buffer), 0);
+    }
+
+    #[test]
+    fn focus_mark_clips_at_the_top_left_edge() {
+        let (buffer, info) = test_framebuffer(16, 16);
+        render_viewing_input_probe(
+            &info,
+            active_viewing_snapshot(16, 16, 0, 0),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
+        )
+        .unwrap();
+
+        assert!(pixel_set(&buffer, 16, 12, 12));
+        assert!(!pixel_set(&buffer, 16, 0, 0));
+        assert_eq!(focus_color_pixel_count(&buffer), 20);
+    }
+
+    #[test]
+    fn focus_mark_clips_at_the_bottom_right_edge() {
+        let (buffer, info) = test_framebuffer(16, 16);
+        render_viewing_input_probe(
+            &info,
+            active_viewing_snapshot(16, 16, 15, 15),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
+        )
+        .unwrap();
+
+        assert!(pixel_set(&buffer, 16, 3, 3));
+        assert!(!pixel_set(&buffer, 16, 15, 15));
+        assert_eq!(focus_color_pixel_count(&buffer), 20);
+    }
+
+    #[test]
+    fn focus_mark_uses_only_the_eight_corner_arms() {
+        let (buffer, info) = test_framebuffer(64, 64);
+        render_viewing_input_probe(
+            &info,
+            active_viewing_snapshot(64, 64, 32, 32),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::Active,
+        )
+        .unwrap();
+
+        assert_eq!(focus_color_pixel_count(&buffer), 80);
     }
 
     #[test]

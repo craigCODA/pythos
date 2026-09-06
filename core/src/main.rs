@@ -163,6 +163,8 @@ mod serial;
 mod service_identity;
 mod service_manager;
 mod service_runtimes;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+mod session_controls;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
@@ -197,6 +199,10 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+mod viewing;
+#[cfg(any(test, feature = "viewing-input-probe"))]
+mod viewing_input_probe;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;

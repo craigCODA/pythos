@@ -343,13 +343,13 @@ pub fn write_object_service_checkpoint(
             snapshot.map_or(1, |snapshot| snapshot.generation + 1)
         })?;
         let slot = slot_for_generation(next_generation);
-        return with_slot_scratch(|image| {
+        with_slot_scratch(|image| {
             encode_slot_into_with_generation(image, slot, snapshot, next_generation, true);
             write_slot_image(device, slot, image)?;
             read_slot_image_into(device, slot, image)?;
             decode_slot(image)?;
             Ok(())
-        });
+        })
     }
 
     #[cfg(test)]
@@ -373,7 +373,7 @@ pub fn write_object_service_candidate_checkpoint(
 ) -> Result<ObjectServiceCandidateCheckpoint, GeneralStoragePersistenceError> {
     #[cfg(not(test))]
     {
-        return with_slot_scratch(|image| {
+        with_slot_scratch(|image| {
             let slot = candidate_slot_for_generation(snapshot.generation);
             encode_slot_into_with_generation(image, slot, snapshot, snapshot.generation, true);
             write_slot_image(device, slot, image)?;
@@ -383,7 +383,7 @@ pub fn write_object_service_candidate_checkpoint(
                 identity,
                 generation: identity.generation,
             })
-        });
+        })
     }
 
     #[cfg(test)]
@@ -417,7 +417,7 @@ pub fn read_object_service_candidate_checkpoint_into(
 ) -> Result<(), GeneralStoragePersistenceError> {
     #[cfg(not(test))]
     {
-        return with_slot_scratch(|image| {
+        with_slot_scratch(|image| {
             read_slot_image_into(
                 device,
                 candidate_slot_for_generation(expected.generation),
@@ -438,7 +438,7 @@ pub fn read_object_service_candidate_checkpoint_into(
                 return Err(GeneralStoragePersistenceError::BadSnapshot);
             }
             Ok(())
-        });
+        })
     }
 
     #[cfg(test)]

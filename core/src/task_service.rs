@@ -136,6 +136,8 @@ impl<'a> TaskService<'a> {
         Ok(TaskCreateResult { task_id })
     }
 
+    // The task-policy service boundary keeps its explicit typed inputs.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_proposal(
         &mut self,
         caller: ActiveUserProcess,
@@ -154,13 +156,15 @@ impl<'a> TaskService<'a> {
             caller,
             proposal_record(
                 proposal_id,
-                PROPOSAL_STATUS_PENDING,
-                kind,
-                target_task_id,
-                candidate_task_id,
-                score,
-                stable_hash(title),
-                stable_hash(reason),
+                StoredProposal {
+                    status: PROPOSAL_STATUS_PENDING,
+                    kind,
+                    target_task_id,
+                    candidate_task_id,
+                    score,
+                    title_hash: stable_hash(title),
+                    reason_hash: stable_hash(reason),
+                },
             )?,
         )?;
         append_event_on(
@@ -245,13 +249,10 @@ impl<'a> TaskService<'a> {
             caller,
             proposal_record(
                 proposal_id,
-                PROPOSAL_STATUS_APPROVED,
-                proposal.kind,
-                proposal.target_task_id,
-                proposal.candidate_task_id,
-                proposal.score,
-                proposal.title_hash,
-                proposal.reason_hash,
+                StoredProposal {
+                    status: PROPOSAL_STATUS_APPROVED,
+                    ..proposal
+                },
             )?,
         )?;
         append_event_on(
@@ -362,13 +363,10 @@ impl<'a> TaskService<'a> {
             caller,
             proposal_record(
                 proposal_id,
-                PROPOSAL_STATUS_REJECTED,
-                proposal.kind,
-                proposal.target_task_id,
-                proposal.candidate_task_id,
-                proposal.score,
-                proposal.title_hash,
-                proposal.reason_hash,
+                StoredProposal {
+                    status: PROPOSAL_STATUS_REJECTED,
+                    ..proposal
+                },
             )?,
         )?;
         append_event_on(
@@ -742,27 +740,27 @@ fn task_record(
 
 fn proposal_record(
     proposal_id: u64,
-    status: u16,
-    kind: TaskProposalKind,
-    target_task_id: u64,
-    candidate_task_id: u64,
-    score: u64,
-    title_hash: u64,
-    reason_hash: u64,
+    proposal: StoredProposal,
 ) -> Result<TypedObjectRecord, TaskServiceError> {
     let mut meta = [0; 16];
-    write_u16(&mut meta, 0, status);
-    write_u16(&mut meta, 2, kind.code());
-    write_u64(&mut meta, 8, score);
+    write_u16(&mut meta, 0, proposal.status);
+    write_u16(&mut meta, 2, proposal.kind.code());
+    write_u64(&mut meta, 8, proposal.score);
     let mut hashes = [0; 16];
-    write_u64(&mut hashes, 0, title_hash);
-    write_u64(&mut hashes, 8, reason_hash);
+    write_u64(&mut hashes, 0, proposal.title_hash);
+    write_u64(&mut hashes, 8, proposal.reason_hash);
 
     let mut record =
         TypedObjectRecord::new(ObjectId::new(proposal_id), ObjectKind::TaskProposal, 1);
     record.push_field(TypedObjectField::new(FIELD_PROPOSAL_META, 1, &meta)?)?;
-    record.push_field(u64_field(FIELD_PROPOSAL_TARGET_TASK, target_task_id)?)?;
-    record.push_field(u64_field(FIELD_PROPOSAL_CANDIDATE_TASK, candidate_task_id)?)?;
+    record.push_field(u64_field(
+        FIELD_PROPOSAL_TARGET_TASK,
+        proposal.target_task_id,
+    )?)?;
+    record.push_field(u64_field(
+        FIELD_PROPOSAL_CANDIDATE_TASK,
+        proposal.candidate_task_id,
+    )?)?;
     record.push_field(TypedObjectField::new(
         FIELD_PROPOSAL_TITLE_REASON_HASH,
         1,

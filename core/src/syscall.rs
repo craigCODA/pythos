@@ -1052,7 +1052,7 @@ fn dispatch_task_request_with_raw_buffers(
         return Ok(bad_task_response());
     }
     let input = checked_task_input(copy_map, &request)?;
-    let mut context_output = if request.operation == OP_READ_CONTEXT_SUMMARY {
+    let context_output = if request.operation == OP_READ_CONTEXT_SUMMARY {
         if request.output_len < size_of::<TaskContextSummary>() as u64 {
             return Ok(task_buffer_too_small_response());
         }
@@ -1060,7 +1060,7 @@ fn dispatch_task_request_with_raw_buffers(
     } else {
         None
     };
-    let mut proposal_output = if request.operation == OP_LIST_PROPOSALS {
+    let proposal_output = if request.operation == OP_LIST_PROPOSALS {
         if request.output_len
             < size_of::<[TaskProposalListEntry; MAX_TASK_PROPOSAL_RESULTS]>() as u64
         {
@@ -1077,8 +1077,8 @@ fn dispatch_task_request_with_raw_buffers(
             caller,
             request,
             input,
-            context_output.as_deref_mut(),
-            proposal_output.as_deref_mut(),
+            context_output,
+            proposal_output,
         )
     })
     .map_err(SyscallError::from)?;
@@ -2013,13 +2013,12 @@ fn dispatch_object_request_to_service(
                         output[count] = entries[count];
                         count += 1;
                     }
-                    let response = ObjectShellResponse {
+                    ObjectShellResponse {
                         status: STATUS_OK,
                         object_kind: request.object_kind,
                         bytes_written: (count * size_of::<ObjectListEntry>()) as u64,
                         ..empty_response()
-                    };
-                    response
+                    }
                 }
                 Err(error) => object_error_response(caller, request, error),
             }
@@ -2032,7 +2031,7 @@ fn dispatch_object_request_to_service(
             Ok(inspection) => {
                 let field_bytes = inspection.field_bytes(FIELD_TEXT).unwrap_or([0; 16]);
                 let bytes_written = u64::from(inspection.field_value_len(FIELD_TEXT).unwrap_or(0));
-                let response = ObjectShellResponse {
+                ObjectShellResponse {
                     status: STATUS_OK,
                     object_kind: OBJECT_KIND_NOTE,
                     field_id: FIELD_TEXT,
@@ -2041,8 +2040,7 @@ fn dispatch_object_request_to_service(
                     bytes_written,
                     field_bytes,
                     ..empty_response()
-                };
-                response
+                }
             }
             Err(error) => object_error_response(caller, request, error),
         },
@@ -2053,29 +2051,23 @@ fn dispatch_object_request_to_service(
             request.field_id,
             input,
         ) {
-            Ok(revision) => {
-                let response = ObjectShellResponse {
-                    status: STATUS_OK,
-                    field_id: request.field_id,
-                    object_id: request.object_id,
-                    revision,
-                    ..empty_response()
-                };
-                response
-            }
+            Ok(revision) => ObjectShellResponse {
+                status: STATUS_OK,
+                field_id: request.field_id,
+                object_id: request.object_id,
+                revision,
+                ..empty_response()
+            },
             Err(error) => object_error_response(caller, request, error),
         },
         OP_GET_HISTORY => {
             match service.history(caller, request.authority, ObjectId::new(request.object_id)) {
-                Ok(revision_count) => {
-                    let response = ObjectShellResponse {
-                        status: STATUS_OK,
-                        object_id: request.object_id,
-                        revision_count,
-                        ..empty_response()
-                    };
-                    response
-                }
+                Ok(revision_count) => ObjectShellResponse {
+                    status: STATUS_OK,
+                    object_id: request.object_id,
+                    revision_count,
+                    ..empty_response()
+                },
                 Err(error) => object_error_response(caller, request, error),
             }
         }

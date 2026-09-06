@@ -261,15 +261,14 @@ pub fn with_object_service<R>(
 pub fn with_task_service<R>(
     f: impl FnOnce(&mut TaskService<'_>) -> R,
 ) -> Result<R, RetainedServiceError> {
-    let result = with_object_service(|objects| {
+    with_object_service(|objects| {
         // SAFETY: task authority is initialized by the same successful
         // initialize_object_service path that made with_object_service succeed.
         let authority = unsafe { (*TASK_AUTHORITY.0.get()).assume_init_mut() };
         let mut tasks =
             TaskService::new(objects, authority).map_err(RetainedServiceError::TaskService)?;
         Ok(f(&mut tasks))
-    })?;
-    result
+    })?
 }
 
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]

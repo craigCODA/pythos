@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from phase13_cargo_behavior import run_exact_core_test
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_SRC = ROOT / "core" / "src"
@@ -9,6 +11,10 @@ PRODUCTION_CFG = 'all(not(test), not(feature = "verify"), not(feature = "hardwar
 
 def source(path: str) -> str:
     return (CORE_SRC / path).read_text(encoding="utf-8")
+
+
+def compact(text: str) -> str:
+    return "".join(text.split())
 
 
 def cfg_block_before_mod(module_name: str) -> str:
@@ -48,19 +54,20 @@ class Phase13PackageContextProductionWiringTests(unittest.TestCase):
             with self.subTest(module=module):
                 self.assertIn(PRODUCTION_CFG, cfg_block_before_mod(module))
 
-    def test_non_verify_package_context_provider_uses_retained_service(self):
-        """Break caught: ordinary production provider is a Denied stub."""
+    def test_package_context_syscall_uses_retained_service_behavior(self):
         text = source("syscall.rs")
+        provider_start = text.index("fn package_runtime_schema_binding(")
+        cfg_start = text.rfind("#[cfg", 0, provider_start)
+        provider_end = text.index("\n#[cfg(", provider_start)
+        production_provider = text[cfg_start:provider_end]
 
-        self.assertIn(PRODUCTION_CFG, text)
-        self.assertIn("with_retained_package_service_for_phase13", text)
-        self.assertNotIn(
-            "not(feature = \"verify\"),\n    not(feature = \"phase13-package-test\")\n))]\nfn package_runtime_schema_binding",
-            text,
-        )
+        self.assertIn(compact(PRODUCTION_CFG), compact(production_provider))
+        self.assertEqual(production_provider.count("fn package_runtime_schema_binding("), 1)
         self.assertIn(
-            'feature = "hardware-probe",\n        not(feature = "phase13-package-test")',
-            text,
+            "with_retained_package_service_for_phase13", production_provider
+        )
+        run_exact_core_test(
+            "syscall::tests::package_context_syscall_uses_phase13_retained_package_service"
         )
 
     def test_normal_boot_initializes_retained_package_service(self):

@@ -3,7 +3,9 @@
 //! This module formats already-collected USB controller and xHCI register
 //! snapshots into fixed ASCII lines for machines without serial capture.
 
-#[cfg(feature = "usb-xhci-probe")]
+#[cfg(any(test, feature = "viewing-input-probe"))]
+use crate::fb_debug;
+#[cfg(any(test, feature = "usb-xhci-probe"))]
 use crate::framebuffer;
 #[cfg(any(test, feature = "usb-xhci-command-probe"))]
 use crate::usb_xhci_driver::{
@@ -15,7 +17,7 @@ use crate::usb_xhci_probe::{
     UsbController, UsbControllerKind, UsbMemoryBar, UsbProbeReport, XhciPortChange,
     XhciPortStatusSnapshot, XhciProbeError, XhciRegisterSnapshot,
 };
-#[cfg(feature = "usb-xhci-probe")]
+#[cfg(any(test, feature = "usb-xhci-probe"))]
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
 const PROBE_SCREEN_MAX_LINES: usize = 14;
@@ -722,6 +724,8 @@ pub enum UsbBootMouseRecurringFailure {
     Driver(crate::usb_xhci_driver::XhciDriverError),
     Decode(crate::input_drivers::InputDriverError),
     TerminalInvariant,
+    #[cfg(any(test, feature = "viewing-input-probe"))]
+    Viewing(crate::viewing_input_probe::ViewingInputIntegrationFailure),
 }
 
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
@@ -809,7 +813,11 @@ pub fn build_boot_mouse_recurring_error_screen(
 ) -> ProbeScreen {
     let mut screen = ProbeScreen::new();
     push_text(&mut screen, "PythOS");
-    push_text(&mut screen, "xhci input error");
+    match failure {
+        #[cfg(any(test, feature = "viewing-input-probe"))]
+        UsbBootMouseRecurringFailure::Viewing(_) => push_text(&mut screen, "viewing input error"),
+        _ => push_text(&mut screen, "xhci input error"),
+    }
     push_text(&mut screen, "no disk writes");
     if let Some(controller) = select_controller(report) {
         push_bdf(&mut screen, controller);
@@ -840,8 +848,41 @@ pub fn build_boot_mouse_recurring_error_screen(
         UsbBootMouseRecurringFailure::TerminalInvariant => {
             push_text(&mut screen, "terminal invariant")
         }
+        #[cfg(any(test, feature = "viewing-input-probe"))]
+        UsbBootMouseRecurringFailure::Viewing(failure) => {
+            push_viewing_input_failure(&mut screen, failure)
+        }
     }
     screen
+}
+
+#[cfg(any(test, feature = "viewing-input-probe"))]
+fn push_viewing_input_failure(
+    screen: &mut ProbeScreen,
+    failure: crate::viewing_input_probe::ViewingInputIntegrationFailure,
+) {
+    use crate::viewing_input_probe::{ViewingInputIntegrationFailure, ViewingInputProbeError};
+
+    let text = match failure {
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::EmptyExtent) => {
+            "viewing extent"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::InputNormalization) => {
+            "input normalization"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::WrongRoute) => {
+            "viewing route"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingTraversalMotion) => {
+            "traversal missing"
+        }
+        ViewingInputIntegrationFailure::Probe(ViewingInputProbeError::MissingCursorMotion) => {
+            "cursor motion missing"
+        }
+        ViewingInputIntegrationFailure::KeyboardUnavailable => "keyboard unavailable",
+        ViewingInputIntegrationFailure::Presentation => "presentation failed",
+    };
+    push_text(screen, text);
 }
 
 #[cfg(any(test, feature = "usb-xhci-boot-mouse-recurring-probe"))]
@@ -1169,6 +1210,37 @@ pub fn render_boot_mouse_recurring_probe(
     render_screen(framebuffer_info, screen)
 }
 
+/// Preserve the framebuffer-identity transition while making the completed
+/// Viewing projection the final visible success frame.
+#[cfg(any(test, feature = "viewing-input-probe"))]
+pub fn render_viewing_input_success_frame(
+    framebuffer_info: &PythFramebufferInfo,
+    identity_color: (u8, u8, u8),
+    snapshot: crate::viewing::ViewingSnapshot,
+) -> Result<(), ()> {
+    fb_debug::fill(framebuffer_info, identity_color);
+    framebuffer::render_viewing_input_probe(
+        framebuffer_info,
+        snapshot,
+        crate::viewing_input_probe::ViewingInputPresentationStatus::Complete,
+    )
+}
+
+/// Render the visible one-way activation wait before the readiness marker is
+/// emitted. A render failure remains a typed higher-layer integration failure.
+#[cfg(any(test, feature = "viewing-input-probe"))]
+pub fn render_viewing_input_activation_ready_frame(
+    framebuffer_info: &PythFramebufferInfo,
+    snapshot: crate::viewing::ViewingSnapshot,
+) -> Result<(), crate::viewing_input_probe::ViewingInputIntegrationFailure> {
+    framebuffer::render_viewing_input_probe(
+        framebuffer_info,
+        snapshot,
+        crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation,
+    )
+    .map_err(|_| crate::viewing_input_probe::ViewingInputIntegrationFailure::Presentation)
+}
+
 #[cfg(feature = "usb-xhci-boot-mouse-recurring-probe")]
 pub fn render_boot_mouse_recurring_error(
     framebuffer_info: &PythFramebufferInfo,
@@ -1442,6 +1514,106 @@ fn bool_digit(value: bool) -> u8 {
 mod tests {
     use super::*;
     use crate::font;
+    use pythos_shared::boot_protocol::PythFramebufferInfo;
+
+    fn test_framebuffer(width: u32, height: u32) -> (Vec<u32>, PythFramebufferInfo) {
+        let len = (width as usize) * (height as usize);
+        let mut buffer = vec![0u32; len];
+        let info = PythFramebufferInfo {
+            physical_base: 0x1000_0000,
+            mapped_virtual_base: buffer.as_mut_ptr() as u64,
+            byte_length: (len as u64) * 4,
+            width,
+            height,
+            pixels_per_scanline: width,
+            pixel_format: pythos_shared::boot_protocol::PIXEL_FORMAT_RGB_RESERVED_8BIT,
+            red_mask: 0,
+            green_mask: 0,
+            blue_mask: 0,
+            reserved_mask: 0,
+        };
+        (buffer, info)
+    }
+
+    fn traversal_waiting_snapshot(width: u32, height: u32) -> crate::viewing::ViewingSnapshot {
+        let mut probe = crate::viewing_input_probe::ViewingInputProbe::new(width, height).unwrap();
+        let route = probe
+            .observe_mouse_report(crate::input_drivers::UsbBootMouseReport {
+                buttons: 0,
+                dx: 1,
+                dy: -1,
+                auxiliary: Some(0),
+            })
+            .unwrap();
+        assert!(matches!(
+            route,
+            Some(crate::viewing::MotionRoute::Traversal(_))
+        ));
+        assert_eq!(
+            probe.presentation_status(),
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation
+        );
+        probe.snapshot()
+    }
+
+    #[test]
+    fn viewing_activation_ready_frame_requests_waiting_for_activation() {
+        let (rendered, framebuffer) = test_framebuffer(128, 32);
+        let (expected, expected_framebuffer) = test_framebuffer(128, 32);
+        let (wrong_status, wrong_status_framebuffer) = test_framebuffer(128, 32);
+        let snapshot = traversal_waiting_snapshot(128, 32);
+
+        render_viewing_input_activation_ready_frame(&framebuffer, snapshot).unwrap();
+        framebuffer::render_viewing_input_probe(
+            &expected_framebuffer,
+            snapshot,
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForActivation,
+        )
+        .unwrap();
+        framebuffer::render_viewing_input_probe(
+            &wrong_status_framebuffer,
+            snapshot,
+            crate::viewing_input_probe::ViewingInputPresentationStatus::WaitingForTraversal,
+        )
+        .unwrap();
+
+        assert_eq!(rendered, expected);
+        assert_ne!(rendered, wrong_status);
+    }
+
+    #[test]
+    fn viewing_activation_ready_frame_maps_invalid_framebuffer_to_presentation_failure() {
+        let (_buffer, mut framebuffer) = test_framebuffer(128, 32);
+        framebuffer.mapped_virtual_base = 0;
+        let snapshot = traversal_waiting_snapshot(128, 32);
+
+        assert_eq!(
+            render_viewing_input_activation_ready_frame(&framebuffer, snapshot),
+            Err(crate::viewing_input_probe::ViewingInputIntegrationFailure::Presentation)
+        );
+    }
+
+    #[test]
+    fn viewing_success_frame_keeps_final_focus_mark_visible_after_identity_fill() {
+        let (buffer, framebuffer) = test_framebuffer(64, 64);
+        let snapshot = crate::viewing::ViewingSnapshot {
+            extent: crate::viewing::ViewingExtent::new(64, 64).unwrap(),
+            focus_mark: Some(crate::viewing::FocusMarkPosition { x: 32, y: 32 }),
+        };
+
+        render_viewing_input_success_frame(
+            &framebuffer,
+            crate::fb_debug::COLOR_HARDWARE_PROBE_EMMC_FOUND,
+            snapshot,
+        )
+        .unwrap();
+
+        let pixel = |x: usize, y: usize| buffer[y * 64 + x];
+        assert_ne!(pixel(20, 20), pixel(32, 32));
+        assert_eq!(pixel(20, 20), pixel(44, 20));
+        assert_eq!(pixel(20, 20), pixel(20, 44));
+        assert_eq!(pixel(20, 20), pixel(44, 44));
+    }
 
     fn recurring_endpoint_configuration() -> XhciEndpointConfigurationProbeResult {
         XhciEndpointConfigurationProbeResult {
@@ -1674,6 +1846,9 @@ mod tests {
                 crate::input_drivers::InputDriverError::BadUsbBootMouseReport,
             ),
             UsbBootMouseRecurringFailure::TerminalInvariant,
+            UsbBootMouseRecurringFailure::Viewing(
+                crate::viewing_input_probe::ViewingInputIntegrationFailure::KeyboardUnavailable,
+            ),
         ];
         for failure in failures {
             assert!(!boot_mouse_recurring_terminal_ready(
@@ -1681,6 +1856,58 @@ mod tests {
                 Some(failure),
                 true,
             ));
+        }
+    }
+
+    #[test]
+    fn recurring_error_screen_identifies_viewing_failure_as_higher_layer() {
+        let mut report = UsbProbeReport::new();
+        assert!(report.record(controller(UsbControllerKind::Xhci, 0, 16)));
+        let port_status = XhciPortStatusSnapshot {
+            max_ports: 8,
+            captured_ports: 0,
+            port_register_base: 0x440,
+            extended_capability_dword_offset: 8,
+            extended_capability_byte_offset: 0x20,
+            legacy_support: None,
+            ports: [None; crate::usb_xhci_probe::XHCI_PORT_SNAPSHOT_LIMIT],
+        };
+        let change = XhciPortChange {
+            port_number: 5,
+            before_portsc: 0x0000_02A0,
+            after_portsc: 0x0022_0603,
+            before_portpmsc: 0,
+            after_portpmsc: 0,
+        };
+        let progress = crate::usb_xhci_driver::XhciInterruptTransferProgress {
+            completed_reports: 1,
+            next_trb_index: 1,
+            next_cycle: true,
+            transfer_wrap_count: 0,
+            event_index: 5,
+            event_cycle: true,
+            event_wrap_count: 0,
+        };
+        let summary = crate::input_drivers::UsbBootMouseSequenceSummary::new();
+
+        let screen = build_boot_mouse_recurring_error_screen(
+            &report,
+            port_status,
+            change,
+            progress,
+            summary,
+            UsbBootMouseRecurringFailure::Viewing(
+                crate::viewing_input_probe::ViewingInputIntegrationFailure::KeyboardUnavailable,
+            ),
+        );
+
+        assert_eq!(screen.line(1), Some("viewing input error"));
+        assert_eq!(
+            screen.line(screen.line_count() - 1),
+            Some("keyboard unavailable")
+        );
+        for index in 0..screen.line_count() {
+            assert!(!screen.line(index).unwrap().contains("stage interrupt"));
         }
     }
 

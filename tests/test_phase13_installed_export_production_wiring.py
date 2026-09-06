@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 
+from phase13_cargo_behavior import run_exact_core_test
+
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE_SRC = ROOT / "core" / "src"
@@ -18,25 +20,26 @@ class Phase13InstalledExportProductionWiringTests(unittest.TestCase):
 
         self.assertIn("#[cfg(test)]", "\n".join(prefix))
 
-    def test_install_paths_materialize_manifest_exports_without_seed_helper(self):
+    def test_installed_manifest_export_survives_restore_and_launches_from_registry(self):
         text = source("package_service.rs")
-        helper = text.index("fn add_manifest_exports_to_registry")
-        tests_mod = text.index("#[cfg(test)]\nmod tests")
-        compatibility = text[
-            text.index("fn install_compatibility") : text.index("pub fn prepare_install_candidate")
-        ]
-        candidate = text[
-            text.index("fn prepare_install_candidate_inner") : text.index(
-                "pub fn publish_install_candidate"
-            )
-        ]
+        compatibility_start = text.index("fn install_compatibility(")
+        compatibility_end = text.index("pub fn prepare_install_candidate", compatibility_start)
+        candidate_start = text.index("fn prepare_install_candidate_inner(")
+        candidate_end = text.index("pub fn publish_install_candidate", candidate_start)
+        compatibility = text[compatibility_start:compatibility_end]
+        candidate = text[candidate_start:candidate_end]
+        materializer = "add_manifest_exports_and_requirements_to_registry"
 
-        self.assertLess(helper, tests_mod)
-        self.assertIn("MANIFEST_RECORD_PACKAGE_EXPORT", text[:tests_mod])
-        self.assertIn("add_manifest_exports_to_registry", compatibility)
-        self.assertIn("add_manifest_exports_to_registry", candidate)
+        self.assertEqual(compatibility.count(materializer), 1)
+        self.assertEqual(candidate.count(materializer), 1)
         self.assertNotIn("seed_launch_export_for_test(", compatibility)
         self.assertNotIn("seed_launch_export_for_test(", candidate)
+        run_exact_core_test(
+            "package_service::tests::package_install_into_preserves_valid_compatibility_install"
+        )
+        run_exact_core_test(
+            "package_service::tests::installed_manifest_export_survives_restore_and_launch_uses_registry_path"
+        )
 
     def test_launch_consumes_only_launchable_exports(self):
         text = source("package_service.rs")
