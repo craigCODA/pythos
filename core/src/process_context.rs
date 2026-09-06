@@ -73,6 +73,21 @@ impl ActiveUserProcess {
         ))
     }
 
+    pub fn from_user_elf_launch(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        image: &user_elf::UserElfImage,
+        stack: user_stacks::UserStackRegion,
+    ) -> Result<Self, UserCopyError> {
+        Ok(Self::from_copy_map(
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map_from_user_elf_launch(image, stack)?,
+        ))
+    }
+
     pub fn from_pyth_runtime_launch(
         service_id: ServiceId,
         principal_id: u64,
@@ -140,17 +155,7 @@ pub fn copy_map_from_validated_launch(
     bootstrap_user_ptr: u64,
 ) -> Result<UserCopyMap, UserCopyError> {
     let mut map = UserCopyMap::new();
-    let mut index = 0usize;
-    while index < image.segment_count() {
-        let segment = image.segment(index).ok_or(UserCopyError::OutOfRange)?;
-        map.add_mapping(
-            segment.page_start(),
-            segment.page_len(),
-            true,
-            segment.writable(),
-        )?;
-        index += 1;
-    }
+    add_validated_elf_segments(&mut map, image)?;
     map.add_mapping(stack.stack_start, stack.stack_len, true, true)?;
     map.add_mapping(
         bootstrap_user_ptr,
@@ -158,6 +163,16 @@ pub fn copy_map_from_validated_launch(
         true,
         false,
     )?;
+    Ok(map)
+}
+
+pub fn copy_map_from_user_elf_launch(
+    image: &user_elf::UserElfImage,
+    stack: user_stacks::UserStackRegion,
+) -> Result<UserCopyMap, UserCopyError> {
+    let mut map = UserCopyMap::new();
+    add_validated_elf_segments(&mut map, image)?;
+    map.add_mapping(stack.stack_start, stack.stack_len, true, true)?;
     Ok(map)
 }
 
@@ -177,6 +192,14 @@ pub fn copy_map_from_pyth_native_launch(
     spec: PythRuntimeCopyMapSpec,
 ) -> Result<UserCopyMap, UserCopyError> {
     let mut map = copy_map_from_pyth_runtime_launch(spec)?;
+    add_validated_elf_segments(&mut map, image)?;
+    Ok(map)
+}
+
+fn add_validated_elf_segments(
+    map: &mut UserCopyMap,
+    image: &user_elf::UserElfImage,
+) -> Result<(), UserCopyError> {
     let mut index = 0usize;
     while index < image.segment_count() {
         let segment = image.segment(index).ok_or(UserCopyError::OutOfRange)?;
@@ -188,7 +211,7 @@ pub fn copy_map_from_pyth_native_launch(
         )?;
         index += 1;
     }
-    Ok(map)
+    Ok(())
 }
 
 struct ActiveProcessStorage(UnsafeCell<Option<ActiveUserProcess>>);
@@ -331,6 +354,54 @@ mod tests {
         assert_eq!(
             map.validate_range(bootstrap, 8, UserCopyAccess::Write),
             Err(UserCopyError::PermissionDenied)
+        );
+        assert_eq!(
+            map.validate_range(0xFFFF_FFFF_8000_0000, 8, UserCopyAccess::Read),
+            Err(UserCopyError::OutOfRange)
+        );
+    }
+
+    #[test]
+    fn user_elf_launch_copy_map_admits_only_elf_segments_and_guarded_stack() {
+        let image = user_elf::validate(&minimal_user_elf()).unwrap();
+        let stack = user_stacks::UserStackRegion {
+            guard_start: 0x0070_0000,
+            stack_start: 0x0070_1000,
+            stack_len: 0x1000,
+        };
+        let process = ActiveUserProcess::from_user_elf_launch(
+            ServiceId::from_raw(42),
+            SHELL_PRINCIPAL_ID,
+            0xCC,
+            &image,
+            stack,
+        )
+        .unwrap();
+        let map = process.copy_map();
+
+        assert!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert!(
+            map.validate_range(0x0040_1000, 4, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(stack.stack_start, 32, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(stack.guard_start, 1, UserCopyAccess::Read),
+            Err(UserCopyError::OutOfRange)
+        );
+        assert_eq!(
+            map.validate_range(0x0080_0000, 1, UserCopyAccess::Read),
+            Err(UserCopyError::OutOfRange)
         );
         assert_eq!(
             map.validate_range(0xFFFF_FFFF_8000_0000, 8, UserCopyAccess::Read),

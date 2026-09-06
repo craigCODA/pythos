@@ -146,6 +146,52 @@ global_asm!(
         pop rbx
         ret
 
+    .global ring3_enter_with_args_abi
+    ring3_enter_with_args_abi:
+        push rbx
+        push rbp
+        push r12
+        push r13
+        push r14
+        push r15
+        sub rsp, 8
+        mov rbx, rdi
+        mov r12, rsi
+        mov r13, rdx
+        mov r14, rcx
+        lea rdi, [rip + .Lring3_with_args_recovered]
+        mov rsi, rsp
+        call prepare_ring3_return_abi
+
+        mov ax, 0x2B
+        mov ds, ax
+        mov es, ax
+        push 0x2B
+        push r12
+        pushfq
+        pop rax
+        or rax, 0x200
+        push rax
+        push 0x33
+        push rbx
+        mov rdi, r13
+        mov rsi, r14
+        iretq
+
+    .Lring3_with_args_recovered:
+        mov ax, 0x10
+        mov ds, ax
+        mov es, ax
+        mov eax, 1
+        add rsp, 8
+        pop r15
+        pop r14
+        pop r13
+        pop r12
+        pop rbp
+        pop rbx
+        ret
+
     .global ring3_enter_forever_abi
     ring3_enter_forever_abi:
         mov rbx, rdi
@@ -168,6 +214,7 @@ global_asm!(
 #[cfg(not(test))]
 unsafe extern "C" {
     fn ring3_enter_abi(entry: u64, user_stack_top: u64) -> u64;
+    fn ring3_enter_with_args_abi(entry: u64, user_stack_top: u64, arg0: u64, arg1: u64) -> u64;
     fn ring3_enter_forever_abi(entry: u64, user_stack_top: u64, bootstrap_user_ptr: u64) -> !;
 }
 
@@ -242,6 +289,41 @@ pub fn run_bad_pointer_fault_test() -> Result<(), UserModeError> {
 #[cfg(not(test))]
 pub fn run_dynamic_breakpoint_test(entry: u64) -> Result<(), UserModeError> {
     run_user_entry(entry, ExpectedUserTrap::Breakpoint)
+}
+
+#[cfg(not(test))]
+pub fn run_dynamic_process_breakpoint_test(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    arg0: u64,
+    arg1: u64,
+) -> Result<(), UserModeError> {
+    process_context::bind_current_process(process);
+    EXPECTED_USER_BREAKPOINT.store(true, Ordering::SeqCst);
+    EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
+    tss::set_ring0_stack(kernel_trap_stack_top());
+    // SAFETY:
+    // 1. Invariant: `entry` belongs to a validated user ELF, `user_stack_top`
+    //    belongs to its guarded user stack, and `arg0`/`arg1` are plain ABI
+    //    values admitted by that process's isolated copy map.
+    // 2. Established by: the caller constructs `process` with
+    //    `ActiveUserProcess::from_user_elf_launch` and maps the same validated
+    //    ELF segments and guarded stack into the active user root.
+    // 3. Lifetime: the ELF pages, guarded stack, bound process, and kernel trap
+    //    stack remain live until the expected breakpoint recovery returns.
+    // 4. Pointer ownership: the CPU consumes RIP/RSP/RDI/RSI by value; no Rust
+    //    reference crosses the privilege transition.
+    // 5. Alignment: the stack top is the guarded allocator's ABI-aligned top;
+    //    the assembly maintains its own SysV-aligned kernel call frame.
+    // 6. Mapped length: only the validated ELF segments, selected usable stack,
+    //    and established trap/recovery kernel mappings are required.
+    // 7. Concurrency: this finite probe is single-core and has one active user
+    //    process while the expected breakpoint is armed.
+    // 8. Violation: a bad frame or unexpected trap cannot report success,
+    //    because success also requires both recovery proofs below.
+    let returned = unsafe { ring3_enter_with_args_abi(entry, user_stack_top, arg0, arg1) };
+    finish_dynamic_process_breakpoint_test(returned)
 }
 
 #[cfg(not(test))]
@@ -435,6 +517,17 @@ fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeErro
     // 8. Violation: bad descriptors or mappings fault through diagnostics.
     let returned = unsafe { ring3_enter_abi(entry, user_stack_top()) };
     if returned == 1 && USER_RETURNED.load(Ordering::SeqCst) {
+        Ok(())
+    } else {
+        Err(UserModeError::DidNotReturn)
+    }
+}
+
+fn finish_dynamic_process_breakpoint_test(returned: u64) -> Result<(), UserModeError> {
+    let user_returned = USER_RETURNED.load(Ordering::SeqCst);
+    EXPECTED_USER_BREAKPOINT.store(false, Ordering::SeqCst);
+    process_context::clear_current_process();
+    if returned == 1 && user_returned {
         Ok(())
     } else {
         Err(UserModeError::DidNotReturn)
@@ -745,6 +838,31 @@ mod tests {
             u64::from(gdt::KERNEL_CODE_SELECTOR),
             u64::from(gdt::USER_DATA_SELECTOR)
         ));
+    }
+
+    #[test]
+    fn finite_process_recovery_requires_both_proofs_and_clears_the_binding() {
+        let _process_guard = crate::process_context::PROCESS_CONTEXT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let process = ActiveUserProcess::new(
+            crate::service_identity::ServiceId::from_raw(42),
+            pythos_shared::user_program_manifest::SHELL_PRINCIPAL_ID,
+            0xCC,
+        );
+
+        process_context::bind_current_process(process);
+        USER_RETURNED.store(true, Ordering::SeqCst);
+        assert_eq!(finish_dynamic_process_breakpoint_test(1), Ok(()));
+        assert!(process_context::current_caller().is_err());
+
+        process_context::bind_current_process(process);
+        USER_RETURNED.store(true, Ordering::SeqCst);
+        assert_eq!(
+            finish_dynamic_process_breakpoint_test(0),
+            Err(UserModeError::DidNotReturn)
+        );
+        assert!(process_context::current_caller().is_err());
     }
 
     #[test]
