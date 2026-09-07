@@ -2,10 +2,13 @@ name: QEMU Acceptance
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
-  qemu-acceptance:
+  milestone_acceptance:
+    name: qemu-milestones
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -151,9 +154,6 @@ jobs:
           python scripts/prepare-pyth-physical-image.py --manifest target/pyth-physical-image-manifest.json
           python scripts/verify-pyth-physical-log.py --manifest target/pyth-physical-image-manifest.json --log target/pyth-cross-target-ahci.log --backend ahci --target-id qemu-ahci-import-smoke --output target/pyth-physical-log-verification-ahci.json
 
-      - name: Full QEMU slice handoff suite
-        run: python -m unittest tests.boot_core_handoff
-
       - name: Upload serial log
         if: always()
         uses: actions/upload-artifact@v4
@@ -161,3 +161,109 @@ jobs:
           name: boot-serial-log
           path: target/boot-serial.log
           if-no-files-found: ignore
+
+  handoff_acceptance:
+    name: qemu-handoff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      PYTHOS_TEST_BOOT_TIMEOUT: "60"
+      QEMU_VERSION: "11.1.1"
+      QEMU_SHA256: "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
+      OVMF_VERSION: "2024.02-2ubuntu0.9"
+      QEMU_PREFIX: ${{ github.workspace }}/.tools/qemu-11.1.1
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ninja-build \
+            pkg-config \
+            python3-venv \
+            libglib2.0-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            libslirp-dev \
+            "ovmf=${OVMF_VERSION}"
+
+      - name: Restore pinned QEMU runtime
+        id: qemu-cache
+        uses: actions/cache@v4
+        with:
+          path: .tools/qemu-11.1.1
+          key: ubuntu-24.04-qemu-11.1.1-x86_64-softmmu-v1
+
+      - name: Build pinned QEMU runtime
+        if: steps.qemu-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          archive="${RUNNER_TEMP}/qemu-${QEMU_VERSION}.tar.xz"
+          source_dir="${RUNNER_TEMP}/qemu-${QEMU_VERSION}-source"
+          build_dir="${RUNNER_TEMP}/qemu-${QEMU_VERSION}-build"
+          curl --fail --location \
+            "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
+            --output "${archive}"
+          echo "${QEMU_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "${source_dir}" "${build_dir}"
+          tar -xf "${archive}" -C "${source_dir}" --strip-components=1
+          cd "${build_dir}"
+          "${source_dir}/configure" \
+            --prefix="${QEMU_PREFIX}" \
+            --target-list=x86_64-softmmu \
+            --disable-docs \
+            --disable-werror
+          ninja -j2
+          ninja install
+
+      - name: Expose and verify pinned QEMU and OVMF
+        run: |
+          set -euxo pipefail
+          echo "${QEMU_PREFIX}/bin" >> "$GITHUB_PATH"
+          "${QEMU_PREFIX}/bin/qemu-system-x86_64" --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
+          dpkg-query -W -f='${Version}\n' ovmf | grep -Fx "${OVMF_VERSION}"
+          test -f /usr/share/OVMF/OVMF_CODE_4M.fd
+          echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd" >> "$GITHUB_ENV"
+
+      - name: Assert QEMU on PATH
+        run: qemu-system-x86_64 --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
+
+      - name: Install Rust toolchain
+        run: |
+          set -euxo pipefail
+          rustup toolchain install 1.93.1 --profile minimal --component clippy --component rustfmt
+          rustup default 1.93.1
+          rustup target add x86_64-unknown-uefi x86_64-unknown-none
+
+      - name: Full QEMU slice handoff suite
+        run: python -m unittest tests.boot_core_handoff
+
+      - name: Upload handoff logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qemu-handoff-logs
+          path: target/**/*.log
+          if-no-files-found: ignore
+
+  qemu_acceptance:
+    name: qemu-acceptance
+    if: ${{ always() }}
+    needs:
+      - milestone_acceptance
+      - handoff_acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every acceptance stage
+        env:
+          MILESTONE_RESULT: ${{ needs.milestone_acceptance.result }}
+          HANDOFF_RESULT: ${{ needs.handoff_acceptance.result }}
+        run: |
+          test "${MILESTONE_RESULT}" = "success"
+          test "${HANDOFF_RESULT}" = "success"

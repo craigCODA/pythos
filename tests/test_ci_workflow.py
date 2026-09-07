@@ -7,6 +7,23 @@ WORKFLOW = ROOT / ".github" / "workflows" / "qemu-acceptance.yml"
 
 
 class CiWorkflowTest(unittest.TestCase):
+    @staticmethod
+    def _job_block(workflow: str, job_id: str) -> str:
+        marker = f"  {job_id}:\n"
+        start = workflow.find(marker)
+        if start < 0:
+            raise AssertionError(f"missing workflow job: {job_id}")
+
+        next_job = workflow.find("\n  ", start + len(marker))
+        while next_job >= 0:
+            line_end = workflow.find("\n", next_job + 1)
+            candidate = workflow[next_job + 1 : line_end if line_end >= 0 else None]
+            if candidate.startswith("  ") and not candidate.startswith("    "):
+                return workflow[start:next_job]
+            next_job = workflow.find("\n  ", next_job + 3)
+
+        return workflow[start:]
+
     def test_qemu_runtime_and_firmware_are_pinned_and_asserted(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         required_snippets = (
@@ -94,6 +111,32 @@ class CiWorkflowTest(unittest.TestCase):
             workflow.index("python scripts/test-session-input-bridge-probe.py\n"),
             "bridge oracle self-tests must run before the live QEMU proof",
         )
+
+    def test_long_handoff_suite_runs_parallel_and_has_one_aggregate_gate(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        aggregate = self._job_block(workflow, "qemu_acceptance")
+
+        self.assertNotIn("needs:", milestone)
+        self.assertNotIn("needs:", handoff)
+        self.assertIn("python scripts/test-session-input-bridge-probe.py", milestone)
+        self.assertNotIn("python -m unittest tests.boot_core_handoff", milestone)
+        self.assertEqual(handoff.count("python -m unittest tests.boot_core_handoff"), 1)
+
+        self.assertIn("name: qemu-acceptance", aggregate)
+        self.assertIn("- milestone_acceptance", aggregate)
+        self.assertIn("- handoff_acceptance", aggregate)
+        self.assertIn("if: ${{ always() }}", aggregate)
+        self.assertIn("needs.milestone_acceptance.result", aggregate)
+        self.assertIn("needs.handoff_acceptance.result", aggregate)
+
+    def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        trigger_block = workflow[: workflow.index("\njobs:")]
+
+        self.assertIn("push:\n    branches:\n      - main", trigger_block)
+        self.assertIn("pull_request:", trigger_block)
 
 
 if __name__ == "__main__":
