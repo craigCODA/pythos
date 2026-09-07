@@ -435,6 +435,25 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             // then initializes only the production facilities its finite
             // ring-3 proof consumes. The ordinary verification sequence below
             // remains feature-absent and therefore retains its original order.
+            // SAFETY:
+            // 1. Invariant: `address_space` maps the executing PythCore code
+            //    and data, active bootstrap stack, descriptor tables, boot
+            //    metadata, framebuffer, COM1 serial path, and validation tables.
+            // 2. Established by: the successful `KernelAddressSpace::build`
+            //    above using the bridge's minimal mapping options.
+            // 3. Lifetime: PythCore retains the root and its table frames for
+            //    the entire bounded bridge proof.
+            // 4. Pointer ownership: PythCore owns the page-table hierarchy;
+            //    the CPU only borrows it through CR3.
+            // 5. Alignment: the physical allocator supplied a 4 KiB-aligned
+            //    root PML4 page.
+            // 6. Mapped length: the complete early kernel surface listed above
+            //    plus its page-table frames is mapped; no optional device or
+            //    evidence-terminal mapping is required by this feature.
+            // 7. Concurrency: this single-core bridge path has no concurrent
+            //    page-table mutation, and `activate` disables interrupts first.
+            // 8. Violation: a missing or invalid mapping faults during or
+            //    immediately after the CR3 switch, before terminal success.
             unsafe {
                 address_space.activate();
             }
