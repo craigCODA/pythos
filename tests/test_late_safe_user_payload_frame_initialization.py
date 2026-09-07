@@ -74,7 +74,7 @@ class LateSafeUserPayloadFrameInitializationTests(unittest.TestCase):
         user_elf_segment = slice_between(
             text,
             "fn map_user_elf_segment",
-            "fn remember_user_payload_frame",
+            "fn remember_retained_user_frame",
         )
         self.assertIn("allocate_zeroed_frame(tables.allocator)?", user_elf_segment)
         self.assertNotIn("allocate_zeroed_page", user_elf_segment)
