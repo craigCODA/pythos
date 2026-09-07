@@ -2,10 +2,10 @@
 
 Date: 2026-09-07
 
-Status: Proposed written design for owner review. The owner approved bounded
-supervised reinvocation as the Slice 2 runtime direction on 2026-09-07. This
-document does not yet authorize implementation, normal-boot cutover, USB
-deployment, or physical-hardware claims.
+Status: Accepted design. The owner approved bounded supervised reinvocation as
+the Slice 2 runtime direction and approved this detailed design on 2026-09-07.
+This acceptance authorizes implementation planning, not normal-boot cutover,
+USB deployment, or physical-hardware claims.
 
 ## Goal
 
@@ -351,8 +351,10 @@ panic; timeout; disk writes; or an extra/malformed `QEMU_OUTCOME`.
 - `PythServiceSupervisor` clean-exit/fault action meanings;
 - `scripts/test-session-input-bridge-probe.py` for QMP input injection, dual
   COM1/COM2 collection, strict timeline checks, and process-tree cleanup;
-- `scripts/test-persistent-storage.py` only for its two-boot orchestration and
-  before/after storage hash pattern.
+- `scripts/test-persistent-storage.py` only for its two-boot orchestration; it
+  does not currently hash the attached image.
+- `scripts/prepare-pyth-physical-image.py` for its chunked SHA-256 file-hash
+  pattern, adapted to the disposable Slice 2 storage image.
 
 The test harness must extract or reuse characterized helpers instead of adding
 a third QEMU cleanup implementation.
