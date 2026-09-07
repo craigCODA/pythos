@@ -95,8 +95,11 @@ def assert_cargo_dependency_boundary(cargo: dict) -> None:
 
 def probe_rust_source_paths(root: Path) -> list[Path]:
     core_probe = root / "core" / "src" / "session_runtime_probe.rs"
+    core_probe_modules = root / "core" / "src" / "session_runtime_probe"
     runtime_sources = root / "user" / "session-runtime" / "src"
     paths = [core_probe] if core_probe.is_file() else []
+    if core_probe_modules.is_dir():
+        paths.extend(sorted(core_probe_modules.rglob("*.rs")))
     if runtime_sources.is_dir():
         paths.extend(sorted(runtime_sources.rglob("*.rs")))
     return paths
@@ -376,6 +379,34 @@ pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }
             self.assertTrue(dependency_components(statements[0]) & FORBIDDEN_MODULES)
             with self.assertRaisesRegex(AssertionError, "forbidden dependency"):
                 assert_probe_source_boundary(root)
+
+    def test_recursive_probe_source_enumeration_rejects_nested_core_bypass(self) -> None:
+        cases = (
+            ("import", "use viewing::ViewingState;", "forbidden dependency"),
+            ("declaration", "struct FocusMark;", "forbidden declarations"),
+        )
+        for name, source, error in cases:
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                core = root / "core" / "src" / "session_runtime_probe.rs"
+                nested = (
+                    root
+                    / "core"
+                    / "src"
+                    / "session_runtime_probe"
+                    / "nested"
+                    / "forbidden.rs"
+                )
+                core.parent.mkdir(parents=True)
+                nested.parent.mkdir(parents=True)
+                core.write_text("use core::fmt;", encoding="utf-8")
+                nested.write_text(source, encoding="utf-8")
+
+                paths = probe_rust_source_paths(root)
+                self.assertIn(core, paths)
+                self.assertIn(nested, paths)
+                with self.assertRaisesRegex(AssertionError, error):
+                    assert_probe_source_boundary(root)
 
     def test_normal_boot_has_no_session_runtime_probe_integration(self) -> None:
         code = strip_rust_comments_and_strings(

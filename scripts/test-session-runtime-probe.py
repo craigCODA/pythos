@@ -46,6 +46,7 @@ COM2_CONNECT_TIMEOUT_SECONDS = 20.0
 COM2_READ_TIMEOUT_SECONDS = 15.0
 STORAGE_IMAGE_SIZE = 16 * 1024 * 1024
 ZEROED_STORAGE_SHA256 = "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
+ALLOWED_COM1_BASELINE_LINES = frozenset(("PYTHOS:CORE:EXPECTED_PAGE_FAULT",))
 
 EXPECTED_COM1_CONTRACT = (
     "PYTHOS:CORE:SESSION_RUNTIME:COM2_READY",
@@ -205,7 +206,12 @@ def assert_exact_ordered_markers(
         )
 
 
-def assert_no_forbidden_evidence(transcript: str, channel: str) -> None:
+def assert_no_forbidden_evidence(
+    transcript: str,
+    channel: str,
+    *,
+    allowed_failure_lines: frozenset[str] = frozenset(),
+) -> None:
     allowed_no_write = EXPECTED_COM1_CONTRACT[-2]
     for line in complete_lines(transcript):
         upper = line.upper()
@@ -219,7 +225,7 @@ def assert_no_forbidden_evidence(transcript: str, channel: str) -> None:
         )
         if any(token in normalized for token in forbidden_semantics):
             raise AssertionError(f"{channel}: forbidden semantic evidence {line!r}")
-        if line != allowed_no_write and (
+        if line != allowed_no_write and line not in allowed_failure_lines and (
             any(token in normalized for token in ("PANIC", "GAP", "ERROR", "FAULT", "FAILURE", "RECOVERY", "FALLBACK"))
             or "DISK_WRITE" in normalized
         ):
@@ -229,12 +235,16 @@ def assert_no_forbidden_evidence(transcript: str, channel: str) -> None:
 TIMELINE_EDGES = (
     ("COM1", EXPECTED_COM1_CONTRACT[5], "COM2", EXPECTED_COM2_CONTRACT[0]),
     ("COM2", EXPECTED_COM2_CONTRACT[0], "COM2", EXPECTED_COM2_CONTRACT[1]),
-    ("COM2", EXPECTED_COM2_CONTRACT[1], "HARNESS", "QMP_A_SENT"),
+    ("COM2", EXPECTED_COM2_CONTRACT[1], "HARNESS", "QMP_A_DISPATCH"),
+    ("HARNESS", "QMP_A_DISPATCH", "COM1", EXPECTED_COM1_CONTRACT[6]),
+    ("HARNESS", "QMP_A_DISPATCH", "HARNESS", "QMP_A_SENT"),
     ("COM1", EXPECTED_COM1_CONTRACT[6], "COM2", EXPECTED_COM2_CONTRACT[2]),
     ("HARNESS", "QMP_A_SENT", "COM2", EXPECTED_COM2_CONTRACT[2]),
     ("COM2", EXPECTED_COM2_CONTRACT[2], "COM2", EXPECTED_COM2_CONTRACT[7]),
     ("COM2", EXPECTED_COM2_CONTRACT[7], "COM2", EXPECTED_COM2_CONTRACT[8]),
-    ("COM2", EXPECTED_COM2_CONTRACT[8], "HARNESS", "QMP_MOUSE_SENT"),
+    ("COM2", EXPECTED_COM2_CONTRACT[8], "HARNESS", "QMP_MOUSE_DISPATCH"),
+    ("HARNESS", "QMP_MOUSE_DISPATCH", "COM1", EXPECTED_COM1_CONTRACT[7]),
+    ("HARNESS", "QMP_MOUSE_DISPATCH", "HARNESS", "QMP_MOUSE_SENT"),
     ("COM1", EXPECTED_COM1_CONTRACT[7], "COM2", EXPECTED_COM2_CONTRACT[9]),
     ("HARNESS", "QMP_MOUSE_SENT", "COM2", EXPECTED_COM2_CONTRACT[9]),
     ("COM2", EXPECTED_COM2_CONTRACT[9], "COM2", EXPECTED_COM2_CONTRACT[-1]),
@@ -256,7 +266,11 @@ def assert_qemu_success(output: str) -> None:
 
 
 def assert_boot_acceptance(boot: BootEvidence, ordinal: int) -> None:
-    assert_no_forbidden_evidence(boot.com1, f"boot {ordinal} COM1")
+    assert_no_forbidden_evidence(
+        boot.com1,
+        f"boot {ordinal} COM1",
+        allowed_failure_lines=ALLOWED_COM1_BASELINE_LINES,
+    )
     assert_no_forbidden_evidence(boot.com2, f"boot {ordinal} COM2")
     assert_exact_ordered_markers(
         boot.com1,
@@ -431,11 +445,13 @@ def snapshot_image(path: Path, retained) -> ImageSnapshot:
 
 
 def send_qmp_a(timeline: AcceptanceTimeline) -> None:
+    timeline.record("HARNESS", "QMP_A_DISPATCH")
     launcher_click.press_qcode_keys(["a"])
     timeline.record("HARNESS", "QMP_A_SENT")
 
 
 def send_qmp_mouse(timeline: AcceptanceTimeline) -> None:
+    timeline.record("HARNESS", "QMP_MOUSE_DISPATCH")
     launcher_click.send_relative_mouse_motion(7, -7)
     timeline.record("HARNESS", "QMP_MOUSE_SENT")
 
@@ -721,11 +737,13 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
         timeline.record("COM1", FIXTURE_COM1_MARKERS[5])
         timeline.record("COM2", FIXTURE_COM2_MARKERS[0])
         timeline.record("COM2", FIXTURE_COM2_MARKERS[1])
+        timeline.record("HARNESS", "QMP_A_DISPATCH")
         timeline.record("HARNESS", "QMP_A_SENT")
         timeline.record("COM1", FIXTURE_COM1_MARKERS[6])
         for marker in FIXTURE_COM2_MARKERS[2:8]:
             timeline.record("COM2", marker)
         timeline.record("COM2", FIXTURE_COM2_MARKERS[8])
+        timeline.record("HARNESS", "QMP_MOUSE_DISPATCH")
         timeline.record("HARNESS", "QMP_MOUSE_SENT")
         timeline.record("COM1", FIXTURE_COM1_MARKERS[7])
         for marker in FIXTURE_COM2_MARKERS[9:]:
@@ -779,6 +797,37 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
 
     def test_valid_two_boot_transcript_passes(self) -> None:
         assert_session_runtime_acceptance(*self.valid_evidence())
+
+    def test_exact_expected_page_fault_lines_are_allowed_only_on_com1(self) -> None:
+        boots, images = self.valid_evidence()
+        expected_fault = "PYTHOS:CORE:EXPECTED_PAGE_FAULT"
+        for count in (1, 3):
+            with self.subTest(count=count):
+                com1 = (expected_fault + "\n") * count + boots[0].com1
+                assert_session_runtime_acceptance(
+                    self.replace_boot(boots, 0, com1=com1), images
+                )
+
+        for unexpected in (
+            "PYTHOS:CORE:EXPECTED_PAGE_FAULT_EXTRA",
+            "PYTHOS:CORE:UNEXPECTED_PAGE_FAULT",
+            "PYTHOS:CORE:EXPECTED_GENERAL_PROTECTION_FAULT",
+            "PYTHOS:CORE:FAULT",
+        ):
+            with self.subTest(unexpected=unexpected):
+                self.assert_rejected(
+                    self.replace_boot(
+                        boots, 0, com1=unexpected + "\n" + boots[0].com1
+                    ),
+                    images,
+                )
+
+        self.assert_rejected(
+            self.replace_boot(
+                boots, 0, com2=expected_fault + "\n" + boots[0].com2
+            ),
+            images,
+        )
 
     def test_fixture_contract_does_not_follow_an_oracle_marker_mutation(self) -> None:
         module = sys.modules[__name__]
@@ -911,12 +960,16 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
         edges = (
             ("COM1", FIXTURE_COM1_MARKERS[5], "COM2", FIXTURE_COM2_MARKERS[0]),
             ("COM2", FIXTURE_COM2_MARKERS[0], "COM2", FIXTURE_COM2_MARKERS[1]),
-            ("COM2", FIXTURE_COM2_MARKERS[1], "HARNESS", "QMP_A_SENT"),
+            ("COM2", FIXTURE_COM2_MARKERS[1], "HARNESS", "QMP_A_DISPATCH"),
+            ("HARNESS", "QMP_A_DISPATCH", "COM1", FIXTURE_COM1_MARKERS[6]),
+            ("HARNESS", "QMP_A_DISPATCH", "HARNESS", "QMP_A_SENT"),
             ("COM1", FIXTURE_COM1_MARKERS[6], "COM2", FIXTURE_COM2_MARKERS[2]),
             ("HARNESS", "QMP_A_SENT", "COM2", FIXTURE_COM2_MARKERS[2]),
             ("COM2", FIXTURE_COM2_MARKERS[2], "COM2", FIXTURE_COM2_MARKERS[7]),
             ("COM2", FIXTURE_COM2_MARKERS[7], "COM2", FIXTURE_COM2_MARKERS[8]),
-            ("COM2", FIXTURE_COM2_MARKERS[8], "HARNESS", "QMP_MOUSE_SENT"),
+            ("COM2", FIXTURE_COM2_MARKERS[8], "HARNESS", "QMP_MOUSE_DISPATCH"),
+            ("HARNESS", "QMP_MOUSE_DISPATCH", "COM1", FIXTURE_COM1_MARKERS[7]),
+            ("HARNESS", "QMP_MOUSE_DISPATCH", "HARNESS", "QMP_MOUSE_SENT"),
             ("COM1", FIXTURE_COM1_MARKERS[7], "COM2", FIXTURE_COM2_MARKERS[9]),
             ("HARNESS", "QMP_MOUSE_SENT", "COM2", FIXTURE_COM2_MARKERS[9]),
             ("COM2", FIXTURE_COM2_MARKERS[9], "COM2", FIXTURE_COM2_MARKERS[-1]),
@@ -938,6 +991,21 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                     self.assert_rejected(
                         self.replace_boot(boots, boot_ordinal, timeline=timeline), images
                     )
+
+    def test_qmp_completion_and_irq_have_no_invented_relative_order(self) -> None:
+        _, images = self.valid_evidence()
+        timeline = self.valid_timeline()
+        timeline.move_after(
+            "HARNESS", "QMP_A_SENT", "COM1", FIXTURE_COM1_MARKERS[6]
+        )
+        timeline.move_after(
+            "HARNESS", "QMP_MOUSE_SENT", "COM1", FIXTURE_COM1_MARKERS[7]
+        )
+        boots = (
+            replace(self.valid_boot(), timeline=timeline),
+            self.valid_boot(),
+        )
+        assert_session_runtime_acceptance(boots, images)
 
     def test_identity_state_reset_stale_reuse_and_event_mutations_fail(self) -> None:
         boots, images = self.valid_evidence()
@@ -1202,6 +1270,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             side_effect=lambda _keys: timeline.record("TEST", "A_HELPER_RETURNED"),
         ):
             send_qmp_a(timeline)
+        timeline.assert_before("HARNESS", "QMP_A_DISPATCH", "TEST", "A_HELPER_RETURNED")
         timeline.assert_before("TEST", "A_HELPER_RETURNED", "HARNESS", "QMP_A_SENT")
 
         failed = AcceptanceTimeline()
@@ -1209,6 +1278,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             launcher_click, "press_qcode_keys", side_effect=RuntimeError("QMP failed")
         ), self.assertRaisesRegex(RuntimeError, "QMP failed"):
             send_qmp_a(failed)
+        self.assertEqual(failed.count("HARNESS", "QMP_A_DISPATCH"), 1)
         self.assertEqual(failed.count("HARNESS", "QMP_A_SENT"), 0)
 
         mouse = AcceptanceTimeline()
@@ -1218,6 +1288,9 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             side_effect=lambda _dx, _dy: mouse.record("TEST", "MOUSE_HELPER_RETURNED"),
         ):
             send_qmp_mouse(mouse)
+        mouse.assert_before(
+            "HARNESS", "QMP_MOUSE_DISPATCH", "TEST", "MOUSE_HELPER_RETURNED"
+        )
         mouse.assert_before(
             "TEST", "MOUSE_HELPER_RETURNED", "HARNESS", "QMP_MOUSE_SENT"
         )
@@ -1229,6 +1302,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             side_effect=RuntimeError("mouse QMP failed"),
         ), self.assertRaisesRegex(RuntimeError, "mouse QMP failed"):
             send_qmp_mouse(failed_mouse)
+        self.assertEqual(failed_mouse.count("HARNESS", "QMP_MOUSE_DISPATCH"), 1)
         self.assertEqual(failed_mouse.count("HARNESS", "QMP_MOUSE_SENT"), 0)
 
     def test_cleanup_tracks_exact_runner_job_members_before_reaping(self) -> None:
