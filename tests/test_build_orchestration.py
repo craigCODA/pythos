@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -69,7 +70,7 @@ class BuildOrchestrationTest(unittest.TestCase):
                     events.append(("verify", normalize(command)))
                     return subprocess.CompletedProcess(command, verifier_returncode)
 
-                def package(*args: object) -> bytes:
+                def package(*args: object, **_kwargs: object) -> bytes:
                     events.append(("package", args[-1]))
                     return b"pak"
 
@@ -295,6 +296,134 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn(b"session-input-probe.elf", opted_in)
         self.assertIn(module.SESSION_INPUT_PROBE_PRINCIPAL_ID.to_bytes(8, "little"), opted_in)
         self.assertIn(module.digest64(b"probe").to_bytes(8, "little"), opted_in)
+
+    def test_session_runtime_records_are_exact_and_default_bundle_is_byte_identical(self) -> None:
+        # Catches packaging the generic runtime/default-services graph, or changing the default bundle.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            runtime = root / "session-runtime.elf"
+            graph = root / "session-manager.tig"
+            shell.write_bytes(b"shell")
+            runtime.write_bytes(b"retained-runtime")
+            graph.write_bytes(b"session-manager-graph")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "PYTH_SESSION_MANAGER_GRAPH_PACKAGE", graph
+            ), unittest.mock.patch.object(module, "build_runtime_payload", return_value=b"runtime"):
+                default = module.build_default_init_pak()
+                opted_in = module.build_default_init_pak(session_runtime_elf=runtime)
+                records = module.session_runtime_records(runtime)
+
+        self.assertEqual(
+            hashlib.sha256(default).hexdigest(),
+            "b0bec33f7206e0f90ed14112ff9ffef80bce4a896a11b2794216efd58c3fb47e",
+        )
+        self.assertEqual(
+            records,
+            [
+                (
+                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                    module.build_named_user_program(
+                        b"session-runtime.elf",
+                        module.SESSION_RUNTIME_PRINCIPAL_ID,
+                        b"retained-runtime",
+                    ),
+                ),
+                (
+                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                    module.build_named_pyth_graph(
+                        b"session-manager.tig",
+                        module.SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+                        b"session-manager-graph",
+                    ),
+                ),
+            ],
+        )
+        self.assertIn(b"session-runtime.elf", opted_in)
+        self.assertIn(b"session-manager.tig", opted_in)
+        self.assertNotIn(b"pyth-runtime.elf", opted_in)
+        self.assertNotIn(b"task-steward.tig", opted_in)
+        self.assertIn(module.digest64(b"retained-runtime").to_bytes(8, "little"), opted_in)
+        self.assertIn(module.digest64(b"session-manager-graph").to_bytes(8, "little"), opted_in)
+
+    def test_session_runtime_profile_rejects_every_other_pythtig_set_and_session_input_probe(self) -> None:
+        # Catches a mixed acceptance image that could launch more than the retained runtime pair.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            runtime = root / "session-runtime.elf"
+            other = root / "other.elf"
+            shell.write_bytes(b"shell")
+            runtime.write_bytes(b"runtime")
+            other.write_bytes(b"other")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell):
+                for conflicting in (
+                    {"include_pythtig": True},
+                    {"include_pythtig_object_flow": True},
+                    {"pyth_native_elf": other},
+                    {"include_pythtig_task_steward": True},
+                    {"include_pythtig_default_services": True},
+                    {"session_input_probe_elf": other},
+                ):
+                    with self.subTest(conflicting=conflicting), self.assertRaises(SystemExit):
+                        module.build_default_init_pak(session_runtime_elf=runtime, **conflicting)
+
+    def test_session_runtime_elf_is_resolved_verified_before_any_esp_mutation(self) -> None:
+        # Catches relative ELF ambiguity or writing an ESP after a failed ELF verifier.
+        module = load_script("build-image.py")
+        events: list[tuple[str, object]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "repository"
+            caller = Path(temp_dir) / "caller"
+            root.mkdir()
+            caller.mkdir()
+            loader = caller / "BOOTX64.EFI"
+            kernel = caller / "PYTHCORE.ELF"
+            runtime = caller / "runtime.elf"
+            for path in (loader, kernel, runtime):
+                path.write_bytes(b"artifact")
+
+            def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                events.append(("verify", normalize(command)))
+                events.append(("identity", Path(command[-1]).samefile(runtime)))
+                return subprocess.CompletedProcess(command, 1)
+
+            def mutate(*_args: object, **_kwargs: object) -> None:
+                events.append(("mutation", None))
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(caller)
+                with unittest.mock.patch.object(module, "ROOT", root), unittest.mock.patch.object(
+                    module, "ESP", caller / "esp"
+                ), unittest.mock.patch.object(Path, "mkdir", side_effect=mutate), unittest.mock.patch.object(
+                    module.shutil, "copy2", side_effect=mutate
+                ), unittest.mock.patch.object(
+                    module, "write_binary_if_changed", side_effect=mutate
+                ), unittest.mock.patch.object(subprocess, "run", side_effect=verify), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(module.__file__),
+                        "--loader",
+                        str(loader),
+                        "--kernel",
+                        str(kernel),
+                        "--session-runtime-elf",
+                        "runtime.elf",
+                    ],
+                ):
+                    with self.assertRaises(SystemExit):
+                        module.main()
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual([kind for kind, _value in events], ["verify", "identity"])
+        verified_path = Path(events[0][1][-1])
+        self.assertTrue(verified_path.is_absolute())
+        self.assertTrue(events[1][1])
 
     def assert_shell_build_verify_before_packaging(
         self, commands: list[list[object]], packaging_script: str

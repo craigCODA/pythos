@@ -18,6 +18,14 @@ BOOT_EFI = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
 PYTHCORE_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
 SHELL_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
 PYTH_RUNTIME_ELF = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-pyth-runtime"
+SESSION_RUNTIME_ELF = (
+    ROOT
+    / "target"
+    / "session-runtime-probe"
+    / "x86_64-unknown-none"
+    / "debug"
+    / "pythos-user-session-runtime"
+)
 PYTH_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "hello.tig"
 PYTH_BUDGET_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "budget.tig"
 PYTH_INVALID_GRAPH_PACKAGE = ROOT / "target" / "pyth-tig" / "invalid.tig"
@@ -64,6 +72,7 @@ MAX_PACKAGE_SOURCES = 8
 MAX_PACKAGE_SOURCE_LABEL_BYTES = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 SESSION_INPUT_PROBE_PRINCIPAL_ID = 0x5059_5349_4E50_0001
+SESSION_RUNTIME_PRINCIPAL_ID = 0x5059_5352_544D_0001
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
 BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
@@ -77,6 +86,7 @@ OBJECT_KNOWN_DENIED_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0008
 OBJECT_FORGERY_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0009
 TASK_STEWARD_GRAPH_PRINCIPAL_ID = 0x5059_5448_5354_0001
 SESSION_MANAGER_GRAPH_PRINCIPAL_ID = 0x5059_5448_534D_0001
+SESSION_RUNTIME_PROGRAM_NAME = b"session-runtime.elf"
 USER_ELF_ENTRY = 0x00400000
 RUNTIME_SOURCE = (
     b"class HelloService(Service):\n"
@@ -347,6 +357,30 @@ def pyth_runtime_record() -> tuple[int, bytes]:
     )
 
 
+def session_runtime_records(elf_path: Path) -> list[tuple[int, bytes]]:
+    return [
+        (
+            INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+            build_named_user_program(
+                SESSION_RUNTIME_PROGRAM_NAME,
+                SESSION_RUNTIME_PRINCIPAL_ID,
+                require_file(elf_path, "session runtime ELF"),
+            ),
+        ),
+        (
+            INIT_BUNDLE_PYTH_GRAPH_TYPE,
+            build_named_pyth_graph(
+                b"session-manager.tig",
+                SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+                require_file(
+                    PYTH_SESSION_MANAGER_GRAPH_PACKAGE,
+                    "Session Manager graph package",
+                ),
+            ),
+        ),
+    ]
+
+
 def phase2_pyth_graph_records() -> list[tuple[int, bytes]]:
     graph_specs = [
         (b"hello.tig", HELLO_GRAPH_PRINCIPAL_ID, PYTH_GRAPH_PACKAGE, "PythTIG graph package"),
@@ -512,6 +546,7 @@ def build_default_init_pak(
     include_phase13_package_format_fixture: bool = False,
     phase13_package_sources: list[tuple[Path, bytes]] | None = None,
     session_input_probe_elf: Path | None = None,
+    session_runtime_elf: Path | None = None,
 ) -> bytes:
     selected_pythtig_sets = sum(
         [
@@ -520,6 +555,7 @@ def build_default_init_pak(
             pyth_native_elf is not None,
             bool(include_pythtig_task_steward),
             bool(include_pythtig_default_services),
+            session_runtime_elf is not None,
         ]
     )
     if selected_pythtig_sets > 1:
@@ -527,6 +563,8 @@ def build_default_init_pak(
             "select only one PythTIG graph/native set; "
             "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
         )
+    if session_runtime_elf is not None and session_input_probe_elf is not None:
+        raise SystemExit("session runtime profile cannot include the session input probe")
     shell_elf = require_file(SHELL_ELF, "shell ELF")
     records = [
         (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
@@ -546,6 +584,8 @@ def build_default_init_pak(
                 ),
             )
         )
+    if session_runtime_elf is not None:
+        records.extend(session_runtime_records(session_runtime_elf))
     if include_pythtig:
         records.append(pyth_runtime_record())
         records.extend(phase2_pyth_graph_records())
@@ -635,6 +675,25 @@ def resolve_session_input_probe_elf(path: Path) -> Path:
     return resolved
 
 
+def verify_session_runtime_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("session runtime ELF verification failed")
+
+
+def resolve_session_runtime_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing session runtime ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"session runtime ELF is not a file: {resolved}")
+    return resolved
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
@@ -647,6 +706,7 @@ def main() -> int:
     parser.add_argument("--with-phase13-package-format-fixture", action="store_true")
     parser.add_argument("--phase13-package-source", action="append", default=[])
     parser.add_argument("--session-input-probe-elf", type=Path)
+    parser.add_argument("--session-runtime-elf", type=Path)
     args = parser.parse_args()
 
     loader = args.loader
@@ -659,6 +719,10 @@ def main() -> int:
     if args.session_input_probe_elf is not None:
         session_input_probe_elf = resolve_session_input_probe_elf(args.session_input_probe_elf)
         verify_session_input_probe_elf(session_input_probe_elf)
+    session_runtime_elf = None
+    if args.session_runtime_elf is not None:
+        session_runtime_elf = resolve_session_runtime_elf(args.session_runtime_elf)
+        verify_session_runtime_elf(session_runtime_elf)
 
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
@@ -682,6 +746,7 @@ def main() -> int:
                 for source in args.phase13_package_source
             ],
             session_input_probe_elf,
+            session_runtime_elf=session_runtime_elf,
         ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
