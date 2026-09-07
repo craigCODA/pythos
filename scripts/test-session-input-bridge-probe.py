@@ -15,6 +15,7 @@ import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
+from unittest import mock
 
 if sys.platform == "win32":
     import ctypes
@@ -593,6 +594,7 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
         if process.returncode != 0:
             raise AssertionError(f"QEMU runner failed with {process.returncode}")
         assert_qemu_success(qemu_output)
+        observer.stop_join()
         result = (
             serial.transcript(),
             bytes(collector.captured).decode("utf-8", errors="replace"),
@@ -806,6 +808,137 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             assert_session_input_acceptance(
                 self.valid_com1(), bytes(collector.captured).decode(), "QEMU_OUTCOME success", timeline
             )
+
+    def test_run_probe_boot_includes_late_complete_com1_failure_before_final_snapshot(self) -> None:
+        late_failure = "PYTHOS:PANIC late failure"
+
+        with tempfile.TemporaryDirectory() as directory:
+            serial_path = Path(directory) / "com1.log"
+            observer_ref: list[Com1Observer] = []
+
+            def append_lines(*lines: str) -> None:
+                with serial_path.open("a", encoding="utf-8") as serial_file:
+                    serial_file.write("\n".join(lines) + "\n")
+
+            class ExitingProcess:
+                def __init__(self) -> None:
+                    self.returncode: int | None = None
+                    self.ready_to_exit = False
+                    self.late_failure_written = False
+                    self.timeline: AcceptanceTimeline | None = None
+
+                def poll(self) -> int | None:
+                    if not self.ready_to_exit:
+                        return None
+                    if not self.late_failure_written:
+                        self.returncode = 0
+                        append_lines(late_failure)
+                        self.late_failure_written = True
+                    return self.returncode
+
+                def wait(self, timeout: float | None = None) -> int:
+                    del timeout
+                    self.returncode = 0
+                    return 0
+
+            process = ExitingProcess()
+
+            class CompletedRunnerCapture:
+                def __init__(self, captured_process: ExitingProcess, timeline: AcceptanceTimeline) -> None:
+                    self.process = captured_process
+                    self.timeline = timeline
+                    self.recorded_outcome = False
+                    captured_process.timeline = timeline
+
+                def start(self) -> None:
+                    pass
+
+                def text(self) -> str:
+                    return "QEMU_OUTCOME success\n"
+
+                def finish(self, timeout: float = 5.0) -> str:
+                    del timeout
+                    if not self.recorded_outcome:
+                        self.timeline.record("RUNNER", "QEMU_OUTCOME success")
+                        self.recorded_outcome = True
+                    return self.text()
+
+            class ProbeSocket:
+                def __init__(self) -> None:
+                    self.receives = 0
+                    self.writer: threading.Thread | None = None
+
+                def __enter__(self) -> ProbeSocket:
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    if self.writer is not None:
+                        self.writer.join(timeout=1)
+
+                def settimeout(self, _timeout: float) -> None:
+                    pass
+
+                def sendall(self, data: bytes) -> None:
+                    if data != b"G":
+                        raise AssertionError(f"unexpected COM2 acknowledgement {data!r}")
+
+                def recv(self, _size: int) -> bytes:
+                    self.receives += 1
+                    if self.receives == 1:
+                        return COM2_MARKERS[0].encode() + b"\r\n"
+                    if self.receives != 2:
+                        raise AssertionError("unexpected extra COM2 receive")
+
+                    def write_terminal_com1_after_com2_ready() -> None:
+                        assert process.timeline is not None
+                        deadline = time.monotonic() + 1
+                        while process.timeline.count("COM2", COM2_MARKERS[-1]) != 1:
+                            if time.monotonic() >= deadline:
+                                raise AssertionError("COM2 terminal marker was not recorded")
+                            time.sleep(0.001)
+                        append_lines(COM1_MARKERS[6], COM1_MARKERS[7], COM1_MARKERS[8])
+                        observer_ref[0].serial.poll()
+                        process.ready_to_exit = True
+
+                    self.writer = threading.Thread(target=write_terminal_com1_after_com2_ready)
+                    self.writer.start()
+                    return b"\r\n".join(marker.encode() for marker in COM2_MARKERS[1:]) + b"\r\n"
+
+            original_observer = Com1Observer
+
+            def create_slow_observer(serial: SerialTail) -> Com1Observer:
+                observer = original_observer(serial, poll_interval=60)
+                observer_ref.append(observer)
+                return observer
+
+            def spawn_completed_runner(_command: list[str], **_kwargs: object) -> RunnerHandle:
+                serial_path.write_text("\n".join(COM1_MARKERS[:4]) + "\n", encoding="utf-8")
+                return RunnerHandle(process, None, None)  # type: ignore[arg-type]
+
+            def inject_irq_evidence() -> None:
+                append_lines(COM1_MARKERS[4], COM1_MARKERS[5])
+                observer_ref[0].serial.poll()
+
+            module = sys.modules[__name__]
+            with (
+                mock.patch.object(module, "SERIAL_LOG", serial_path),
+                mock.patch.object(module, "DRAIN_SECONDS", 0),
+                mock.patch.object(module, "Com1Observer", create_slow_observer),
+                mock.patch.object(module, "RunnerCapture", CompletedRunnerCapture),
+                mock.patch.object(module, "spawn_runner_process", spawn_completed_runner),
+                mock.patch.object(module, "connect_com2", return_value=ProbeSocket()),
+                mock.patch.object(
+                    launcher_click,
+                    "type_session_input_bridge_sequence",
+                    side_effect=inject_irq_evidence,
+                ),
+            ):
+                com1, com2, qemu_output, timeline = run_probe_boot()
+
+        self.assertTrue(process.late_failure_written)
+        self.assertIn(late_failure, com1)
+        with self.assertRaisesRegex(AssertionError, "forbidden evidence"):
+            assert_session_input_acceptance(com1, com2, qemu_output, timeline)
 
     def test_cross_channel_timeline_edges_reject_every_reversal(self) -> None:
         required_edges = (
