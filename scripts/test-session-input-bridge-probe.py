@@ -16,6 +16,7 @@ from pathlib import Path
 from unittest import mock
 
 import launcher_click
+import qemu_probe_support as qemu_support
 from qemu_probe_support import (
     AcceptanceTimeline,
     Com1Observer,
@@ -779,6 +780,278 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 del os.killpg
         self.assertEqual(calls, [(4242, signal.SIGTERM), (4242, POSIX_SIGKILL)])
         self.assertEqual(process.waits, 2)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows suspended runner test")
+    def test_windows_spawn_suspends_before_job_assignment_then_resumes(self) -> None:
+        events: list[object] = []
+
+        class FakeProcess:
+            pid = 4242
+            _handle = 0x1234
+
+        process = FakeProcess()
+
+        def fake_popen(command: list[str], **kwargs: object) -> FakeProcess:
+            events.append(("popen", command, kwargs["creationflags"]))
+            return process
+
+        class FakeJob:
+            def __init__(self, captured_process: FakeProcess) -> None:
+                self.process = captured_process
+                events.append(("job", captured_process.pid))
+
+        def fake_resume(captured_process: FakeProcess) -> None:
+            events.append(("resume", captured_process.pid))
+
+        original_flags = 0x08000000
+        with (
+            mock.patch.object(qemu_support.subprocess, "Popen", fake_popen),
+            mock.patch.object(qemu_support, "WindowsJob", FakeJob),
+            mock.patch.object(
+                qemu_support, "_resume_windows_process", fake_resume, create=True
+            ),
+        ):
+            runner = qemu_support.spawn_runner_process(
+                ["runner.exe"], creationflags=original_flags
+            )
+
+        self.assertIs(runner.process, process)
+        self.assertIs(runner.job.process, process)
+        self.assertEqual(
+            events,
+            [
+                ("popen", ["runner.exe"], original_flags | 0x00000004),
+                ("job", 4242),
+                ("resume", 4242),
+            ],
+        )
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows suspended runner test")
+    def test_windows_job_assignment_failure_kills_and_reaps_suspended_runner(self) -> None:
+        events: list[str] = []
+
+        class FakeProcess:
+            pid = 4242
+            _handle = 0x1234
+
+            def kill(self) -> None:
+                events.append("kill")
+
+            def wait(self, timeout: float) -> int:
+                self.timeout = timeout
+                events.append("wait")
+                return 1
+
+        process = FakeProcess()
+
+        def fake_popen(_command: list[str], **_kwargs: object) -> FakeProcess:
+            events.append("popen")
+            return process
+
+        class FailingJob:
+            def __init__(self, _process: FakeProcess) -> None:
+                events.append("job")
+                raise OSError("job assignment failed")
+
+        with (
+            mock.patch.object(qemu_support.subprocess, "Popen", fake_popen),
+            mock.patch.object(qemu_support, "WindowsJob", FailingJob),
+            mock.patch.object(
+                qemu_support,
+                "_resume_windows_process",
+                side_effect=AssertionError("resume must not run"),
+                create=True,
+            ),
+            self.assertRaisesRegex(OSError, "job assignment failed"),
+        ):
+            qemu_support.spawn_runner_process(["runner.exe"])
+
+        self.assertEqual(events, ["popen", "job", "kill", "wait"])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows suspended runner test")
+    def test_windows_thread_or_resume_failure_terminates_job_reaps_and_closes(self) -> None:
+        for failure in ("thread discovery", "thread open", "thread resume"):
+            with self.subTest(failure=failure):
+                events: list[str] = []
+
+                class FakeProcess:
+                    pid = 4242
+                    _handle = 0x1234
+
+                    def kill(self) -> None:
+                        raise AssertionError("assigned process must be killed through its job")
+
+                    def wait(self, timeout: float) -> int:
+                        self.timeout = timeout
+                        events.append("wait")
+                        return 1
+
+                process = FakeProcess()
+
+                def fake_popen(_command: list[str], **_kwargs: object) -> FakeProcess:
+                    events.append("popen")
+                    return process
+
+                class FakeJob:
+                    def __init__(self, _process: FakeProcess) -> None:
+                        events.append("job")
+
+                    def terminate(self) -> None:
+                        events.append("terminate")
+
+                    def close(self) -> None:
+                        events.append("close")
+
+                def fail_resume(_process: FakeProcess) -> None:
+                    events.append(failure)
+                    raise OSError(failure)
+
+                with (
+                    mock.patch.object(qemu_support.subprocess, "Popen", fake_popen),
+                    mock.patch.object(qemu_support, "WindowsJob", FakeJob),
+                    mock.patch.object(
+                        qemu_support, "_resume_windows_process", fail_resume, create=True
+                    ),
+                    self.assertRaisesRegex(OSError, failure),
+                ):
+                    qemu_support.spawn_runner_process(["runner.exe"])
+
+                self.assertEqual(
+                    events,
+                    ["popen", "job", failure, "terminate", "wait", "close"],
+                )
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows suspended runner test")
+    def test_windows_resume_requires_exactly_one_prior_suspend(self) -> None:
+        resume_windows_process = getattr(qemu_support, "_resume_windows_process", None)
+        self.assertIsNotNone(
+            resume_windows_process, "spawn must resume the assigned suspended runner"
+        )
+        for prior_count in (0, 2, 0xFFFFFFFF):
+            with self.subTest(prior_count=prior_count):
+                closed: list[int] = []
+                with (
+                    mock.patch.object(
+                        qemu_support,
+                        "_find_sole_windows_thread_id",
+                        return_value=8181,
+                        create=True,
+                    ),
+                    mock.patch.object(
+                        qemu_support,
+                        "_open_windows_thread",
+                        return_value=0xCAFE,
+                        create=True,
+                    ),
+                    mock.patch.object(
+                        qemu_support,
+                        "_resume_windows_thread",
+                        return_value=prior_count,
+                        create=True,
+                    ),
+                    mock.patch.object(
+                        qemu_support,
+                        "_close_windows_handle",
+                        side_effect=closed.append,
+                        create=True,
+                    ),
+                    self.assertRaises((AssertionError, OSError)),
+                ):
+                    resume_windows_process(mock.Mock(pid=4242))
+                self.assertEqual(closed, [0xCAFE])
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
+    def test_windows_suspended_assignment_contains_immediate_child(self) -> None:
+        original_job = qemu_support.WindowsJob
+        runner: RunnerHandle | None = None
+        child_handle: int | None = None
+
+        with tempfile.TemporaryDirectory() as directory:
+            evidence = Path(directory) / "runner-child.txt"
+
+            class InspectingJob:
+                def __init__(self, process: subprocess.Popen[str]) -> None:
+                    deadline = time.monotonic() + 1.0
+                    while not evidence.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.executed_before_assignment = evidence.exists()
+                    self.inner = original_job(process)
+
+                def terminate(self) -> None:
+                    self.inner.terminate()
+
+                def close(self) -> None:
+                    self.inner.close()
+
+            child_code = "import time; time.sleep(60)"
+            runner_code = (
+                "import os,pathlib,subprocess,sys,time; "
+                f"child=subprocess.Popen([sys.executable, '-u', '-c', {child_code!r}]); "
+                f"pathlib.Path({str(evidence)!r}).write_text(str(os.getpid()) + ' ' + str(child.pid)); "
+                "time.sleep(60)"
+            )
+
+            kernel32 = qemu_support.ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.OpenProcess.argtypes = [
+                qemu_support.wintypes.DWORD,
+                qemu_support.wintypes.BOOL,
+                qemu_support.wintypes.DWORD,
+            ]
+            kernel32.OpenProcess.restype = qemu_support.wintypes.HANDLE
+            kernel32.IsProcessInJob.argtypes = [
+                qemu_support.wintypes.HANDLE,
+                qemu_support.wintypes.HANDLE,
+                qemu_support.ctypes.POINTER(qemu_support.wintypes.BOOL),
+            ]
+            kernel32.IsProcessInJob.restype = qemu_support.wintypes.BOOL
+            kernel32.WaitForSingleObject.argtypes = [
+                qemu_support.wintypes.HANDLE,
+                qemu_support.wintypes.DWORD,
+            ]
+            kernel32.WaitForSingleObject.restype = qemu_support.wintypes.DWORD
+            kernel32.TerminateProcess.argtypes = [
+                qemu_support.wintypes.HANDLE,
+                qemu_support.wintypes.UINT,
+            ]
+            kernel32.TerminateProcess.restype = qemu_support.wintypes.BOOL
+            kernel32.CloseHandle.argtypes = [qemu_support.wintypes.HANDLE]
+            kernel32.CloseHandle.restype = qemu_support.wintypes.BOOL
+
+            try:
+                with mock.patch.object(qemu_support, "WindowsJob", InspectingJob):
+                    runner = qemu_support.spawn_runner_process(
+                        [sys.executable, "-u", "-c", runner_code]
+                    )
+
+                deadline = time.monotonic() + 3.0
+                while not evidence.exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                self.assertTrue(evidence.exists(), "runner did not create child evidence")
+                _, child_pid_text = evidence.read_text(encoding="utf-8").split()
+                child_pid = int(child_pid_text)
+                child_handle = kernel32.OpenProcess(0x00100000 | 0x00001000, False, child_pid)
+                self.assertTrue(child_handle, qemu_support.ctypes.get_last_error())
+                self.assertFalse(runner.job.executed_before_assignment)
+                is_member = qemu_support.wintypes.BOOL()
+                self.assertTrue(
+                    kernel32.IsProcessInJob(
+                        child_handle, runner.job.inner._handle, qemu_support.ctypes.byref(is_member)
+                    ),
+                    qemu_support.ctypes.get_last_error(),
+                )
+                self.assertTrue(is_member.value, "immediate child escaped the runner job")
+
+                cleanup_runner_process(runner, terminate_timeout=2.0)
+                self.assertIsNotNone(runner.process.poll())
+                self.assertEqual(kernel32.WaitForSingleObject(child_handle, 2000), 0)
+            finally:
+                if runner is not None:
+                    cleanup_runner_process(runner, terminate_timeout=2.0)
+                if child_handle:
+                    if kernel32.WaitForSingleObject(child_handle, 0) == 0x00000102:
+                        kernel32.TerminateProcess(child_handle, 1)
+                        kernel32.WaitForSingleObject(child_handle, 2000)
+                    kernel32.CloseHandle(child_handle)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
     def test_windows_job_cleans_child_after_parent_has_exited(self) -> None:

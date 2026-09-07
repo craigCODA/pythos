@@ -21,6 +21,14 @@ POSIX_SIGKILL = getattr(signal, "SIGKILL", 9)
 
 
 if sys.platform == "win32":
+    _CREATE_SUSPENDED = 0x00000004
+    _TH32CS_SNAPTHREAD = 0x00000004
+    _THREAD_SUSPEND_RESUME = 0x0002
+    _ERROR_NO_MORE_FILES = 18
+    _RESUME_THREAD_FAILED = 0xFFFFFFFF
+    _MAX_THREAD_SNAPSHOT_ENTRIES = 262144
+    _WINDOWS_ABORT_TIMEOUT_SECONDS = 5.0
+
     class _JobBasicLimitInformation(ctypes.Structure):
         _fields_ = [
             ("per_process_user_time_limit", ctypes.c_longlong),
@@ -50,12 +58,137 @@ if sys.platform == "win32":
             ("peak_job_memory_used", ctypes.c_size_t),
         ]
 
+    class _ThreadEntry32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ThreadID", wintypes.DWORD),
+            ("th32OwnerProcessID", wintypes.DWORD),
+            ("tpBasePri", wintypes.LONG),
+            ("tpDeltaPri", wintypes.LONG),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    def _windows_kernel32():
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateJobObjectW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR]
+        kernel32.CreateJobObjectW.restype = wintypes.HANDLE
+        kernel32.SetInformationJobObject.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+        ]
+        kernel32.SetInformationJobObject.restype = wintypes.BOOL
+        kernel32.AssignProcessToJobObject.argtypes = [
+            wintypes.HANDLE,
+            wintypes.HANDLE,
+        ]
+        kernel32.AssignProcessToJobObject.restype = wintypes.BOOL
+        kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+        kernel32.TerminateJobObject.restype = wintypes.BOOL
+        kernel32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        kernel32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+        kernel32.Thread32First.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_ThreadEntry32),
+        ]
+        kernel32.Thread32First.restype = wintypes.BOOL
+        kernel32.Thread32Next.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(_ThreadEntry32),
+        ]
+        kernel32.Thread32Next.restype = wintypes.BOOL
+        kernel32.OpenThread.argtypes = [
+            wintypes.DWORD,
+            wintypes.BOOL,
+            wintypes.DWORD,
+        ]
+        kernel32.OpenThread.restype = wintypes.HANDLE
+        kernel32.ResumeThread.argtypes = [wintypes.HANDLE]
+        kernel32.ResumeThread.restype = wintypes.DWORD
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        return kernel32
+
+    def _close_windows_handle(handle: int) -> None:
+        if not _windows_kernel32().CloseHandle(handle):
+            raise OSError(ctypes.get_last_error(), "CloseHandle failed")
+
+    def _find_sole_windows_thread_id(process_id: int) -> int:
+        kernel32 = _windows_kernel32()
+        snapshot = kernel32.CreateToolhelp32Snapshot(_TH32CS_SNAPTHREAD, 0)
+        invalid_handle = ctypes.c_void_p(-1).value
+        if snapshot == invalid_handle:
+            raise OSError(
+                ctypes.get_last_error(), "CreateToolhelp32Snapshot for runner failed"
+            )
+
+        matches: list[int] = []
+        visited = 0
+        entry = _ThreadEntry32()
+        entry.dwSize = ctypes.sizeof(entry)
+        try:
+            ctypes.set_last_error(0)
+            available = bool(kernel32.Thread32First(snapshot, ctypes.byref(entry)))
+            if not available:
+                error = ctypes.get_last_error()
+                if error not in (0, _ERROR_NO_MORE_FILES):
+                    raise OSError(error, "Thread32First for runner failed")
+            while available:
+                visited += 1
+                if visited > _MAX_THREAD_SNAPSHOT_ENTRIES:
+                    raise AssertionError("runner thread snapshot exceeded bounded scan")
+                if entry.th32OwnerProcessID == process_id:
+                    matches.append(int(entry.th32ThreadID))
+                    if len(matches) > 1:
+                        raise AssertionError(
+                            "suspended runner did not have exactly one primary thread"
+                        )
+                ctypes.set_last_error(0)
+                available = bool(kernel32.Thread32Next(snapshot, ctypes.byref(entry)))
+                if not available:
+                    error = ctypes.get_last_error()
+                    if error not in (0, _ERROR_NO_MORE_FILES):
+                        raise OSError(error, "Thread32Next for runner failed")
+        finally:
+            _close_windows_handle(snapshot)
+
+        if len(matches) != 1:
+            raise AssertionError("suspended runner primary thread was not found")
+        return matches[0]
+
+    def _open_windows_thread(thread_id: int) -> int:
+        handle = _windows_kernel32().OpenThread(
+            _THREAD_SUSPEND_RESUME, False, thread_id
+        )
+        if not handle:
+            raise OSError(ctypes.get_last_error(), "OpenThread for runner failed")
+        return handle
+
+    def _resume_windows_thread(thread_handle: int) -> int:
+        return int(_windows_kernel32().ResumeThread(thread_handle))
+
+    def _resume_windows_process(process: subprocess.Popen[str]) -> None:
+        thread_id = _find_sole_windows_thread_id(process.pid)
+        thread_handle = _open_windows_thread(thread_id)
+        try:
+            previous_suspend_count = _resume_windows_thread(thread_handle)
+            if previous_suspend_count == _RESUME_THREAD_FAILED:
+                raise OSError(ctypes.get_last_error(), "ResumeThread for runner failed")
+            if previous_suspend_count != 1:
+                raise AssertionError(
+                    "runner primary thread did not have suspend count exactly one"
+                )
+        finally:
+            _close_windows_handle(thread_handle)
+
     class WindowsJob:
         _KILL_ON_JOB_CLOSE = 0x00002000
         _EXTENDED_LIMIT_INFORMATION = 9
 
         def __init__(self, process: subprocess.Popen[str]) -> None:
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32 = _windows_kernel32()
             self._close_handle = kernel32.CloseHandle
             self._terminate_job = kernel32.TerminateJobObject
             self._handle = kernel32.CreateJobObjectW(None, None)
@@ -76,13 +209,15 @@ if sys.platform == "win32":
                 raise OSError(ctypes.get_last_error(), "AssignProcessToJobObject failed")
 
         def terminate(self) -> None:
-            if self._handle:
-                self._terminate_job(self._handle, 1)
+            if self._handle and not self._terminate_job(self._handle, 1):
+                raise OSError(ctypes.get_last_error(), "TerminateJobObject failed")
 
         def close(self) -> None:
             if self._handle:
-                self._close_handle(self._handle)
+                handle = self._handle
                 self._handle = None
+                if not self._close_handle(handle):
+                    raise OSError(ctypes.get_last_error(), "CloseHandle failed")
 else:
     WindowsJob = None
 
@@ -95,6 +230,9 @@ class RunnerHandle:
 
 
 def spawn_runner_process(command: list[str], **popen_kwargs: object) -> RunnerHandle:
+    if sys.platform == "win32":
+        creation_flags = int(popen_kwargs.get("creationflags", 0))
+        popen_kwargs["creationflags"] = creation_flags | _CREATE_SUSPENDED
     process = subprocess.Popen(
         command,
         text=True,
@@ -103,8 +241,37 @@ def spawn_runner_process(command: list[str], **popen_kwargs: object) -> RunnerHa
         **popen_kwargs,
     )
     if sys.platform == "win32":
-        return RunnerHandle(process, None, WindowsJob(process))
+        job = None
+        try:
+            job = WindowsJob(process)
+            _resume_windows_process(process)
+        except BaseException:
+            _abort_windows_runner(process, job)
+            raise
+        return RunnerHandle(process, None, job)
     return RunnerHandle(process, os.getpgid(process.pid), None)
+
+
+def _abort_windows_runner(
+    process: subprocess.Popen[str], job: WindowsJob | None
+) -> None:
+    """Kill and reap a runner that must not escape an incomplete job setup."""
+    try:
+        if job is not None:
+            try:
+                job.terminate()
+            except OSError:
+                process.kill()
+        else:
+            process.kill()
+        try:
+            process.wait(timeout=_WINDOWS_ABORT_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=_WINDOWS_ABORT_TIMEOUT_SECONDS)
+    finally:
+        if job is not None:
+            job.close()
 
 
 class AcceptanceTimeline:
