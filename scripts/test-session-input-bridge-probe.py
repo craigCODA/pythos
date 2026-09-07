@@ -979,6 +979,37 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             except BaseException as error:
                 failures.append(f"runner cleanup raised {error!r}")
 
+                runner_running = True
+                try:
+                    runner_running = runner.process.poll() is None
+                except BaseException as fallback_error:
+                    failures.append(
+                        f"runner fallback poll raised {fallback_error!r}"
+                    )
+
+                if runner_running:
+                    try:
+                        runner.process.kill()
+                    except BaseException as fallback_error:
+                        failures.append(
+                            f"runner fallback kill raised {fallback_error!r}"
+                        )
+
+                try:
+                    runner.process.wait(timeout=2.0)
+                except BaseException as fallback_error:
+                    failures.append(
+                        f"runner fallback wait raised {fallback_error!r}"
+                    )
+
+                if runner.job is not None:
+                    try:
+                        runner.job.close()
+                    except BaseException as fallback_error:
+                        failures.append(
+                            f"runner fallback job close raised {fallback_error!r}"
+                        )
+
         if child_handle:
             wait_result: int | None = None
             try:
@@ -1082,12 +1113,35 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 events.append(f"fallback:wait:{timeout}")
                 return 1
 
-        runner = mock.Mock()
+        class FakeRunnerProcess:
+            def poll(self) -> None:
+                events.append("runner:poll")
+                return None
+
+            def kill(self) -> None:
+                events.append("runner:kill")
+                raise OSError("injected runner kill failure")
+
+            def wait(self, timeout: float) -> int:
+                events.append(f"runner:wait:{timeout}")
+                raise OSError("injected runner wait failure")
+
+        class FakeRunnerJob:
+            def close(self) -> None:
+                events.append("runner:job:close")
+                raise OSError("injected runner job close failure")
+
+        runner = RunnerHandle(FakeRunnerProcess(), None, FakeRunnerJob())
+
+        def fail_runner_cleanup(
+            _runner: RunnerHandle, terminate_timeout: float
+        ) -> None:
+            events.append(f"runner:cleanup:{terminate_timeout}")
+            raise OSError("injected runner cleanup failure")
+
         with mock.patch(
             f"{__name__}.cleanup_runner_process",
-            side_effect=lambda _runner, terminate_timeout: events.append(
-                f"runner:cleanup:{terminate_timeout}"
-            ),
+            side_effect=fail_runner_cleanup,
         ):
             failures = cleanup(
                 runner=runner,
@@ -1101,6 +1155,10 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             events,
             [
                 "runner:cleanup:2.0",
+                "runner:poll",
+                "runner:kill",
+                "runner:wait:2.0",
+                "runner:job:close",
                 "wait:101:0",
                 "terminate:101",
                 "wait:101:2000",
@@ -1110,6 +1168,22 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 "fallback:wait:2.0",
                 "close:202",
             ],
+        )
+        self.assertIn(
+            "runner cleanup raised OSError('injected runner cleanup failure')",
+            failures,
+        )
+        self.assertIn(
+            "runner fallback kill raised OSError('injected runner kill failure')",
+            failures,
+        )
+        self.assertIn(
+            "runner fallback wait raised OSError('injected runner wait failure')",
+            failures,
+        )
+        self.assertIn(
+            "runner fallback job close raised OSError('injected runner job close failure')",
+            failures,
         )
         self.assertIn("child TerminateProcess returned false", failures)
         self.assertIn("child WaitForSingleObject returned 0xffffffff", failures)
