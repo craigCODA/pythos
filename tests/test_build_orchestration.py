@@ -43,6 +43,84 @@ def normalize(command: list[object]) -> list[str]:
     return [str(part).replace("\\", "/") for part in command]
 
 
+def read_u16(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 2], "little")
+
+
+def read_u32(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 4], "little")
+
+
+def read_u64(data: bytes, offset: int) -> int:
+    return int.from_bytes(data[offset : offset + 8], "little")
+
+
+def parse_init_pak_bundle(pak: bytes) -> list[tuple[int, bytes]]:
+    """Decode the v0 package/bundle framing without using build-image helpers."""
+    if pak[:18] != b"PYTHOS_INIT_PAK_V0":
+        raise AssertionError("unexpected INIT.PAK magic")
+    if read_u16(pak, 18) != 0 or read_u16(pak, 20) != 0 or read_u32(pak, 22) != 64:
+        raise AssertionError("unexpected INIT.PAK version or header length")
+    if read_u64(pak, 26) != len(pak) or read_u64(pak, 34) != len(pak) - 64:
+        raise AssertionError("unexpected INIT.PAK length")
+    bundle = pak[64:]
+    if read_u32(pak, 42) != sum(bundle) & 0xFFFFFFFF:
+        raise AssertionError("bad INIT.PAK checksum")
+    if bundle[:16] != b"PYTHOS_BUNDLE_V0":
+        raise AssertionError("unexpected bundle magic")
+    if read_u16(bundle, 16) != 0 or read_u16(bundle, 18) != 0 or read_u32(bundle, 20) != 32:
+        raise AssertionError("unexpected bundle version or header length")
+
+    record_count = read_u16(bundle, 24)
+    table_end = 32 + record_count * 32
+    if record_count == 0 or table_end > len(bundle) or bundle[26:32] != b"\0" * 6:
+        raise AssertionError("unexpected bundle record table")
+
+    records: list[tuple[int, bytes]] = []
+    ranges: list[tuple[int, int]] = []
+    for index in range(record_count):
+        entry = 32 + index * 32
+        record_type = read_u32(bundle, entry)
+        offset = read_u64(bundle, entry + 8)
+        length = read_u64(bundle, entry + 16)
+        end = offset + length
+        if (
+            read_u32(bundle, entry + 4) != 0
+            or bundle[entry + 28 : entry + 32] != b"\0" * 4
+            or offset < table_end
+            or end > len(bundle)
+            or any(offset < previous_end and previous_start < end for previous_start, previous_end in ranges)
+        ):
+            raise AssertionError("invalid bundle record framing")
+        payload = bundle[offset:end]
+        if read_u32(bundle, entry + 24) != sum(payload) & 0xFFFFFFFF:
+            raise AssertionError("bad bundle record checksum")
+        ranges.append((offset, end))
+        records.append((record_type, payload))
+    return records
+
+
+def parse_named_record(record_type: int, payload: bytes) -> tuple[bytes, int, int, bytes]:
+    expected_magic = {
+        3: b"PYUPGM01",
+        4: b"PYTIGM01",
+    }.get(record_type)
+    if expected_magic is None or payload[:8] != expected_magic:
+        raise AssertionError("unexpected named record type or magic")
+    if read_u16(payload, 8) != 1 or read_u16(payload, 10) != 0 or payload[14:16] != b"\0\0":
+        raise AssertionError("unexpected named record version")
+    name_len = read_u16(payload, 12)
+    payload_len = read_u32(payload, 32)
+    if payload[36:40] != b"\0" * 4 or len(payload) != 40 + name_len + payload_len:
+        raise AssertionError("unexpected named record length")
+    return (
+        payload[40 : 40 + name_len],
+        read_u64(payload, 16),
+        read_u64(payload, 24),
+        payload[40 + name_len :],
+    )
+
+
 class BuildOrchestrationTest(unittest.TestCase):
     def test_relative_probe_identity_is_resolved_once_before_any_packaging_mutation(self) -> None:
         module = load_script("build-image.py")
@@ -298,7 +376,7 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn(module.digest64(b"probe").to_bytes(8, "little"), opted_in)
 
     def test_session_runtime_records_are_exact_and_default_bundle_is_byte_identical(self) -> None:
-        # Catches packaging the generic runtime/default-services graph, or changing the default bundle.
+        # Catches a wrong principal/digest/name or any extra named runtime/graph record.
         module = load_script("build-image.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -313,39 +391,51 @@ class BuildOrchestrationTest(unittest.TestCase):
             ), unittest.mock.patch.object(module, "build_runtime_payload", return_value=b"runtime"):
                 default = module.build_default_init_pak()
                 opted_in = module.build_default_init_pak(session_runtime_elf=runtime)
-                records = module.session_runtime_records(runtime)
 
         self.assertEqual(
             hashlib.sha256(default).hexdigest(),
             "b0bec33f7206e0f90ed14112ff9ffef80bce4a896a11b2794216efd58c3fb47e",
         )
         self.assertEqual(
-            records,
+            [record_type for record_type, _payload in parse_init_pak_bundle(default)],
+            [1, 3, 2, 2, 2, 2],
+        )
+        records = parse_init_pak_bundle(opted_in)
+        self.assertEqual(
+            [record_type for record_type, _payload in records],
+            [1, 3, 3, 4, 2, 2, 2, 2],
+        )
+        named_records = [
+            (record_type, *parse_named_record(record_type, payload))
+            for record_type, payload in records
+            if record_type in (3, 4)
+        ]
+        self.assertEqual(
+            named_records,
             [
                 (
-                    module.INIT_BUNDLE_NAMED_USER_ELF_TYPE,
-                    module.build_named_user_program(
-                        b"session-runtime.elf",
-                        module.SESSION_RUNTIME_PRINCIPAL_ID,
-                        b"retained-runtime",
-                    ),
+                    3,
+                    b"shell.elf",
+                    0x5059_5348_454C_4C01,
+                    0x4D29_0749_288B_71C1,
+                    b"shell",
                 ),
                 (
-                    module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
-                    module.build_named_pyth_graph(
-                        b"session-manager.tig",
-                        module.SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
-                        b"session-manager-graph",
-                    ),
+                    3,
+                    b"session-runtime.elf",
+                    0x5059_5352_544D_0001,
+                    0x27F8_716A_6FAD_F8D4,
+                    b"retained-runtime",
+                ),
+                (
+                    4,
+                    b"session-manager.tig",
+                    0x5059_5448_534D_0001,
+                    0x7EF4_FA53_40D7_C414,
+                    b"session-manager-graph",
                 ),
             ],
         )
-        self.assertIn(b"session-runtime.elf", opted_in)
-        self.assertIn(b"session-manager.tig", opted_in)
-        self.assertNotIn(b"pyth-runtime.elf", opted_in)
-        self.assertNotIn(b"task-steward.tig", opted_in)
-        self.assertIn(module.digest64(b"retained-runtime").to_bytes(8, "little"), opted_in)
-        self.assertIn(module.digest64(b"session-manager-graph").to_bytes(8, "little"), opted_in)
 
     def test_session_runtime_profile_rejects_every_other_pythtig_set_and_session_input_probe(self) -> None:
         # Catches a mixed acceptance image that could launch more than the retained runtime pair.
