@@ -20,8 +20,10 @@ const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
 // The owning ledger retains both dynamically allocated ELF pages and caller-
-// supplied user payload pages so `reclaim` can release every mapped frame.
-pub(crate) const MAX_RETAINED_USER_FRAMES: usize = 69;
+// supplied user payload pages so `reclaim` can release every mapped frame. The
+// fixed power-of-two bound doubles the former 64-frame ceiling, matches the
+// nearby bounded table-frame ceiling, and leaves deliberate artifact headroom.
+pub(crate) const MAX_RETAINED_USER_FRAMES: usize = 128;
 pub const LATE_FRAME_SCRATCH_VIRT: u64 = 0xFFFF_C000_3000_0000;
 
 const PTE_PRESENT: u64 = 1 << 0;
@@ -1748,7 +1750,7 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
 // mapping's actual effect on real AHCI hardware is proven functionally by
 // Task E's QEMU integration test.
 const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
-const _: () = assert!(MAX_RETAINED_USER_FRAMES == 65 + 4);
+const _: () = assert!(MAX_RETAINED_USER_FRAMES.is_power_of_two());
 #[cfg(feature = "evidence-terminal")]
 pub fn evidence_log_supervisor_mapping(boot_info: &PythBootInfo) -> Option<(u64, u64, u64)> {
     if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {
