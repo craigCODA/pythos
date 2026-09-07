@@ -249,6 +249,7 @@ fn validate_phase2_runtime_profile(verified: &VerifiedGraph<'_>) -> Result<(), P
                 | Opcode::ConstBytes
                 | Opcode::ConstUtf8
                 | Opcode::HostResult
+                | Opcode::Eq
                 | Opcode::LessThanU64
                 | Opcode::SystemLog
                 | Opcode::ObjectCreate
@@ -441,6 +442,25 @@ mod tests {
         )]))
     }
 
+    fn typed_u64_equality_package(lhs: u64, rhs: u64) -> Vec<u8> {
+        let mut package = test_support::package_with_add_bool();
+        let nodes_offset = u32::from_le_bytes(package[68..72].try_into().unwrap()) as usize;
+        let node_size = core::mem::size_of::<pythos_shared::pyth_tig::NodeRecord>();
+
+        package[nodes_offset..nodes_offset + 2]
+            .copy_from_slice(&Opcode::ConstU64.code().to_le_bytes());
+        package[nodes_offset + 2..nodes_offset + 4]
+            .copy_from_slice(&PythType::U64.code().to_le_bytes());
+        let equality = nodes_offset + 2 * node_size;
+        package[equality..equality + 2].copy_from_slice(&Opcode::Eq.code().to_le_bytes());
+        package[equality + 2..equality + 4].copy_from_slice(&PythType::Bool.code().to_le_bytes());
+        let return_node = nodes_offset + 3 * node_size;
+        package[return_node + 8..return_node + 12].copy_from_slice(&NO_VALUE.to_le_bytes());
+        test_support::set_node_immediate(&mut package, 0, lhs);
+        test_support::set_node_immediate(&mut package, 1, rhs);
+        package.to_vec()
+    }
+
     fn commit_package_export_content<'a>(
         package_object_id: u64,
         release_digest: [u8; 32],
@@ -592,6 +612,23 @@ mod tests {
                 producer: 0
             }))
         );
+    }
+
+    #[test]
+    fn loader_accepts_session_manager_shaped_typed_u64_equality() {
+        let package = typed_u64_equality_package(3, 3);
+        let verified = verify::verify_bytes(&package)
+            .expect("shared v1 verifier must admit typed U64 equality");
+        let equality = verified.package().nodes().get(2).unwrap();
+        assert_eq!(Opcode::try_from(equality.opcode), Ok(Opcode::Eq));
+        assert_eq!(PythType::try_from(equality.result_type), Ok(PythType::Bool));
+        assert_eq!([equality.input0, equality.input1], [0, 1]);
+        let bundle = build_named_graph_bundle(b"session-eq.tig", &package);
+
+        let loaded = validate_named_pyth_graph_payload_bytes(&bundle, b"session-eq.tig")
+            .expect("Phase 2 profile must admit the frozen Session Manager equality shape");
+
+        assert_eq!(loaded.verified.package().header().node_count, 4);
     }
 
     #[test]

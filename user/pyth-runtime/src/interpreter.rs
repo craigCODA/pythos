@@ -226,6 +226,7 @@ impl<'a> Interpreter<'a> {
             Opcode::EffectStart => self.store_value(node_index, Value::Effect(node_index as u64)),
             Opcode::ConstBool => self.execute_const_bool(node_index, &node),
             Opcode::ConstU64 => self.execute_const_u64(node_index, &node),
+            Opcode::Eq => self.execute_eq(node_index, &node),
             Opcode::LessThanU64 => self.execute_less_than_u64(node_index, &node),
             Opcode::ConstBytes => self.execute_const_bytes(package, node_index, &node),
             Opcode::ConstUtf8 => self.execute_const_utf8(package, node_index, &node),
@@ -322,6 +323,21 @@ impl<'a> Interpreter<'a> {
         let lhs = self.expect_u64(node.input0)?;
         let rhs = self.expect_u64(node.input1)?;
         self.store_value(node_index, Value::Bool(lhs < rhs))
+    }
+
+    fn execute_eq(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        if PythType::try_from(node.result_type).map_err(|_| RuntimeError::InvalidValue)?
+            != PythType::Bool
+        {
+            return Err(RuntimeError::UnsupportedOpcode);
+        }
+        let lhs = self.expect_u64(node.input0)?;
+        let rhs = self.expect_u64(node.input1)?;
+        self.store_value(node_index, Value::Bool(lhs == rhs))
     }
 
     fn execute_const_utf8(
@@ -877,6 +893,44 @@ mod tests {
         last_score: u64,
     }
 
+    fn empty_recording_host() -> RecordingHost {
+        RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+            proposal_count: 0,
+            last_candidate_task_id: 0,
+            last_score: 0,
+        }
+    }
+
+    fn typed_u64_equality_package(lhs: u64, rhs: u64) -> impl core::ops::Deref<Target = [u8]> {
+        let mut package = test_support::package_with_add_bool();
+        let nodes_offset = u32::from_le_bytes(package[68..72].try_into().unwrap()) as usize;
+        let node_size = core::mem::size_of::<pythos_shared::pyth_tig::NodeRecord>();
+
+        package[nodes_offset..nodes_offset + 2]
+            .copy_from_slice(&Opcode::ConstU64.code().to_le_bytes());
+        package[nodes_offset + 2..nodes_offset + 4]
+            .copy_from_slice(&PythType::U64.code().to_le_bytes());
+        let equality = nodes_offset + 2 * node_size;
+        package[equality..equality + 2].copy_from_slice(&Opcode::Eq.code().to_le_bytes());
+        package[equality + 2..equality + 4].copy_from_slice(&PythType::Bool.code().to_le_bytes());
+        let return_node = nodes_offset + 3 * node_size;
+        package[return_node + 8..return_node + 12].copy_from_slice(&NO_VALUE.to_le_bytes());
+        test_support::set_node_immediate(&mut package, 0, lhs);
+        test_support::set_node_immediate(&mut package, 1, rhs);
+        package
+    }
+
     impl Host for RecordingHost {
         fn system_log(
             &mut self,
@@ -1133,6 +1187,81 @@ mod tests {
             assert_eq!(exit.executed_nodes, 3);
             assert_eq!(exit.last_node, expected_last_node);
         }
+    }
+
+    #[test]
+    fn typed_u64_equality_evaluates_true_and_false() {
+        for (lhs, rhs, expected) in [(3, 3, true), (3, 4, false)] {
+            let bytes = typed_u64_equality_package(lhs, rhs);
+            let package = PythGraphPackage::decode(&bytes).unwrap();
+            let verified = verify_package(&package).unwrap();
+            let mut host = empty_recording_host();
+            let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+            let mut values = [None; MAX_RUNTIME_VALUES];
+            let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+            let exit = Interpreter::new(verified, &imports, 16, &mut values, &mut host_results)
+                .execute(&mut host);
+
+            assert_ne!(
+                exit.error_code,
+                RuntimeError::UnsupportedOpcode.code(),
+                "typed U64 Eq reached UnsupportedOpcode"
+            );
+            assert_eq!(exit.status, GRAPH_EXIT_OK);
+            assert_eq!(values[2], Some(Value::Bool(expected)));
+        }
+    }
+
+    #[test]
+    fn typed_u64_equality_preserves_missing_and_invalid_operand_errors() {
+        let bytes = typed_u64_equality_package(3, 3);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = empty_recording_host();
+        let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+        let mut interpreter =
+            Interpreter::new(verified, &imports, 16, &mut values, &mut host_results);
+
+        assert_eq!(
+            interpreter.dispatch_node(&package, 2, &mut host),
+            Err(RuntimeError::InvalidInput)
+        );
+        interpreter.values[0] = Some(Value::Bool(true));
+        interpreter.values[1] = Some(Value::U64(3));
+        assert_eq!(
+            interpreter.dispatch_node(&package, 2, &mut host),
+            Err(RuntimeError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn command_kind_host_result_flows_into_typed_u64_equality() {
+        let bytes = typed_u64_equality_package(3, 3);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = empty_recording_host();
+        let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+        let mut interpreter =
+            Interpreter::new(verified, &imports, 16, &mut values, &mut host_results);
+        let mut result = HostCallResult::empty(0);
+        result.reserved0 = u32::from(COMMAND_KIND_CREATE_NOTE);
+        interpreter.values[0] = Some(
+            interpreter
+                .command_host_result_value(0, COMMAND_FIELD_KIND, result)
+                .unwrap(),
+        );
+        interpreter.values[1] = Some(Value::U64(u64::from(COMMAND_KIND_CREATE_NOTE)));
+
+        interpreter
+            .dispatch_node(&package, 2, &mut host)
+            .expect("typed command kind comparison must execute");
+
+        assert_eq!(interpreter.values[2], Some(Value::Bool(true)));
     }
 
     #[test]
