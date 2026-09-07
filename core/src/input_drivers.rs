@@ -253,6 +253,7 @@ pub(crate) fn scancode_to_keycode(scancode: u8) -> Option<KeyCode> {
 
 #[cfg(any(
     test,
+    feature = "session-input-bridge-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -270,6 +271,7 @@ enum PhysicalScanSet {
 /// suppression. Higher layers retain their own policy for accepted keys.
 #[cfg(any(
     test,
+    feature = "session-input-bridge-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -282,6 +284,7 @@ pub(crate) struct PhysicalKeyboardDecoder {
 
 #[cfg(any(
     test,
+    feature = "session-input-bridge-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -355,6 +358,7 @@ impl PhysicalKeyboardDecoder {
 
 #[cfg(any(
     test,
+    feature = "session-input-bridge-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -459,7 +463,7 @@ impl MouseDriver {
         }
         Ok(RawInputEvent::MouseMoved {
             dx: packet[1] as i8,
-            dy: packet[2] as i8,
+            dy: normalize_ps2_relative_y(packet[2]),
         })
     }
 }
@@ -470,6 +474,14 @@ impl MouseDriver {
 /// lives in exactly one place.
 pub(crate) fn mouse_byte0_is_valid(byte0: u8) -> bool {
     byte0 & 0x08 != 0
+}
+
+/// Convert PS/2 packet Y into the screen-relative convention used by QMP and
+/// the normalized input ABI. The protocol's positive Y is upward, opposite
+/// the screen convention. `i8::MIN` remains `i8::MIN` under wrapping negation,
+/// matching the existing deliberate i8-only mouse simplification.
+pub(crate) const fn normalize_ps2_relative_y(protocol_y: u8) -> i8 {
+    (protocol_y as i8).wrapping_neg()
 }
 
 pub fn run_self_test() -> Result<(), InputDriverError> {
@@ -500,7 +512,7 @@ pub fn run_self_test() -> Result<(), InputDriverError> {
     #[cfg(not(test))]
     serial::write_line("PYTHOS:CORE:INPUT:KEYBOARD");
 
-    if mouse.decode(&capabilities, input_service, [0x08, 5, 253])?
+    if mouse.decode(&capabilities, input_service, [0x08, 5, 3])?
         != (RawInputEvent::MouseMoved { dx: 5, dy: -3 })
     {
         return Err(InputDriverError::BadMousePacket);
@@ -556,9 +568,17 @@ mod tests {
             Err(InputDriverError::BadMousePacket)
         );
         assert_eq!(
-            mouse.decode(&capabilities, input, [0x08, 5, 253]),
+            mouse.decode(&capabilities, input, [0x08, 5, 3]),
             Ok(RawInputEvent::MouseMoved { dx: 5, dy: -3 })
         );
+    }
+
+    #[test]
+    fn ps2_y_normalization_inverts_protocol_y_with_i8_minimum_retained() {
+        assert_eq!(normalize_ps2_relative_y(0), 0);
+        assert_eq!(normalize_ps2_relative_y(7), -7);
+        assert_eq!(normalize_ps2_relative_y((-7i8) as u8), 7);
+        assert_eq!(normalize_ps2_relative_y(i8::MIN as u8), i8::MIN);
     }
 
     #[test]

@@ -705,7 +705,11 @@ fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R 
     unsafe { f(&mut *SYSCALL_CAPABILITIES.0.get()) }
 }
 
-#[cfg(any(test, all(not(test), not(feature = "verify"))))]
+#[cfg(any(
+    test,
+    feature = "session-input-bridge-probe",
+    all(not(test), not(feature = "verify"))
+))]
 pub fn grant_console_capability(
     process: ActiveUserProcess,
 ) -> Result<PackedCapability, SyscallError> {

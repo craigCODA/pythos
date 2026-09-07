@@ -11,8 +11,8 @@ place that QMP-injection sequence lives, reused by
 
 The exact "rel" delta values and step count here were tuned and verified live
 against QEMU's emulated PS/2 mouse during ADR 0053 Task D: PS/2 mice report Y
-motion inverted relative to on-screen coordinates, so a negative QMP y-axis
-value moves the cursor *down* the screen.
+motion inverted relative to on-screen coordinates, so this normalized path
+uses a positive QMP y-axis value to move the cursor *down* the screen.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ QMP_PORT = 4488
 # edge.
 _MOVE_STEPS = 10
 _STEP_DX = 30
-_STEP_DY = -38
+_STEP_DY = 38
 
 
 def _qmp_send(sock_file, sock: socket.socket, command: dict) -> dict:

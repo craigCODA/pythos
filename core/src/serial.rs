@@ -9,7 +9,10 @@
 //! The COM2 items below are unused under `--features verify` (only
 //! `normal_boot` calls them, and that module is normal-boot-only); allow dead
 //! code for that one build configuration rather than gating each item.
-#![cfg_attr(feature = "verify", allow(dead_code))]
+#![cfg_attr(
+    all(feature = "verify", not(feature = "session-input-bridge-probe")),
+    allow(dead_code)
+)]
 
 use core::arch::asm;
 

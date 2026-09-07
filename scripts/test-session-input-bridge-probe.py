@@ -525,17 +525,22 @@ def cleanup_runner_process(runner: RunnerHandle, terminate_timeout: float = 5.0)
         runner.job.close()
 
 
+def probe_runner_command() -> list[str]:
+    return [
+        sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG),
+        "--shell-port", str(SHELL_PORT), "--timeout", str(QEMU_TIMEOUT_SECONDS),
+        "--success-marker", COM1_MARKERS[-1],
+        "--expect-outcome", "success",
+    ]
+
+
 def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
     if SERIAL_LOG.exists():
         SERIAL_LOG.unlink()
     popen_kwargs: dict[str, object] = {}
     if sys.platform != "win32":
         popen_kwargs["start_new_session"] = True
-    command = [
-        sys.executable, "scripts/run-qemu.py", "--serial-log", str(SERIAL_LOG),
-        "--shell-port", str(SHELL_PORT), "--timeout", str(QEMU_TIMEOUT_SECONDS),
-        "--expect-outcome", "success",
-    ]
+    command = probe_runner_command()
     print("+ " + " ".join(command), flush=True)
     popen_kwargs["cwd"] = ROOT
     runner = spawn_runner_process(command, **popen_kwargs)
@@ -1029,6 +1034,12 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         self.assertEqual(commands[4], [sys.executable, "scripts/build-session-input-probe.py", "--target-dir", str(target_dir)])
         self.assertEqual(commands[5], [sys.executable, "scripts/verify-user-elf.py", "--elf", str(probe)])
         self.assertEqual(commands[6], [sys.executable, "scripts/build-image.py", "--kernel", str(kernel), "--session-input-probe-elf", str(probe)])
+
+    def test_probe_runner_uses_its_own_terminal_readiness_as_success_marker(self) -> None:
+        command = probe_runner_command()
+        marker_index = command.index("--success-marker")
+        self.assertEqual(command[marker_index + 1], COM1_MARKERS[-1])
+        self.assertEqual(command[-2:], ["--expect-outcome", "success"])
 
     def test_runner_capture_reaps_success_and_retains_diagnostics(self) -> None:
         runner, capture = self.spawn_runner("print('runner success diagnostic', flush=True)")
