@@ -299,17 +299,28 @@ pub fn run_dynamic_process_breakpoint_test(
     arg0: u64,
     arg1: u64,
 ) -> Result<(), UserModeError> {
+    run_returnable_user_process(process, entry, user_stack_top, arg0, arg1)
+}
+
+#[cfg(not(test))]
+pub fn run_returnable_user_process(
+    process: ActiveUserProcess,
+    entry: u64,
+    user_stack_top: u64,
+    arg0: u64,
+    arg1: u64,
+) -> Result<(), UserModeError> {
     process_context::bind_current_process(process);
     EXPECTED_USER_BREAKPOINT.store(true, Ordering::SeqCst);
     EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
     tss::set_ring0_stack(kernel_trap_stack_top());
     // SAFETY:
-    // 1. Invariant: `entry` belongs to a validated user ELF, `user_stack_top`
-    //    belongs to its guarded user stack, and `arg0`/`arg1` are plain ABI
-    //    values admitted by that process's isolated copy map.
-    // 2. Established by: the caller constructs `process` with
-    //    `ActiveUserProcess::from_user_elf_launch` and maps the same validated
-    //    ELF segments and guarded stack into the active user root.
+    // 1. Invariant: `entry` belongs to the supplied process's validated user
+    //    ELF, `user_stack_top` belongs to its guarded user stack, and
+    //    `arg0`/`arg1` are plain ABI values admitted by its isolated copy map.
+    // 2. Established by: the caller constructs `process` from the same
+    //    validated ELF, guarded stack, and payload mappings installed in the
+    //    active retained user root.
     // 3. Lifetime: the ELF pages, guarded stack, bound process, and kernel trap
     //    stack remain live until the expected breakpoint recovery returns.
     // 4. Pointer ownership: the CPU consumes RIP/RSP/RDI/RSI by value; no Rust
@@ -323,7 +334,7 @@ pub fn run_dynamic_process_breakpoint_test(
     // 8. Violation: a bad frame or unexpected trap cannot report success,
     //    because success also requires both recovery proofs below.
     let returned = unsafe { ring3_enter_with_args_abi(entry, user_stack_top, arg0, arg1) };
-    finish_dynamic_process_breakpoint_test(returned)
+    finish_returnable_user_process(returned)
 }
 
 #[cfg(not(test))]
@@ -523,7 +534,7 @@ fn run_user_entry(entry: u64, trap: ExpectedUserTrap) -> Result<(), UserModeErro
     }
 }
 
-fn finish_dynamic_process_breakpoint_test(returned: u64) -> Result<(), UserModeError> {
+fn finish_returnable_user_process(returned: u64) -> Result<(), UserModeError> {
     let user_returned = USER_RETURNED.load(Ordering::SeqCst);
     EXPECTED_USER_BREAKPOINT.store(false, Ordering::SeqCst);
     process_context::clear_current_process();
@@ -845,7 +856,7 @@ mod tests {
     }
 
     #[test]
-    fn finite_process_recovery_requires_both_proofs_and_clears_the_binding() {
+    fn session_runtime_returnable_process_recovery_requires_both_proofs_and_clears_the_binding() {
         let _process_guard = crate::process_context::PROCESS_CONTEXT_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner());
@@ -857,13 +868,13 @@ mod tests {
 
         process_context::bind_current_process(process);
         USER_RETURNED.store(true, Ordering::SeqCst);
-        assert_eq!(finish_dynamic_process_breakpoint_test(1), Ok(()));
+        assert_eq!(finish_returnable_user_process(1), Ok(()));
         assert!(process_context::current_caller().is_err());
 
         process_context::bind_current_process(process);
         USER_RETURNED.store(true, Ordering::SeqCst);
         assert_eq!(
-            finish_dynamic_process_breakpoint_test(0),
+            finish_returnable_user_process(0),
             Err(UserModeError::DidNotReturn)
         );
         assert!(process_context::current_caller().is_err());
@@ -871,7 +882,7 @@ mod tests {
         process_context::bind_current_process(process);
         USER_RETURNED.store(false, Ordering::SeqCst);
         assert_eq!(
-            finish_dynamic_process_breakpoint_test(1),
+            finish_returnable_user_process(1),
             Err(UserModeError::DidNotReturn)
         );
         assert!(process_context::current_caller().is_err());
@@ -879,7 +890,7 @@ mod tests {
         process_context::bind_current_process(process);
         USER_RETURNED.store(false, Ordering::SeqCst);
         assert_eq!(
-            finish_dynamic_process_breakpoint_test(0),
+            finish_returnable_user_process(0),
             Err(UserModeError::DidNotReturn)
         );
         assert!(process_context::current_caller().is_err());

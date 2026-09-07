@@ -9,7 +9,16 @@
 )]
 // The session-input bridge deliberately terminates once its bounded ring-3
 // proof completes, leaving the normal-boot-only remainder unused in that image.
-#![cfg_attr(all(not(test), feature = "session-input-bridge-probe"), allow(unused))]
+#![cfg_attr(
+    all(
+        not(test),
+        any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )
+    ),
+    allow(unused)
+)]
 
 #[cfg(all(feature = "verify", feature = "hardware-probe"))]
 compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
@@ -31,6 +40,37 @@ compile_error!(
 #[cfg(all(feature = "session-input-bridge-probe", feature = "evidence-terminal"))]
 compile_error!(
     "features `session-input-bridge-probe` and `evidence-terminal` are mutually exclusive: the bounded bridge uses a minimal root and does not map or render the evidence terminal"
+);
+#[cfg(all(feature = "session-runtime-probe", feature = "phase13-package-test"))]
+compile_error!(
+    "features `session-runtime-probe` and `phase13-package-test` are mutually exclusive"
+);
+#[cfg(all(
+    feature = "session-runtime-probe",
+    feature = "session-input-bridge-probe"
+))]
+compile_error!(
+    "features `session-runtime-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "session-runtime-probe", feature = "evidence-terminal"))]
+compile_error!("features `session-runtime-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "session-runtime-probe", feature = "hardware-probe"))]
+compile_error!("features `session-runtime-probe` and `hardware-probe` are mutually exclusive");
+#[cfg(all(feature = "session-runtime-probe", feature = "usb-xhci-probe"))]
+compile_error!("features `session-runtime-probe` and USB xHCI diagnostics are mutually exclusive");
+#[cfg(all(
+    feature = "session-runtime-probe",
+    any(
+        feature = "physical-wake-diagnostic",
+        feature = "physical-input-event-diagnostic",
+        feature = "physical-keyboard-console",
+        feature = "normal-boot-diagnostic",
+        feature = "legacy-shell",
+        feature = "pyth-tig-session-manager-fault-test"
+    )
+))]
+compile_error!(
+    "feature `session-runtime-probe` is mutually exclusive with physical and normal-boot-only diagnostics"
 );
 #[cfg(all(feature = "physical-wake-diagnostic", not(feature = "verify")))]
 compile_error!("feature `physical-wake-diagnostic` requires `verify`");
@@ -182,6 +222,8 @@ mod session_controls;
 mod session_input;
 #[cfg(all(not(test), feature = "session-input-bridge-probe"))]
 mod session_input_probe;
+#[cfg(any(test, feature = "session-runtime-probe"))]
+mod session_runtime_probe;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
@@ -337,18 +379,30 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:INTERRUPTS_READY");
 
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         // ADR 0048: discover the HDA controller now (PCI config I/O works before
         // the VM switch) so its MMIO can be mapped into the kernel address space.
         let hda_controller = audio::probe_hda();
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         // ADR 0054: discover an AHCI controller before the VM switch for the
         // same reason; the polling driver uses a fixed kernel virtual window.
         let ahci_controller = block_device::probe_ahci();
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         let ahci_mmio = ahci_controller.map(|c| {
             (
                 c.mmio_base,
@@ -357,7 +411,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             )
         });
         #[cfg(all(
-            not(feature = "session-input-bridge-probe"),
+            not(any(
+                feature = "session-input-bridge-probe",
+                feature = "session-runtime-probe"
+            )),
             feature = "sdhci-emmc-backend"
         ))]
         let sdhci_emmc_controller = match sdhci_emmc::probe_controller() {
@@ -369,7 +426,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
         };
         #[cfg(all(
-            not(feature = "session-input-bridge-probe"),
+            not(any(
+                feature = "session-input-bridge-probe",
+                feature = "session-runtime-probe"
+            )),
             feature = "sdhci-emmc-backend"
         ))]
         let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
@@ -380,12 +440,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             )
         });
         #[cfg(all(
-            not(feature = "session-input-bridge-probe"),
+            not(any(
+                feature = "session-input-bridge-probe",
+                feature = "session-runtime-probe"
+            )),
             not(feature = "sdhci-emmc-backend")
         ))]
         let sdhci_emmc_mmio = None;
 
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         let kernel_address_space_options = {
             let mut options = memory::r#virtual::KernelAddressSpaceBuildOptions::new();
             options.hda_mmio = hda_mmio;
@@ -412,7 +478,22 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
         };
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(feature = "session-runtime-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            session_runtime_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,
@@ -426,6 +507,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         };
         #[cfg(feature = "session-input-bridge-probe")]
         if session_input_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "session-runtime-probe")]
+        if session_runtime_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err()
+        {
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
@@ -475,7 +562,47 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
             qemu_exit::success();
         }
-        #[cfg(not(feature = "session-input-bridge-probe"))]
+        #[cfg(feature = "session-runtime-probe")]
+        {
+            // The retained session-runtime image uses the same minimal-root
+            // boundary as Slice 1, then initializes only syscall and guarded
+            // stack facilities before its finite launch.
+            // SAFETY:
+            // 1. Invariant: `address_space` maps the executing kernel, stack,
+            //    descriptors, boot metadata, COM1, and validation tables.
+            // 2. Established by: the successful minimal kernel-root build above.
+            // 3. Lifetime: PythCore retains the root for the complete probe.
+            // 4. Pointer ownership: the CPU borrows the PythCore-owned hierarchy.
+            // 5. Alignment: the root is a physical allocator-owned 4 KiB page.
+            // 6. Mapped length: the full continuing kernel proof surface is mapped.
+            // 7. Concurrency: single-core activation occurs with interrupts disabled.
+            // 8. Violation: validation fails or execution faults before readiness.
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if session_runtime_probe::run(boot_info, &mut physical_memory, &address_space).is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(not(any(
+            feature = "session-input-bridge-probe",
+            feature = "session-runtime-probe"
+        )))]
         {
             let user_address_space =
                 match memory::r#virtual::UserAddressSpace::build(&mut physical_memory, boot_info) {
@@ -1822,7 +1949,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
             #[cfg(not(any(
                 feature = "phase13-package-test",
-                feature = "session-input-bridge-probe"
+                feature = "session-input-bridge-probe",
+                feature = "session-runtime-probe"
             )))]
             {
                 #[cfg(feature = "sdhci-emmc-backend")]

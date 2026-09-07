@@ -20,9 +20,19 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::architecture::x86_64::interrupts;
-#[cfg(any(test, feature = "session-input-bridge-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
 use crate::input_drivers::PhysicalKeyboardDecoder;
-#[cfg(any(test, not(feature = "session-input-bridge-probe")))]
+#[cfg(any(
+    test,
+    not(any(
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe"
+    ))
+))]
 use crate::input_drivers::scancode_to_keycode;
 use crate::input_drivers::{RawInputEvent, mouse_byte0_is_valid, normalize_ps2_relative_y};
 use crate::session_input;
@@ -186,9 +196,10 @@ pub fn poll_raw_output_byte() -> Option<u8> {
 }
 
 /// IRQ1 top half: read the pending scancode from the data port and enqueue a
-/// known key-down event. The session-input probe reuses the existing physical
-/// decoder because this controller deliberately supplies set-2 bytes; the
-/// default path preserves the original set-1-only behavior.
+/// known key-down event. The bounded input and session-runtime probes reuse
+/// the existing physical decoder because this controller deliberately
+/// supplies set-2 bytes; the default path preserves the original
+/// set-1-only behavior.
 #[cfg(not(test))]
 pub fn handle_keyboard_interrupt() {
     // First-fire-only marker (guarded so it doesn't spam COM1 on every
@@ -200,35 +211,68 @@ pub fn handle_keyboard_interrupt() {
         crate::serial::write_line("PYTHOS:CORE:PS2:KEYBOARD_IRQ_FIRED");
     }
     let scancode = inb(PS2_DATA_PORT);
-    #[cfg(feature = "session-input-bridge-probe")]
+    #[cfg(any(
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe"
+    ))]
     {
-        // SAFETY: this static decoder is accessed only by IRQ1. The PIC's
-        // single-core dispatch cannot re-enter this handler.
+        // SAFETY:
+        // 1. Invariant: the decoder is mutated only by this IRQ1 top half.
+        // 2. Established by: no normal-context accessor to the static exists.
+        // 3. Lifetime: the static decoder lives for the complete boot.
+        // 4. Pointer ownership: this module exclusively owns the decoder cell.
+        // 5. Alignment: `UnsafeCell` preserves decoder alignment.
+        // 6. Mapped length: exactly one complete decoder value is accessed.
+        // 7. Concurrency: single-core PIC dispatch cannot re-enter IRQ1.
+        // 8. Violation: concurrent prefix-state mutation could misdecode input.
         let decoder = unsafe { &mut *KEYBOARD_DECODER.0.get() };
         publish_keyboard_byte(decoder, scancode);
     }
-    #[cfg(not(feature = "session-input-bridge-probe"))]
+    #[cfg(not(any(
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe"
+    )))]
     if let Some(key) = scancode_to_keycode(scancode) {
         let _ = session_input::publish(RawInputEvent::KeyPressed { scancode, key });
     }
 }
 
-#[cfg(any(test, feature = "session-input-bridge-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
 fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
     if let Some(event) = decoder.feed_raw_byte(byte) {
         let _ = session_input::publish(event);
     }
 }
 
-#[cfg(feature = "session-input-bridge-probe")]
+#[cfg(any(
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
 struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
 
-// SAFETY: IRQ1 is the sole producer and the platform's PIC dispatch never
-// re-enters that handler on this single-core kernel.
-#[cfg(feature = "session-input-bridge-probe")]
+// SAFETY:
+// 1. Invariant: only the IRQ1 top half mutates the decoder cell.
+// 2. Established by: the static is private and has no other accessor.
+// 3. Lifetime: both cell and decoder state have static boot lifetime.
+// 4. Pointer ownership: this module exclusively owns the stored decoder.
+// 5. Alignment: `UnsafeCell` preserves `PhysicalKeyboardDecoder` alignment.
+// 6. Mapped length: the cell contains exactly one decoder value.
+// 7. Concurrency: this kernel is single-core and PIC dispatch is non-reentrant.
+// 8. Violation: concurrent mutation could corrupt scan-prefix state.
+#[cfg(any(
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
 unsafe impl Sync for KeyboardDecoder {}
 
-#[cfg(feature = "session-input-bridge-probe")]
+#[cfg(any(
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
 static KEYBOARD_DECODER: KeyboardDecoder =
     KeyboardDecoder(UnsafeCell::new(PhysicalKeyboardDecoder::new()));
 
@@ -237,14 +281,20 @@ static KEYBOARD_DECODER: KeyboardDecoder =
 #[cfg(not(test))]
 pub fn handle_mouse_interrupt() {
     let byte = inb(PS2_DATA_PORT);
-    // The bridge arms a one-shot filter for the device-enable ACK. It is a
-    // setup response rather than QMP-delivered user input, so keep it out of
-    // the first-real-IRQ evidence used by the ordered bridge transcript.
-    #[cfg(feature = "session-input-bridge-probe")]
+    // The bounded probes arm a one-shot filter for the device-enable ACK. It
+    // is a setup response rather than QMP-delivered user input, so keep it out
+    // of the first-real-IRQ evidence used by their ordered transcripts.
+    #[cfg(any(
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe"
+    ))]
     if byte != MOUSE_ACK && !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
         crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
     }
-    #[cfg(not(feature = "session-input-bridge-probe"))]
+    #[cfg(not(any(
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe"
+    )))]
     if !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
         crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
     }

@@ -709,6 +709,7 @@ fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R 
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     all(not(test), not(feature = "verify"))
 ))]
 pub fn grant_console_capability(

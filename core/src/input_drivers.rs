@@ -254,6 +254,7 @@ pub(crate) fn scancode_to_keycode(scancode: u8) -> Option<KeyCode> {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -272,6 +273,7 @@ enum PhysicalScanSet {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -285,6 +287,7 @@ pub(crate) struct PhysicalKeyboardDecoder {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -359,6 +362,7 @@ impl PhysicalKeyboardDecoder {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
