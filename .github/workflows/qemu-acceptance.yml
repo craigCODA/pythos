@@ -6,10 +6,14 @@ on:
 
 jobs:
   qemu-acceptance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       PYTHOS_TEST_BOOT_TIMEOUT: "60"
+      QEMU_VERSION: "11.1.1"
+      QEMU_SHA256: "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"
+      OVMF_VERSION: "2024.02-2ubuntu0.9"
+      QEMU_PREFIX: ${{ github.workspace }}/.tools/qemu-11.1.1
 
     steps:
       - name: Checkout
@@ -19,15 +23,59 @@ jobs:
         run: |
           set -euxo pipefail
           sudo apt-get update
-          sudo apt-get install -y qemu-system-x86 ovmf
-          if [ -f /usr/share/OVMF/OVMF_CODE_4M.fd ]; then
-            echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd" >> "$GITHUB_ENV"
-          elif [ -f /usr/share/OVMF/OVMF_CODE.fd ]; then
-            echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE.fd" >> "$GITHUB_ENV"
-          else
-            echo "missing OVMF code firmware" >&2
-            exit 1
-          fi
+          sudo apt-get install -y \
+            build-essential \
+            ninja-build \
+            pkg-config \
+            python3-venv \
+            libglib2.0-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            libslirp-dev \
+            "ovmf=${OVMF_VERSION}"
+
+      - name: Restore pinned QEMU runtime
+        id: qemu-cache
+        uses: actions/cache@v4
+        with:
+          path: .tools/qemu-11.1.1
+          key: ubuntu-24.04-qemu-11.1.1-x86_64-softmmu-v1
+
+      - name: Build pinned QEMU runtime
+        if: steps.qemu-cache.outputs.cache-hit != 'true'
+        run: |
+          set -euxo pipefail
+          archive="${RUNNER_TEMP}/qemu-${QEMU_VERSION}.tar.xz"
+          source_dir="${RUNNER_TEMP}/qemu-${QEMU_VERSION}-source"
+          build_dir="${RUNNER_TEMP}/qemu-${QEMU_VERSION}-build"
+          curl --fail --location \
+            "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
+            --output "${archive}"
+          echo "${QEMU_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "${source_dir}" "${build_dir}"
+          tar -xf "${archive}" -C "${source_dir}" --strip-components=1
+          cd "${build_dir}"
+          "${source_dir}/configure" \
+            --prefix="${QEMU_PREFIX}" \
+            --target-list=x86_64-softmmu \
+            --disable-docs \
+            --disable-werror
+          ninja -j2
+          ninja install
+
+      - name: Expose and verify pinned QEMU and OVMF
+        run: |
+          set -euxo pipefail
+          echo "${QEMU_PREFIX}/bin" >> "$GITHUB_PATH"
+          "${QEMU_PREFIX}/bin/qemu-system-x86_64" --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
+          dpkg-query -W -f='${Version}\n' ovmf | grep -Fx "${OVMF_VERSION}"
+          test -f /usr/share/OVMF/OVMF_CODE_4M.fd
+          test -f /usr/share/OVMF/OVMF_VARS_4M.fd
+          echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd" >> "$GITHUB_ENV"
+          echo "PYTHOS_OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd" >> "$GITHUB_ENV"
+
+      - name: Assert QEMU on PATH
+        run: qemu-system-x86_64 --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
 
       - name: Install Rust toolchain
         run: |
@@ -75,10 +123,10 @@ jobs:
           cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 
       - name: Phase 7 script import checks
-        run: python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py scripts/build-session-input-probe.py scripts/test-session-input-bridge-probe.py
+        run: python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/run-qemu.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py scripts/build-session-input-probe.py scripts/test-session-input-bridge-probe.py
 
       - name: Python harness tests
-        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze
+        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze
 
       - name: QEMU milestone acceptance
         run: |

@@ -7,6 +7,29 @@ WORKFLOW = ROOT / ".github" / "workflows" / "qemu-acceptance.yml"
 
 
 class CiWorkflowTest(unittest.TestCase):
+    def test_qemu_runtime_and_firmware_are_pinned_and_asserted(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        required_snippets = (
+            "runs-on: ubuntu-24.04",
+            'QEMU_VERSION: "11.1.1"',
+            'QEMU_SHA256: "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"',
+            'OVMF_VERSION: "2024.02-2ubuntu0.9"',
+            "uses: actions/cache@v4",
+            "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz",
+            "sha256sum --check --strict",
+            '"ovmf=${OVMF_VERSION}"',
+            'qemu-system-x86_64 --version | grep -F "QEMU emulator version ${QEMU_VERSION}"',
+            'dpkg-query -W -f=\'${Version}\\n\' ovmf | grep -Fx "${OVMF_VERSION}"',
+            "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd",
+            "PYTHOS_OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd",
+            "tests.test_qemu_boot_media",
+        )
+
+        for snippet in required_snippets:
+            self.assertIn(snippet, workflow)
+
+        self.assertNotIn("runs-on: ubuntu-latest", workflow)
+
     def test_qemu_acceptance_workflow_exists_and_runs_required_gates(self) -> None:
         self.assertTrue(WORKFLOW.exists(), "missing QEMU acceptance CI workflow")
 
@@ -40,7 +63,7 @@ class CiWorkflowTest(unittest.TestCase):
             "scripts/build-session-input-probe.py",
             "scripts/test-session-input-bridge-probe.py",
             "python scripts/test-session-input-bridge-probe.py --self-test",
-            "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze",
+            "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze",
             "python scripts/test-pyth-graph-runtime.py",
             "python scripts/test-pyth-graph-object-flow.py",
             "python scripts/test-pyth-native-codegen.py",
