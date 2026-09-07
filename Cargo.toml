@@ -8,6 +8,7 @@ members = [
     "tools/pyth-tig-tool",
     "tools/pythc",
     "user/pyth-runtime",
+    "user/session-runtime",
     "user/shell",
     "user/probes/session-input",
 ]
