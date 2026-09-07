@@ -1,0 +1,554 @@
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
+
+#[cfg(not(test))]
+mod syscalls;
+
+#[cfg(not(test))]
+use core::{cell::UnsafeCell, panic::PanicInfo, ptr};
+#[cfg(not(test))]
+use pythos_shared::{
+    object_shell_abi::PackedCapability,
+    pyth_command_abi::{COMMAND_RESULT_STATUS_OK, PythCommand, PythCommandResult},
+    pyth_runtime_abi::{
+        GRAPH_EXIT_OK, GRAPH_RESULT_UNIT, GraphExitRecord, HostCallResult, MAX_PYTH_GRAPH_IMPORTS,
+        PythGraphBootstrapBlock,
+    },
+    pyth_tig::{format::MAX_RUNTIME_VALUES, verify::VerifiedGraph},
+    session_input_abi::{
+        SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT, SessionInputEventV1,
+    },
+    session_runtime_abi::{
+        SESSION_RUNTIME_COMMAND_COUNT, SESSION_RUNTIME_EMPTY_POLL_LIMIT,
+        SESSION_RUNTIME_LIFECYCLE_REINVOKE, SESSION_RUNTIME_LIFECYCLE_REQUEST_RECOVERY,
+        SESSION_RUNTIME_RESULT_COMPLETE, SESSION_RUNTIME_RESULT_MAGIC,
+        SESSION_RUNTIME_RESULT_REQUEST_RECOVERY, SessionRuntimeBootstrapV1,
+        SessionRuntimeFixtureV1, SessionRuntimeResultV1, validate_session_runtime_result,
+    },
+};
+#[cfg(not(test))]
+use pythos_user_pyth_runtime::{interpreter::Interpreter, value::Value};
+#[cfg(not(test))]
+use pythos_user_session_runtime::{
+    InputSequenceValidator, SessionGraphLifecycleAction, SessionRuntimeState,
+    session_command_host::SessionCommandHost, validate_session_runtime_bootstrap_address,
+    validate_session_runtime_fixture_contract, validate_session_runtime_outer_bootstrap,
+    validate_session_runtime_package,
+};
+
+#[cfg(not(test))]
+struct RuntimeOwnedStorage {
+    bootstrap: SessionRuntimeBootstrapV1,
+    fixture: SessionRuntimeFixtureV1,
+    graph: PythGraphBootstrapBlock,
+    imports: [PackedCapability; MAX_PYTH_GRAPH_IMPORTS],
+    values: [Option<Value>; MAX_RUNTIME_VALUES],
+    host_results: [Option<HostCallResult>; MAX_RUNTIME_VALUES],
+}
+
+#[cfg(not(test))]
+struct RuntimeStorage(UnsafeCell<RuntimeOwnedStorage>);
+
+#[cfg(not(test))]
+#[repr(align(8))]
+struct InputOutputSlot(UnsafeCell<SessionInputEventV1>);
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: one retained ring-3 runtime thread owns this storage for one finite execution.
+// 2. Established by: the session-runtime ELF has no thread, callback, or interrupt-entry API.
+// 3. Lifetime: the static storage outlives the complete retained runtime execution.
+// 4. Pointer ownership: `_start` obtains the sole mutable reference and never publishes it.
+// 5. Alignment: `UnsafeCell` preserves every contained ABI record and array alignment.
+// 6. Mapped length: accesses stay within exactly one `RuntimeOwnedStorage` value.
+// 7. Concurrency: no second ring-3 execution can race this process-local static.
+// 8. Violation: aliasing or concurrent access could corrupt authenticated launch or invocation state.
+unsafe impl Sync for RuntimeStorage {}
+
+#[cfg(not(test))]
+// SAFETY:
+// 1. Invariant: only the one finite ring-3 runtime execution accesses this input output slot.
+// 2. Established by: this user ELF has no threads, callbacks, or interrupt handler.
+// 3. Lifetime: the static belongs to the complete retained runtime execution.
+// 4. Pointer ownership: polling owns the sole mutable reference for each synchronous syscall.
+// 5. Alignment: `repr(align(8))` satisfies `SessionInputEventV1` alignment.
+// 6. Mapped length: exactly one writable 40-byte BSS record is exposed to PythCore.
+// 7. Concurrency: input reads are strictly sequential in `_start`.
+// 8. Violation: concurrent access could race PythCore's synchronous copy-out.
+unsafe impl Sync for InputOutputSlot {}
+
+#[cfg(not(test))]
+static RUNTIME_STORAGE: RuntimeStorage = RuntimeStorage(UnsafeCell::new(RuntimeOwnedStorage {
+    bootstrap: SessionRuntimeBootstrapV1::empty(),
+    fixture: SessionRuntimeFixtureV1::empty(),
+    graph: SessionRuntimeBootstrapV1::empty().graph,
+    imports: [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS],
+    values: [None; MAX_RUNTIME_VALUES],
+    host_results: [None; MAX_RUNTIME_VALUES],
+}));
+
+#[cfg(not(test))]
+static INPUT_OUTPUT: InputOutputSlot =
+    InputOutputSlot(UnsafeCell::new(SessionInputEventV1::empty()));
+
+#[cfg(not(test))]
+struct ExecutionEvidence {
+    state: SessionRuntimeState,
+    retained_state_before_second: u64,
+    retained_state_final: u64,
+    command_results: [PythCommandResult; SESSION_RUNTIME_COMMAND_COUNT],
+    graph_exits: [GraphExitRecord; SESSION_RUNTIME_COMMAND_COUNT],
+}
+
+#[cfg(not(test))]
+impl ExecutionEvidence {
+    const fn new(session_service_id: u64) -> Self {
+        Self {
+            state: SessionRuntimeState::new(session_service_id),
+            retained_state_before_second: 0,
+            retained_state_final: 0,
+            command_results: [PythCommandResult::empty(0, 0); SESSION_RUNTIME_COMMAND_COUNT],
+            graph_exits: [empty_graph_exit(); SESSION_RUNTIME_COMMAND_COUNT],
+        }
+    }
+}
+
+/// Entry for the bounded retained ring-3 session runtime.
+///
+/// # Safety
+///
+/// PythCore must map the exact authenticated bootstrap address read-only before
+/// entry and retain the matching package, fixture, result, and stack mappings
+/// until the expected breakpoint returns control to the kernel.
+#[cfg(not(test))]
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn _start(bootstrap_ptr: *const SessionRuntimeBootstrapV1) -> ! {
+    let bootstrap_address = bootstrap_ptr as u64;
+    if validate_session_runtime_bootstrap_address(bootstrap_address).is_err() {
+        trap_and_spin();
+    }
+
+    let storage = runtime_storage();
+    copy_bootstrap(bootstrap_ptr, &mut storage.bootstrap);
+    if validate_session_runtime_outer_bootstrap(&storage.bootstrap).is_err() {
+        trap_and_spin();
+    }
+
+    let mut evidence = ExecutionEvidence::new(storage.bootstrap.session_service_id);
+    copy_fixture(
+        storage.bootstrap.fixture_ptr as *const SessionRuntimeFixtureV1,
+        &mut storage.fixture,
+    );
+    if validate_session_runtime_fixture_contract(&storage.bootstrap, &storage.fixture).is_err() {
+        recover(&storage.bootstrap, &evidence);
+    }
+
+    storage.graph = storage.bootstrap.graph;
+    storage.imports.fill(PackedCapability::from_raw(0));
+    let import = storage.graph.imports[0];
+    storage.imports[usize::from(import.import_slot)] = import.capability;
+
+    let package_bytes = package_bytes(&storage.graph);
+    let Ok(package) = validate_session_runtime_package(&storage.bootstrap, package_bytes) else {
+        recover(&storage.bootstrap, &evidence);
+    };
+    // SAFETY:
+    // 1. Invariant: this exact package was authenticated and verified by PythCore before entry.
+    // 2. Established by: the fixed launch map, exact identities, nested bootstrap/import validation,
+    //    immutable package length, and kernel-supplied digest were all validated above.
+    // 3. Lifetime: PythCore retains the read-only package page until this runtime traps once.
+    // 4. Pointer ownership: PythCore owns the mapping; this runtime holds only read-only slices.
+    // 5. Alignment: PythTIG decoding reads byte records and materializes aligned values by value.
+    // 6. Mapped length: the package range is nonempty, bounded to its one fixed read-only page,
+    //    and `PythGraphPackage::decode` validated every internal section range.
+    // 7. Concurrency: no writer is mapped into this single-threaded runtime process.
+    // 8. Violation: bypassing the authenticated boundary would skip capability and graph verification.
+    let verified = unsafe { VerifiedGraph::assume_kernel_verified_package(&package) };
+
+    let console = storage.bootstrap.console_capability;
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\r\n");
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1\r\n");
+
+    let mut input_validator = InputSequenceValidator::new();
+    if poll_input_event(storage.bootstrap.input_capability, &mut input_validator, 1).is_err() {
+        recover(&storage.bootstrap, &evidence);
+    }
+    evidence.state.record_input_event();
+    syscalls::write_str(
+        console,
+        "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0\r\n",
+    );
+
+    let command_one = storage.fixture.commands[0];
+    let payload_one = fixture_payload(&storage.fixture, 0);
+    let (result_one, exit_one) = {
+        let Ok(mut command_host) =
+            SessionCommandHost::new(import.capability, &command_one, payload_one)
+        else {
+            recover(&storage.bootstrap, &evidence);
+        };
+        syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE\r\n");
+        let exit = Interpreter::new(
+            verified,
+            &storage.imports,
+            storage.graph.instruction_budget,
+            &mut storage.values,
+            &mut storage.host_results,
+        )
+        .execute(&mut command_host);
+        (command_host.result(), exit)
+    };
+    evidence.graph_exits[0] = exit_one;
+    if evidence.state.record_graph_exit(exit_one.status) != SessionGraphLifecycleAction::Reinvoke {
+        recover(&storage.bootstrap, &evidence);
+    }
+    let Some(result_one) = result_one else {
+        recover(&storage.bootstrap, &evidence);
+    };
+    if !invocation_is_valid(&command_one, payload_one, result_one, exit_one) {
+        recover(&storage.bootstrap, &evidence);
+    }
+    evidence.command_results[0] = result_one;
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:RESULT_1_SLICE2_ONE\r\n");
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_OK\r\n");
+    syscalls::write_str(
+        console,
+        "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1\r\n",
+    );
+
+    let command_two = storage.fixture.commands[1];
+    let payload_two = fixture_payload(&storage.fixture, 1);
+    let Ok(mut command_host) =
+        SessionCommandHost::new(import.capability, &command_two, payload_two)
+    else {
+        recover(&storage.bootstrap, &evidence);
+    };
+    storage.values.fill(Some(Value::U64(u64::MAX)));
+    storage
+        .host_results
+        .fill(Some(HostCallResult::empty(u16::MAX)));
+    {
+        let _reset_proof = Interpreter::new(
+            verified,
+            &storage.imports,
+            storage.graph.instruction_budget,
+            &mut storage.values,
+            &mut storage.host_results,
+        );
+    }
+    if storage.values.iter().any(Option::is_some)
+        || storage.host_results.iter().any(Option::is_some)
+    {
+        recover(&storage.bootstrap, &evidence);
+    }
+    evidence.retained_state_before_second = evidence.state.input_event_count;
+    if evidence.retained_state_before_second != 1 {
+        recover(&storage.bootstrap, &evidence);
+    }
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_LOCAL_RESET\r\n");
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_2\r\n");
+
+    if poll_input_event(storage.bootstrap.input_capability, &mut input_validator, 2).is_err() {
+        recover(&storage.bootstrap, &evidence);
+    }
+    evidence.state.record_input_event();
+    syscalls::write_str(
+        console,
+        "PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_1\r\n",
+    );
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_TWO\r\n");
+    let exit_two = Interpreter::new(
+        verified,
+        &storage.imports,
+        storage.graph.instruction_budget,
+        &mut storage.values,
+        &mut storage.host_results,
+    )
+    .execute(&mut command_host);
+    let result_two = command_host.result();
+    evidence.graph_exits[1] = exit_two;
+    if evidence.state.record_graph_exit(exit_two.status) != SessionGraphLifecycleAction::Reinvoke {
+        recover(&storage.bootstrap, &evidence);
+    }
+    let Some(result_two) = result_two else {
+        recover(&storage.bootstrap, &evidence);
+    };
+    if !invocation_is_valid(&command_two, payload_two, result_two, exit_two) {
+        recover(&storage.bootstrap, &evidence);
+    }
+    evidence.command_results[1] = result_two;
+    evidence.retained_state_final = evidence.state.input_event_count;
+    if evidence.retained_state_final != 2 || !input_validator.is_complete() {
+        recover(&storage.bootstrap, &evidence);
+    }
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_TWO\r\n");
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_2_EXIT_OK\r\n");
+    syscalls::write_str(
+        console,
+        "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_2_INVOCATIONS_2\r\n",
+    );
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INPUT_CONTIGUOUS\r\n");
+    if evidence.state.session_service_id != storage.bootstrap.session_service_id {
+        recover(&storage.bootstrap, &evidence);
+    }
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE\r\n");
+
+    let result = terminal_result(
+        &storage.bootstrap,
+        &evidence,
+        SESSION_RUNTIME_RESULT_COMPLETE,
+        SESSION_RUNTIME_LIFECYCLE_REINVOKE,
+    );
+    if validate_session_runtime_result(&storage.bootstrap, &result).is_err() {
+        recover(&storage.bootstrap, &evidence);
+    }
+    write_result(storage.bootstrap.result_ptr, result);
+    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY\r\n");
+    trap_and_spin()
+}
+
+#[cfg(not(test))]
+fn runtime_storage() -> &'static mut RuntimeOwnedStorage {
+    // SAFETY:
+    // 1. Invariant: `_start` calls this once and owns the storage until its terminal trap.
+    // 2. Established by: one retained process has one entry and no thread-creation surface.
+    // 3. Lifetime: the static outlives every interpreter invocation and terminal write.
+    // 4. Pointer ownership: this is the sole mutable reference to `RUNTIME_STORAGE`.
+    // 5. Alignment: `UnsafeCell` preserves `RuntimeOwnedStorage` alignment.
+    // 6. Mapped length: exactly one complete `RuntimeOwnedStorage` value is returned.
+    // 7. Concurrency: no callback, interrupt handler, or second runtime thread accesses it.
+    // 8. Violation: another reference could alias bootstrap, fixture, or invocation tables.
+    unsafe { &mut *RUNTIME_STORAGE.0.get() }
+}
+
+#[cfg(not(test))]
+fn copy_bootstrap(
+    source: *const SessionRuntimeBootstrapV1,
+    destination: &mut SessionRuntimeBootstrapV1,
+) {
+    // SAFETY:
+    // 1. Invariant: `source` is the exact aligned fixed bootstrap address checked before this call.
+    // 2. Established by: `validate_session_runtime_bootstrap_address` accepted the entry value.
+    // 3. Lifetime: PythCore retains the read-only page through this one copy.
+    // 4. Pointer ownership: PythCore owns source; the runtime exclusively owns destination.
+    // 5. Alignment: the fixed page address and destination both satisfy ABI alignment.
+    // 6. Mapped length: the kernel contract maps a full page, larger than the 944-byte record.
+    // 7. Concurrency: PythCore never mutates the authenticated page after ring-3 entry.
+    // 8. Violation: an absent mapping faults the user process without authorizing pointer writes.
+    unsafe { ptr::copy_nonoverlapping(source, destination, 1) };
+}
+
+#[cfg(not(test))]
+fn copy_fixture(source: *const SessionRuntimeFixtureV1, destination: &mut SessionRuntimeFixtureV1) {
+    // SAFETY:
+    // 1. Invariant: outer validation accepted the exact fixed read-only fixture address and length.
+    // 2. Established by: `validate_session_runtime_outer_bootstrap` completed before this call.
+    // 3. Lifetime: PythCore retains the fixture mapping through this one copy.
+    // 4. Pointer ownership: PythCore owns source; the runtime exclusively owns destination.
+    // 5. Alignment: the fixed page address and destination satisfy the fixture's alignment.
+    // 6. Mapped length: exactly one 224-byte fixture is copied from a full mapped page.
+    // 7. Concurrency: no writer is mapped into this process for the fixture page.
+    // 8. Violation: violating the kernel map contract faults before input or graph invocation.
+    unsafe { ptr::copy_nonoverlapping(source, destination, 1) };
+}
+
+#[cfg(not(test))]
+fn package_bytes(graph: &PythGraphBootstrapBlock) -> &'static [u8] {
+    // SAFETY:
+    // 1. Invariant: outer validation accepted the fixed read-only package address and one-page bound.
+    // 2. Established by: `validate_session_runtime_outer_bootstrap` checked pointer and length.
+    // 3. Lifetime: PythCore retains the immutable package page until the terminal trap.
+    // 4. Pointer ownership: PythCore owns the bytes; the runtime only reads the returned slice.
+    // 5. Alignment: a byte slice requires alignment one.
+    // 6. Mapped length: `package_len` is nonzero and no greater than the mapped 4096-byte page.
+    // 7. Concurrency: the page has no writable user alias and the runtime is single-threaded.
+    // 8. Violation: a broken map contract faults this process and cannot produce readiness.
+    unsafe {
+        core::slice::from_raw_parts(graph.package_ptr as *const u8, graph.package_len as usize)
+    }
+}
+
+#[cfg(not(test))]
+fn fixture_payload(fixture: &SessionRuntimeFixtureV1, ordinal: usize) -> &[u8] {
+    let len = fixture.commands[ordinal].payload_len as usize;
+    &fixture.payloads[ordinal][..len]
+}
+
+#[cfg(not(test))]
+fn poll_input_event(
+    input: PackedCapability,
+    validator: &mut InputSequenceValidator,
+    expected_ordinal: usize,
+) -> Result<(), ()> {
+    let mut empty_polls = 0u64;
+    loop {
+        let result = try_read_input(input);
+        match result {
+            SESSION_INPUT_RESULT_EVENT => {
+                return match validator.accept(read_input()) {
+                    Ok(ordinal) if ordinal == expected_ordinal => Ok(()),
+                    _ => Err(()),
+                };
+            }
+            SESSION_INPUT_RESULT_EMPTY => {
+                empty_polls += 1;
+                if empty_polls >= SESSION_RUNTIME_EMPTY_POLL_LIMIT {
+                    return Err(());
+                }
+                core::hint::spin_loop();
+            }
+            _ => return Err(()),
+        }
+    }
+}
+
+#[cfg(not(test))]
+fn try_read_input(input: PackedCapability) -> u64 {
+    // SAFETY:
+    // 1. Invariant: `INPUT_OUTPUT` is the runtime's only session-input syscall output slot.
+    // 2. Established by: no bootstrap, fixture, package, or result pointer is passed here.
+    // 3. Lifetime: the static outlives this synchronous syscall and subsequent by-value read.
+    // 4. Pointer ownership: this block creates the only mutable access until the syscall returns.
+    // 5. Alignment: `InputOutputSlot` is explicitly aligned to eight bytes.
+    // 6. Mapped length: exactly one full 40-byte `SessionInputEventV1` record is exposed.
+    // 7. Concurrency: polling is sequential on the runtime's only thread.
+    // 8. Violation: aliasing during copy-out could corrupt input validation and force recovery.
+    unsafe {
+        *INPUT_OUTPUT.0.get() = SessionInputEventV1::empty();
+        syscalls::try_read(input, &mut *INPUT_OUTPUT.0.get())
+    }
+}
+
+#[cfg(not(test))]
+fn read_input() -> SessionInputEventV1 {
+    // SAFETY:
+    // 1. Invariant: this copies the output of the immediately completed synchronous input syscall.
+    // 2. Established by: `poll_input_event` calls it only after `SESSION_INPUT_RESULT_EVENT`.
+    // 3. Lifetime: the static outlives the returned by-value event.
+    // 4. Pointer ownership: this creates one short read after mutable syscall access ended.
+    // 5. Alignment: `InputOutputSlot` is explicitly aligned to eight bytes.
+    // 6. Mapped length: exactly one initialized 40-byte event record is copied.
+    // 7. Concurrency: no concurrent poll or writer exists.
+    // 8. Violation: a racing writer could produce a torn event and force recovery.
+    unsafe { *INPUT_OUTPUT.0.get() }
+}
+
+#[cfg(not(test))]
+fn invocation_is_valid(
+    command: &PythCommand,
+    payload: &[u8],
+    result: PythCommandResult,
+    exit: GraphExitRecord,
+) -> bool {
+    exit.status == GRAPH_EXIT_OK
+        && exit.error_code == 0
+        && exit.result_type == GRAPH_RESULT_UNIT
+        && exit.reserved0 == 0
+        && exit.reserved1 == 0
+        && exit.result_raw == 0
+        && result.status == COMMAND_RESULT_STATUS_OK
+        && result.kind == command.kind
+        && result.reserved0 == 0
+        && result.object_id == command.object_id
+        && result.task_id == command.task_id
+        && result.proposal_id == command.proposal_id
+        && result.bytes_written == payload.len() as u64
+        && result.reserved1 == 0
+}
+
+#[cfg(not(test))]
+fn terminal_result(
+    bootstrap: &SessionRuntimeBootstrapV1,
+    evidence: &ExecutionEvidence,
+    terminal_status: u16,
+    lifecycle: u16,
+) -> SessionRuntimeResultV1 {
+    let mut result = SessionRuntimeResultV1::empty();
+    result.magic = SESSION_RUNTIME_RESULT_MAGIC;
+    result.abi_major = bootstrap.abi_major;
+    result.abi_minor = bootstrap.abi_minor;
+    result.terminal_status = terminal_status;
+    result.last_lifecycle_action = lifecycle;
+    result.session_service_id = bootstrap.session_service_id;
+    result.runtime_principal_id = bootstrap.runtime_principal_id;
+    result.graph_principal_id = bootstrap.graph_principal_id;
+    result.input_event_count = evidence.state.input_event_count;
+    result.invocation_count = evidence.state.graph_invocation_count;
+    result.retained_state_before_second = evidence.retained_state_before_second;
+    result.retained_state_final = evidence.retained_state_final;
+    result.command_results = evidence.command_results;
+    result.graph_exits = evidence.graph_exits;
+    result
+}
+
+#[cfg(not(test))]
+fn recover(bootstrap: &SessionRuntimeBootstrapV1, evidence: &ExecutionEvidence) -> ! {
+    let result = terminal_result(
+        bootstrap,
+        evidence,
+        SESSION_RUNTIME_RESULT_REQUEST_RECOVERY,
+        SESSION_RUNTIME_LIFECYCLE_REQUEST_RECOVERY,
+    );
+    write_result(bootstrap.result_ptr, result);
+    syscalls::write_str(
+        bootstrap.console_capability,
+        "PYTHOS:SESSION_RUNTIME:ERROR\r\n",
+    );
+    trap_and_spin()
+}
+
+#[cfg(not(test))]
+fn write_result(result_address: u64, result: SessionRuntimeResultV1) {
+    // SAFETY:
+    // 1. Invariant: outer validation accepted the exact fixed writable result address and size.
+    // 2. Established by: all callers run only after `validate_session_runtime_outer_bootstrap`.
+    // 3. Lifetime: PythCore retains the result page until the expected breakpoint returns.
+    // 4. Pointer ownership: this runtime performs one terminal write; PythCore reads afterward.
+    // 5. Alignment: the page-aligned fixed address satisfies the result record alignment.
+    // 6. Mapped length: exactly one complete 256-byte `SessionRuntimeResultV1` is written.
+    // 7. Concurrency: the runtime is single-threaded and PythCore waits for the trap.
+    // 8. Violation: a broken writable-map contract faults and suppresses readiness.
+    unsafe { (result_address as *mut SessionRuntimeResultV1).write(result) };
+}
+
+#[cfg(not(test))]
+fn trap_and_spin() -> ! {
+    // SAFETY:
+    // 1. Invariant: each terminal path executes this expected breakpoint exactly once.
+    // 2. Established by: every success/failure branch tail-calls this diverging function.
+    // 3. Lifetime: the condition applies to this single instruction.
+    // 4. Pointer ownership: the instruction accesses no pointer.
+    // 5. Alignment: no pointer or alignment requirement applies.
+    // 6. Mapped length: no memory range is accessed.
+    // 7. Concurrency: this retained runtime has one thread and one terminal path.
+    // 8. Violation: an unexpected breakpoint fails containment rather than issuing graph exit.
+    unsafe { core::arch::asm!("int3", options(nomem, nostack)) };
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+const fn empty_graph_exit() -> GraphExitRecord {
+    GraphExitRecord {
+        status: 0,
+        error_code: 0,
+        last_node: 0,
+        executed_nodes: 0,
+        result_type: GRAPH_RESULT_UNIT,
+        reserved0: 0,
+        reserved1: 0,
+        result_raw: 0,
+    }
+}
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_info: &PanicInfo<'_>) -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(test)]
+fn main() {}

@@ -214,6 +214,45 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertEqual(normalized[normalized.index("--target-dir") + 1], str(target_dir).replace("\\", "/"))
         self.assertIn("session-input/linker.ld", str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/"))
 
+    def test_session_runtime_build_is_isolated_and_uses_only_its_own_linker(self) -> None:
+        # Catches building the retained runtime with the generic/probe linker or shared target state.
+        self.assertTrue(
+            (ROOT / "scripts" / "build-session-runtime.py").is_file(),
+            "the isolated session-runtime builder must exist",
+        )
+        module = load_script("build-session-runtime.py")
+        calls: list[tuple[list[object], dict[str, object]]] = []
+        module.subprocess.call = lambda command, **kwargs: calls.append((command, kwargs)) or 0
+
+        target_dir = ROOT / "target" / "session-runtime-test"
+        with unittest.mock.patch.object(
+            sys,
+            "argv",
+            [str(module.__file__), "--target-dir", str(target_dir)],
+        ):
+            self.assertEqual(module.main(), 0)
+
+        self.assertEqual(len(calls), 1)
+        command, kwargs = calls[0]
+        normalized = normalize(command)
+        self.assertEqual(
+            normalized[:7],
+            [
+                "cargo",
+                "build",
+                "-p",
+                "pythos-user-session-runtime",
+                "--target",
+                "x86_64-unknown-none",
+                "--target-dir",
+            ],
+        )
+        self.assertEqual(normalized[7], str(target_dir).replace("\\", "/"))
+        rustflags = str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/")
+        self.assertIn("user/session-runtime/linker.ld", rustflags)
+        self.assertNotIn("user/pyth-runtime/linker.ld", rustflags)
+        self.assertNotIn("user/probes/session-input/linker.ld", rustflags)
+
     def test_session_input_probe_opt_in_record_has_exact_identity_and_default_stays_unchanged(self) -> None:
         module = load_script("build-image.py")
         with tempfile.TemporaryDirectory() as temp_dir:

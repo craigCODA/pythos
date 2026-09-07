@@ -6,8 +6,133 @@ use pythos_shared::session_input_abi::{
     KEY_A, SESSION_INPUT_KIND_KEY_DOWN, SESSION_INPUT_KIND_RELATIVE_MOTION,
     SESSION_INPUT_SOURCE_KEYBOARD, SESSION_INPUT_SOURCE_MOUSE, SessionInputEventV1,
 };
+use pythos_shared::session_runtime_abi::{
+    SessionRuntimeBootstrapV1, SessionRuntimeFixtureV1, SessionRuntimeValidationError,
+    validate_session_runtime_bootstrap, validate_session_runtime_fixture,
+};
+use pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID;
+use pythos_shared::{
+    pyth_graph_manifest::digest64,
+    pyth_tig::format::{PackageDecodeError, PythGraphPackage},
+};
 
 pub use pythos_shared::session_runtime_lifecycle::SessionGraphLifecycleAction;
+
+pub const SESSION_RUNTIME_BOOTSTRAP_ADDRESS: u64 = 0x0000_0000_7200_0000;
+pub const SESSION_RUNTIME_PACKAGE_ADDRESS: u64 = 0x0000_0000_7200_1000;
+pub const SESSION_RUNTIME_FIXTURE_ADDRESS: u64 = 0x0000_0000_7200_2000;
+pub const SESSION_RUNTIME_RESULT_ADDRESS: u64 = 0x0000_0000_7200_3000;
+pub const SESSION_RUNTIME_PAGE_SIZE: u64 = 4096;
+pub const SESSION_RUNTIME_SERVICE_ID: u64 = 0x5059_5345_5353_0001;
+pub const SESSION_MANAGER_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionRuntimeLaunchError {
+    NullBootstrapPointer,
+    MisalignedBootstrapPointer,
+    UnexpectedBootstrapAddress,
+    InvalidBootstrap(SessionRuntimeValidationError),
+    UnexpectedIdentity,
+    UnexpectedPackageRange,
+    UnexpectedFixtureRange,
+    UnexpectedResultRange,
+    InvalidFixture(SessionRuntimeValidationError),
+    UnexpectedFixturePayload,
+    PackageLengthMismatch,
+    PackageDigestMismatch,
+    InvalidPackage(PackageDecodeError),
+}
+
+pub fn validate_session_runtime_bootstrap_address(
+    bootstrap_address: u64,
+) -> Result<(), SessionRuntimeLaunchError> {
+    if bootstrap_address == 0 {
+        return Err(SessionRuntimeLaunchError::NullBootstrapPointer);
+    }
+    if !bootstrap_address.is_multiple_of(core::mem::align_of::<SessionRuntimeBootstrapV1>() as u64)
+    {
+        return Err(SessionRuntimeLaunchError::MisalignedBootstrapPointer);
+    }
+    if bootstrap_address != SESSION_RUNTIME_BOOTSTRAP_ADDRESS {
+        return Err(SessionRuntimeLaunchError::UnexpectedBootstrapAddress);
+    }
+    Ok(())
+}
+
+pub fn validate_session_runtime_outer_bootstrap(
+    bootstrap: &SessionRuntimeBootstrapV1,
+) -> Result<(), SessionRuntimeLaunchError> {
+    validate_session_runtime_bootstrap(bootstrap)
+        .map_err(SessionRuntimeLaunchError::InvalidBootstrap)?;
+    if bootstrap.session_service_id != SESSION_RUNTIME_SERVICE_ID
+        || bootstrap.runtime_principal_id != SESSION_RUNTIME_PRINCIPAL_ID
+        || bootstrap.graph_principal_id != SESSION_MANAGER_GRAPH_PRINCIPAL_ID
+    {
+        return Err(SessionRuntimeLaunchError::UnexpectedIdentity);
+    }
+    if bootstrap.graph_package_digest == 0
+        || bootstrap.graph.package_ptr != SESSION_RUNTIME_PACKAGE_ADDRESS
+        || bootstrap.graph.package_len == 0
+        || bootstrap.graph.package_len > SESSION_RUNTIME_PAGE_SIZE
+    {
+        return Err(SessionRuntimeLaunchError::UnexpectedPackageRange);
+    }
+    if bootstrap.fixture_ptr != SESSION_RUNTIME_FIXTURE_ADDRESS
+        || bootstrap.fixture_len != core::mem::size_of::<SessionRuntimeFixtureV1>() as u64
+    {
+        return Err(SessionRuntimeLaunchError::UnexpectedFixtureRange);
+    }
+    if bootstrap.result_ptr != SESSION_RUNTIME_RESULT_ADDRESS
+        || bootstrap.result_len
+            != core::mem::size_of::<pythos_shared::session_runtime_abi::SessionRuntimeResultV1>()
+                as u64
+        || bootstrap.graph.result_ptr != SESSION_RUNTIME_RESULT_ADDRESS
+    {
+        return Err(SessionRuntimeLaunchError::UnexpectedResultRange);
+    }
+    Ok(())
+}
+
+pub fn validate_session_runtime_fixture_contract(
+    bootstrap: &SessionRuntimeBootstrapV1,
+    fixture: &SessionRuntimeFixtureV1,
+) -> Result<(), SessionRuntimeLaunchError> {
+    validate_session_runtime_fixture(bootstrap, fixture)
+        .map_err(SessionRuntimeLaunchError::InvalidFixture)?;
+    for (ordinal, expected) in [b"slice2-one".as_slice(), b"slice2-two".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        let payload_len = fixture.commands[ordinal].payload_len as usize;
+        if payload_len != expected.len() || &fixture.payloads[ordinal][..payload_len] != expected {
+            return Err(SessionRuntimeLaunchError::UnexpectedFixturePayload);
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_session_runtime_package<'a>(
+    bootstrap: &SessionRuntimeBootstrapV1,
+    package_bytes: &'a [u8],
+) -> Result<PythGraphPackage<'a>, SessionRuntimeLaunchError> {
+    if package_bytes.len() as u64 != bootstrap.graph.package_len {
+        return Err(SessionRuntimeLaunchError::PackageLengthMismatch);
+    }
+    if digest64(package_bytes) != bootstrap.graph_package_digest {
+        return Err(SessionRuntimeLaunchError::PackageDigestMismatch);
+    }
+    PythGraphPackage::decode(package_bytes).map_err(SessionRuntimeLaunchError::InvalidPackage)
+}
+
+pub fn validate_session_runtime_launch(
+    bootstrap_address: u64,
+    bootstrap: &SessionRuntimeBootstrapV1,
+    fixture: &SessionRuntimeFixtureV1,
+) -> Result<(), SessionRuntimeLaunchError> {
+    validate_session_runtime_bootstrap_address(bootstrap_address)?;
+    validate_session_runtime_outer_bootstrap(bootstrap)?;
+    validate_session_runtime_fixture_contract(bootstrap, fixture)
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionRuntimeState {
@@ -136,6 +261,8 @@ mod tests {
         pyth_command_abi::{COMMAND_KIND_CREATE_NOTE, PythCommand},
         pyth_runtime_abi::{
             GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, HostCallResult, MAX_PYTH_GRAPH_IMPORTS,
+            PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR,
+            PythGraphCapabilityBinding,
         },
         pyth_tig::{
             format::{MAX_RUNTIME_VALUES, PythGraphPackage},
@@ -143,12 +270,20 @@ mod tests {
             test_support,
             verify::verify_package,
         },
+        session_runtime_abi::{
+            SESSION_RUNTIME_ABI_MAJOR, SESSION_RUNTIME_ABI_MINOR, SESSION_RUNTIME_BOOTSTRAP_MAGIC,
+            SESSION_RUNTIME_COMMAND_COUNT, SESSION_RUNTIME_FIXTURE_MAGIC,
+            SESSION_RUNTIME_MAX_COMMAND_PAYLOAD, SessionRuntimeBootstrapV1,
+            SessionRuntimeFixtureV1,
+        },
     };
     use pythos_user_pyth_runtime::{interpreter::Interpreter, value::Value};
 
     use crate::session_command_host::SessionCommandHost;
 
     const SESSION_SERVICE_ID: u64 = 0x5059_5345_5353_0001;
+    const RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5352_544D_0001;
+    const GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
 
     fn key_a(sequence: u64) -> SessionInputEventV1 {
         SessionInputEventV1 {
@@ -369,6 +504,220 @@ mod tests {
         assert!(state.recovery_requested);
         assert_eq!(state.graph_invocation_count, 1);
         assert_eq!(hosts_created, 1);
+    }
+
+    #[test]
+    fn bootstrap_gate_rejects_null_misaligned_and_wrong_fixed_addresses_before_work() {
+        // Catches dereferencing an untrusted entry pointer or beginning work with a wrong launch map.
+        let (bootstrap, fixture) = accepted_launch();
+        let mutations = [
+            (0, bootstrap),
+            (SESSION_RUNTIME_BOOTSTRAP_ADDRESS + 1, bootstrap),
+            (SESSION_RUNTIME_BOOTSTRAP_ADDRESS + 8, bootstrap),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    fixture_ptr: SESSION_RUNTIME_FIXTURE_ADDRESS + 8,
+                    ..bootstrap
+                },
+            ),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    result_ptr: SESSION_RUNTIME_RESULT_ADDRESS + 8,
+                    ..bootstrap
+                },
+            ),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    graph: pythos_shared::pyth_runtime_abi::PythGraphBootstrapBlock {
+                        package_ptr: SESSION_RUNTIME_PACKAGE_ADDRESS + 8,
+                        ..bootstrap.graph
+                    },
+                    ..bootstrap
+                },
+            ),
+        ];
+
+        for (bootstrap_address, candidate) in mutations {
+            assert_rejected_before_work(bootstrap_address, &candidate, &fixture);
+        }
+    }
+
+    #[test]
+    fn bootstrap_gate_rejects_wrong_lengths_versions_identities_and_reserved_fields_before_work() {
+        // Catches accepting a structurally plausible but unauthenticated outer launch record.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut candidates = [bootstrap; 12];
+        candidates[0].abi_major = SESSION_RUNTIME_ABI_MAJOR + 1;
+        candidates[1].abi_minor = SESSION_RUNTIME_ABI_MINOR + 1;
+        candidates[2].fixture_len -= 1;
+        candidates[3].result_len -= 1;
+        candidates[4].graph.package_len = 0;
+        candidates[5].graph.package_len = SESSION_RUNTIME_PAGE_SIZE + 1;
+        candidates[6].session_service_id += 1;
+        candidates[7].runtime_principal_id += 1;
+        candidates[8].graph_principal_id += 1;
+        candidates[9].reserved0 = 1;
+        candidates[10].reserved1[0] = 1;
+        candidates[11].graph.result_ptr = SESSION_RUNTIME_RESULT_ADDRESS + 8;
+
+        for candidate in candidates {
+            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
+        }
+    }
+
+    #[test]
+    fn bootstrap_gate_rejects_malformed_graph_imports_before_work() {
+        // Catches entering the interpreter with widened or fabricated graph command authority.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut candidates = [bootstrap; 6];
+        candidates[0].graph.import_count = 0;
+        candidates[1].graph.imports[0].import_slot = 1;
+        candidates[2].graph.imports[0].resource_kind += 1;
+        candidates[3].graph.imports[0].rights ^= 1;
+        candidates[4].graph.imports[0].reserved0 = 1;
+        candidates[5].graph.imports[1].capability = PackedCapability::from_raw(1);
+
+        for candidate in candidates {
+            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
+        }
+    }
+
+    #[test]
+    fn bootstrap_gate_rejects_wrong_fixture_version_pointer_overlap_and_reserved_fields_before_work()
+     {
+        // Catches reading commands from a malformed, aliased, or non-v1 fixture mapping.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut fixtures = [fixture; 5];
+        fixtures[0].abi_major = SESSION_RUNTIME_ABI_MAJOR + 1;
+        fixtures[1].abi_minor = SESSION_RUNTIME_ABI_MINOR + 1;
+        fixtures[2].commands[0].payload_ptr += 1;
+        fixtures[3].reserved0 = 1;
+        fixtures[4].reserved1[0] = 1;
+        for candidate in fixtures {
+            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &bootstrap, &candidate);
+        }
+
+        let overlap = SessionRuntimeBootstrapV1 {
+            result_ptr: SESSION_RUNTIME_FIXTURE_ADDRESS,
+            ..bootstrap
+        };
+        assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &overlap, &fixture);
+    }
+
+    #[test]
+    fn bootstrap_gate_accepts_only_the_authenticated_fixed_fixture() {
+        // Catches rejecting the kernel-authenticated launch after all boundary checks succeed.
+        let (bootstrap, fixture) = accepted_launch();
+        assert_eq!(
+            validate_session_runtime_launch(
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                &bootstrap,
+                &fixture,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn package_gate_requires_exact_authenticated_bytes_before_verifier_assumption() {
+        // Catches assuming kernel verification for a substituted, truncated, or malformed package.
+        let (mut bootstrap, _fixture) = accepted_launch();
+        let bytes =
+            test_support::command_read_result_emit_with_import_rights(RIGHTS_READ | RIGHTS_APPEND);
+        bootstrap.graph.package_len = bytes.len() as u64;
+        bootstrap.graph_package_digest = pythos_shared::pyth_graph_manifest::digest64(&bytes);
+        assert!(validate_session_runtime_package(&bootstrap, &bytes).is_ok());
+
+        let mut substituted =
+            test_support::command_read_result_emit_with_import_rights(RIGHTS_READ | RIGHTS_APPEND);
+        substituted[0] ^= 1;
+        assert_eq!(
+            validate_session_runtime_package(&bootstrap, &substituted),
+            Err(SessionRuntimeLaunchError::PackageDigestMismatch)
+        );
+
+        bootstrap.graph.package_len += 1;
+        assert_eq!(
+            validate_session_runtime_package(&bootstrap, &bytes),
+            Err(SessionRuntimeLaunchError::PackageLengthMismatch)
+        );
+
+        let malformed = [0u8; 64];
+        bootstrap.graph.package_len = malformed.len() as u64;
+        bootstrap.graph_package_digest = pythos_shared::pyth_graph_manifest::digest64(&malformed);
+        assert!(matches!(
+            validate_session_runtime_package(&bootstrap, &malformed),
+            Err(SessionRuntimeLaunchError::InvalidPackage(_))
+        ));
+    }
+
+    fn assert_rejected_before_work(
+        bootstrap_address: u64,
+        bootstrap: &SessionRuntimeBootstrapV1,
+        fixture: &SessionRuntimeFixtureV1,
+    ) {
+        let mut input_polls = 0;
+        let mut graph_invocations = 0;
+        if validate_session_runtime_launch(bootstrap_address, bootstrap, fixture).is_ok() {
+            input_polls += 1;
+            graph_invocations += 1;
+        }
+        assert_eq!(input_polls, 0);
+        assert_eq!(graph_invocations, 0);
+    }
+
+    fn accepted_launch() -> (SessionRuntimeBootstrapV1, SessionRuntimeFixtureV1) {
+        let mut bootstrap = SessionRuntimeBootstrapV1::empty();
+        bootstrap.magic = SESSION_RUNTIME_BOOTSTRAP_MAGIC;
+        bootstrap.abi_major = SESSION_RUNTIME_ABI_MAJOR;
+        bootstrap.abi_minor = SESSION_RUNTIME_ABI_MINOR;
+        bootstrap.command_count = SESSION_RUNTIME_COMMAND_COUNT as u16;
+        bootstrap.session_service_id = SESSION_SERVICE_ID;
+        bootstrap.runtime_principal_id = RUNTIME_PRINCIPAL_ID;
+        bootstrap.graph_principal_id = GRAPH_PRINCIPAL_ID;
+        bootstrap.graph_package_digest = 1;
+        bootstrap.input_capability = PackedCapability::from_raw(1);
+        bootstrap.console_capability = PackedCapability::from_raw(2);
+        bootstrap.fixture_ptr = SESSION_RUNTIME_FIXTURE_ADDRESS;
+        bootstrap.fixture_len = core::mem::size_of::<SessionRuntimeFixtureV1>() as u64;
+        bootstrap.result_ptr = SESSION_RUNTIME_RESULT_ADDRESS;
+        bootstrap.result_len = core::mem::size_of::<
+            pythos_shared::session_runtime_abi::SessionRuntimeResultV1,
+        >() as u64;
+        bootstrap.graph.magic = PYTH_GRAPH_BOOTSTRAP_MAGIC;
+        bootstrap.graph.abi_major = PYTH_GRAPH_RUNTIME_ABI_MAJOR;
+        bootstrap.graph.abi_minor = PYTH_GRAPH_RUNTIME_ABI_MINOR;
+        bootstrap.graph.import_count = 1;
+        bootstrap.graph.package_ptr = SESSION_RUNTIME_PACKAGE_ADDRESS;
+        bootstrap.graph.package_len = 512;
+        bootstrap.graph.instruction_budget = 128;
+        bootstrap.graph.result_ptr = SESSION_RUNTIME_RESULT_ADDRESS;
+        bootstrap.graph.imports[0] = PythGraphCapabilityBinding {
+            import_slot: 0,
+            resource_kind: 6,
+            reserved0: 0,
+            rights: RIGHTS_READ | RIGHTS_APPEND,
+            capability: PackedCapability::from_raw(3),
+        };
+
+        let mut fixture = SessionRuntimeFixtureV1::empty();
+        fixture.magic = SESSION_RUNTIME_FIXTURE_MAGIC;
+        fixture.abi_major = SESSION_RUNTIME_ABI_MAJOR;
+        fixture.abi_minor = SESSION_RUNTIME_ABI_MINOR;
+        fixture.command_count = SESSION_RUNTIME_COMMAND_COUNT as u16;
+        fixture.payloads[0][..10].copy_from_slice(b"slice2-one");
+        fixture.payloads[1][..10].copy_from_slice(b"slice2-two");
+        for ordinal in 0..SESSION_RUNTIME_COMMAND_COUNT {
+            fixture.commands[ordinal] = command((ordinal + 11) as u64, &fixture.payloads[ordinal]);
+            fixture.commands[ordinal].payload_len = 10;
+            fixture.commands[ordinal].payload_ptr = SESSION_RUNTIME_FIXTURE_ADDRESS
+                + core::mem::offset_of!(SessionRuntimeFixtureV1, payloads) as u64
+                + (ordinal * SESSION_RUNTIME_MAX_COMMAND_PAYLOAD) as u64;
+        }
+        (bootstrap, fixture)
     }
 
     fn command(object_id: u64, payload: &[u8]) -> PythCommand {
