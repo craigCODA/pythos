@@ -965,6 +965,8 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         original_job = qemu_support.WindowsJob
         runner: RunnerHandle | None = None
         child_handle: int | None = None
+        fallback_process: subprocess.Popen[str] | None = None
+        fallback_handle: int | None = None
 
         with tempfile.TemporaryDirectory() as directory:
             evidence = Path(directory) / "runner-child.txt"
@@ -1016,8 +1018,35 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             kernel32.TerminateProcess.restype = qemu_support.wintypes.BOOL
             kernel32.CloseHandle.argtypes = [qemu_support.wintypes.HANDLE]
             kernel32.CloseHandle.restype = qemu_support.wintypes.BOOL
+            process_terminate = 0x00000001
+            synchronize = 0x00100000
+            query_limited_information = 0x00001000
+            child_cleanup_access = (
+                process_terminate | synchronize | query_limited_information
+            )
 
             try:
+                fallback_process = subprocess.Popen(
+                    [sys.executable, "-u", "-c", "import time; time.sleep(60)"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                fallback_handle = kernel32.OpenProcess(
+                    child_cleanup_access, False, fallback_process.pid
+                )
+                self.assertTrue(
+                    fallback_handle, qemu_support.ctypes.get_last_error()
+                )
+                qemu_support.ctypes.set_last_error(0)
+                terminated = kernel32.TerminateProcess(fallback_handle, 1)
+                termination_error = qemu_support.ctypes.get_last_error()
+                self.assertTrue(
+                    terminated,
+                    f"fallback TerminateProcess lacked authorization: Windows error {termination_error}",
+                )
+                self.assertEqual(kernel32.WaitForSingleObject(fallback_handle, 2000), 0)
+                fallback_process.wait(timeout=2.0)
+
                 with mock.patch.object(qemu_support, "WindowsJob", InspectingJob):
                     runner = qemu_support.spawn_runner_process(
                         [sys.executable, "-u", "-c", runner_code]
@@ -1029,7 +1058,9 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 self.assertTrue(evidence.exists(), "runner did not create child evidence")
                 _, child_pid_text = evidence.read_text(encoding="utf-8").split()
                 child_pid = int(child_pid_text)
-                child_handle = kernel32.OpenProcess(0x00100000 | 0x00001000, False, child_pid)
+                child_handle = kernel32.OpenProcess(
+                    child_cleanup_access, False, child_pid
+                )
                 self.assertTrue(child_handle, qemu_support.ctypes.get_last_error())
                 self.assertFalse(runner.job.executed_before_assignment)
                 is_member = qemu_support.wintypes.BOOL()
@@ -1049,9 +1080,23 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                     cleanup_runner_process(runner, terminate_timeout=2.0)
                 if child_handle:
                     if kernel32.WaitForSingleObject(child_handle, 0) == 0x00000102:
-                        kernel32.TerminateProcess(child_handle, 1)
-                        kernel32.WaitForSingleObject(child_handle, 2000)
+                        qemu_support.ctypes.set_last_error(0)
+                        terminated = kernel32.TerminateProcess(child_handle, 1)
+                        termination_error = qemu_support.ctypes.get_last_error()
+                        self.assertTrue(
+                            terminated,
+                            f"fallback TerminateProcess failed: Windows error {termination_error}",
+                        )
+                        self.assertEqual(
+                            kernel32.WaitForSingleObject(child_handle, 2000), 0
+                        )
                     kernel32.CloseHandle(child_handle)
+                if fallback_process is not None:
+                    if fallback_process.poll() is None:
+                        fallback_process.kill()
+                    fallback_process.wait(timeout=2.0)
+                if fallback_handle:
+                    kernel32.CloseHandle(fallback_handle)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
     def test_windows_job_cleans_child_after_parent_has_exited(self) -> None:
