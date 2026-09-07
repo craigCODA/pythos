@@ -156,6 +156,7 @@ jobs:
           python scripts/test-session-input-bridge-probe.py --self-test
           python scripts/test-session-runtime-probe.py --self-test
           python scripts/test-session-input-bridge-probe.py
+          python scripts/test-session-runtime-probe.py --fault-test
           python scripts/test-session-runtime-probe.py
 
       - name: PythTIG physical evidence tooling

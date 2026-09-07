@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 import subprocess
+import sys
 import tempfile
 import tomllib
 import unittest
@@ -45,6 +47,20 @@ FORBIDDEN_DECLARATIONS = {
     "UsbDevice",
     "XhciController",
 }
+
+
+def load_session_runtime_harness():
+    scripts = str(ROOT / "scripts")
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    path = ROOT / "scripts" / "test-session-runtime-probe.py"
+    spec = importlib.util.spec_from_file_location("session_runtime_probe_harness", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load session runtime probe harness")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def cargo_document(path: Path) -> dict:
@@ -254,6 +270,15 @@ def sha256(path: Path) -> str:
 
 
 class SessionRuntimeBoundaryTest(unittest.TestCase):
+    def test_fault_probe_builds_an_exact_ud2_user_elf_through_the_shared_builder(self) -> None:
+        harness = load_session_runtime_harness()
+        payload = harness.build_fault_runtime_payload()
+
+        self.assertEqual(payload[0:4], b"\x7fELF")
+        self.assertEqual(int.from_bytes(payload[24:32], "little"), 0x0040_0000)
+        self.assertEqual(payload[0x1000:0x1003], b"\x0f\x0b\xf4")
+        self.assertEqual(len(payload), 0x2004)
+
     def test_rust_lexer_ignores_nested_comments_and_raw_literal_prose(self) -> None:
         source = r'''
             /* outer /* use viewing::State; */ still comment */

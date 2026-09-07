@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import os
 import sys
 import subprocess
@@ -32,6 +33,10 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
 TARGET_DIR = TARGET / "session-runtime-probe"
 STORAGE_IMAGE = TARGET_DIR / "session-runtime-store.img"
+FAULT_STORAGE_IMAGE = TARGET_DIR / "session-runtime-fault-store.img"
+FAULT_RUNTIME_ELF = TARGET_DIR / "session-runtime-fault.elf"
+FAULT_COM1_LOG = TARGET_DIR / "session-runtime-fault-com1.log"
+FAULT_COM2_LOG = TARGET_DIR / "session-runtime-fault-com2.log"
 COM1_LOGS = (
     TARGET_DIR / "session-runtime-boot-1-com1.log",
     TARGET_DIR / "session-runtime-boot-2-com1.log",
@@ -47,6 +52,20 @@ COM2_READ_TIMEOUT_SECONDS = 15.0
 STORAGE_IMAGE_SIZE = 16 * 1024 * 1024
 ZEROED_STORAGE_SHA256 = "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
 ALLOWED_COM1_BASELINE_LINES = frozenset(("PYTHOS:CORE:EXPECTED_PAGE_FAULT",))
+FAULT_RECOVERY_MARKER = "PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED"
+FAULT_CONTEXT_PATTERN = re.compile(
+    r"^PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED "
+    r"principal:50595352544D0001 vector:6 rip:0000000000400000 "
+    r"rsp:([0-9A-F]{16}) cr2:0000000000000000$"
+)
+FAULT_SETUP_COM1_CONTRACT = (
+    "PYTHOS:CORE:SESSION_RUNTIME:COM2_READY",
+    "PYTHOS:CORE:SESSION_RUNTIME:AUTHORITY_CREATED",
+    "PYTHOS:CORE:SESSION_RUNTIME:IDENTITIES_VALID",
+    "PYTHOS:CORE:SESSION_RUNTIME:STREAM_BOUND",
+    "PYTHOS:CORE:SESSION_RUNTIME:PS2_READY",
+    "PYTHOS:CORE:SESSION_RUNTIME:RING3_ENTER",
+)
 
 EXPECTED_COM1_CONTRACT = (
     "PYTHOS:CORE:SESSION_RUNTIME:COM2_READY",
@@ -121,6 +140,14 @@ PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE
 PYTHOS:SESSION_RUNTIME:READY"""
 FIXTURE_COM1_MARKERS = tuple(VALID_COM1_TRANSCRIPT.splitlines())
 FIXTURE_COM2_MARKERS = tuple(VALID_COM2_TRANSCRIPT.splitlines())
+VALID_FAULT_COM1_TRANSCRIPT = """PYTHOS:CORE:SESSION_RUNTIME:COM2_READY
+PYTHOS:CORE:SESSION_RUNTIME:AUTHORITY_CREATED
+PYTHOS:CORE:SESSION_RUNTIME:IDENTITIES_VALID
+PYTHOS:CORE:SESSION_RUNTIME:STREAM_BOUND
+PYTHOS:CORE:SESSION_RUNTIME:PS2_READY
+PYTHOS:CORE:SESSION_RUNTIME:RING3_ENTER
+PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED principal:50595352544D0001 vector:6 rip:0000000000400000 rsp:0000000072004FF0 cr2:0000000000000000
+PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED"""
 
 
 @dataclass(frozen=True)
@@ -143,6 +170,14 @@ class BootEvidence:
     com2: str
     runner_output: str
     timeline: AcceptanceTimeline
+    process_tree_reaped: bool
+
+
+@dataclass(frozen=True)
+class FaultBootEvidence:
+    com1: str
+    com2: str
+    runner_output: str
     process_tree_reaped: bool
 
 
@@ -172,6 +207,62 @@ def assert_session_runtime_acceptance(
 
     for ordinal, boot in enumerate(boots, start=1):
         assert_boot_acceptance(boot, ordinal)
+
+
+def assert_session_runtime_fault_acceptance(
+    boot: FaultBootEvidence, images: tuple[ImageSnapshot, ...]
+) -> None:
+    """Accept one contained UD2 boot over one unchanged fresh image."""
+    if len(images) != 2:
+        raise AssertionError(
+            f"expected initial/after-fault image snapshots, got {len(images)}"
+        )
+    for label, snapshot in zip(("initial", "after fault boot"), images):
+        if snapshot.size != STORAGE_IMAGE_SIZE:
+            raise AssertionError(
+                f"{label}: expected {STORAGE_IMAGE_SIZE} image bytes, got {snapshot.size}"
+            )
+        if re.fullmatch(r"[0-9a-f]{64}", snapshot.sha256) is None:
+            raise AssertionError(f"{label}: malformed lowercase SHA-256 {snapshot.sha256!r}")
+        if snapshot.path_identity != snapshot.retained_identity:
+            raise AssertionError(
+                f"{label}: storage path no longer names the retained image: {snapshot!r}"
+            )
+    if images[0].sha256 != ZEROED_STORAGE_SHA256:
+        raise AssertionError("initial fault image is not the fresh zeroed 16 MiB fixture")
+    if images[0] != images[1]:
+        raise AssertionError(f"storage image changed across fault boot: {images!r}")
+
+    lines = complete_lines(boot.com1)
+    fault_lines = [
+        line
+        for line in lines
+        if line.startswith("PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED")
+    ]
+    if len(fault_lines) != 1:
+        raise AssertionError(f"expected one exact contained-fault line, got {fault_lines!r}")
+    fault_match = FAULT_CONTEXT_PATTERN.fullmatch(fault_lines[0])
+    if fault_match is None or int(fault_match.group(1), 16) == 0:
+        raise AssertionError(f"malformed contained-fault context: {fault_lines[0]!r}")
+    expected_owned = list(FAULT_SETUP_COM1_CONTRACT) + [fault_lines[0], FAULT_RECOVERY_MARKER]
+    owned = [line for line in lines if line.startswith("PYTHOS:CORE:SESSION_RUNTIME:")]
+    if owned != expected_owned:
+        raise AssertionError(f"fault COM1 contract mismatch: {owned!r}")
+    if any(line.startswith("PYTHOS:CORE:PS2:") for line in lines):
+        raise AssertionError("fault boot unexpectedly observed injected input IRQ evidence")
+    if "PYTHOS:CORE:USER_MODE:RETURN" in lines:
+        raise AssertionError("fault boot reported the normal breakpoint return marker")
+    assert_no_forbidden_evidence(
+        boot.com1,
+        "fault boot COM1",
+        allowed_failure_lines=ALLOWED_COM1_BASELINE_LINES
+        | frozenset((fault_lines[0], FAULT_RECOVERY_MARKER)),
+    )
+    if "PYTHOS:SESSION_RUNTIME:" in boot.com2 or "PYTHOS:PANIC" in boot.com2:
+        raise AssertionError(f"fault boot emitted COM2 runtime evidence: {boot.com2!r}")
+    assert_qemu_success(boot.runner_output)
+    if not boot.process_tree_reaped:
+        raise AssertionError("fault boot runner or child process survived cleanup")
 
 
 def complete_lines(text: str) -> list[str]:
@@ -303,6 +394,83 @@ def run(command: list[str]) -> None:
         raise AssertionError(
             f"build command failed ({result.returncode}): {' '.join(command)}"
         )
+
+
+def load_build_image_module():
+    path = ROOT / "scripts" / "build-image.py"
+    spec = importlib.util.spec_from_file_location("session_runtime_build_image", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load build-image.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def build_fault_runtime_payload() -> bytes:
+    return load_build_image_module().build_user_elf_payload(b"\x0f\x0b\xf4")
+
+
+def write_fault_runtime_elf(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(build_fault_runtime_payload())
+
+
+def build_fault_boot_image() -> None:
+    kernel = (TARGET_DIR / "x86_64-unknown-none" / "debug" / "pythcore").resolve()
+    runtime = FAULT_RUNTIME_ELF.resolve()
+    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run(
+        [
+            "cargo",
+            "build",
+            "-p",
+            "pythos-core",
+            "--target",
+            "x86_64-unknown-none",
+            "--target-dir",
+            str(TARGET_DIR),
+            "--features",
+            "session-runtime-probe",
+        ]
+    )
+    run(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "pythc",
+            "--",
+            "build",
+            "programs/session-manager/main.pyth",
+            "-o",
+            "target/pyth-tig/session-manager.tig",
+        ]
+    )
+    run(
+        [
+            "cargo",
+            "run",
+            "-p",
+            "pyth-tig-tool",
+            "--",
+            "verify",
+            "target/pyth-tig/session-manager.tig",
+        ]
+    )
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+    write_fault_runtime_elf(runtime)
+    run([sys.executable, "scripts/verify-user-elf.py", "--elf", str(runtime)])
+    run(
+        [
+            sys.executable,
+            "scripts/build-image.py",
+            "--kernel",
+            str(kernel),
+            "--session-runtime-elf",
+            str(runtime),
+        ]
+    )
 
 
 def build_boot_image() -> None:
@@ -470,6 +638,25 @@ def probe_runner_command(boot_ordinal: int) -> list[str]:
         str(STORAGE_IMAGE),
         "--success-marker",
         EXPECTED_COM1_CONTRACT[-1],
+        "--expect-outcome",
+        "success",
+    ]
+
+
+def fault_probe_runner_command() -> list[str]:
+    return [
+        sys.executable,
+        "scripts/run-qemu.py",
+        "--serial-log",
+        str(FAULT_COM1_LOG),
+        "--shell-port",
+        str(SHELL_PORT),
+        "--timeout",
+        str(QEMU_TIMEOUT_SECONDS),
+        "--storage-image",
+        str(FAULT_STORAGE_IMAGE),
+        "--success-marker",
+        FAULT_RECOVERY_MARKER,
         "--expect-outcome",
         "success",
     ]
@@ -729,6 +916,103 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
     return evidence
 
 
+def run_fault_probe_boot() -> FaultBootEvidence:
+    FAULT_COM1_LOG.parent.mkdir(parents=True, exist_ok=True)
+    for path in (FAULT_COM1_LOG, FAULT_COM2_LOG):
+        if path.exists():
+            path.unlink()
+
+    popen_kwargs: dict[str, object] = {"cwd": ROOT}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
+    command = fault_probe_runner_command()
+    print("+ " + " ".join(command), flush=True)
+    runner = spawn_runner_process(command, **popen_kwargs)
+    process = runner.process
+    timeline = AcceptanceTimeline()
+    serial = SerialTail(FAULT_COM1_LOG, timeline)
+    observer = Com1Observer(serial)
+    capture = RunnerCapture(process, timeline)
+    tracker: RunnerTreeTracker | None = None
+    tree_reaped = False
+    captured_error: BaseException | None = None
+    com2_bytes = bytearray()
+    capture.start()
+    observer.start()
+    try:
+        with connect_com2(SHELL_PORT, COM2_CONNECT_TIMEOUT_SECONDS) as com2:
+            observer.wait_for(
+                FAULT_SETUP_COM1_CONTRACT + (FAULT_RECOVERY_MARKER,),
+                COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
+            )
+            deadline = time.monotonic() + QEMU_TIMEOUT_SECONDS + 5.0
+            com2.settimeout(0.1)
+            while process.poll() is None and time.monotonic() < deadline:
+                try:
+                    chunk = com2.recv(512)
+                except TimeoutError:
+                    continue
+                except ConnectionResetError:
+                    # QEMU closes the Windows TCP serial endpoint with WSAECONNRESET
+                    # after the success marker; at that point it is ordinary EOF.
+                    break
+                if not chunk:
+                    break
+                com2_bytes.extend(chunk)
+        while process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if process.poll() is None:
+            raise AssertionError("QEMU runner did not terminate after fault recovery")
+        if process.returncode != 0:
+            raise AssertionError(f"QEMU runner failed with {process.returncode}")
+    except BaseException as error:
+        captured_error = error
+    finally:
+        try:
+            observer.stop_join()
+        except BaseException as error:
+            if captured_error is None:
+                captured_error = error
+        try:
+            tracker = track_runner_tree(runner)
+        except BaseException as error:
+            if captured_error is None:
+                captured_error = error
+        try:
+            cleanup_runner_process(runner)
+        except BaseException as error:
+            if captured_error is None:
+                captured_error = error
+        if tracker is not None:
+            try:
+                tree_reaped = tracker.wait_reaped(5.0)
+            except BaseException as error:
+                if captured_error is None:
+                    captured_error = error
+
+    qemu_output = capture.finish()
+    if qemu_output:
+        print(qemu_output, end="")
+    com1 = serial.transcript()
+    com2 = bytes(com2_bytes).decode("utf-8", errors="replace")
+    FAULT_COM2_LOG.write_text(com2, encoding="utf-8")
+    if captured_error is not None:
+        raise AssertionError(
+            f"fault boot: {captured_error}\n"
+            f"COM1:\n{com1}\nCOM2:\n{com2}\nrunner output:\n{qemu_output}"
+        ) from captured_error
+
+    evidence = FaultBootEvidence(
+        com1=com1,
+        com2=com2,
+        runner_output=qemu_output,
+        process_tree_reaped=tree_reaped,
+    )
+    return evidence
+
+
 class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def valid_timeline(self) -> AcceptanceTimeline:
         timeline = AcceptanceTimeline()
@@ -795,6 +1079,124 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
 
     def test_valid_two_boot_transcript_passes(self) -> None:
         assert_session_runtime_acceptance(*self.valid_evidence())
+
+    def valid_fault_evidence(
+        self,
+    ) -> tuple[FaultBootEvidence, tuple[ImageSnapshot, ...]]:
+        identity = FileIdentity(device=9, inode=17)
+        snapshot = ImageSnapshot(
+            STORAGE_IMAGE_SIZE, ZEROED_STORAGE_SHA256, identity, identity
+        )
+        return (
+            FaultBootEvidence(
+                com1=VALID_FAULT_COM1_TRANSCRIPT,
+                com2="",
+                runner_output="QEMU_OUTCOME success\n",
+                process_tree_reaped=True,
+            ),
+            (snapshot, snapshot),
+        )
+
+    def assert_fault_rejected(
+        self,
+        evidence: FaultBootEvidence,
+        images: tuple[ImageSnapshot, ...] | None = None,
+    ) -> None:
+        if images is None:
+            images = self.valid_fault_evidence()[1]
+        with self.assertRaises(AssertionError):
+            assert_session_runtime_fault_acceptance(evidence, images)
+
+    def test_valid_fault_transcript_passes(self) -> None:
+        assert_session_runtime_fault_acceptance(*self.valid_fault_evidence())
+
+    def test_fault_context_requires_exact_principal_vector_rip_rsp_and_cr2(self) -> None:
+        evidence, images = self.valid_fault_evidence()
+        exact = VALID_FAULT_COM1_TRANSCRIPT.splitlines()[6]
+        mutations = (
+            exact.replace("50595352544D0001", "50595352544D0002"),
+            exact.replace("vector:6", "vector:13"),
+            exact.replace("0000000000400000", "0000000000400001"),
+            exact.replace("rsp:0000000072004FF0", "rsp:72004FF0"),
+            exact.replace("rsp:0000000072004FF0", "rsp:0000000000000000"),
+            exact.replace("cr2:0000000000000000", "cr2:0000000000000001"),
+            exact.lower(),
+        )
+        for mutation in mutations:
+            with self.subTest(mutation=mutation):
+                self.assert_fault_rejected(
+                    replace(evidence, com1=evidence.com1.replace(exact, mutation, 1)),
+                    images,
+                )
+
+    def test_fault_oracle_rejects_missing_duplicate_reordered_or_normal_completion(self) -> None:
+        evidence, images = self.valid_fault_evidence()
+        lines = VALID_FAULT_COM1_TRANSCRIPT.splitlines()
+        for index, line in enumerate(lines):
+            with self.subTest(mutation="missing", line=line):
+                self.assert_fault_rejected(
+                    replace(evidence, com1="\n".join(lines[:index] + lines[index + 1 :])),
+                    images,
+                )
+            with self.subTest(mutation="duplicate", line=line):
+                self.assert_fault_rejected(
+                    replace(evidence, com1=evidence.com1 + "\n" + line), images
+                )
+        reordered = list(lines)
+        reordered[-2], reordered[-1] = reordered[-1], reordered[-2]
+        self.assert_fault_rejected(replace(evidence, com1="\n".join(reordered)), images)
+        for extra in (
+            "PYTHOS:CORE:USER_MODE:RETURN",
+            "PYTHOS:CORE:SESSION_RUNTIME:RING3_RETURN",
+            "PYTHOS:CORE:SESSION_RUNTIME:INVOCATION_1_VALID",
+            "PYTHOS:CORE:SESSION_RUNTIME:NO_DISK_WRITES",
+            "PYTHOS:CORE:SESSION_RUNTIME:READY",
+            "PYTHOS:PANIC",
+        ):
+            with self.subTest(extra=extra):
+                self.assert_fault_rejected(
+                    replace(evidence, com1=evidence.com1 + "\n" + extra), images
+                )
+
+    def test_fault_oracle_rejects_com2_runtime_outcome_storage_or_cleanup_mutations(self) -> None:
+        evidence, images = self.valid_fault_evidence()
+        self.assert_fault_rejected(
+            replace(evidence, com2="PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\n"), images
+        )
+        for output in (
+            "",
+            "QEMU_OUTCOME timeout\n",
+            "QEMU_OUTCOME success\nQEMU_OUTCOME success\n",
+        ):
+            with self.subTest(output=output):
+                self.assert_fault_rejected(replace(evidence, runner_output=output), images)
+        self.assert_fault_rejected(replace(evidence, process_tree_reaped=False), images)
+        self.assert_fault_rejected(evidence, images[:1])
+        self.assert_fault_rejected(
+            evidence, (images[0], replace(images[1], sha256="1" * 64))
+        )
+
+    def test_fault_oracle_allows_non_runtime_firmware_console_noise_on_com2(self) -> None:
+        evidence, images = self.valid_fault_evidence()
+        assert_session_runtime_fault_acceptance(
+            replace(evidence, com2="\x1b[2JBdsDxe: loading Boot0001\r\n"), images
+        )
+
+    def test_fault_runtime_payload_is_verified_synthetic_ud2_elf_at_exact_entry(self) -> None:
+        payload = build_fault_runtime_payload()
+        self.assertEqual(payload[0:4], b"\x7fELF")
+        self.assertEqual(int.from_bytes(payload[24:32], "little"), 0x0040_0000)
+        self.assertEqual(payload[0x1000:0x1003], b"\x0f\x0b\xf4")
+
+    def test_fault_runner_uses_one_no_input_boot_and_recovery_as_success(self) -> None:
+        command = fault_probe_runner_command()
+        self.assertEqual(command.count("--serial-log"), 1)
+        self.assertEqual(command.count("--storage-image"), 1)
+        self.assertEqual(
+            command[command.index("--success-marker") + 1],
+            "PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED",
+        )
+        self.assertEqual(command[-2:], ["--expect-outcome", "success"])
 
     def test_exact_expected_page_fault_lines_are_allowed_only_on_com1(self) -> None:
         boots, images = self.valid_evidence()
@@ -1415,9 +1817,34 @@ def main() -> int:
     return 0
 
 
+def fault_main() -> int:
+    build_fault_boot_image()
+    create_zeroed_storage_image(FAULT_STORAGE_IMAGE)
+    with open_retained_storage_image(FAULT_STORAGE_IMAGE) as retained_image:
+        initial = snapshot_image(FAULT_STORAGE_IMAGE, retained_image)
+        print(
+            "SESSION_RUNTIME_FAULT_IMAGE_INITIAL "
+            f"size={initial.size} sha256={initial.sha256}"
+        )
+        boot = run_fault_probe_boot()
+        after = snapshot_image(FAULT_STORAGE_IMAGE, retained_image)
+        print(
+            "SESSION_RUNTIME_FAULT_IMAGE_AFTER_BOOT "
+            f"size={after.size} sha256={after.sha256}"
+        )
+        assert_session_runtime_fault_acceptance(boot, (initial, after))
+    print("SESSION_RUNTIME_FAULT_BOOT_PROCESS_TREE_REAPED")
+    print("SESSION_RUNTIME_FAULT_PROBE_OK")
+    return 0
+
+
 if __name__ == "__main__":
     if sys.argv[1:] == ["--self-test"]:
         raise SystemExit(run_self_tests())
+    if sys.argv[1:] == ["--fault-test"]:
+        raise SystemExit(fault_main())
     if sys.argv[1:]:
-        raise SystemExit("usage: test-session-runtime-probe.py [--self-test]")
+        raise SystemExit(
+            "usage: test-session-runtime-probe.py [--self-test | --fault-test]"
+        )
     raise SystemExit(main())

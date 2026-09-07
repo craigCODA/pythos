@@ -20,6 +20,7 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-session-input-bridge-probe.py --self-test",
         "python scripts/test-session-input-bridge-probe.py",
         "python scripts/test-session-runtime-probe.py --self-test",
+        "python scripts/test-session-runtime-probe.py --fault-test",
         "python scripts/test-session-runtime-probe.py",
     )
 
@@ -197,8 +198,13 @@ class CiWorkflowTest(unittest.TestCase):
         )
         self.assertLess(
             milestone_commands.index("python scripts/test-session-runtime-probe.py --self-test"),
+            milestone_commands.index("python scripts/test-session-runtime-probe.py --fault-test"),
+            "Slice 2 oracle self-tests must precede its live fault proof",
+        )
+        self.assertLess(
+            milestone_commands.index("python scripts/test-session-runtime-probe.py --fault-test"),
             milestone_commands.index("python scripts/test-session-runtime-probe.py"),
-            "Slice 2 oracle self-tests must precede its live QEMU proof",
+            "Slice 2 fault proof must precede its standard live QEMU proof",
         )
         first_live = min(
             milestone_commands.index("python scripts/test-session-input-bridge-probe.py"),
