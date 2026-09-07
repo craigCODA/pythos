@@ -8,6 +8,16 @@ WORKFLOW = ROOT / ".github" / "workflows" / "qemu-acceptance.yml"
 
 class CiWorkflowTest(unittest.TestCase):
     @staticmethod
+    def _commands(block: str) -> list[str]:
+        commands = []
+        for line in block.splitlines():
+            command = line.strip()
+            if command.startswith("run: "):
+                command = command.removeprefix("run: ")
+            commands.append(command)
+        return commands
+
+    @staticmethod
     def _job_block(workflow: str, job_id: str) -> str:
         marker = f"  {job_id}:\n"
         start = workflow.find(marker)
@@ -130,6 +140,62 @@ class CiWorkflowTest(unittest.TestCase):
         self.assertIn("if: ${{ always() }}", aggregate)
         self.assertIn("needs.milestone_acceptance.result", aggregate)
         self.assertIn("needs.handoff_acceptance.result", aggregate)
+
+    def test_session_runtime_slice_is_fully_gated_in_milestone_only(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        aggregate = self._job_block(workflow, "qemu_acceptance")
+        milestone_commands = self._commands(milestone)
+        handoff_commands = self._commands(handoff)
+
+        required_milestone_commands = (
+            "cargo test -p pythos-user-session-runtime",
+            "cargo test -p pythos-core session_runtime",
+            "cargo test -p pythos-core pyth_service_supervisor",
+            "python scripts/build-session-runtime.py --target-dir target/session-runtime-probe",
+            "python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime",
+            "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings",
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings",
+            "python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py",
+            "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary",
+            "python scripts/test-session-input-bridge-probe.py --self-test",
+            "python scripts/test-session-input-bridge-probe.py",
+            "python scripts/test-session-runtime-probe.py --self-test",
+            "python scripts/test-session-runtime-probe.py",
+        )
+        for command in required_milestone_commands:
+            self.assertEqual(
+                milestone_commands.count(command),
+                1,
+                f"milestone must run exactly once: {command}",
+            )
+
+        self.assertLess(
+            milestone_commands.index("python scripts/test-session-input-bridge-probe.py --self-test"),
+            milestone_commands.index("python scripts/test-session-input-bridge-probe.py"),
+            "Slice 1 oracle self-tests must precede its live QEMU proof",
+        )
+        self.assertLess(
+            milestone_commands.index("python scripts/test-session-runtime-probe.py --self-test"),
+            milestone_commands.index("python scripts/test-session-runtime-probe.py"),
+            "Slice 2 oracle self-tests must precede its live QEMU proof",
+        )
+        first_live = min(
+            milestone_commands.index("python scripts/test-session-input-bridge-probe.py"),
+            milestone_commands.index("python scripts/test-session-runtime-probe.py"),
+        )
+        last_self_test = max(
+            milestone_commands.index("python scripts/test-session-input-bridge-probe.py --self-test"),
+            milestone_commands.index("python scripts/test-session-runtime-probe.py --self-test"),
+        )
+        self.assertLess(last_self_test, first_live, "all oracle self-tests must precede live QEMU")
+
+        self.assertNotIn("python scripts/test-session-runtime-probe.py", handoff_commands)
+        self.assertNotIn("python scripts/test-session-runtime-probe.py --self-test", handoff_commands)
+        self.assertEqual(workflow.count("  qemu_acceptance:\n"), 1)
+        self.assertIn("- milestone_acceptance", aggregate)
+        self.assertIn("- handoff_acceptance", aggregate)
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

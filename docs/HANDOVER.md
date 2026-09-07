@@ -1,8 +1,12 @@
 # PythOS Handover
 
-Current checked-in boundary: Phase 13 is complete and the tree is stopped at
-Phase 13 -> Phase 13.5. Phase 12 `path-vs-graph-decision` is recorded through
-ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12
+Current checked-in boundary: Phase 13.5 Slice 2 is accepted on the opt-in
+session-runtime profile and the tree is stopped before Slice 3. ADR 0090
+records Slice 1's capability-gated ring-3 input delivery. ADR 0091 records
+Slice 2's bounded retained session-runtime lifecycle. ADR 0089 remains the
+semantic authority for Viewing, and neither Slice 1 nor Slice 2 cuts Viewing
+or the retained runtime into normal boot. Phase 12 `path-vs-graph-decision` is
+recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12
 `path-resolution` is recorded through ADR 0070 and
 `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite
 loader read-bound increase required by the Slice 2 debug acceptance image; and
@@ -10,6 +14,64 @@ Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and
 `PYTHOS:CORE:PHASE_12_COMPLETE`. ADR 0073 records the Phase 13 package
 lifecycle and schema-extensibility ABI, and the final independent package QEMU
 proof reaches `PYTHOS:CORE:PHASE_13_COMPLETE`.
+
+## Phase 13.5 Slice 2 Bounded Session Runtime (2026-09-07)
+
+The implementation evidence source is
+`6109425047de86cf60e4367313811fc284c43bad`. The exact later documentation
+commit is recorded in `D:\PythOS-Workspace\CURRENT-STATE.md` because a commit
+cannot contain its own SHA.
+
+The opt-in `session-runtime-probe` launches one separately named retained
+ring-3 runtime under one stable `ServiceId`, binds ADR 0090 input once, and
+consumes two contiguous normalized events. The separately scoped session
+command resource is `0x5059_5345_5343_4D44` with exact `READ | APPEND` rights.
+It executes the unchanged
+`session-manager.tig` twice with fresh invocation-local interpreter/host state
+while neutral session-lifetime state advances exactly `0 -> 1 -> 2`. Its exact
+command capability admits two independent immutable `CREATE_NOTE` fixtures;
+those commands are not derived from physical input. Shared lifecycle policy
+reinvokes only after a clean graph exit and requests recovery on every
+failure or unknown exit.
+
+The bounded result page and one expected ring-3 `int3` return are
+acceptance-only. They do not establish production waiting, wakeup, or return
+semantics.
+
+Fresh acceptance passed locally on QEMU 11.0.50 and independently on JacesPC
+QEMU 11.1.0. Each machine completed two fresh boots with exactly one
+`QEMU_OUTCOME success` per boot, `SESSION_RUNTIME_PROBE_OK`, both runner trees
+reaped, and both COM2 transcripts beginning
+`PYTHOS:SESSION_RUNTIME:BOOT_STATE_0`. The disposable 16 MiB storage image was
+unchanged before, between, and after the boots at SHA-256
+`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
+Local COM1 logs were each 1,573 bytes at
+`4863AFE1A482286A54CACA7C6072DBFE5668E7D11758B5A0E11FD9DFE464F4F1`;
+local COM2 logs were each 1,102 bytes at
+`0D185C2E936796449852BE48CB5B0EC5C104F0C6FD88CF31201EC5ACE507C66A`.
+
+Fresh gates passed: `cargo fmt --check`, `cargo test --workspace`, both strict
+session-runtime Clippy profiles, 54 focused Python tests, full Python discovery
+at 153/153, both oracle self-tests, the live Slice 1 bridge, normal fast boot,
+and persistent storage.
+GitHub CI is pinned to QEMU 11.1.1; that hosted-version claim remains pending
+until the workflow runs this branch tip.
+
+Canonical artifacts:
+
+```text
+target/session-runtime-probe/session-runtime-boot-1-com1.log
+target/session-runtime-probe/session-runtime-boot-1-com2.log
+target/session-runtime-probe/session-runtime-boot-2-com1.log
+target/session-runtime-probe/session-runtime-boot-2-com2.log
+target/session-runtime-probe/session-runtime-store.img
+```
+
+Next, and only after a separate invocation, Slice 3 may bind ADR 0089's
+`SessionControlInterpreter` and session-lifetime `ViewingState` to this
+retained owner. Slice 2 does not implement Viewing, default boot, durable
+session persistence, production wait/wakeup, USB/xHCI integration, or any new
+physical Lenovo claim. No USB media was written.
 
 Recent merged decisions and fixes:
 

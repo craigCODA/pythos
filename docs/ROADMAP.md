@@ -11,6 +11,32 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
+## Current Phase 13.5 Boundary
+
+Phase 13.5 Slice 1 and Slice 2 are accepted in bounded, opt-in QEMU profiles.
+ADR 0090 records exclusive capability-gated normalized-input delivery to one
+ring-3 consumer. ADR 0091 records one separately named retained session
+runtime with one stable per-boot session identity, two contiguous input events,
+two fresh in-process invocations of unchanged `session-manager.tig`, an exact
+`0x5059_5345_5343_4D44` `READ | APPEND` command capability,
+invocation-local reset, neutral state advancing exactly `0 -> 1 -> 2`, shared
+reinvoke-or-recover policy, and no storage mutation.
+
+The accepted Slice 2 implementation evidence source is
+`6109425047de86cf60e4367313811fc284c43bad`. Local QEMU 11.0.50 and independent
+JacesPC QEMU 11.1.0 each passed two fresh boots with state zero at each boot,
+both process trees reaped, and the disposable 16 MiB image unchanged at
+SHA-256
+`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
+The CI workflow remains pinned to QEMU 11.1.1; hosted acceptance of the later
+documentation commit must be recorded separately after that workflow runs.
+
+Stop at the Slice 2 -> Slice 3 boundary. Slice 3 is the next separately
+invoked unit: bind ADR 0089 `SessionControlInterpreter` and session-lifetime
+`ViewingState` to the retained owner. Do not infer a normal-boot cutover,
+production wait/wakeup, durable session state, Viewing behavior, USB/xHCI
+integration, or physical Lenovo acceptance from Slice 2.
+
 ## Accepted PythTIG Program Boundary
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is
