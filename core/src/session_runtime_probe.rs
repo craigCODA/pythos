@@ -127,8 +127,15 @@ pub enum SessionRuntimeProbeError {
     PreparedLaunch,
     Ps2(crate::ps2::Ps2Error),
     UserMode(crate::user_mode::UserModeError),
+    FaultPrincipalMismatch,
     KernelRootNotRestored,
     CallerStillBound,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionRuntimeUserOutcome {
+    Completed,
+    FaultContained(crate::user_mode::UserFaultContext),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -307,6 +314,29 @@ pub fn validate_session_runtime_return(
         return Err(SessionRuntimeProbeError::Result);
     }
     Ok(())
+}
+
+pub fn validate_session_runtime_user_outcome(
+    user_result: Result<(), crate::user_mode::UserModeError>,
+    kernel_root_restored: bool,
+    caller_cleared: bool,
+) -> Result<SessionRuntimeUserOutcome, SessionRuntimeProbeError> {
+    if !kernel_root_restored {
+        return Err(SessionRuntimeProbeError::KernelRootNotRestored);
+    }
+    if !caller_cleared {
+        return Err(SessionRuntimeProbeError::CallerStillBound);
+    }
+    match user_result {
+        Ok(()) => Ok(SessionRuntimeUserOutcome::Completed),
+        Err(crate::user_mode::UserModeError::FaultContained(context)) => {
+            if context.principal != SESSION_RUNTIME_PRINCIPAL_ID {
+                return Err(SessionRuntimeProbeError::FaultPrincipalMismatch);
+            }
+            Ok(SessionRuntimeUserOutcome::FaultContained(context))
+        }
+        Err(error) => Err(SessionRuntimeProbeError::UserMode(error)),
+    }
 }
 
 #[cfg(not(test))]
@@ -588,9 +618,27 @@ pub fn run(
     unsafe {
         kernel_address_space.activate();
     }
-    user_result.map_err(SessionRuntimeProbeError::UserMode)?;
     let kernel_root_restored = kernel_address_space.validate_active(boot_info).is_ok();
     let caller_cleared = process_context::current_caller().is_err();
+    match validate_session_runtime_user_outcome(user_result, kernel_root_restored, caller_cleared)?
+    {
+        SessionRuntimeUserOutcome::Completed => {}
+        SessionRuntimeUserOutcome::FaultContained(context) => {
+            crate::serial::write_str("PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED principal:");
+            crate::serial::write_hex_u64_value(context.principal);
+            crate::serial::write_str(" vector:");
+            crate::serial::write_dec_u64_value(context.vector);
+            crate::serial::write_str(" rip:");
+            crate::serial::write_hex_u64_value(context.rip);
+            crate::serial::write_str(" rsp:");
+            crate::serial::write_hex_u64_value(context.rsp);
+            crate::serial::write_str(" cr2:");
+            crate::serial::write_hex_u64_value(context.cr2);
+            crate::serial::write_str("\r\n");
+            crate::serial::write_line("PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED");
+            return Ok(());
+        }
+    }
     crate::serial::write_line(SESSION_RUNTIME_COM1_CONTRACT[8]);
     let result = read_result_from_frame(prepared.result_physical)?;
     validate_session_runtime_return(
@@ -875,6 +923,73 @@ mod tests {
         );
         assert!(
             validate_session_runtime_return(&bootstrap, &fixture, &result, false, true).is_err()
+        );
+    }
+
+    #[test]
+    fn session_runtime_accepts_only_matching_contained_fault_after_boundary_cleanup() {
+        let context = crate::user_mode::UserFaultContext {
+            principal: SESSION_RUNTIME_PRINCIPAL_ID,
+            vector: 6,
+            rip: 0x0040_0000,
+            rsp: 0x7200_5000,
+            cr2: 0,
+        };
+
+        assert_eq!(
+            validate_session_runtime_user_outcome(
+                Err(crate::user_mode::UserModeError::FaultContained(context)),
+                true,
+                true,
+            ),
+            Ok(SessionRuntimeUserOutcome::FaultContained(context))
+        );
+        assert_eq!(
+            validate_session_runtime_user_outcome(
+                Err(crate::user_mode::UserModeError::FaultContained(
+                    crate::user_mode::UserFaultContext {
+                        principal: 7,
+                        ..context
+                    },
+                )),
+                true,
+                true,
+            ),
+            Err(SessionRuntimeProbeError::FaultPrincipalMismatch)
+        );
+        assert_eq!(
+            validate_session_runtime_user_outcome(
+                Err(crate::user_mode::UserModeError::FaultContained(context)),
+                true,
+                false,
+            ),
+            Err(SessionRuntimeProbeError::CallerStillBound)
+        );
+        assert_eq!(
+            validate_session_runtime_user_outcome(
+                Err(crate::user_mode::UserModeError::FaultContained(context)),
+                false,
+                true,
+            ),
+            Err(SessionRuntimeProbeError::KernelRootNotRestored)
+        );
+    }
+
+    #[test]
+    fn session_runtime_normal_return_contract_remains_distinct_from_contained_fault() {
+        assert_eq!(
+            validate_session_runtime_user_outcome(Ok(()), true, true),
+            Ok(SessionRuntimeUserOutcome::Completed)
+        );
+        assert_eq!(
+            validate_session_runtime_user_outcome(
+                Err(crate::user_mode::UserModeError::DidNotReturn),
+                true,
+                true,
+            ),
+            Err(SessionRuntimeProbeError::UserMode(
+                crate::user_mode::UserModeError::DidNotReturn
+            ))
         );
     }
 
