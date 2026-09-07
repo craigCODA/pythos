@@ -7,6 +7,22 @@ WORKFLOW = ROOT / ".github" / "workflows" / "qemu-acceptance.yml"
 
 
 class CiWorkflowTest(unittest.TestCase):
+    SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-session-runtime",
+        "cargo test -p pythos-core session_runtime",
+        "cargo test -p pythos-core pyth_service_supervisor",
+        "python scripts/build-session-runtime.py --target-dir target/session-runtime-probe",
+        "python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime",
+        "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings",
+        "python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py",
+        "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary",
+        "python scripts/test-session-input-bridge-probe.py --self-test",
+        "python scripts/test-session-input-bridge-probe.py",
+        "python scripts/test-session-runtime-probe.py --self-test",
+        "python scripts/test-session-runtime-probe.py",
+    )
+
     @staticmethod
     def _commands(block: str) -> list[str]:
         commands = []
@@ -33,6 +49,26 @@ class CiWorkflowTest(unittest.TestCase):
             next_job = workflow.find("\n  ", next_job + 3)
 
         return workflow[start:]
+
+    @classmethod
+    def _workflow_with_handoff_command(cls, workflow: str, command: str) -> str:
+        handoff_start = workflow.index("  handoff_acceptance:\n")
+        upload_marker = "      - name: Upload handoff logs\n"
+        insertion_at = workflow.index(upload_marker, handoff_start)
+        injected_step = (
+            "      - name: Injected duplicate\n"
+            f"        run: {command}\n\n"
+        )
+        return workflow[:insertion_at] + injected_step + workflow[insertion_at:]
+
+    def _assert_handoff_excludes_session_runtime_gates(self, workflow: str) -> None:
+        handoff_commands = self._commands(self._job_block(workflow, "handoff_acceptance"))
+        for command in self.SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS:
+            self.assertNotIn(
+                command,
+                handoff_commands,
+                f"handoff must not duplicate milestone-only command: {command}",
+            )
 
     def test_qemu_runtime_and_firmware_are_pinned_and_asserted(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -144,27 +180,10 @@ class CiWorkflowTest(unittest.TestCase):
     def test_session_runtime_slice_is_fully_gated_in_milestone_only(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         milestone = self._job_block(workflow, "milestone_acceptance")
-        handoff = self._job_block(workflow, "handoff_acceptance")
         aggregate = self._job_block(workflow, "qemu_acceptance")
         milestone_commands = self._commands(milestone)
-        handoff_commands = self._commands(handoff)
 
-        required_milestone_commands = (
-            "cargo test -p pythos-user-session-runtime",
-            "cargo test -p pythos-core session_runtime",
-            "cargo test -p pythos-core pyth_service_supervisor",
-            "python scripts/build-session-runtime.py --target-dir target/session-runtime-probe",
-            "python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime",
-            "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings",
-            "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings",
-            "python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py",
-            "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary",
-            "python scripts/test-session-input-bridge-probe.py --self-test",
-            "python scripts/test-session-input-bridge-probe.py",
-            "python scripts/test-session-runtime-probe.py --self-test",
-            "python scripts/test-session-runtime-probe.py",
-        )
-        for command in required_milestone_commands:
+        for command in self.SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS:
             self.assertEqual(
                 milestone_commands.count(command),
                 1,
@@ -191,11 +210,22 @@ class CiWorkflowTest(unittest.TestCase):
         )
         self.assertLess(last_self_test, first_live, "all oracle self-tests must precede live QEMU")
 
-        self.assertNotIn("python scripts/test-session-runtime-probe.py", handoff_commands)
-        self.assertNotIn("python scripts/test-session-runtime-probe.py --self-test", handoff_commands)
+        self._assert_handoff_excludes_session_runtime_gates(workflow)
         self.assertEqual(workflow.count("  qemu_acceptance:\n"), 1)
         self.assertIn("- milestone_acceptance", aggregate)
         self.assertIn("- handoff_acceptance", aggregate)
+
+    def test_handoff_rejects_every_session_runtime_gate_duplicate(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        for command in self.SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS:
+            with self.subTest(command=command):
+                mutated = self._workflow_with_handoff_command(workflow, command)
+                mutated_handoff = self._commands(
+                    self._job_block(mutated, "handoff_acceptance")
+                )
+                self.assertEqual(mutated_handoff.count(command), 1)
+                with self.assertRaises(AssertionError):
+                    self._assert_handoff_excludes_session_runtime_gates(mutated)
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

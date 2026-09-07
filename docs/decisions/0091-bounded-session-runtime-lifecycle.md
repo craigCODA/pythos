@@ -25,9 +25,9 @@ The opt-in `session-runtime-probe` profile admits one separately named
 stable `ServiceId` for that runtime per boot. The runtime principal, graph
 principal, and session service identity are non-zero and distinct. PythCore
 authenticates the runtime ELF and the single `session-manager.tig` package,
-maps the bounded bootstrap/package/fixture/result payload, grants only the
-required console and session-command capabilities, and binds the ADR 0090
-input stream exactly once.
+maps the bounded bootstrap/package/fixture/result payload, grants the required
+console, session-command, and ADR 0090 input capabilities, and binds the input
+stream exactly once.
 
 The ring-3 runtime owns neutral session-lifetime state: the stable session
 identity, count of consumed input events, count of graph invocations, the
@@ -80,14 +80,15 @@ py -3 scripts/test-session-input-bridge-probe.py --self-test
 py -3 scripts/test-session-runtime-probe.py --self-test
 ```
 
-The focused Python gate passed 54 tests. The Slice 1 and Slice 2 oracle
+The initial focused Python gate passed 54 tests. The Slice 1 and Slice 2 oracle
 self-tests passed. The strict Clippy invocations completed without warnings.
-Fresh full Python discovery also passed 153 tests.
+After review added the adversarial milestone-only CI mutation test, the exact
+CI suite passed 6 tests and fresh full Python discovery passed 154 tests.
 
 `py -3 scripts/test-session-runtime-probe.py` then passed two fresh boots on
 local QEMU 11.0.50. Each boot emitted exactly one `QEMU_OUTCOME success`, each
-runner tree was reaped, and the terminal result was
-`SESSION_RUNTIME_PROBE_OK`. Both COM2 transcripts began with
+runner tree was reaped, and after both boots the harness emitted
+`SESSION_RUNTIME_PROBE_OK` once. Both COM2 transcripts began with
 `PYTHOS:SESSION_RUNTIME:BOOT_STATE_0`, proving that session state was new for
 the second boot rather than durable across reboot. Within each boot, neutral
 session state advanced exactly `0 -> 1 -> 2`, and the transcript proved two
@@ -104,9 +105,11 @@ The two local COM2 logs were byte-identical at 1,102 bytes with SHA-256
 `0D185C2E936796449852BE48CB5B0EC5C104F0C6FD88CF31201EC5ACE507C66A`.
 
 An independent Windows runner on JacesPC repeated the two-boot proof with
-QEMU 11.1.0: both boots reached the exact terminal marker and outcome, both
-process trees were reaped, both COM2 transcripts began at boot state zero,
-and the same 16 MiB storage hash was unchanged at all three checkpoints.
+QEMU 11.1.0: each boot reached the exact per-channel terminal markers and one
+exact `QEMU_OUTCOME success`, both process trees were reaped, both COM2
+transcripts began at boot state zero, and the same 16 MiB storage hash was
+unchanged at all three checkpoints. The harness emitted
+`SESSION_RUNTIME_PROBE_OK` once after the completed two-boot acceptance.
 
 The predecessor/regression gate also passed:
 

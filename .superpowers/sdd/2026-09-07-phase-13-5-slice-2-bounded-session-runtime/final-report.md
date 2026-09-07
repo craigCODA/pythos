@@ -60,9 +60,33 @@ python scripts/test-session-runtime-probe.py
 ```
 
 Both oracle self-tests precede both live oracles. The Slice 2 live oracle is
-absent from `handoff_acceptance`. The pinned QEMU 11.1.1 download/hash/cache,
-pinned OVMF, independent milestone/handoff jobs, and single aggregate
-`qemu_acceptance` job remain unchanged.
+absent from `handoff_acceptance`, as are every other command in the protected
+milestone-only list above. An adversarial test injects each protected command
+into the handoff job independently and requires the validator to reject every
+mutation. The pinned QEMU 11.1.1 download/hash/cache, pinned OVMF, independent
+milestone/handoff jobs, and single aggregate `qemu_acceptance` job remain
+unchanged.
+
+The review-fix adversarial test first produced the intended RED against the
+two-command-only handoff validator:
+
+```text
+py -3 -m unittest tests.test_ci_workflow
+Ran 6 tests
+FAILED (failures=11)
+AssertionError: AssertionError not raised
+```
+
+The eleven failures corresponded to the eleven newly protected command
+mutations; the two previously protected Slice 2 oracle commands already
+failed closed. After the validator was generalized across the exact protected
+command tuple:
+
+```text
+py -3 -m unittest tests.test_ci_workflow
+Ran 6 tests
+OK
+```
 
 ## Fresh local gates
 
@@ -90,9 +114,10 @@ the bounded session-runtime tests. Both strict Clippy profiles completed
 without warnings.
 
 The full Python discovery gate immediately before Task 9 passed 152/152 at the
-accepted implementation checkpoint. Task 9 then added one CI contract test;
-fresh full discovery passed 153/153, and the focused 54-test gate above also
-includes and passes that new test.
+accepted implementation checkpoint. Initial Task 9 added one CI contract test;
+full discovery passed 153/153, and the focused 54-test gate above included it.
+The review fix added one adversarial CI mutation test; the exact CI suite then
+passed 6/6 and fresh full discovery passed 154/154.
 
 ## Fresh local two-boot Slice 2 evidence
 
@@ -233,13 +258,14 @@ target/session-runtime-probe/session-runtime-boot-2-com1-esp.img
 ## Independent Windows/QEMU evidence
 
 JacesPC independently checked out implementation checkpoint `6109425` and ran
-the exact two-boot oracle with QEMU 11.1.0. Both boots reached
-`SESSION_RUNTIME_PROBE_OK` with exactly one `QEMU_OUTCOME success`; both
+the exact two-boot oracle with QEMU 11.1.0. Each boot reached the exact
+per-channel terminal markers with exactly one `QEMU_OUTCOME success`; both
 process trees were reaped; both COM2 transcripts began
 `PYTHOS:SESSION_RUNTIME:BOOT_STATE_0`; and the 16,777,216-byte storage image
 retained SHA-256
 `080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`
-before, between, and after the boots.
+before, between, and after the boots. The harness emitted
+`SESSION_RUNTIME_PROBE_OK` once after the completed two-boot acceptance.
 
 GitHub Actions is pinned to QEMU 11.1.1. Hosted acceptance of the later Task 9
 commit is not claimed by this report before that workflow actually passes.
