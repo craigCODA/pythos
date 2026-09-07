@@ -248,9 +248,7 @@ TIMELINE_EDGES = (
     ("COM1", EXPECTED_COM1_CONTRACT[7], "COM2", EXPECTED_COM2_CONTRACT[9]),
     ("HARNESS", "QMP_MOUSE_SENT", "COM2", EXPECTED_COM2_CONTRACT[9]),
     ("COM2", EXPECTED_COM2_CONTRACT[9], "COM2", EXPECTED_COM2_CONTRACT[-1]),
-    ("COM2", EXPECTED_COM2_CONTRACT[-1], "COM1", EXPECTED_COM1_CONTRACT[8]),
     ("COM1", EXPECTED_COM1_CONTRACT[8], "COM1", EXPECTED_COM1_CONTRACT[-1]),
-    ("COM1", EXPECTED_COM1_CONTRACT[-1], "RUNNER", "QEMU_OUTCOME success"),
 )
 
 
@@ -973,9 +971,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             ("COM1", FIXTURE_COM1_MARKERS[7], "COM2", FIXTURE_COM2_MARKERS[9]),
             ("HARNESS", "QMP_MOUSE_SENT", "COM2", FIXTURE_COM2_MARKERS[9]),
             ("COM2", FIXTURE_COM2_MARKERS[9], "COM2", FIXTURE_COM2_MARKERS[-1]),
-            ("COM2", FIXTURE_COM2_MARKERS[-1], "COM1", FIXTURE_COM1_MARKERS[8]),
             ("COM1", FIXTURE_COM1_MARKERS[8], "COM1", FIXTURE_COM1_MARKERS[-1]),
-            ("COM1", FIXTURE_COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
         )
         _, images = self.valid_evidence()
         for boot_ordinal in range(2):
@@ -1006,6 +1002,38 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             self.valid_boot(),
         )
         assert_session_runtime_acceptance(boots, images)
+
+    def test_com1_return_and_com2_terminal_ready_allow_either_observation_order(self) -> None:
+        _, images = self.valid_evidence()
+        for boot_ordinal in range(2):
+            with self.subTest(boot=boot_ordinal + 1):
+                timeline = self.valid_timeline()
+                timeline.move_after(
+                    "COM1",
+                    FIXTURE_COM1_MARKERS[8],
+                    "COM2",
+                    FIXTURE_COM2_MARKERS[9],
+                )
+                boots = (self.valid_boot(), self.valid_boot())
+                assert_session_runtime_acceptance(
+                    self.replace_boot(boots, boot_ordinal, timeline=timeline), images
+                )
+
+    def test_com1_terminal_ready_and_runner_outcome_allow_either_observation_order(self) -> None:
+        _, images = self.valid_evidence()
+        for boot_ordinal in range(2):
+            with self.subTest(boot=boot_ordinal + 1):
+                timeline = self.valid_timeline()
+                timeline.move_after(
+                    "RUNNER",
+                    "QEMU_OUTCOME success",
+                    "COM1",
+                    FIXTURE_COM1_MARKERS[-2],
+                )
+                boots = (self.valid_boot(), self.valid_boot())
+                assert_session_runtime_acceptance(
+                    self.replace_boot(boots, boot_ordinal, timeline=timeline), images
+                )
 
     def test_identity_state_reset_stale_reuse_and_event_mutations_fail(self) -> None:
         boots, images = self.valid_evidence()
