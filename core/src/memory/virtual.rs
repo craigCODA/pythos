@@ -19,7 +19,9 @@ const TWO_MIB: u64 = 2 * 1024 * 1024;
 const OLD_IDENTITY_PROBE: u64 = 64 * 1024 * 1024;
 const ENTRY_COUNT: usize = 512;
 const MAX_TABLE_FRAMES: usize = 128;
-const MAX_USER_ELF_FRAMES: usize = 64;
+// The owning ledger retains both dynamically allocated ELF pages and caller-
+// supplied user payload pages so `reclaim` can release every mapped frame.
+pub(crate) const MAX_RETAINED_USER_FRAMES: usize = 69;
 pub const LATE_FRAME_SCRATCH_VIRT: u64 = 0xFFFF_C000_3000_0000;
 
 const PTE_PRESENT: u64 = 1 << 0;
@@ -351,8 +353,8 @@ pub struct UserAddressSpace {
     root_table_phys: u64,
     table_frames: [u64; MAX_TABLE_FRAMES],
     table_frame_count: usize,
-    user_elf_frames: [u64; MAX_USER_ELF_FRAMES],
-    user_elf_frame_count: usize,
+    retained_user_frames: [u64; MAX_RETAINED_USER_FRAMES],
+    retained_user_frame_count: usize,
 }
 
 pub struct RetainedUserAddressSpace {
@@ -437,8 +439,8 @@ impl UserAddressSpace {
             root_table_phys: tables.root_table_phys,
             table_frames,
             table_frame_count,
-            user_elf_frames: [0; MAX_USER_ELF_FRAMES],
-            user_elf_frame_count: 0,
+            retained_user_frames: [0; MAX_RETAINED_USER_FRAMES],
+            retained_user_frame_count: 0,
         })
     }
 
@@ -525,8 +527,8 @@ impl UserAddressSpace {
         supervisor_mappings: &[Option<(u64, u64, u64)>],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
-        let mut user_elf_frames = [0u64; MAX_USER_ELF_FRAMES];
-        let mut user_elf_frame_count = 0usize;
+        let mut retained_user_frames = [0u64; MAX_RETAINED_USER_FRAMES];
+        let mut retained_user_frame_count = 0usize;
         map_kernel_segments(&mut tables)?;
         map_user_stack_pages(&mut tables)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
@@ -540,18 +542,18 @@ impl UserAddressSpace {
                 &mut tables,
                 elf_bytes,
                 segment,
-                &mut user_elf_frames,
-                &mut user_elf_frame_count,
+                &mut retained_user_frames,
+                &mut retained_user_frame_count,
             )?;
             segment_index += 1;
         }
         let mut payload_index = 0usize;
         while payload_index < user_payload_mappings.len() {
             let mapping = user_payload_mappings[payload_index];
-            remember_user_payload_frame(
+            remember_retained_user_frame(
                 mapping.physical,
-                &mut user_elf_frames,
-                &mut user_elf_frame_count,
+                &mut retained_user_frames,
+                &mut retained_user_frame_count,
             )?;
             let flags = if mapping.writable {
                 PTE_WRITE | PTE_NO_EXECUTE
@@ -576,8 +578,8 @@ impl UserAddressSpace {
                 root_table_phys: tables.root_table_phys,
                 table_frames,
                 table_frame_count,
-                user_elf_frames,
-                user_elf_frame_count,
+                retained_user_frames,
+                retained_user_frame_count,
             },
             user_elf::LoadedUserElf::new(image.entry(), image.segment_count(), true),
         ))
@@ -702,8 +704,8 @@ impl UserAddressSpace {
             reclaimed += 1;
         }
         let mut user_frame = 0;
-        while user_frame < self.user_elf_frame_count {
-            allocator.release_allocated_page(self.user_elf_frames[user_frame])?;
+        while user_frame < self.retained_user_frame_count {
+            allocator.release_allocated_page(self.retained_user_frames[user_frame])?;
             reclaimed += 1;
             user_frame += 1;
         }
@@ -1080,15 +1082,15 @@ fn map_user_elf_segment(
     tables: &mut PageTableBuilder<'_>,
     elf_bytes: &[u8],
     segment: &user_elf::LoadSegment,
-    user_elf_frames: &mut [u64; MAX_USER_ELF_FRAMES],
-    user_elf_frame_count: &mut usize,
+    retained_user_frames: &mut [u64; MAX_RETAINED_USER_FRAMES],
+    retained_user_frame_count: &mut usize,
 ) -> Result<(), VmError> {
     let page_len = segment.page_len();
     let mut page_offset = 0u64;
     while page_offset < page_len {
         let physical = allocate_zeroed_frame(tables.allocator)?;
         copy_user_elf_page(elf_bytes, segment, page_offset, physical)?;
-        remember_user_payload_frame(physical, user_elf_frames, user_elf_frame_count)?;
+        remember_retained_user_frame(physical, retained_user_frames, retained_user_frame_count)?;
 
         let flags = user_elf_page_flags(segment);
         tables.map_user_physical_range(
@@ -1107,16 +1109,16 @@ fn map_user_elf_segment(
     Ok(())
 }
 
-fn remember_user_payload_frame(
+fn remember_retained_user_frame(
     physical: u64,
-    user_elf_frames: &mut [u64; MAX_USER_ELF_FRAMES],
-    user_elf_frame_count: &mut usize,
+    retained_user_frames: &mut [u64; MAX_RETAINED_USER_FRAMES],
+    retained_user_frame_count: &mut usize,
 ) -> Result<(), VmError> {
-    if *user_elf_frame_count >= MAX_USER_ELF_FRAMES {
+    if *retained_user_frame_count >= MAX_RETAINED_USER_FRAMES {
         return Err(VmError::UserElfTooLarge);
     }
-    user_elf_frames[*user_elf_frame_count] = physical;
-    *user_elf_frame_count += 1;
+    retained_user_frames[*retained_user_frame_count] = physical;
+    *retained_user_frame_count += 1;
     Ok(())
 }
 
@@ -1746,7 +1748,7 @@ fn symbol_range_len(start: *const u8, end: *const u8) -> Result<u64, VmError> {
 // mapping's actual effect on real AHCI hardware is proven functionally by
 // Task E's QEMU integration test.
 const _: () = assert!(PTE_CACHE_DISABLE == 1 << 4);
-const _: () = assert!(MAX_USER_ELF_FRAMES >= 31 + 3);
+const _: () = assert!(MAX_RETAINED_USER_FRAMES == 65 + 4);
 #[cfg(feature = "evidence-terminal")]
 pub fn evidence_log_supervisor_mapping(boot_info: &PythBootInfo) -> Option<(u64, u64, u64)> {
     if boot_info.evidence_log_flags & PYTH_EVIDENCE_LOG_FLAG_PRESENT == 0 {

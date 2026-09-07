@@ -34,8 +34,35 @@ pub const SESSION_RUNTIME_SERVICE_ID_RAW: u64 = 0x5059_5345_5353_0001;
 pub const SESSION_RUNTIME_PRINCIPAL_ID: u64 =
     pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID;
 pub const SESSION_RUNTIME_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
+// The packaged runtime's PT_LOAD footprint is 25 text + 4 rodata + 36 data/BSS
+// pages. The probe also maps four one-page ABI payloads into the same owning
+// ledger.
+const SESSION_RUNTIME_ELF_FRAME_COUNT: usize = 65;
+const SESSION_RUNTIME_PAYLOAD_FRAME_COUNT: usize = 4;
+const SESSION_RUNTIME_RETAINED_FRAME_REQUIREMENT: usize =
+    SESSION_RUNTIME_ELF_FRAME_COUNT + SESSION_RUNTIME_PAYLOAD_FRAME_COUNT;
 
 const SESSION_RUNTIME_GRAPH_NAME: &[u8] = b"session-manager.tig";
+
+const fn retained_user_frame_capacity_accepts(
+    capacity: usize,
+    elf_frames: usize,
+    payload_frames: usize,
+) -> bool {
+    match elf_frames.checked_add(payload_frames) {
+        Some(required) => required <= capacity,
+        None => false,
+    }
+}
+
+#[cfg(not(test))]
+// `memory::virtual` is intentionally absent from host tests, so this production
+// const assertion binds the host-tested arithmetic to the actual kernel ledger.
+const _: () = assert!(retained_user_frame_capacity_accepts(
+    crate::memory::r#virtual::MAX_RETAINED_USER_FRAMES,
+    SESSION_RUNTIME_ELF_FRAME_COUNT,
+    SESSION_RUNTIME_PAYLOAD_FRAME_COUNT,
+));
 
 pub const SESSION_RUNTIME_COM1_CONTRACT: [&str; 15] = [
     "PYTHOS:CORE:SESSION_RUNTIME:COM2_READY",
@@ -660,6 +687,19 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn session_runtime_retained_frame_capacity_is_exact_and_bounded() {
+        assert_eq!(SESSION_RUNTIME_RETAINED_FRAME_REQUIREMENT, 65 + 4);
+        assert!(!retained_user_frame_capacity_accepts(64, 65, 4));
+        assert!(retained_user_frame_capacity_accepts(69, 65, 4));
+        assert!(!retained_user_frame_capacity_accepts(69, 66, 4));
+        assert!(!retained_user_frame_capacity_accepts(
+            usize::MAX,
+            usize::MAX,
+            1,
+        ));
     }
 
     #[test]
