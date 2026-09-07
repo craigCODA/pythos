@@ -21,6 +21,13 @@ use pythos_shared::{
 };
 
 const SESSION_INPUT_PROBE_SERVICE_ID: u64 = 0x5349_4E50;
+
+/// Return the bridge's deliberately hardware-neutral kernel mapping options.
+pub fn minimal_kernel_address_space_options()
+-> crate::memory::r#virtual::KernelAddressSpaceBuildOptions {
+    crate::memory::r#virtual::KernelAddressSpaceBuildOptions::new()
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SessionInputProbeError {
     Load(runtime_loader::RuntimeLoadError),

@@ -333,14 +333,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         }
         serial::write_line("PYTHOS:CORE:INTERRUPTS_READY");
 
+        #[cfg(not(feature = "session-input-bridge-probe"))]
         // ADR 0048: discover the HDA controller now (PCI config I/O works before
         // the VM switch) so its MMIO can be mapped into the kernel address space.
         let hda_controller = audio::probe_hda();
+        #[cfg(not(feature = "session-input-bridge-probe"))]
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
+        #[cfg(not(feature = "session-input-bridge-probe"))]
         // ADR 0054: discover an AHCI controller before the VM switch for the
         // same reason; the polling driver uses a fixed kernel virtual window.
         let ahci_controller = block_device::probe_ahci();
+        #[cfg(not(feature = "session-input-bridge-probe"))]
         let ahci_mmio = ahci_controller.map(|c| {
             (
                 c.mmio_base,
@@ -348,7 +352,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 block_device::AHCI_MMIO_LEN,
             )
         });
-        #[cfg(feature = "sdhci-emmc-backend")]
+        #[cfg(all(
+            not(feature = "session-input-bridge-probe"),
+            feature = "sdhci-emmc-backend"
+        ))]
         let sdhci_emmc_controller = match sdhci_emmc::probe_controller() {
             Ok(controller) => Some(controller),
             Err(sdhci_emmc::SdhciEmmcBackendError::DeviceAbsent) => None,
@@ -357,7 +364,10 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
         };
-        #[cfg(feature = "sdhci-emmc-backend")]
+        #[cfg(all(
+            not(feature = "session-input-bridge-probe"),
+            feature = "sdhci-emmc-backend"
+        ))]
         let sdhci_emmc_mmio = sdhci_emmc_controller.map(|controller| {
             (
                 controller.physical_mmio_base,
@@ -365,21 +375,40 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 sdhci_emmc::SDHCI_EMMC_MMIO_LEN,
             )
         });
-        #[cfg(not(feature = "sdhci-emmc-backend"))]
+        #[cfg(all(
+            not(feature = "session-input-bridge-probe"),
+            not(feature = "sdhci-emmc-backend")
+        ))]
         let sdhci_emmc_mmio = None;
 
-        let mut kernel_address_space_options =
-            memory::r#virtual::KernelAddressSpaceBuildOptions::new();
-        kernel_address_space_options.hda_mmio = hda_mmio;
-        kernel_address_space_options.ahci_mmio = ahci_mmio;
-        kernel_address_space_options.sdhci_emmc_mmio = sdhci_emmc_mmio;
+        #[cfg(not(feature = "session-input-bridge-probe"))]
+        let kernel_address_space_options = {
+            let mut options = memory::r#virtual::KernelAddressSpaceBuildOptions::new();
+            options.hda_mmio = hda_mmio;
+            options.ahci_mmio = ahci_mmio;
+            options.sdhci_emmc_mmio = sdhci_emmc_mmio;
 
-        #[cfg(feature = "evidence-terminal")]
-        {
-            kernel_address_space_options.evidence_log_mapping =
-                memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
-        }
+            #[cfg(feature = "evidence-terminal")]
+            {
+                options.evidence_log_mapping =
+                    memory::r#virtual::evidence_log_supervisor_mapping(boot_info);
+            }
+            options
+        };
 
+        #[cfg(feature = "session-input-bridge-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            session_input_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(not(feature = "session-input-bridge-probe"))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
             boot_info,

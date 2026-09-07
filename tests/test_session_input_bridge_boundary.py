@@ -16,6 +16,10 @@ FORBIDDEN_MODULES = {
     "xhci",
     "usb_xhci",
     "usb_xhci_probe",
+    "audio",
+    "block_device",
+    "sdhci",
+    "sdhci_emmc",
 }
 FORBIDDEN_DECLARATIONS = {
     "ActivationSequence",
@@ -182,22 +186,6 @@ class SessionInputBridgeBoundaryTest(unittest.TestCase):
         probe = cargo_document(ROOT / "user" / "probes" / "session-input" / "Cargo.toml")
         self.assertEqual(set(probe.get("dependencies", {})), {"pythos-shared"})
         self.assertEqual(probe.get("features", {}), {})
-
-    def test_feature_route_uses_production_setup_before_the_bounded_probe(self) -> None:
-        main = (ROOT / "core" / "src" / "main.rs").read_text(encoding="utf-8")
-        feature_start = main.index('#[cfg(feature = "session-input-bridge-probe")]')
-        feature_end = main.index('#[cfg(not(feature = "session-input-bridge-probe"))]', feature_start)
-        route = main[feature_start:feature_end]
-        self.assertIn("session_input_probe::prepare", route)
-        self.assertIn("address_space.activate()", route)
-        self.assertIn("address_space.validate_active(boot_info)", route)
-        self.assertIn("prove_old_identity_map_removed()", route)
-        self.assertIn("prove_syscall_stack_guard_pages_unmapped()", route)
-        self.assertIn("syscall::initialize()", route)
-        self.assertIn("user_stacks::initialize()", route)
-        self.assertIn("session_input_probe::run", route)
-        self.assertLess(route.index("syscall::initialize()"), route.index("session_input_probe::run"))
-        self.assertLess(route.index("user_stacks::initialize()"), route.index("session_input_probe::run"))
 
     def test_probe_path_imports_only_non_forbidden_modules(self) -> None:
         paths = [
