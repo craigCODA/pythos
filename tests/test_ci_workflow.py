@@ -21,7 +21,6 @@ class CiWorkflowTest(unittest.TestCase):
             'qemu-system-x86_64 --version | grep -F "QEMU emulator version ${QEMU_VERSION}"',
             'dpkg-query -W -f=\'${Version}\\n\' ovmf | grep -Fx "${OVMF_VERSION}"',
             "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd",
-            "PYTHOS_OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd",
             "tests.test_qemu_boot_media",
         )
 
@@ -29,6 +28,7 @@ class CiWorkflowTest(unittest.TestCase):
             self.assertIn(snippet, workflow)
 
         self.assertNotIn("runs-on: ubuntu-latest", workflow)
+        self.assertNotIn("PYTHOS_OVMF_VARS", workflow)
 
     def test_qemu_acceptance_workflow_exists_and_runs_required_gates(self) -> None:
         self.assertTrue(WORKFLOW.exists(), "missing QEMU acceptance CI workflow")

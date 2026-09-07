@@ -66,28 +66,11 @@ class QemuBootMediaTest(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "PYTHOS/INIT.PAK"):
                 run_qemu.prepare_esp_image(esp, root / "boot.img")
 
-    def test_each_run_gets_a_fresh_ovmf_variable_store(self) -> None:
-        run_qemu = load_run_qemu_module()
-        with tempfile.TemporaryDirectory() as temp:
-            root = Path(temp)
-            template = root / "OVMF_VARS.fd"
-            original = b"ovmf-variable-template"
-            template.write_bytes(original)
-
-            first = run_qemu.prepare_ovmf_vars(template, root / "first-vars.fd")
-            first.write_bytes(b"mutated-by-first-run")
-            second = run_qemu.prepare_ovmf_vars(template, root / "second-vars.fd")
-
-            self.assertEqual(template.read_bytes(), original)
-            self.assertEqual(second.read_bytes(), original)
-            self.assertNotEqual(first.read_bytes(), second.read_bytes())
-
-    def test_drive_arguments_separate_firmware_state_and_forbid_vvfat(self) -> None:
+    def test_drive_arguments_separate_firmware_state_and_isolate_esp_writes(self) -> None:
         run_qemu = load_run_qemu_module()
 
         arguments = run_qemu.qemu_firmware_and_esp_args(
             Path("OVMF_CODE.fd"),
-            Path("run-vars.fd"),
             Path("run-esp.img"),
         )
 
@@ -97,14 +80,13 @@ class QemuBootMediaTest(unittest.TestCase):
                 "-drive",
                 "if=pflash,format=raw,unit=0,readonly=on,file=OVMF_CODE.fd",
                 "-drive",
-                "if=pflash,format=raw,unit=1,file=run-vars.fd",
-                "-drive",
-                "if=none,id=pythos_esp,format=raw,readonly=on,file=run-esp.img",
+                "if=none,id=pythos_esp,format=raw,snapshot=on,file=run-esp.img",
                 "-device",
                 "ide-hd,drive=pythos_esp,bootindex=1",
             ],
         )
         self.assertNotIn("fat:rw:", " ".join(arguments))
+        self.assertEqual(" ".join(arguments).count("if=pflash"), 1)
 
 
 if __name__ == "__main__":

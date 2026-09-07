@@ -118,36 +118,6 @@ def find_ovmf(explicit: str | None) -> str:
     raise SystemExit("missing OVMF code firmware; set PYTHOS_OVMF_CODE")
 
 
-def find_ovmf_vars(explicit: str | None) -> str:
-    if explicit:
-        return explicit
-    env_value = os.environ.get("PYTHOS_OVMF_VARS")
-    if env_value:
-        return env_value
-    candidates = [
-        r"C:\Program Files\qemu\share\edk2-x86_64-vars.fd",
-        r"C:\Program Files\qemu\share\edk2-i386-vars.fd",
-        r"C:\Program Files\qemu\share\OVMF_VARS.fd",
-        r"C:\Program Files (x86)\qemu\share\edk2-x86_64-vars.fd",
-        r"C:\Program Files (x86)\qemu\share\edk2-i386-vars.fd",
-        "/usr/share/OVMF/OVMF_VARS_4M.fd",
-        "/usr/share/OVMF/OVMF_VARS.fd",
-        "/usr/share/edk2/x64/OVMF_VARS.4m.fd",
-    ]
-    for candidate in candidates:
-        if Path(candidate).exists():
-            return candidate
-    raise SystemExit("missing OVMF variable-store template; set PYTHOS_OVMF_VARS")
-
-
-def prepare_ovmf_vars(template: Path, output: Path) -> Path:
-    if not template.is_file():
-        raise FileNotFoundError(f"missing OVMF variable-store template: {template}")
-    output.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(template, output)
-    return output
-
-
 def load_build_iso_module():
     path = ROOT / "scripts" / "build-iso.py"
     spec = importlib.util.spec_from_file_location("pythos_build_iso", path)
@@ -171,19 +141,23 @@ def prepare_esp_image(esp: Path, output: Path) -> Path:
     return output
 
 
-def qemu_firmware_args(code: Path, variables: Path) -> list[str]:
+def qemu_firmware_args(code: Path) -> list[str]:
+    # Keep the established single-pflash machine topology. In this OVMF mode,
+    # file-backed variable writes land on the boot disk; qemu_esp_args routes
+    # every such write into a per-process snapshot instead of the fresh image.
     return [
         "-drive",
         f"if=pflash,format=raw,unit=0,readonly=on,file={code}",
-        "-drive",
-        f"if=pflash,format=raw,unit=1,file={variables}",
     ]
 
 
 def qemu_esp_args(esp_image: Path) -> list[str]:
+    # ide-hd rejects a read-only block node. snapshot=on gives the guest a
+    # writable temporary overlay while keeping the deterministic raw backing
+    # image unchanged and eliminating shared VVFAT/NvVars state between runs.
     return [
         "-drive",
-        f"if=none,id=pythos_esp,format=raw,readonly=on,file={esp_image}",
+        f"if=none,id=pythos_esp,format=raw,snapshot=on,file={esp_image}",
         "-device",
         "ide-hd,drive=pythos_esp,bootindex=1",
     ]
@@ -191,10 +165,9 @@ def qemu_esp_args(esp_image: Path) -> list[str]:
 
 def qemu_firmware_and_esp_args(
     code: Path,
-    variables: Path,
     esp_image: Path,
 ) -> list[str]:
-    return qemu_firmware_args(code, variables) + qemu_esp_args(esp_image)
+    return qemu_firmware_args(code) + qemu_esp_args(esp_image)
 
 
 QMP_PORT = 4488
@@ -380,7 +353,6 @@ def main() -> int:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS)
     parser.add_argument("--qemu")
     parser.add_argument("--ovmf-code")
-    parser.add_argument("--ovmf-vars")
     parser.add_argument("--screendump", type=Path)
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
     parser.add_argument(
@@ -508,7 +480,6 @@ def main() -> int:
 
     qemu = find_qemu(args.qemu)
     ovmf = Path(find_ovmf(args.ovmf_code))
-    ovmf_vars_template = Path(find_ovmf_vars(args.ovmf_vars))
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
     if args.ahci_storage_image and not args.ahci:
@@ -542,13 +513,9 @@ def main() -> int:
     args.serial_log.parent.mkdir(parents=True, exist_ok=True)
     if args.serial_log.exists():
         args.serial_log.unlink()
-    ovmf_vars = prepare_ovmf_vars(
-        ovmf_vars_template,
-        args.serial_log.with_name(f"{args.serial_log.stem}-ovmf-vars.fd"),
-    )
 
     command = [qemu]
-    command += qemu_firmware_args(ovmf, ovmf_vars)
+    command += qemu_firmware_args(ovmf)
     command += [
         "-machine",
         "q35",

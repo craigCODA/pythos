@@ -70,9 +70,7 @@ jobs:
           "${QEMU_PREFIX}/bin/qemu-system-x86_64" --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
           dpkg-query -W -f='${Version}\n' ovmf | grep -Fx "${OVMF_VERSION}"
           test -f /usr/share/OVMF/OVMF_CODE_4M.fd
-          test -f /usr/share/OVMF/OVMF_VARS_4M.fd
           echo "PYTHOS_OVMF_CODE=/usr/share/OVMF/OVMF_CODE_4M.fd" >> "$GITHUB_ENV"
-          echo "PYTHOS_OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd" >> "$GITHUB_ENV"
 
       - name: Assert QEMU on PATH
         run: qemu-system-x86_64 --version | grep -F "QEMU emulator version ${QEMU_VERSION}"
