@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import re
 import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -53,6 +54,68 @@ def cargo_document(path: Path) -> dict:
 def feature_dependencies(cargo: dict, feature_name: str) -> tuple[str, ...] | None:
     value = cargo.get("features", {}).get(feature_name)
     return None if value is None else tuple(value)
+
+
+def assert_cargo_dependency_boundary(cargo: dict) -> None:
+    expected = {
+        ("dependencies",): {
+            "pythos-shared": {"path": "../../shared", "features": ["pyth-tig"]},
+            "pythos-user-pyth-runtime": {"path": "../pyth-runtime"},
+        },
+        ("dev-dependencies",): {
+            "pythos-shared": {
+                "path": "../../shared",
+                "features": ["pyth-tig-test-support"],
+            },
+        },
+    }
+    dependency_keys = {"dependencies", "dev-dependencies", "build-dependencies"}
+    discovered: dict[tuple[str, ...], object] = {}
+
+    def visit(value: object, path: tuple[str, ...] = ()) -> None:
+        if not isinstance(value, dict):
+            return
+        for key, child in value.items():
+            child_path = path + (key,)
+            if key in dependency_keys:
+                discovered[child_path] = child
+            visit(child, child_path)
+
+    visit(cargo)
+    unexpected = set(discovered) - set(expected)
+    if unexpected:
+        raise AssertionError(f"unapproved Cargo dependency tables: {sorted(unexpected)!r}")
+    if discovered != expected:
+        raise AssertionError(
+            f"session-runtime dependency boundary mismatch: {discovered!r}"
+        )
+    if cargo.get("features", {}) != {}:
+        raise AssertionError("session-runtime crate may not define feature escape hatches")
+
+
+def probe_rust_source_paths(root: Path) -> list[Path]:
+    core_probe = root / "core" / "src" / "session_runtime_probe.rs"
+    runtime_sources = root / "user" / "session-runtime" / "src"
+    paths = [core_probe] if core_probe.is_file() else []
+    if runtime_sources.is_dir():
+        paths.extend(sorted(runtime_sources.rglob("*.rs")))
+    return paths
+
+
+def assert_probe_source_boundary(root: Path) -> None:
+    for path in probe_rust_source_paths(root):
+        source = path.read_text(encoding="utf-8")
+        for statement in rust_dependency_statements(source):
+            forbidden = dependency_components(statement) & FORBIDDEN_MODULES
+            if forbidden:
+                raise AssertionError(
+                    f"{path}: forbidden dependency components {sorted(forbidden)!r}"
+                )
+        forbidden = declared_rust_symbols(source) & FORBIDDEN_DECLARATIONS
+        if forbidden:
+            raise AssertionError(
+                f"{path}: forbidden declarations {sorted(forbidden)!r}"
+            )
 
 
 def strip_rust_comments_and_strings(source: str) -> str:
@@ -120,6 +183,18 @@ def strip_rust_comments_and_strings(source: str) -> str:
                     index += 1
             output.append(mask(source[start:index]))
             continue
+        if source[index] == "'" and index + 1 < len(source) and (
+            source[index + 1].isalpha() or source[index + 1] == "_"
+        ):
+            end = index + 2
+            while end < len(source) and (
+                source[end].isalnum() or source[end] == "_"
+            ):
+                end += 1
+            if end >= len(source) or source[end] != "'":
+                output.append(source[index:end])
+                index = end
+                continue
         if source[index] == "'":
             end = index + 1
             while end < len(source) and source[end] != "\n":
@@ -194,6 +269,24 @@ class SessionRuntimeBoundaryTest(unittest.TestCase):
         self.assertTrue(dependency_components("viewing::ViewingState") & FORBIDDEN_MODULES)
         self.assertTrue(declared_rust_symbols(source) & FORBIDDEN_DECLARATIONS)
 
+    def test_rust_lexer_preserves_lifetimes_before_later_forbidden_code(self) -> None:
+        source = (
+            "fn borrow<'a, T: 'static>(value: &'a str) where T: 'a { "
+            "let letter: char = 'a'; 'retry: loop { struct FocusMark; "
+            "break 'retry; } }"
+        )
+        self.assertIn("FocusMark", declared_rust_symbols(source))
+        code = strip_rust_comments_and_strings(source)
+        self.assertIn("'static", code)
+        self.assertIn("'retry", code)
+        self.assertNotIn("= 'a'", code)
+
+        ordinary = "fn choose<'a, 'b>(left: &'a str, right: &'b str) -> &'a str { left }"
+        code = strip_rust_comments_and_strings(ordinary)
+        self.assertIn("'a", code)
+        self.assertIn("'b", code)
+        self.assertIn("fn choose", code)
+
     def test_all_immutable_lower_layer_files_match_the_literal_pins(self) -> None:
         for relative, expected in PINNED_SHA256.items():
             with self.subTest(path=relative):
@@ -205,29 +298,45 @@ class SessionRuntimeBoundaryTest(unittest.TestCase):
 
     def test_session_runtime_crate_dependencies_are_exactly_bounded(self) -> None:
         cargo = cargo_document(ROOT / "user" / "session-runtime" / "Cargo.toml")
-        dependencies = cargo.get("dependencies", {})
-        self.assertEqual(set(dependencies), {"pythos-shared", "pythos-user-pyth-runtime"})
-        self.assertEqual(
-            dependencies["pythos-shared"],
-            {"path": "../../shared", "features": ["pyth-tig"]},
+        self.assertIn(
+            "assert_cargo_dependency_boundary",
+            globals(),
+            "complete Cargo dependency-table validation is not implemented",
         )
-        self.assertEqual(dependencies["pythos-user-pyth-runtime"], {"path": "../pyth-runtime"})
-        self.assertEqual(
-            cargo.get("dev-dependencies", {}),
-            {
-                "pythos-shared": {
-                    "path": "../../shared",
-                    "features": ["pyth-tig-test-support"],
-                }
-            },
+        assert_cargo_dependency_boundary(cargo)
+
+    def test_build_and_target_specific_dependency_bypass_forms_are_rejected(self) -> None:
+        self.assertIn(
+            "assert_cargo_dependency_boundary",
+            globals(),
+            "complete Cargo dependency-table validation is not implemented",
         )
-        self.assertEqual(cargo.get("features", {}), {})
+        base = """
+[dependencies]
+pythos-shared = { path = "../../shared", features = ["pyth-tig"] }
+pythos-user-pyth-runtime = { path = "../pyth-runtime" }
+[dev-dependencies]
+pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }
+"""
+        bypasses = (
+            base + "\n[build-dependencies]\nforbidden = \"1\"\n",
+            base + "\n[build-dependencies]\n",
+            base + "\n[target.'cfg(unix)'.dependencies]\nforbidden = \"1\"\n",
+            base + "\n[target.'cfg(windows)'.dev-dependencies]\nforbidden = \"1\"\n",
+            base + "\n[target.x86_64-unknown-none.build-dependencies]\nforbidden = \"1\"\n",
+        )
+        for source in bypasses:
+            with self.subTest(source=source.splitlines()[-2]):
+                with self.assertRaises(AssertionError):
+                    assert_cargo_dependency_boundary(tomllib.loads(source))
 
     def test_probe_sources_import_no_viewing_framebuffer_usb_or_xhci_modules(self) -> None:
-        paths = [
-            ROOT / "core" / "src" / "session_runtime_probe.rs",
-            *sorted((ROOT / "user" / "session-runtime" / "src").glob("*.rs")),
-        ]
+        self.assertIn(
+            "probe_rust_source_paths",
+            globals(),
+            "recursive Rust source enumeration is not implemented",
+        )
+        paths = probe_rust_source_paths(ROOT)
         for path in paths:
             statements = rust_dependency_statements(path.read_text(encoding="utf-8"))
             for statement in statements:
@@ -235,14 +344,38 @@ class SessionRuntimeBoundaryTest(unittest.TestCase):
                     self.assertFalse(dependency_components(statement) & FORBIDDEN_MODULES)
 
     def test_probe_sources_declare_no_viewing_framebuffer_usb_or_xhci_types(self) -> None:
-        paths = [
-            ROOT / "core" / "src" / "session_runtime_probe.rs",
-            *sorted((ROOT / "user" / "session-runtime" / "src").glob("*.rs")),
-        ]
+        self.assertIn(
+            "probe_rust_source_paths",
+            globals(),
+            "recursive Rust source enumeration is not implemented",
+        )
+        paths = probe_rust_source_paths(ROOT)
         for path in paths:
             declarations = declared_rust_symbols(path.read_text(encoding="utf-8"))
             with self.subTest(path=path.relative_to(ROOT)):
                 self.assertFalse(declarations & FORBIDDEN_DECLARATIONS)
+
+    def test_recursive_probe_source_enumeration_includes_nested_modules(self) -> None:
+        self.assertIn(
+            "probe_rust_source_paths",
+            globals(),
+            "recursive Rust source enumeration is not implemented",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            core = root / "core" / "src" / "session_runtime_probe.rs"
+            nested = root / "user" / "session-runtime" / "src" / "nested" / "forbidden.rs"
+            core.parent.mkdir(parents=True)
+            nested.parent.mkdir(parents=True)
+            core.write_text("use core::fmt;", encoding="utf-8")
+            nested.write_text("use viewing::ViewingState;", encoding="utf-8")
+            paths = probe_rust_source_paths(root)
+            self.assertIn(core, paths)
+            self.assertIn(nested, paths)
+            statements = rust_dependency_statements(nested.read_text(encoding="utf-8"))
+            self.assertTrue(dependency_components(statements[0]) & FORBIDDEN_MODULES)
+            with self.assertRaisesRegex(AssertionError, "forbidden dependency"):
+                assert_probe_source_boundary(root)
 
     def test_normal_boot_has_no_session_runtime_probe_integration(self) -> None:
         code = strip_rust_comments_and_strings(

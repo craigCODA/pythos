@@ -47,7 +47,7 @@ COM2_READ_TIMEOUT_SECONDS = 15.0
 STORAGE_IMAGE_SIZE = 16 * 1024 * 1024
 ZEROED_STORAGE_SHA256 = "080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e"
 
-COM1_MARKERS = (
+EXPECTED_COM1_CONTRACT = (
     "PYTHOS:CORE:SESSION_RUNTIME:COM2_READY",
     "PYTHOS:CORE:SESSION_RUNTIME:AUTHORITY_CREATED",
     "PYTHOS:CORE:SESSION_RUNTIME:IDENTITIES_VALID",
@@ -64,7 +64,7 @@ COM1_MARKERS = (
     "PYTHOS:CORE:SESSION_RUNTIME:NO_DISK_WRITES",
     "PYTHOS:CORE:SESSION_RUNTIME:READY",
 )
-COM2_MARKERS = (
+EXPECTED_COM2_CONTRACT = (
     "PYTHOS:SESSION_RUNTIME:BOOT_STATE_0",
     "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1",
     "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0",
@@ -84,11 +84,56 @@ COM2_MARKERS = (
     "PYTHOS:SESSION_RUNTIME:READY",
 )
 
+# Test specimens are deliberately duplicated literals. They must never be
+# assembled from the oracle's expected-contract constants above.
+VALID_COM1_TRANSCRIPT = """PYTHOS:CORE:SESSION_RUNTIME:COM2_READY
+PYTHOS:CORE:SESSION_RUNTIME:AUTHORITY_CREATED
+PYTHOS:CORE:SESSION_RUNTIME:IDENTITIES_VALID
+PYTHOS:CORE:SESSION_RUNTIME:STREAM_BOUND
+PYTHOS:CORE:SESSION_RUNTIME:PS2_READY
+PYTHOS:CORE:SESSION_RUNTIME:RING3_ENTER
+PYTHOS:CORE:PS2:KEYBOARD_IRQ_FIRED
+PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED
+PYTHOS:CORE:SESSION_RUNTIME:RING3_RETURN
+PYTHOS:CORE:SESSION_RUNTIME:INVOCATION_1_VALID
+PYTHOS:CORE:SESSION_RUNTIME:REINVOKE_VALID
+PYTHOS:CORE:SESSION_RUNTIME:INVOCATION_2_VALID
+PYTHOS:CORE:SESSION_RUNTIME:STATE_RETENTION_VALID
+PYTHOS:CORE:SESSION_RUNTIME:NO_DISK_WRITES
+PYTHOS:CORE:SESSION_RUNTIME:READY"""
+VALID_COM2_TRANSCRIPT = """PYTHOS:SESSION_RUNTIME:BOOT_STATE_0
+PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1
+PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0
+PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE
+PYTHOS:SESSION_RUNTIME:RESULT_1_SLICE2_ONE
+PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_OK
+PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1
+PYTHOS:SESSION_RUNTIME:INVOCATION_LOCAL_RESET
+PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_2
+PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_1
+PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_TWO
+PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_TWO
+PYTHOS:SESSION_RUNTIME:INVOCATION_2_EXIT_OK
+PYTHOS:SESSION_RUNTIME:STATE_INPUTS_2_INVOCATIONS_2
+PYTHOS:SESSION_RUNTIME:INPUT_CONTIGUOUS
+PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE
+PYTHOS:SESSION_RUNTIME:READY"""
+FIXTURE_COM1_MARKERS = tuple(VALID_COM1_TRANSCRIPT.splitlines())
+FIXTURE_COM2_MARKERS = tuple(VALID_COM2_TRANSCRIPT.splitlines())
+
+
+@dataclass(frozen=True)
+class FileIdentity:
+    device: int
+    inode: int
+
 
 @dataclass(frozen=True)
 class ImageSnapshot:
     size: int
     sha256: str
+    path_identity: FileIdentity
+    retained_identity: FileIdentity
 
 
 @dataclass(frozen=True)
@@ -115,6 +160,10 @@ def assert_session_runtime_acceptance(
             )
         if re.fullmatch(r"[0-9a-f]{64}", snapshot.sha256) is None:
             raise AssertionError(f"{label}: malformed lowercase SHA-256 {snapshot.sha256!r}")
+        if snapshot.path_identity != snapshot.retained_identity:
+            raise AssertionError(
+                f"{label}: storage path no longer names the retained image: {snapshot!r}"
+            )
     if images[0].sha256 != ZEROED_STORAGE_SHA256:
         raise AssertionError("initial image is not the fresh zeroed 16 MiB fixture")
     if images[0] != images[1] or images[0] != images[2]:
@@ -132,7 +181,7 @@ def assert_exact_ordered_markers(
     transcript: str,
     markers: tuple[str, ...],
     channel: str,
-    owned_prefix: str,
+    owned_prefixes: tuple[str, ...],
 ) -> None:
     lines = complete_lines(transcript)
     previous = -1
@@ -146,8 +195,10 @@ def assert_exact_ordered_markers(
         if position <= previous:
             raise AssertionError(f"{channel}: marker order violation at {marker!r}")
         previous = position
-    owned_lines = [line for line in lines if line.startswith(owned_prefix)]
-    expected_owned_lines = [marker for marker in markers if marker.startswith(owned_prefix)]
+    owned_lines = [line for line in lines if line.startswith(owned_prefixes)]
+    expected_owned_lines = [
+        marker for marker in markers if marker.startswith(owned_prefixes)
+    ]
     if owned_lines != expected_owned_lines:
         raise AssertionError(
             f"{channel}: owned marker contract contains extra or malformed lines: {owned_lines!r}"
@@ -155,7 +206,7 @@ def assert_exact_ordered_markers(
 
 
 def assert_no_forbidden_evidence(transcript: str, channel: str) -> None:
-    allowed_no_write = COM1_MARKERS[-2]
+    allowed_no_write = EXPECTED_COM1_CONTRACT[-2]
     for line in complete_lines(transcript):
         upper = line.upper()
         normalized = "_".join(filter(None, re.split(r"[^A-Z0-9]+", upper)))
@@ -176,20 +227,20 @@ def assert_no_forbidden_evidence(transcript: str, channel: str) -> None:
 
 
 TIMELINE_EDGES = (
-    ("COM1", COM1_MARKERS[5], "COM2", COM2_MARKERS[0]),
-    ("COM2", COM2_MARKERS[0], "COM2", COM2_MARKERS[1]),
-    ("COM2", COM2_MARKERS[1], "HARNESS", "QMP_A_SENT"),
-    ("HARNESS", "QMP_A_SENT", "COM1", COM1_MARKERS[6]),
-    ("COM1", COM1_MARKERS[6], "COM2", COM2_MARKERS[2]),
-    ("COM2", COM2_MARKERS[2], "COM2", COM2_MARKERS[7]),
-    ("COM2", COM2_MARKERS[7], "COM2", COM2_MARKERS[8]),
-    ("COM2", COM2_MARKERS[8], "HARNESS", "QMP_MOUSE_SENT"),
-    ("HARNESS", "QMP_MOUSE_SENT", "COM1", COM1_MARKERS[7]),
-    ("COM1", COM1_MARKERS[7], "COM2", COM2_MARKERS[9]),
-    ("COM2", COM2_MARKERS[9], "COM2", COM2_MARKERS[-1]),
-    ("COM2", COM2_MARKERS[-1], "COM1", COM1_MARKERS[8]),
-    ("COM1", COM1_MARKERS[8], "COM1", COM1_MARKERS[-1]),
-    ("COM1", COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
+    ("COM1", EXPECTED_COM1_CONTRACT[5], "COM2", EXPECTED_COM2_CONTRACT[0]),
+    ("COM2", EXPECTED_COM2_CONTRACT[0], "COM2", EXPECTED_COM2_CONTRACT[1]),
+    ("COM2", EXPECTED_COM2_CONTRACT[1], "HARNESS", "QMP_A_SENT"),
+    ("COM1", EXPECTED_COM1_CONTRACT[6], "COM2", EXPECTED_COM2_CONTRACT[2]),
+    ("HARNESS", "QMP_A_SENT", "COM2", EXPECTED_COM2_CONTRACT[2]),
+    ("COM2", EXPECTED_COM2_CONTRACT[2], "COM2", EXPECTED_COM2_CONTRACT[7]),
+    ("COM2", EXPECTED_COM2_CONTRACT[7], "COM2", EXPECTED_COM2_CONTRACT[8]),
+    ("COM2", EXPECTED_COM2_CONTRACT[8], "HARNESS", "QMP_MOUSE_SENT"),
+    ("COM1", EXPECTED_COM1_CONTRACT[7], "COM2", EXPECTED_COM2_CONTRACT[9]),
+    ("HARNESS", "QMP_MOUSE_SENT", "COM2", EXPECTED_COM2_CONTRACT[9]),
+    ("COM2", EXPECTED_COM2_CONTRACT[9], "COM2", EXPECTED_COM2_CONTRACT[-1]),
+    ("COM2", EXPECTED_COM2_CONTRACT[-1], "COM1", EXPECTED_COM1_CONTRACT[8]),
+    ("COM1", EXPECTED_COM1_CONTRACT[8], "COM1", EXPECTED_COM1_CONTRACT[-1]),
+    ("COM1", EXPECTED_COM1_CONTRACT[-1], "RUNNER", "QEMU_OUTCOME success"),
 )
 
 
@@ -209,15 +260,15 @@ def assert_boot_acceptance(boot: BootEvidence, ordinal: int) -> None:
     assert_no_forbidden_evidence(boot.com2, f"boot {ordinal} COM2")
     assert_exact_ordered_markers(
         boot.com1,
-        COM1_MARKERS,
+        EXPECTED_COM1_CONTRACT,
         f"boot {ordinal} COM1",
-        "PYTHOS:CORE:SESSION_RUNTIME:",
+        ("PYTHOS:CORE:SESSION_RUNTIME:", "PYTHOS:CORE:PS2:"),
     )
     assert_exact_ordered_markers(
         boot.com2,
-        COM2_MARKERS,
+        EXPECTED_COM2_CONTRACT,
         f"boot {ordinal} COM2",
-        "PYTHOS:SESSION_RUNTIME:",
+        ("PYTHOS:SESSION_RUNTIME:",),
     )
     assert_qemu_success(boot.runner_output)
     assert_cross_channel_timeline(boot.timeline)
@@ -318,14 +369,75 @@ def create_zeroed_storage_image(path: Path) -> None:
         image.truncate(STORAGE_IMAGE_SIZE)
 
 
-def snapshot_image(path: Path) -> ImageSnapshot:
+def file_identity(stat_result: os.stat_result) -> FileIdentity:
+    return FileIdentity(device=int(stat_result.st_dev), inode=int(stat_result.st_ino))
+
+
+def open_retained_storage_image(path: Path):
+    if sys.platform == "win32":
+        import ctypes
+        import msvcrt
+        from ctypes import wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_file = kernel32.CreateFileW
+        create_file.argtypes = (
+            wintypes.LPCWSTR,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            ctypes.c_void_p,
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.HANDLE,
+        )
+        create_file.restype = wintypes.HANDLE
+        raw_handle = create_file(
+            str(path),
+            0x80000000,  # GENERIC_READ
+            0x00000001 | 0x00000002 | 0x00000004,  # SHARE_READ|WRITE|DELETE
+            None,
+            3,  # OPEN_EXISTING
+            0x00000080,  # FILE_ATTRIBUTE_NORMAL
+            None,
+        )
+        if raw_handle == wintypes.HANDLE(-1).value:
+            raise ctypes.WinError(ctypes.get_last_error())
+        descriptor = msvcrt.open_osfhandle(int(raw_handle), os.O_RDONLY | os.O_BINARY)
+        retained = os.fdopen(descriptor, "rb")
+    else:
+        retained = path.open("rb")
+    try:
+        if not os.path.samestat(path.stat(), os.fstat(retained.fileno())):
+            raise AssertionError("storage image changed while opening retained handle")
+    except BaseException:
+        retained.close()
+        raise
+    return retained
+
+
+def snapshot_image(path: Path, retained) -> ImageSnapshot:
     digest = hashlib.sha256()
     size = 0
     with path.open("rb") as image:
         for chunk in iter(lambda: image.read(1024 * 1024), b""):
             size += len(chunk)
             digest.update(chunk)
-    return ImageSnapshot(size=size, sha256=digest.hexdigest())
+    return ImageSnapshot(
+        size=size,
+        sha256=digest.hexdigest(),
+        path_identity=file_identity(path.stat()),
+        retained_identity=file_identity(os.fstat(retained.fileno())),
+    )
+
+
+def send_qmp_a(timeline: AcceptanceTimeline) -> None:
+    launcher_click.press_qcode_keys(["a"])
+    timeline.record("HARNESS", "QMP_A_SENT")
+
+
+def send_qmp_mouse(timeline: AcceptanceTimeline) -> None:
+    launcher_click.send_relative_mouse_motion(7, -7)
+    timeline.record("HARNESS", "QMP_MOUSE_SENT")
 
 
 def probe_runner_command(boot_ordinal: int) -> list[str]:
@@ -343,26 +455,136 @@ def probe_runner_command(boot_ordinal: int) -> list[str]:
         "--storage-image",
         str(STORAGE_IMAGE),
         "--success-marker",
-        COM1_MARKERS[-1],
+        EXPECTED_COM1_CONTRACT[-1],
         "--expect-outcome",
         "success",
     ]
 
 
-def runner_tree_is_reaped(process, process_group: int | None, job) -> bool:
-    if process.poll() is None:
-        return False
-    if job is not None:
-        return getattr(job, "_handle", None) is None
-    if process_group is None or not hasattr(os, "killpg"):
-        return True
-    try:
-        os.killpg(process_group, 0)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        return False
-    return False
+@dataclass
+class RunnerTreeTracker:
+    process: object
+    process_group: int | None
+    job: object | None
+    tracked_pids: tuple[int, ...]
+    windows_process_handles: list[int]
+
+    def wait_reaped(self, timeout: float) -> bool:
+        deadline = time.monotonic() + timeout
+        if sys.platform == "win32":
+            import ctypes
+            from ctypes import wintypes
+
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            wait_for_single_object = kernel32.WaitForSingleObject
+            wait_for_single_object.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+            wait_for_single_object.restype = wintypes.DWORD
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = (wintypes.HANDLE,)
+            close_handle.restype = wintypes.BOOL
+            wait_object_0 = 0
+            try:
+                for handle in self.windows_process_handles:
+                    remaining_ms = max(0, int((deadline - time.monotonic()) * 1000))
+                    if wait_for_single_object(handle, remaining_ms) != wait_object_0:
+                        return False
+            finally:
+                for handle in self.windows_process_handles:
+                    close_handle(handle)
+                self.windows_process_handles.clear()
+            return (
+                self.process.poll() is not None
+                and (self.job is None or getattr(self.job, "_handle", None) is None)
+            )
+
+        while True:
+            process_reaped = self.process.poll() is not None
+            group_reaped = True
+            if self.process_group is not None and hasattr(os, "killpg"):
+                try:
+                    os.killpg(self.process_group, 0)
+                except ProcessLookupError:
+                    pass
+                except PermissionError:
+                    group_reaped = False
+                else:
+                    group_reaped = False
+            if process_reaped and group_reaped:
+                return True
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            # A bounded condition poll is needed because POSIX exposes no portable
+            # wait handle for an entire process group.
+            import threading
+
+            threading.Event().wait(min(0.01, remaining))
+
+
+def windows_job_process_ids(job) -> tuple[int, ...]:
+    if job is None or getattr(job, "_handle", None) is None:
+        return ()
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    query = kernel32.QueryInformationJobObject
+    query.argtypes = (
+        wintypes.HANDLE,
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    )
+    query.restype = wintypes.BOOL
+    for capacity in (16, 64, 256, 1024):
+        class ProcessIdList(ctypes.Structure):
+            _fields_ = [
+                ("number_assigned", wintypes.DWORD),
+                ("number_in_list", wintypes.DWORD),
+                ("process_ids", ctypes.c_size_t * capacity),
+            ]
+
+        info = ProcessIdList()
+        returned = wintypes.DWORD()
+        if query(
+            job._handle,
+            3,  # JobObjectBasicProcessIdList
+            ctypes.byref(info),
+            ctypes.sizeof(info),
+            ctypes.byref(returned),
+        ):
+            return tuple(int(info.process_ids[index]) for index in range(info.number_in_list))
+        if ctypes.get_last_error() != 234:  # ERROR_MORE_DATA
+            raise ctypes.WinError(ctypes.get_last_error())
+    raise AssertionError("Windows Job Object member list exceeded bounded capacity")
+
+
+def track_runner_tree(runner) -> RunnerTreeTracker:
+    tracked_pids = {int(runner.process.pid)}
+    handles: list[int] = []
+    if sys.platform == "win32":
+        import ctypes
+        from ctypes import wintypes
+
+        tracked_pids.update(windows_job_process_ids(runner.job))
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        open_process = kernel32.OpenProcess
+        open_process.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        open_process.restype = wintypes.HANDLE
+        for pid in sorted(tracked_pids):
+            handle = open_process(0x00100000, False, pid)  # SYNCHRONIZE
+            if handle:
+                handles.append(int(handle))
+            elif ctypes.get_last_error() != 87:  # ERROR_INVALID_PARAMETER: exited
+                raise ctypes.WinError(ctypes.get_last_error())
+    return RunnerTreeTracker(
+        process=runner.process,
+        process_group=runner.process_group,
+        job=runner.job,
+        tracked_pids=tuple(sorted(tracked_pids)),
+        windows_process_handles=handles,
+    )
 
 
 def run_probe_boot(boot_ordinal: int) -> BootEvidence:
@@ -385,6 +607,8 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
     observer = Com1Observer(serial)
     capture = RunnerCapture(process, timeline)
     collector: Com2Collector | None = None
+    tracker: RunnerTreeTracker | None = None
+    tree_reaped = False
     captured_error: BaseException | None = None
     capture.start()
     observer.start()
@@ -392,29 +616,44 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
         with connect_com2(SHELL_PORT, COM2_CONNECT_TIMEOUT_SECONDS) as com2:
             collector = Com2Collector(com2, timeline)
             observer.wait_for(
-                (COM1_MARKERS[0], COM1_MARKERS[5]),
+                (EXPECTED_COM1_CONTRACT[0], EXPECTED_COM1_CONTRACT[5]),
                 COM2_CONNECT_TIMEOUT_SECONDS,
                 process,
                 capture,
             )
-            collector.read_until(COM2_MARKERS[1].encode(), COM2_READ_TIMEOUT_SECONDS)
-
-            timeline.record("HARNESS", "QMP_A_SENT")
-            launcher_click.press_qcode_keys(["a"])
-            observer.wait_for(
-                (COM1_MARKERS[6],), COM2_READ_TIMEOUT_SECONDS, process, capture
+            collector.read_until(
+                EXPECTED_COM2_CONTRACT[1].encode(), COM2_READ_TIMEOUT_SECONDS
             )
-            collector.read_until(COM2_MARKERS[7].encode(), COM2_READ_TIMEOUT_SECONDS)
-            collector.read_until(COM2_MARKERS[8].encode(), COM2_READ_TIMEOUT_SECONDS)
 
-            timeline.record("HARNESS", "QMP_MOUSE_SENT")
-            launcher_click.send_relative_mouse_motion(7, -7)
+            send_qmp_a(timeline)
             observer.wait_for(
-                (COM1_MARKERS[7],), COM2_READ_TIMEOUT_SECONDS, process, capture
+                (EXPECTED_COM1_CONTRACT[6],),
+                COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
             )
-            collector.read_until(COM2_MARKERS[-1].encode(), COM2_READ_TIMEOUT_SECONDS)
+            collector.read_until(
+                EXPECTED_COM2_CONTRACT[7].encode(), COM2_READ_TIMEOUT_SECONDS
+            )
+            collector.read_until(
+                EXPECTED_COM2_CONTRACT[8].encode(), COM2_READ_TIMEOUT_SECONDS
+            )
+
+            send_qmp_mouse(timeline)
             observer.wait_for(
-                tuple(COM1_MARKERS[8:]), COM2_READ_TIMEOUT_SECONDS, process, capture
+                (EXPECTED_COM1_CONTRACT[7],),
+                COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
+            )
+            collector.read_until(
+                EXPECTED_COM2_CONTRACT[-1].encode(), COM2_READ_TIMEOUT_SECONDS
+            )
+            observer.wait_for(
+                tuple(EXPECTED_COM1_CONTRACT[8:]),
+                COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
             )
 
         deadline = time.monotonic() + QEMU_TIMEOUT_SECONDS + 5.0
@@ -433,10 +672,21 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
             if captured_error is None:
                 captured_error = error
         try:
+            tracker = track_runner_tree(runner)
+        except BaseException as error:
+            if captured_error is None:
+                captured_error = error
+        try:
             cleanup_runner_process(runner)
         except BaseException as error:
             if captured_error is None:
                 captured_error = error
+        if tracker is not None:
+            try:
+                tree_reaped = tracker.wait_reaped(5.0)
+            except BaseException as error:
+                if captured_error is None:
+                    captured_error = error
 
     qemu_output = capture.finish()
     if qemu_output:
@@ -448,9 +698,6 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
         else ""
     )
     com2_log.write_text(com2, encoding="utf-8")
-    tree_reaped = runner_tree_is_reaped(
-        process, runner.process_group, runner.job
-    )
     if captured_error is not None:
         raise AssertionError(
             f"boot {boot_ordinal}: {captured_error}\n"
@@ -471,27 +718,27 @@ def run_probe_boot(boot_ordinal: int) -> BootEvidence:
 class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def valid_timeline(self) -> AcceptanceTimeline:
         timeline = AcceptanceTimeline()
-        timeline.record("COM1", COM1_MARKERS[5])
-        timeline.record("COM2", COM2_MARKERS[0])
-        timeline.record("COM2", COM2_MARKERS[1])
+        timeline.record("COM1", FIXTURE_COM1_MARKERS[5])
+        timeline.record("COM2", FIXTURE_COM2_MARKERS[0])
+        timeline.record("COM2", FIXTURE_COM2_MARKERS[1])
         timeline.record("HARNESS", "QMP_A_SENT")
-        timeline.record("COM1", COM1_MARKERS[6])
-        for marker in COM2_MARKERS[2:8]:
+        timeline.record("COM1", FIXTURE_COM1_MARKERS[6])
+        for marker in FIXTURE_COM2_MARKERS[2:8]:
             timeline.record("COM2", marker)
-        timeline.record("COM2", COM2_MARKERS[8])
+        timeline.record("COM2", FIXTURE_COM2_MARKERS[8])
         timeline.record("HARNESS", "QMP_MOUSE_SENT")
-        timeline.record("COM1", COM1_MARKERS[7])
-        for marker in COM2_MARKERS[9:]:
+        timeline.record("COM1", FIXTURE_COM1_MARKERS[7])
+        for marker in FIXTURE_COM2_MARKERS[9:]:
             timeline.record("COM2", marker)
-        for marker in COM1_MARKERS[8:]:
+        for marker in FIXTURE_COM1_MARKERS[8:]:
             timeline.record("COM1", marker)
         timeline.record("RUNNER", "QEMU_OUTCOME success")
         return timeline
 
     def valid_boot(self) -> BootEvidence:
         return BootEvidence(
-            com1="\n".join(COM1_MARKERS),
-            com2="\n".join(COM2_MARKERS),
+            com1=VALID_COM1_TRANSCRIPT,
+            com2=VALID_COM2_TRANSCRIPT,
             runner_output="QEMU_OUTCOME success\n",
             timeline=self.valid_timeline(),
             process_tree_reaped=True,
@@ -500,7 +747,10 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def valid_evidence(
         self,
     ) -> tuple[tuple[BootEvidence, ...], tuple[ImageSnapshot, ...]]:
-        snapshot = ImageSnapshot(STORAGE_IMAGE_SIZE, ZEROED_STORAGE_SHA256)
+        identity = FileIdentity(device=7, inode=11)
+        snapshot = ImageSnapshot(
+            STORAGE_IMAGE_SIZE, ZEROED_STORAGE_SHA256, identity, identity
+        )
         return (self.valid_boot(), self.valid_boot()), (snapshot, snapshot, snapshot)
 
     def assert_rejected(
@@ -530,6 +780,13 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def test_valid_two_boot_transcript_passes(self) -> None:
         assert_session_runtime_acceptance(*self.valid_evidence())
 
+    def test_fixture_contract_does_not_follow_an_oracle_marker_mutation(self) -> None:
+        module = sys.modules[__name__]
+        mutated = list(EXPECTED_COM1_CONTRACT)
+        mutated[1] = mutated[1] + "_DRIFTED"
+        with mock.patch.object(module, "EXPECTED_COM1_CONTRACT", tuple(mutated)):
+            self.assert_rejected(*self.valid_evidence())
+
     def test_requires_exactly_two_boots_and_three_image_snapshots(self) -> None:
         boots, images = self.valid_evidence()
         for mutation in (boots[:1], boots + (self.valid_boot(),)):
@@ -542,10 +799,10 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def test_every_com1_marker_is_required_exact_once_well_formed_and_ordered(self) -> None:
         boots, images = self.valid_evidence()
         for boot_ordinal in range(2):
-            for marker_ordinal, marker in enumerate(COM1_MARKERS):
+            for marker_ordinal, marker in enumerate(FIXTURE_COM1_MARKERS):
                 with self.subTest(boot=boot_ordinal + 1, mutation="missing", marker=marker):
                     transcript = "\n".join(
-                        candidate for candidate in COM1_MARKERS if candidate != marker
+                        candidate for candidate in FIXTURE_COM1_MARKERS if candidate != marker
                     )
                     self.assert_rejected(
                         self.replace_boot(boots, boot_ordinal, com1=transcript), images
@@ -555,7 +812,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                         self.replace_boot(
                             boots,
                             boot_ordinal,
-                            com1="\n".join(COM1_MARKERS) + "\n" + marker,
+                            com1="\n".join(FIXTURE_COM1_MARKERS) + "\n" + marker,
                         ),
                         images,
                     )
@@ -564,7 +821,9 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                         self.replace_boot(
                             boots,
                             boot_ordinal,
-                            com1="\n".join(COM1_MARKERS).replace(marker, marker + "_MALFORMED", 1),
+                            com1="\n".join(FIXTURE_COM1_MARKERS).replace(
+                                marker, marker + "_MALFORMED", 1
+                            ),
                         ),
                         images,
                     )
@@ -575,19 +834,40 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                                 boots,
                                 boot_ordinal,
                                 com1=self.swap_markers(
-                                    COM1_MARKERS, marker_ordinal - 1, marker_ordinal
+                                    FIXTURE_COM1_MARKERS,
+                                    marker_ordinal - 1,
+                                    marker_ordinal,
                                 ),
                             ),
                             images,
                         )
 
+    def test_additional_malformed_ps2_namespace_markers_fail(self) -> None:
+        boots, images = self.valid_evidence()
+        for extra in (
+            "PYTHOS:CORE:PS2:KEYBOARD_IRQ_FIRED_MALFORMED",
+            "PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED_MALFORMED",
+            "PYTHOS:CORE:PS2:KEYBOARD_IRQ",
+            "PYTHOS:CORE:PS2:MOUSE_IRQ",
+        ):
+            for boot_ordinal in range(2):
+                with self.subTest(boot=boot_ordinal + 1, extra=extra):
+                    self.assert_rejected(
+                        self.replace_boot(
+                            boots,
+                            boot_ordinal,
+                            com1=boots[boot_ordinal].com1 + "\n" + extra,
+                        ),
+                        images,
+                    )
+
     def test_every_com2_marker_is_required_exact_once_well_formed_and_ordered(self) -> None:
         boots, images = self.valid_evidence()
         for boot_ordinal in range(2):
-            for marker_ordinal, marker in enumerate(COM2_MARKERS):
+            for marker_ordinal, marker in enumerate(FIXTURE_COM2_MARKERS):
                 with self.subTest(boot=boot_ordinal + 1, mutation="missing", marker=marker):
                     transcript = "\n".join(
-                        candidate for candidate in COM2_MARKERS if candidate != marker
+                        candidate for candidate in FIXTURE_COM2_MARKERS if candidate != marker
                     )
                     self.assert_rejected(
                         self.replace_boot(boots, boot_ordinal, com2=transcript), images
@@ -597,7 +877,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                         self.replace_boot(
                             boots,
                             boot_ordinal,
-                            com2="\n".join(COM2_MARKERS) + "\n" + marker,
+                            com2="\n".join(FIXTURE_COM2_MARKERS) + "\n" + marker,
                         ),
                         images,
                     )
@@ -606,7 +886,9 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                         self.replace_boot(
                             boots,
                             boot_ordinal,
-                            com2="\n".join(COM2_MARKERS).replace(marker, marker + "_MALFORMED", 1),
+                            com2="\n".join(FIXTURE_COM2_MARKERS).replace(
+                                marker, marker + "_MALFORMED", 1
+                            ),
                         ),
                         images,
                     )
@@ -617,7 +899,9 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                                 boots,
                                 boot_ordinal,
                                 com2=self.swap_markers(
-                                    COM2_MARKERS, marker_ordinal - 1, marker_ordinal
+                                    FIXTURE_COM2_MARKERS,
+                                    marker_ordinal - 1,
+                                    marker_ordinal,
                                 ),
                             ),
                             images,
@@ -625,20 +909,20 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
 
     def test_cross_channel_timeline_rejects_every_reversed_edge(self) -> None:
         edges = (
-            ("COM1", COM1_MARKERS[5], "COM2", COM2_MARKERS[0]),
-            ("COM2", COM2_MARKERS[0], "COM2", COM2_MARKERS[1]),
-            ("COM2", COM2_MARKERS[1], "HARNESS", "QMP_A_SENT"),
-            ("HARNESS", "QMP_A_SENT", "COM1", COM1_MARKERS[6]),
-            ("COM1", COM1_MARKERS[6], "COM2", COM2_MARKERS[2]),
-            ("COM2", COM2_MARKERS[2], "COM2", COM2_MARKERS[7]),
-            ("COM2", COM2_MARKERS[7], "COM2", COM2_MARKERS[8]),
-            ("COM2", COM2_MARKERS[8], "HARNESS", "QMP_MOUSE_SENT"),
-            ("HARNESS", "QMP_MOUSE_SENT", "COM1", COM1_MARKERS[7]),
-            ("COM1", COM1_MARKERS[7], "COM2", COM2_MARKERS[9]),
-            ("COM2", COM2_MARKERS[9], "COM2", COM2_MARKERS[-1]),
-            ("COM2", COM2_MARKERS[-1], "COM1", COM1_MARKERS[8]),
-            ("COM1", COM1_MARKERS[8], "COM1", COM1_MARKERS[-1]),
-            ("COM1", COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
+            ("COM1", FIXTURE_COM1_MARKERS[5], "COM2", FIXTURE_COM2_MARKERS[0]),
+            ("COM2", FIXTURE_COM2_MARKERS[0], "COM2", FIXTURE_COM2_MARKERS[1]),
+            ("COM2", FIXTURE_COM2_MARKERS[1], "HARNESS", "QMP_A_SENT"),
+            ("COM1", FIXTURE_COM1_MARKERS[6], "COM2", FIXTURE_COM2_MARKERS[2]),
+            ("HARNESS", "QMP_A_SENT", "COM2", FIXTURE_COM2_MARKERS[2]),
+            ("COM2", FIXTURE_COM2_MARKERS[2], "COM2", FIXTURE_COM2_MARKERS[7]),
+            ("COM2", FIXTURE_COM2_MARKERS[7], "COM2", FIXTURE_COM2_MARKERS[8]),
+            ("COM2", FIXTURE_COM2_MARKERS[8], "HARNESS", "QMP_MOUSE_SENT"),
+            ("COM1", FIXTURE_COM1_MARKERS[7], "COM2", FIXTURE_COM2_MARKERS[9]),
+            ("HARNESS", "QMP_MOUSE_SENT", "COM2", FIXTURE_COM2_MARKERS[9]),
+            ("COM2", FIXTURE_COM2_MARKERS[9], "COM2", FIXTURE_COM2_MARKERS[-1]),
+            ("COM2", FIXTURE_COM2_MARKERS[-1], "COM1", FIXTURE_COM1_MARKERS[8]),
+            ("COM1", FIXTURE_COM1_MARKERS[8], "COM1", FIXTURE_COM1_MARKERS[-1]),
+            ("COM1", FIXTURE_COM1_MARKERS[-1], "RUNNER", "QEMU_OUTCOME success"),
         )
         _, images = self.valid_evidence()
         for boot_ordinal in range(2):
@@ -658,24 +942,24 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
     def test_identity_state_reset_stale_reuse_and_event_mutations_fail(self) -> None:
         boots, images = self.valid_evidence()
         mutations = {
-            "changed session identity": (1, COM2_MARKERS[15], "PYTHOS:SESSION_RUNTIME:SESSION_ID_CHANGED"),
-            "boot 2 starts above zero": (1, COM2_MARKERS[0], "PYTHOS:SESSION_RUNTIME:BOOT_STATE_1"),
+            "changed session identity": (1, FIXTURE_COM2_MARKERS[15], "PYTHOS:SESSION_RUNTIME:SESSION_ID_CHANGED"),
+            "boot 2 starts above zero": (1, FIXTURE_COM2_MARKERS[0], "PYTHOS:SESSION_RUNTIME:BOOT_STATE_1"),
             "state resets between invocations": (
                 0,
-                COM2_MARKERS[13],
+                FIXTURE_COM2_MARKERS[13],
                 "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1",
             ),
-            "stale command reused": (0, COM2_MARKERS[10], "PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_ONE"),
-            "stale result reused": (0, COM2_MARKERS[11], "PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_ONE"),
-            "wrong event kind": (0, COM2_MARKERS[2], "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_B_SEQUENCE_0"),
+            "stale command reused": (0, FIXTURE_COM2_MARKERS[10], "PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_ONE"),
+            "stale result reused": (0, FIXTURE_COM2_MARKERS[11], "PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_ONE"),
+            "wrong event kind": (0, FIXTURE_COM2_MARKERS[2], "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_B_SEQUENCE_0"),
             "wrong event value": (
                 0,
-                COM2_MARKERS[9],
+                FIXTURE_COM2_MARKERS[9],
                 "PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_8_DY_NEG_7_SEQUENCE_1",
             ),
             "wrong event continuity": (
                 0,
-                COM2_MARKERS[9],
+                FIXTURE_COM2_MARKERS[9],
                 "PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_2",
             ),
         }
@@ -686,7 +970,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                     self.replace_boot(boots, boot_ordinal, com2=transcript), images
                 )
 
-        event_before_reset = list(COM2_MARKERS)
+        event_before_reset = list(FIXTURE_COM2_MARKERS)
         event = event_before_reset.pop(9)
         event_before_reset.insert(7, event)
         self.assert_rejected(
@@ -700,12 +984,12 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             (
                 "com2",
                 boots[0].com2.replace(
-                    COM2_MARKERS[5],
+                    FIXTURE_COM2_MARKERS[5],
                     "PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_RUNTIME_ERROR\n"
-                    + COM2_MARKERS[5],
+                    + FIXTURE_COM2_MARKERS[5],
                 ),
             ),
-            ("com1", boots[0].com1 + "\n" + COM1_MARKERS[3]),
+            ("com1", boots[0].com1 + "\n" + FIXTURE_COM1_MARKERS[3]),
         )
         for channel, transcript in mutations:
             with self.subTest(channel=channel, extra=transcript.splitlines()[-1]):
@@ -722,7 +1006,7 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
                 boots,
                 0,
                 com1="",
-                runner_output="\n".join(COM1_MARKERS) + "\nQEMU_OUTCOME success\n",
+                runner_output="\n".join(FIXTURE_COM1_MARKERS) + "\nQEMU_OUTCOME success\n",
             ),
             images,
         )
@@ -766,8 +1050,8 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
 
     def test_zeroed_image_mutation_truncation_and_replacement_after_either_boot_fail(self) -> None:
         boots, images = self.valid_evidence()
-        changed = ImageSnapshot(STORAGE_IMAGE_SIZE, "1" * 64)
-        truncated = ImageSnapshot(STORAGE_IMAGE_SIZE - 1, ZEROED_STORAGE_SHA256)
+        changed = replace(images[0], sha256="1" * 64)
+        truncated = replace(images[0], size=STORAGE_IMAGE_SIZE - 1)
         nonzero_initial = (changed, images[1], images[2])
         mutations = (
             nonzero_initial,
@@ -779,6 +1063,39 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
         for mutation in mutations:
             with self.subTest(snapshots=mutation):
                 self.assert_rejected(boots, mutation)
+
+    def test_real_same_byte_file_replacement_after_either_boot_fails(self) -> None:
+        self.assertIn("FileIdentity", globals(), "file identity is not recorded")
+        self.assertIn(
+            "open_retained_storage_image",
+            globals(),
+            "one image handle is not retained across boots",
+        )
+        boots, _ = self.valid_evidence()
+        with tempfile.TemporaryDirectory() as directory:
+            image = Path(directory) / "store.img"
+            replacement = Path(directory) / "replacement.img"
+            create_zeroed_storage_image(image)
+            with open_retained_storage_image(image) as retained:
+                initial = snapshot_image(image, retained)
+                replacement.write_bytes(image.read_bytes())
+                if sys.platform == "win32":
+                    # Windows cannot atomically replace an open target even with
+                    # delete sharing, but it permits the same real unlink/rename
+                    # path replacement that the retained identity must detect.
+                    image.unlink()
+                os.replace(replacement, image)
+                replaced = snapshot_image(image, retained)
+        self.assertEqual(initial.size, replaced.size)
+        self.assertEqual(initial.sha256, replaced.sha256)
+        self.assertNotEqual(initial.path_identity, replaced.path_identity)
+        self.assertNotEqual(replaced.path_identity, replaced.retained_identity)
+        for snapshots in (
+            (initial, replaced, replaced),
+            (initial, initial, replaced),
+        ):
+            with self.subTest(checkpoint=snapshots.index(replaced)):
+                self.assert_rejected(boots, snapshots)
 
     def test_surviving_runner_or_child_process_after_either_boot_fails(self) -> None:
         boots, images = self.valid_evidence()
@@ -842,10 +1159,11 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             image = Path(directory) / "session-runtime-store.img"
             image.write_bytes(b"stale")
             create_zeroed_storage_image(image)
-            self.assertEqual(
-                snapshot_image(image),
-                ImageSnapshot(STORAGE_IMAGE_SIZE, ZEROED_STORAGE_SHA256),
-            )
+            with open_retained_storage_image(image) as retained:
+                snapshot = snapshot_image(image, retained)
+            self.assertEqual(snapshot.size, STORAGE_IMAGE_SIZE)
+            self.assertEqual(snapshot.sha256, ZEROED_STORAGE_SHA256)
+            self.assertEqual(snapshot.path_identity, snapshot.retained_identity)
 
     def test_two_runner_commands_use_distinct_com1_logs_and_the_same_storage_image(self) -> None:
         self.assertIn("probe_runner_command", globals(), "probe runner command is not implemented")
@@ -862,14 +1180,66 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
         self.assertEqual(second[-2:], ["--expect-outcome", "success"])
 
     def test_cleanup_verifier_rejects_a_live_runner(self) -> None:
-        self.assertIn("runner_tree_is_reaped", globals(), "cleanup verifier is not implemented")
-
         class LiveProcess:
+            pid = 123
+
             @staticmethod
             def poll() -> None:
                 return None
 
-        self.assertFalse(runner_tree_is_reaped(LiveProcess(), None, None))
+        tracker = RunnerTreeTracker(LiveProcess(), None, None, (123,), [])
+        self.assertFalse(tracker.wait_reaped(0.0))
+
+    def test_qmp_completion_markers_follow_successful_helper_return_only(self) -> None:
+        self.assertIn("send_qmp_a", globals(), "QMP A completion helper is not implemented")
+        self.assertIn(
+            "send_qmp_mouse", globals(), "QMP mouse completion helper is not implemented"
+        )
+        timeline = AcceptanceTimeline()
+        with mock.patch.object(
+            launcher_click,
+            "press_qcode_keys",
+            side_effect=lambda _keys: timeline.record("TEST", "A_HELPER_RETURNED"),
+        ):
+            send_qmp_a(timeline)
+        timeline.assert_before("TEST", "A_HELPER_RETURNED", "HARNESS", "QMP_A_SENT")
+
+        failed = AcceptanceTimeline()
+        with mock.patch.object(
+            launcher_click, "press_qcode_keys", side_effect=RuntimeError("QMP failed")
+        ), self.assertRaisesRegex(RuntimeError, "QMP failed"):
+            send_qmp_a(failed)
+        self.assertEqual(failed.count("HARNESS", "QMP_A_SENT"), 0)
+
+        mouse = AcceptanceTimeline()
+        with mock.patch.object(
+            launcher_click,
+            "send_relative_mouse_motion",
+            side_effect=lambda _dx, _dy: mouse.record("TEST", "MOUSE_HELPER_RETURNED"),
+        ):
+            send_qmp_mouse(mouse)
+        mouse.assert_before(
+            "TEST", "MOUSE_HELPER_RETURNED", "HARNESS", "QMP_MOUSE_SENT"
+        )
+
+        failed_mouse = AcceptanceTimeline()
+        with mock.patch.object(
+            launcher_click,
+            "send_relative_mouse_motion",
+            side_effect=RuntimeError("mouse QMP failed"),
+        ), self.assertRaisesRegex(RuntimeError, "mouse QMP failed"):
+            send_qmp_mouse(failed_mouse)
+        self.assertEqual(failed_mouse.count("HARNESS", "QMP_MOUSE_SENT"), 0)
+
+    def test_cleanup_tracks_exact_runner_job_members_before_reaping(self) -> None:
+        self.assertIn(
+            "track_runner_tree", globals(), "exact runner member tracking is not implemented"
+        )
+        self.assertIn(
+            "windows_job_process_ids",
+            globals(),
+            "Windows Job Object membership query is not implemented",
+        )
 
     def test_shared_cleanup_reaps_runner_and_child_process_tree(self) -> None:
         child_code = "import time; time.sleep(60)"
@@ -885,40 +1255,22 @@ class SessionRuntimeOracleSelfTest(unittest.TestCase):
             [sys.executable, "-u", "-c", parent_code], **popen_kwargs
         )
         capture = RunnerCapture(runner.process, AcceptanceTimeline())
+        tracker: RunnerTreeTracker | None = None
         capture.start()
         try:
             capture.wait_for("child pid=", 2)
             child_pid = int(capture.text().split("child pid=", 1)[1].splitlines()[0])
+            tracker = track_runner_tree(runner)
+            self.assertIn(runner.process.pid, tracker.tracked_pids)
+            if sys.platform == "win32":
+                self.assertIn(child_pid, tracker.tracked_pids)
             cleanup_runner_process(runner, terminate_timeout=0.2)
-            self.assertTrue(
-                runner_tree_is_reaped(
-                    runner.process, runner.process_group, runner.job
-                )
-            )
-            deadline = time.monotonic() + 2.0
-            while self.process_alive(child_pid) and time.monotonic() < deadline:
-                time.sleep(0.01)
-            self.assertFalse(self.process_alive(child_pid), f"surviving child {child_pid}")
+            self.assertTrue(tracker.wait_reaped(2.0))
             self.assertIn("child pid=", capture.finish(timeout=2))
         finally:
             cleanup_runner_process(runner, terminate_timeout=0.2)
-
-    @staticmethod
-    def process_alive(pid: int) -> bool:
-        if sys.platform == "win32":
-            result = subprocess.run(
-                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
-                text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
-            return str(pid) in result.stdout
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        return True
+            if tracker is not None and tracker.windows_process_handles:
+                tracker.wait_reaped(2.0)
 
 
 def run_self_tests() -> int:
@@ -933,29 +1285,30 @@ def run_self_tests() -> int:
 def main() -> int:
     build_boot_image()
     create_zeroed_storage_image(STORAGE_IMAGE)
-    snapshots = [snapshot_image(STORAGE_IMAGE)]
-    print(
-        "SESSION_RUNTIME_IMAGE_INITIAL "
-        f"size={snapshots[0].size} sha256={snapshots[0].sha256}"
-    )
-
-    boots: list[BootEvidence] = []
-    for boot_ordinal in (1, 2):
-        boots.append(run_probe_boot(boot_ordinal))
-        snapshot = snapshot_image(STORAGE_IMAGE)
-        snapshots.append(snapshot)
+    with open_retained_storage_image(STORAGE_IMAGE) as retained_image:
+        snapshots = [snapshot_image(STORAGE_IMAGE, retained_image)]
         print(
-            f"SESSION_RUNTIME_IMAGE_AFTER_BOOT_{boot_ordinal} "
-            f"size={snapshot.size} sha256={snapshot.sha256}"
+            "SESSION_RUNTIME_IMAGE_INITIAL "
+            f"size={snapshots[0].size} sha256={snapshots[0].sha256}"
         )
-        if snapshot != snapshots[0]:
-            raise AssertionError(
-                f"storage image changed after boot {boot_ordinal}: "
-                f"initial={snapshots[0]!r}, current={snapshot!r}"
-            )
-        print(f"SESSION_RUNTIME_BOOT_{boot_ordinal}_PROCESS_TREE_REAPED")
 
-    assert_session_runtime_acceptance(tuple(boots), tuple(snapshots))
+        boots: list[BootEvidence] = []
+        for boot_ordinal in (1, 2):
+            boots.append(run_probe_boot(boot_ordinal))
+            snapshot = snapshot_image(STORAGE_IMAGE, retained_image)
+            snapshots.append(snapshot)
+            print(
+                f"SESSION_RUNTIME_IMAGE_AFTER_BOOT_{boot_ordinal} "
+                f"size={snapshot.size} sha256={snapshot.sha256}"
+            )
+            if snapshot != snapshots[0]:
+                raise AssertionError(
+                    f"storage image changed after boot {boot_ordinal}: "
+                    f"initial={snapshots[0]!r}, current={snapshot!r}"
+                )
+            print(f"SESSION_RUNTIME_BOOT_{boot_ordinal}_PROCESS_TREE_REAPED")
+
+        assert_session_runtime_acceptance(tuple(boots), tuple(snapshots))
     print("SESSION_RUNTIME_PROBE_OK")
     return 0
 
