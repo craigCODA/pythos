@@ -325,6 +325,7 @@ and where the boundary of the work still is.
 | ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0086 USB/xHCI one-shot interrupt transfer probe QEMU-accepted with one four-byte raw report `00 08 FC 00`, completion code `01`, exact event identity checks, and `NO_DISK_WRITES` | Physical interrupt-transfer acceptance, HID decoding, recurring reports, cursor movement, IRQ input, or trackpad support |
 | ADR 0089 accepted in QEMU: opt-in Traversal default, one-way session cursor activation, exclusive FocusMark routing, preserved ADR 0088 no-write evidence, and a clean strict Viewing-feature Clippy gate | Physical validation; default boot cutover, deactivation, durable cursor state, or generic physical input support; the unrelated Phase 13 Python baseline remains non-green |
+| ADR 0090 accepted in QEMU: one capability-authorized ring-3 consumer receives recurring normalized emulated-PS/2 input through ABI 1.0, with sequence-gap evidence and independent COM1/COM2 no-write proof | Physical or production USB/xHCI input, persistent Session Manager consumption, ADR 0089 activation/routing/presentation behavior, or normal-boot cutover |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -486,6 +487,26 @@ boot. ADR 0089 is accepted in QEMU after its bounded oracle and strict
 Viewing-feature Clippy gate passed. Physical validation remains pending, and
 the unrelated Phase 13 Python baseline means the branch is not fully green or
 merge-ready; no physical claim follows.
+
+ADR 0090 adds the narrower Phase 13.5 Slice 1 session-input bridge beneath
+that semantic boundary. The opt-in QEMU proof gives one capability-authorized
+ring-3 probe recurring normalized keyboard and relative-mouse events from the
+emulated PS/2 IRQ path through ABI 1.0's 40-byte nonblocking `try_read`
+record. Its exclusive queue has 16 slots and 15 usable entries; it drops the
+newest candidate when full and marks the first later delivered sequence gap
+with `GAP_BEFORE`. The probe's independent COM1 and COM2 oracle requires the
+four deterministic key values, relative motion `(7, -7)`, forged-capability
+denial, `NO_DISK_WRITES`, and `QEMU_OUTCOME success`:
+
+```powershell
+py -3 scripts\test-session-input-bridge-probe.py
+```
+
+This is delivery capability only. ADR 0089 remains the authority for Viewing:
+Slice 1 neither recognizes the key sequence nor activates, routes, or renders
+Viewing, and it does not change normal boot. The evidence makes no claim for
+physical input, USB/xHCI production input, a persistent Session Manager
+consumer, or presentation integration.
 
 Phase 6 adds a bounded cinematic boot/audio path using QEMU AC97 and an explicit
 no-audio fallback. The wake phrase is rendered and synchronized with the boot

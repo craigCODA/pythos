@@ -2,7 +2,7 @@
 
 Date: 2026-09-06
 
-Status: Accepted design; implementation pending
+Status: Accepted in QEMU; physical and production-session integration pending
 
 ## Context
 
@@ -112,7 +112,24 @@ semantics, storage writes, physical-input support, or a hardware expansion.
 
 ## Evidence Boundary
 
-QEMU acceptance will prove emulated PS/2 IRQ-to-ring-3 delivery, not physical
-or USB input. It will require separate COM1 and COM2 evidence, no disk writes,
-and the existing QEMU success contract. No physical, USB, xHCI, Viewing, or
+QEMU acceptance proves emulated PS/2 IRQ-to-ring-3 delivery, not physical or
+USB input. The opt-in oracle requires separate COM1 and COM2 evidence, no disk
+writes, and the existing QEMU success contract:
+
+```powershell
+py -3 scripts\test-session-input-bridge-probe.py
+```
+
+The fresh accepted run delivers exactly `Space`, `Space`, `Backspace`,
+`Backspace`, and relative motion `(7, -7)` to the authorized probe. It requires
+the bridge setup/return markers on COM1, the five ordered event markers plus
+forged-handle denial on COM2, `NO_DISK_WRITES`,
+`SESSION_INPUT_BRIDGE_PROBE_OK`, and `QEMU_OUTCOME success`. Those values are
+transport evidence only: they do not recognize or activate the ADR 0089
+sequence.
+
+Phase 13.5 Slice 1 proves one capability-authorized ring-3 consumer can
+receive recurring normalized input from the emulated PS/2 IRQ path. ADR 0089
+still defines Viewing semantics; Slice 1 does not activate, route, or render
+Viewing and does not cut over normal boot. No physical, USB, xHCI, Viewing, or
 default-boot evidence is promoted by this decision.
