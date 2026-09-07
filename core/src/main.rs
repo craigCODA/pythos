@@ -28,6 +28,10 @@ compile_error!("feature `phase13-package-test` requires `verify`");
 compile_error!(
     "features `phase13-package-test` and `session-input-bridge-probe` are mutually exclusive"
 );
+#[cfg(all(feature = "session-input-bridge-probe", feature = "evidence-terminal"))]
+compile_error!(
+    "features `session-input-bridge-probe` and `evidence-terminal` are mutually exclusive: the bounded bridge uses a minimal root and does not map or render the evidence terminal"
+);
 #[cfg(all(feature = "physical-wake-diagnostic", not(feature = "verify")))]
 compile_error!("feature `physical-wake-diagnostic` requires `verify`");
 #[cfg(all(feature = "physical-input-event-diagnostic", not(feature = "verify")))]

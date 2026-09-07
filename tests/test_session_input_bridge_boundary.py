@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 import unittest
 from pathlib import Path
@@ -180,6 +181,31 @@ class SessionInputBridgeBoundaryTest(unittest.TestCase):
         self.assertEqual(
             feature_dependencies({"features": {FEATURE_NAME: ["verify"]}}, FEATURE_NAME),
             ("verify",),
+        )
+
+    def test_probe_rejects_evidence_terminal_feature_combination(self) -> None:
+        result = subprocess.run(
+            [
+                "cargo",
+                "check",
+                "-p",
+                "pythos-core",
+                "--target",
+                "x86_64-unknown-none",
+                "--no-default-features",
+                "--features",
+                "session-input-bridge-probe evidence-terminal",
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn(
+            "features `session-input-bridge-probe` and `evidence-terminal` are mutually exclusive: the bounded bridge uses a minimal root and does not map or render the evidence terminal",
+            result.stdout,
         )
 
     def test_probe_cargo_declares_only_the_shared_abi_dependency(self) -> None:
