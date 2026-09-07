@@ -961,6 +961,160 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 self.assertEqual(closed, [0xCAFE])
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
+    @staticmethod
+    def cleanup_windows_adversarial_resources(
+        *,
+        runner: RunnerHandle | None,
+        child_handle: int | None,
+        fallback_process: object | None,
+        fallback_handle: int | None,
+        kernel32: object,
+    ) -> list[str]:
+        """Best-effort cleanup with every failure deferred until all resources close."""
+        failures: list[str] = []
+
+        if runner is not None:
+            try:
+                cleanup_runner_process(runner, terminate_timeout=2.0)
+            except BaseException as error:
+                failures.append(f"runner cleanup raised {error!r}")
+
+        if child_handle:
+            wait_result: int | None = None
+            try:
+                wait_result = int(kernel32.WaitForSingleObject(child_handle, 0))
+            except BaseException as error:
+                failures.append(f"child initial WaitForSingleObject raised {error!r}")
+
+            if wait_result != 0:
+                try:
+                    terminated = bool(kernel32.TerminateProcess(child_handle, 1))
+                except BaseException as error:
+                    failures.append(f"child TerminateProcess raised {error!r}")
+                else:
+                    if not terminated:
+                        failures.append("child TerminateProcess returned false")
+
+                try:
+                    wait_result = int(kernel32.WaitForSingleObject(child_handle, 2000))
+                except BaseException as error:
+                    failures.append(f"child WaitForSingleObject raised {error!r}")
+                else:
+                    if wait_result != 0:
+                        failures.append(
+                            f"child WaitForSingleObject returned {wait_result:#010x}"
+                        )
+
+            try:
+                closed = bool(kernel32.CloseHandle(child_handle))
+            except BaseException as error:
+                failures.append(f"child CloseHandle raised {error!r}")
+            else:
+                if not closed:
+                    failures.append("child CloseHandle returned false")
+
+        if fallback_process is not None:
+            fallback_running = True
+            try:
+                fallback_running = fallback_process.poll() is None
+            except BaseException as error:
+                failures.append(f"fallback process poll raised {error!r}")
+            if fallback_running:
+                try:
+                    fallback_process.kill()
+                except BaseException as error:
+                    failures.append(f"fallback process kill raised {error!r}")
+            try:
+                fallback_process.wait(timeout=2.0)
+            except BaseException as error:
+                failures.append(f"fallback process wait raised {error!r}")
+
+        if fallback_handle:
+            try:
+                closed = bool(kernel32.CloseHandle(fallback_handle))
+            except BaseException as error:
+                failures.append(f"fallback CloseHandle raised {error!r}")
+            else:
+                if not closed:
+                    failures.append("fallback CloseHandle returned false")
+
+        return failures
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
+    def test_windows_adversary_cleanup_continues_after_termination_and_wait_failures(
+        self,
+    ) -> None:
+        cleanup = getattr(self, "cleanup_windows_adversarial_resources", None)
+        self.assertIsNotNone(
+            cleanup,
+            "adversarial cleanup must be isolated so failures can be deferred until every resource is closed",
+        )
+
+        events: list[str] = []
+
+        class FakeKernel32:
+            wait_timeout = 0x00000102
+            wait_failed = 0xFFFFFFFF
+
+            def WaitForSingleObject(self, handle: int, timeout: int) -> int:
+                events.append(f"wait:{handle}:{timeout}")
+                if timeout == 0:
+                    return self.wait_timeout
+                return self.wait_failed
+
+            def TerminateProcess(self, handle: int, _exit_code: int) -> bool:
+                events.append(f"terminate:{handle}")
+                return False
+
+            def CloseHandle(self, handle: int) -> bool:
+                events.append(f"close:{handle}")
+                return True
+
+        class FakeFallbackProcess:
+            def poll(self) -> None:
+                events.append("fallback:poll")
+                return None
+
+            def kill(self) -> None:
+                events.append("fallback:kill")
+
+            def wait(self, timeout: float) -> int:
+                events.append(f"fallback:wait:{timeout}")
+                return 1
+
+        runner = mock.Mock()
+        with mock.patch(
+            f"{__name__}.cleanup_runner_process",
+            side_effect=lambda _runner, terminate_timeout: events.append(
+                f"runner:cleanup:{terminate_timeout}"
+            ),
+        ):
+            failures = cleanup(
+                runner=runner,
+                child_handle=101,
+                fallback_process=FakeFallbackProcess(),
+                fallback_handle=202,
+                kernel32=FakeKernel32(),
+            )
+
+        self.assertEqual(
+            events,
+            [
+                "runner:cleanup:2.0",
+                "wait:101:0",
+                "terminate:101",
+                "wait:101:2000",
+                "close:101",
+                "fallback:poll",
+                "fallback:kill",
+                "fallback:wait:2.0",
+                "close:202",
+            ],
+        )
+        self.assertIn("child TerminateProcess returned false", failures)
+        self.assertIn("child WaitForSingleObject returned 0xffffffff", failures)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
     def test_windows_suspended_assignment_contains_immediate_child(self) -> None:
         original_job = qemu_support.WindowsJob
         runner: RunnerHandle | None = None
@@ -1025,6 +1179,8 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 process_terminate | synchronize | query_limited_information
             )
 
+            captured_error: BaseException | None = None
+            cleanup_failures: list[str] = []
             try:
                 fallback_process = subprocess.Popen(
                     [sys.executable, "-u", "-c", "import time; time.sleep(60)"],
@@ -1075,28 +1231,27 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
                 cleanup_runner_process(runner, terminate_timeout=2.0)
                 self.assertIsNotNone(runner.process.poll())
                 self.assertEqual(kernel32.WaitForSingleObject(child_handle, 2000), 0)
+            except BaseException as error:
+                captured_error = error
             finally:
-                if runner is not None:
-                    cleanup_runner_process(runner, terminate_timeout=2.0)
-                if child_handle:
-                    if kernel32.WaitForSingleObject(child_handle, 0) == 0x00000102:
-                        qemu_support.ctypes.set_last_error(0)
-                        terminated = kernel32.TerminateProcess(child_handle, 1)
-                        termination_error = qemu_support.ctypes.get_last_error()
-                        self.assertTrue(
-                            terminated,
-                            f"fallback TerminateProcess failed: Windows error {termination_error}",
-                        )
-                        self.assertEqual(
-                            kernel32.WaitForSingleObject(child_handle, 2000), 0
-                        )
-                    kernel32.CloseHandle(child_handle)
-                if fallback_process is not None:
-                    if fallback_process.poll() is None:
-                        fallback_process.kill()
-                    fallback_process.wait(timeout=2.0)
-                if fallback_handle:
-                    kernel32.CloseHandle(fallback_handle)
+                cleanup_failures = self.cleanup_windows_adversarial_resources(
+                    runner=runner,
+                    child_handle=child_handle,
+                    fallback_process=fallback_process,
+                    fallback_handle=fallback_handle,
+                    kernel32=kernel32,
+                )
+
+            if captured_error is not None:
+                if cleanup_failures:
+                    raise AssertionError(
+                        f"{captured_error}\ncleanup failures: {'; '.join(cleanup_failures)}"
+                    ) from captured_error
+                raise captured_error
+            self.assertFalse(
+                cleanup_failures,
+                f"adversarial cleanup failures: {'; '.join(cleanup_failures)}",
+            )
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
     def test_windows_job_cleans_child_after_parent_has_exited(self) -> None:
