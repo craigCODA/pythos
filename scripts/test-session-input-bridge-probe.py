@@ -9,6 +9,7 @@ import signal
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -303,27 +304,89 @@ class SerialTail:
         self.offset = 0
         self.remainder = ""
         self.lines: list[str] = []
+        self._lock = threading.Lock()
 
-    def poll(self) -> None:
-        if not self.path.exists():
-            return
-        data = self.path.read_bytes()
-        if len(data) < self.offset:
-            self.offset = 0
-            self.remainder = ""
-            self.lines.clear()
-        chunk = data[self.offset :].decode("utf-8", errors="replace")
-        self.offset = len(data)
-        parts = (self.remainder + chunk).split("\n")
-        self.remainder = parts.pop()
-        for line in parts:
-            complete = line.rstrip("\r")
-            self.lines.append(complete)
-            self.timeline.record("COM1", complete)
+    def poll(self) -> bool:
+        with self._lock:
+            if not self.path.exists():
+                return False
+            data = self.path.read_bytes()
+            if len(data) < self.offset:
+                self.offset = 0
+                self.remainder = ""
+                self.lines.clear()
+            chunk = data[self.offset :].decode("utf-8", errors="replace")
+            self.offset = len(data)
+            parts = (self.remainder + chunk).split("\n")
+            self.remainder = parts.pop()
+            for line in parts:
+                complete = line.rstrip("\r")
+                self.lines.append(complete)
+                self.timeline.record("COM1", complete)
+            return bool(parts)
+
+    def contains_all(self, markers: tuple[str, ...]) -> bool:
+        with self._lock:
+            return all(marker in self.lines for marker in markers)
 
     def transcript(self) -> str:
-        self.poll()
-        return "\n".join(self.lines)
+        with self._lock:
+            return "\n".join(self.lines)
+
+
+class Com1Observer:
+    """Drain the COM1 log independently of every COM2 receive wait."""
+
+    def __init__(self, serial: SerialTail, poll_interval: float = 0.01) -> None:
+        self.serial = serial
+        self.poll_interval = poll_interval
+        self._stop = threading.Event()
+        self._updated = threading.Event()
+        self._failure: BaseException | None = None
+        self._thread = threading.Thread(target=self._drain, daemon=True)
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _drain(self) -> None:
+        try:
+            while not self._stop.is_set():
+                if self.serial.poll():
+                    self._updated.set()
+                self._stop.wait(self.poll_interval)
+            if self.serial.poll():
+                self._updated.set()
+        except BaseException as error:
+            self._failure = error
+            self._updated.set()
+
+    def wait_for(
+        self,
+        markers: tuple[str, ...],
+        timeout: float,
+        process: subprocess.Popen[str] | None = None,
+        capture: RunnerCapture | None = None,
+    ) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self._failure is not None:
+                raise AssertionError("COM1 observer failed") from self._failure
+            if self.serial.contains_all(markers):
+                return
+            if process is not None and process.poll() is not None:
+                detail = capture.text() if capture is not None else ""
+                raise AssertionError(f"QEMU exited before COM1 markers {markers!r}: {detail}")
+            self._updated.clear()
+            self._updated.wait(timeout=min(0.05, deadline - time.monotonic()))
+        raise AssertionError(f"timed out waiting for COM1 markers {markers!r}")
+
+    def stop_join(self, timeout: float = 5.0) -> None:
+        self._stop.set()
+        self._thread.join(timeout=timeout)
+        if self._thread.is_alive():
+            raise AssertionError("COM1 observer did not stop")
+        if self._failure is not None:
+            raise AssertionError("COM1 observer failed") from self._failure
 
 
 class RunnerCapture:
@@ -389,12 +452,11 @@ class Com2Collector:
             self.complete_lines.append(complete)
             self.timeline.record("COM2", complete)
 
-    def read_until(self, marker: bytes, timeout: float, poll_com1) -> bytes:
+    def read_until(self, marker: bytes, timeout: float) -> bytes:
         start = len(self.captured)
         marker_line = marker.decode("utf-8")
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            poll_com1()
             if marker_line in self.complete_lines:
                 return bytes(self.captured[start:])
             try:
@@ -405,38 +467,9 @@ class Com2Collector:
                 raise AssertionError(f"COM2 closed before {marker!r}: {bytes(self.captured)!r}")
             self.captured.extend(chunk)
             self._record_complete_lines(chunk)
-            poll_com1()
             if marker_line in self.complete_lines:
                 return bytes(self.captured[start:])
         raise AssertionError(f"timed out waiting for COM2 {marker!r}: {bytes(self.captured)!r}")
-
-
-def wait_for_com1_marker(
-    process: subprocess.Popen[str], capture: RunnerCapture, serial: SerialTail, marker: str, timeout: float
-) -> str:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        serial.poll()
-        if marker in serial.lines:
-            return serial.transcript()
-        if process.poll() is not None:
-            raise AssertionError(f"QEMU exited before {marker}: {capture.text()}")
-        time.sleep(0.05)
-    raise AssertionError(f"timed out waiting for COM1 marker {marker}")
-
-
-def wait_for_com1_markers(
-    process: subprocess.Popen[str], capture: RunnerCapture, serial: SerialTail, markers: tuple[str, ...], timeout: float
-) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        serial.poll()
-        if all(marker in serial.lines for marker in markers):
-            return
-        if process.poll() is not None:
-            raise AssertionError(f"QEMU exited before input IRQ evidence: {capture.text()}")
-        time.sleep(0.01)
-    raise AssertionError(f"timed out waiting for COM1 IRQ evidence {markers!r}")
 
 
 def connect_com2(timeout: float) -> socket.socket:
@@ -459,7 +492,15 @@ def cleanup_posix_process_group(process, process_group: int, terminate_timeout: 
     try:
         process.wait(timeout=terminate_timeout)
     except subprocess.TimeoutExpired:
-        pass
+        try:
+            os.killpg(process_group, POSIX_SIGKILL)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=terminate_timeout)
+        except subprocess.TimeoutExpired as error:
+            raise AssertionError("runner process group did not reap after SIGKILL") from error
+        return
     try:
         os.killpg(process_group, POSIX_SIGKILL)
     except ProcessLookupError:
@@ -500,48 +541,54 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
     process = runner.process
     timeline = AcceptanceTimeline()
     serial = SerialTail(SERIAL_LOG, timeline)
+    observer = Com1Observer(serial)
     capture = RunnerCapture(process, timeline)
     capture.start()
+    observer.start()
     captured_error: BaseException | None = None
     result: tuple[str, str, str, AcceptanceTimeline] | None = None
     try:
         # The wait=off COM2 backend drops writes before a client connects.
         with connect_com2(COM2_CONNECT_TIMEOUT_SECONDS) as com2:
             collector = Com2Collector(com2, timeline)
-            wait_for_com1_marker(
-                process, capture, serial, COM1_MARKERS[0], COM2_CONNECT_TIMEOUT_SECONDS
+            observer.wait_for(
+                (COM1_MARKERS[0], COM1_MARKERS[3]),
+                COM2_CONNECT_TIMEOUT_SECONDS,
+                process,
+                capture,
             )
             before_input = collector.read_until(
-                COM2_MARKERS[0].encode(), COM2_READ_TIMEOUT_SECONDS, serial.poll
+                COM2_MARKERS[0].encode(), COM2_READ_TIMEOUT_SECONDS
             )
-            serial.poll()
             timeline.record("HARNESS", "QMP_INJECTION_STARTED")
             launcher_click.type_session_input_bridge_sequence()
             drain_deadline = time.monotonic() + DRAIN_SECONDS
             while time.monotonic() < drain_deadline:
-                serial.poll()
                 if process.poll() is not None:
                     raise AssertionError(f"QEMU exited during input injection: {capture.text()}")
                 time.sleep(0.01)
-            wait_for_com1_markers(
-                process,
-                capture,
-                serial,
+            observer.wait_for(
                 (COM1_MARKERS[4], COM1_MARKERS[5]),
                 COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
             )
             timeline.record("HARNESS", "G_SENT")
             com2.sendall(b"G")
             after_input = collector.read_until(
-                COM2_MARKERS[-1].encode(), COM2_READ_TIMEOUT_SECONDS, serial.poll
+                COM2_MARKERS[-1].encode(), COM2_READ_TIMEOUT_SECONDS
+            )
+            observer.wait_for(
+                (COM1_MARKERS[6], COM1_MARKERS[7], COM1_MARKERS[8]),
+                COM2_READ_TIMEOUT_SECONDS,
+                process,
+                capture,
             )
         runner_deadline = time.monotonic() + QEMU_TIMEOUT_SECONDS + 5
         while process.poll() is None and time.monotonic() < runner_deadline:
-            serial.poll()
             time.sleep(0.05)
         if process.poll() is None:
             raise AssertionError("QEMU runner did not terminate after probe acknowledgement")
-        serial.poll()
         qemu_output = capture.finish()
         if process.returncode != 0:
             raise AssertionError(f"QEMU runner failed with {process.returncode}")
@@ -555,7 +602,10 @@ def run_probe_boot() -> tuple[str, str, str, AcceptanceTimeline]:
     except BaseException as error:
         captured_error = error
     finally:
-        cleanup_runner_process(runner)
+        try:
+            observer.stop_join()
+        finally:
+            cleanup_runner_process(runner)
     qemu_output = capture.finish()
     if qemu_output:
         print(qemu_output, end="")
@@ -672,8 +722,8 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         ]
         socket = ChunkSocket(socket_chunks)
         collector = Com2Collector(socket, AcceptanceTimeline())
-        first = collector.read_until(COM2_MARKERS[0].encode(), 1, lambda: None)
-        second = collector.read_until(COM2_MARKERS[-1].encode(), 1, lambda: None)
+        first = collector.read_until(COM2_MARKERS[0].encode(), 1)
+        second = collector.read_until(COM2_MARKERS[-1].encode(), 1)
         self.assertEqual(socket.receives, 2)
         self.assertEqual(first, COM2_MARKERS[0].encode() + b"\r\n")
         self.assertNotIn(COM2_MARKERS[0].encode(), second)
@@ -698,7 +748,7 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         socket = ChunkSocket()
         collector = Com2Collector(socket, AcceptanceTimeline())
         self.assertEqual(
-            collector.read_until(COM2_MARKERS[0].encode(), 1, lambda: None),
+            collector.read_until(COM2_MARKERS[0].encode(), 1),
             COM2_MARKERS[0].encode() + b"\r\n",
         )
         self.assertEqual(socket.receives, 2)
@@ -715,19 +765,43 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
         ):
             timeline.record(source, marker)
 
-        class ReceiveRaceSocket:
-            def settimeout(self, _timeout: float) -> None:
-                pass
+        with tempfile.TemporaryDirectory() as directory:
+            serial_path = Path(directory) / "com1.log"
+            serial_path.write_text("")
+            observer = Com1Observer(SerialTail(serial_path, timeline), poll_interval=0.001)
+            observer.start()
+            try:
+                class ReceiveRaceSocket:
+                    def __init__(self) -> None:
+                        self.reads = 0
 
-            def recv(self, _size: int) -> bytes:
-                timeline.record("COM1", COM1_MARKERS[6])
-                return b"\r\n".join(marker.encode() for marker in COM2_MARKERS[1:]) + b"\r\n"
+                    def settimeout(self, _timeout: float) -> None:
+                        pass
 
-        collector = Com2Collector(ReceiveRaceSocket(), timeline)
-        collector.read_until(COM2_MARKERS[-1].encode(), 1, lambda: None)
-        timeline.record("COM1", COM1_MARKERS[7])
-        timeline.record("COM1", COM1_MARKERS[8])
+                    def recv(self, _size: int) -> bytes:
+                        self.reads += 1
+                        if self.reads == 1:
+                            return COM2_MARKERS[0].encode() + b"\r\n"
+                        # This COM1 line becomes readable while recv is blocked.  The
+                        # independent observer must record it before recv can return.
+                        with serial_path.open("a", encoding="utf-8") as serial_file:
+                            serial_file.write(COM1_MARKERS[6] + "\n")
+                        observer.wait_for((COM1_MARKERS[6],), 1)
+                        return b"\r\n".join(marker.encode() for marker in COM2_MARKERS[1:]) + b"\r\n"
+
+                collector = Com2Collector(ReceiveRaceSocket(), timeline)
+                collector.read_until(COM2_MARKERS[0].encode(), 1)
+                collector.read_until(COM2_MARKERS[-1].encode(), 1)
+                with serial_path.open("a", encoding="utf-8") as serial_file:
+                    serial_file.write(COM1_MARKERS[7] + "\n" + COM1_MARKERS[8] + "\n")
+                observer.wait_for((COM1_MARKERS[6], COM1_MARKERS[7], COM1_MARKERS[8]), 1)
+            finally:
+                observer.stop_join()
         timeline.record("RUNNER", "QEMU_OUTCOME success")
+        self.assertLess(
+            timeline.index("COM1", COM1_MARKERS[6]),
+            timeline.index("COM2", COM2_MARKERS[-1]),
+        )
         with self.assertRaises(AssertionError):
             assert_session_input_acceptance(
                 self.valid_com1(), bytes(collector.captured).decode(), "QEMU_OUTCOME success", timeline
@@ -893,6 +967,32 @@ class SessionInputBridgeOracleSelfTest(unittest.TestCase):
             else:
                 del os.killpg
         self.assertEqual(calls, [(4242, signal.SIGTERM), (4242, POSIX_SIGKILL)])
+
+    def test_cleanup_posix_timeout_escalates_and_reaps_after_sigkill(self) -> None:
+        class TimeoutThenExitedProcess:
+            def __init__(self) -> None:
+                self.waits = 0
+
+            def wait(self, timeout: float):
+                self.waits += 1
+                if self.waits == 1:
+                    raise subprocess.TimeoutExpired(["runner"], timeout)
+                return 0
+
+        process = TimeoutThenExitedProcess()
+        calls: list[tuple[int, int]] = []
+        had_killpg = hasattr(os, "killpg")
+        original_killpg = getattr(os, "killpg", None)
+        try:
+            os.killpg = lambda pgid, sig: calls.append((pgid, sig))
+            cleanup_posix_process_group(process, 4242, 0.1)
+        finally:
+            if had_killpg:
+                os.killpg = original_killpg
+            else:
+                del os.killpg
+        self.assertEqual(calls, [(4242, signal.SIGTERM), (4242, POSIX_SIGKILL)])
+        self.assertEqual(process.waits, 2)
 
     @unittest.skipUnless(sys.platform == "win32", "Windows Job Object test")
     def test_windows_job_cleans_child_after_parent_has_exited(self) -> None:
