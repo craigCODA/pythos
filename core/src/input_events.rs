@@ -14,8 +14,9 @@ use crate::{
     service_identity::{ServiceId, ServiceIdentityTable},
     tasks::TaskId,
 };
+use pythos_shared::session_input_abi::SESSION_INPUT_RESOURCE_ID;
 
-const INPUT_EVENT_STREAM: ResourceId = ResourceId::new(0x1A50_0100);
+const INPUT_EVENT_STREAM: ResourceId = ResourceId::new(SESSION_INPUT_RESOURCE_ID);
 const INPUT_RIGHT: RightsMask = RightsMask::new(RightsMask::INPUT);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

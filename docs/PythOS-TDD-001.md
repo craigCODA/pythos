@@ -1322,6 +1322,38 @@ and 1 error, so the branch is not fully green or merge-ready. There is no
 default normal-boot cutover, durable cursor state, or physical Lenovo acceptance
 claim.
 
+## ADR 0090 Session-Input Bridge Acceptance
+
+ADR 0090 is the privileged delivery mechanism below ADR 0089, not another
+Viewing implementation. Phase 13.5 Slice 1 proves one capability-authorized
+ring-3 consumer can receive recurring normalized input from the emulated PS/2
+IRQ path. ADR 0089 still defines Viewing semantics; Slice 1 does not activate,
+route, or render Viewing and does not cut over normal boot.
+
+The version 1.0 `try_read` ABI copies one fixed 40-byte event to an exactly
+sized, aligned, writable user buffer and returns `EVENT` or normal-flow
+`EMPTY`. The exclusive queue has 16 storage slots with 15 usable entries,
+drops the newest candidate when full, consumes a sequence number for every
+candidate, and flags the first later delivered discontinuity with
+`GAP_BEFORE`. This establishes delivery and loss evidence only; it adds no
+click, drag, scroll, zoom, activation, focus, Traversal, or presentation
+meaning.
+
+Run the opt-in QEMU proof with:
+
+```powershell
+py -3 scripts\test-session-input-bridge-probe.py
+```
+
+The accepted oracle requires independent COM1 bridge lifecycle evidence and
+COM2 probe evidence. It injects Space, Space, Backspace, Backspace, then
+relative motion `(7, -7)` through the emulated PS/2 IRQ path; proves forged
+capability denial without consuming input; requires five continuous events,
+`NO_DISK_WRITES`, `SESSION_INPUT_BRIDGE_PROBE_OK`, and `QEMU_OUTCOME success`.
+This is opt-in QEMU evidence only. It does not establish physical input,
+production USB/xHCI input, a persistent Session Manager consumer, ADR 0089
+routing or presentation integration, or a normal-boot cutover.
+
 The opt-in ADR 0063 evidence-terminal acceptance path keeps the normal
 milestone success marker unchanged, then renders the captured transcript and
 emits `PYTHOS:CORE:EVIDENCE_TERMINAL_READY` only after the final terminal frame

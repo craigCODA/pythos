@@ -174,7 +174,7 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
     def test_general_syscall_numbers_proof_path_and_consumers_are_frozen(self) -> None:
         syscall = source("core/src/syscall.rs")
         self.assert_const_decl(syscall, "SYSCALL_ABI_MAJOR", "u16", "1", "syscall ABI")
-        self.assert_const_decl(syscall, "SYSCALL_ABI_MINOR", "u16", "0", "syscall ABI")
+        self.assert_const_decl(syscall, "SYSCALL_ABI_MINOR", "u16", "1", "syscall ABI")
         self.assert_const_decl(
             syscall, "SYSCALL_ABI_INFO", "u64", "0x5059_0000", "syscall ABI"
         )
@@ -256,6 +256,15 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
             syscall,
         )
         self.assertIn("fn dispatch_system_log_proof_uses_capability_and_log_surfaces()", syscall)
+        self.assertIn(
+            "number: SYSCALL_SESSION_INPUT_TRY_READ,",
+            syscall,
+        )
+        self.assertIn(
+            "name: \"SYSCALL_SESSION_INPUT_TRY_READ\",",
+            syscall,
+        )
+        self.assertIn("introduced_major: 1,\n        introduced_minor: 1,\n        proof_only: false,\n        dispatch_kind: SyscallDispatchKind::SessionInputTryRead,", syscall)
 
         test_boot = load_script("test-boot.py")
         self.assertEqual(

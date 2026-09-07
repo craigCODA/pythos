@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import shutil
@@ -22,6 +23,13 @@ DEFAULT_LOG = ROOT / "target" / "boot-serial.log"
 DEFAULT_STORAGE_IMAGE = ROOT / "target" / "pythos-store.img"
 DEFAULT_EMMC_IMAGE = ROOT / "target" / "pythos-emmc.img"
 DEFAULT_XHCI_USB_STORAGE_IMAGE = ROOT / "target" / "pythos-xhci-usb-storage.img"
+REQUIRED_ESP_FILES = (
+    "EFI/BOOT/BOOTX64.EFI",
+    "PYTHOS/PYTHCORE.ELF",
+    "PYTHOS/BOOT.CFG",
+    "PYTHOS/INIT.PAK",
+    "PYTHOS/FONT.PSF",
+)
 DEFAULT_STORAGE_SIZE_BYTES = 16 * 1024 * 1024
 DEFAULT_EMMC_SIZE_BYTES = 32 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 20.0
@@ -108,6 +116,58 @@ def find_ovmf(explicit: str | None) -> str:
         if Path(candidate).exists():
             return candidate
     raise SystemExit("missing OVMF code firmware; set PYTHOS_OVMF_CODE")
+
+
+def load_build_iso_module():
+    path = ROOT / "scripts" / "build-iso.py"
+    spec = importlib.util.spec_from_file_location("pythos_build_iso", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load build-iso.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def prepare_esp_image(esp: Path, output: Path) -> Path:
+    files: dict[str, bytes] = {}
+    for relative in REQUIRED_ESP_FILES:
+        source = esp / Path(relative)
+        if not source.is_file():
+            raise FileNotFoundError(f"missing required ESP artifact: {relative}")
+        files[relative] = source.read_bytes()
+    image = load_build_iso_module().build_esp_image(files)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(image)
+    return output
+
+
+def qemu_firmware_args(code: Path) -> list[str]:
+    # Keep the established single-pflash machine topology. In this OVMF mode,
+    # file-backed variable writes land on the boot disk; qemu_esp_args routes
+    # every such write into a per-process snapshot instead of the fresh image.
+    return [
+        "-drive",
+        f"if=pflash,format=raw,unit=0,readonly=on,file={code}",
+    ]
+
+
+def qemu_esp_args(esp_image: Path) -> list[str]:
+    # ide-hd rejects a read-only block node. snapshot=on gives the guest a
+    # writable temporary overlay while keeping the deterministic raw backing
+    # image unchanged and eliminating shared VVFAT/NvVars state between runs.
+    return [
+        "-drive",
+        f"if=none,id=pythos_esp,format=raw,snapshot=on,file={esp_image}",
+        "-device",
+        "ide-hd,drive=pythos_esp,bootindex=1",
+    ]
+
+
+def qemu_firmware_and_esp_args(
+    code: Path,
+    esp_image: Path,
+) -> list[str]:
+    return qemu_firmware_args(code) + qemu_esp_args(esp_image)
 
 
 QMP_PORT = 4488
@@ -419,7 +479,7 @@ def main() -> int:
     args = parser.parse_args()
 
     qemu = find_qemu(args.qemu)
-    ovmf = find_ovmf(args.ovmf_code)
+    ovmf = Path(find_ovmf(args.ovmf_code))
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
     if args.ahci_storage_image and not args.ahci:
@@ -455,6 +515,7 @@ def main() -> int:
         args.serial_log.unlink()
 
     command = [qemu]
+    command += qemu_firmware_args(ovmf)
     command += [
         "-machine",
         "q35",
@@ -464,8 +525,6 @@ def main() -> int:
         "1",
         "-m",
         "512M",
-        "-drive",
-        f"if=pflash,format=raw,readonly=on,file={ovmf}",
         "-serial",
         f"file:{args.serial_log}",
         "-display",
@@ -518,12 +577,11 @@ def main() -> int:
             "order=d",
         ]
     else:
-        command += [
-            "-drive",
-            f"if=none,id=pythos_esp,format=raw,file=fat:rw:{args.esp}",
-            "-device",
-            "ide-hd,drive=pythos_esp,bootindex=1",
-        ]
+        esp_image = prepare_esp_image(
+            args.esp,
+            args.serial_log.with_name(f"{args.serial_log.stem}-esp.img"),
+        )
+        command += qemu_esp_args(esp_image)
     if args.ahci:
         ahci_storage_image = args.ahci_storage_image or args.storage_image
         ensure_storage_image(ahci_storage_image)

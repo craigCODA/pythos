@@ -120,7 +120,7 @@
     "QMP_PORT": 4488,
     "_MOVE_STEPS": 10,
     "_STEP_DX": 30,
-    "_STEP_DY": -38
+    "_STEP_DY": 38
   },
   "taxonomy": {
     "authoritative_paths": [

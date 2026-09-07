@@ -11,8 +11,8 @@ place that QMP-injection sequence lives, reused by
 
 The exact "rel" delta values and step count here were tuned and verified live
 against QEMU's emulated PS/2 mouse during ADR 0053 Task D: PS/2 mice report Y
-motion inverted relative to on-screen coordinates, so a negative QMP y-axis
-value moves the cursor *down* the screen.
+motion inverted relative to on-screen coordinates, so this normalized path
+uses a positive QMP y-axis value to move the cursor *down* the screen.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ QMP_PORT = 4488
 # edge.
 _MOVE_STEPS = 10
 _STEP_DX = 30
-_STEP_DY = -38
+_STEP_DY = 38
 
 
 def _qmp_send(sock_file, sock: socket.socket, command: dict) -> dict:
@@ -168,6 +168,41 @@ def type_cursor_activation_sequence(
         qmp_port=qmp_port,
         timeout=timeout,
     )
+
+
+def send_relative_mouse_motion(
+    dx: int, dy: int, qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Send one exact relative-motion event over QMP."""
+    with socket.create_connection(("127.0.0.1", qmp_port), timeout=timeout) as sock:
+        sock_file = sock.makefile("r", encoding="utf-8", newline="\n")
+        sock_file.readline()  # greeting
+        _qmp_send(sock_file, sock, {"execute": "qmp_capabilities"})
+        _qmp_send(
+            sock_file,
+            sock,
+            {
+                "execute": "input-send-event",
+                "arguments": {
+                    "events": [
+                        {"type": "rel", "data": {"axis": "x", "value": dx}},
+                        {"type": "rel", "data": {"axis": "y", "value": dy}},
+                    ]
+                },
+            },
+        )
+
+
+def type_session_input_bridge_sequence(
+    qmp_port: int = QMP_PORT, timeout: float = 5.0
+) -> None:
+    """Inject the five transport-proof events without buttons or USB devices."""
+    press_qcode_keys(
+        ["spc", "spc", "backspace", "backspace"],
+        qmp_port=qmp_port,
+        timeout=timeout,
+    )
+    send_relative_mouse_motion(7, -7, qmp_port=qmp_port, timeout=timeout)
 
 
 def click_launcher_tile(qmp_port: int = QMP_PORT, timeout: float = 5.0) -> None:

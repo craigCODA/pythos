@@ -29,6 +29,8 @@ pub const MAX_NAMED_PROGRAM_NAME_LEN: usize = 32;
 
 pub const SHELL_PRINCIPAL_ID: u64 = 0x5059_5348_454C_4C01;
 pub const INTRUDER_PRINCIPAL_ID: u64 = 0x5059_494E_5452_4401;
+pub const SESSION_INPUT_PROBE_PROGRAM_NAME: &[u8] = b"session-input-probe.elf";
+pub const SESSION_INPUT_PROBE_PRINCIPAL_ID: u64 = 0x5059_5349_4E50_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {

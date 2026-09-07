@@ -34,37 +34,9 @@ pub const SHELL_BOOTSTRAP_MAGIC: u64 = 0x3154_4F4F_4259_5350;
 pub const MAX_SHELL_OBJECT_CAPS: usize = 8;
 pub const MAX_QUERY_RESULTS: usize = 8;
 
-/// An opaque capability handle: a host-side table slot plus generation,
-/// never a raw pointer. See ADR 0050's handle discipline.
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct PackedCapability {
-    raw: u64,
-}
-
-impl PackedCapability {
-    pub const fn from_raw(raw: u64) -> Self {
-        Self { raw }
-    }
-
-    pub const fn from_parts(slot: u32, generation: u32) -> Self {
-        Self {
-            raw: (slot as u64) | ((generation as u64) << 32),
-        }
-    }
-
-    pub const fn raw(self) -> u64 {
-        self.raw
-    }
-
-    pub const fn slot(self) -> u32 {
-        self.raw as u32
-    }
-
-    pub const fn generation(self) -> u32 {
-        (self.raw >> 32) as u32
-    }
-}
+/// Compatibility path for the neutral capability ABI. See ADR 0050's handle
+/// discipline.
+pub use crate::capability_abi::PackedCapability;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -133,6 +105,21 @@ pub struct ObjectShellResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn packed_capability_reexport_preserves_layout_and_values() {
+        use crate::capability_abi::PackedCapability as NeutralPackedCapability;
+
+        let legacy = PackedCapability::from_parts(7, 9);
+        let neutral = NeutralPackedCapability::from_parts(7, 9);
+        assert_eq!(core::mem::size_of::<PackedCapability>(), 8);
+        assert_eq!(core::mem::align_of::<PackedCapability>(), 8);
+        assert_eq!(core::mem::size_of::<NeutralPackedCapability>(), 8);
+        assert_eq!(core::mem::align_of::<NeutralPackedCapability>(), 8);
+        assert_eq!(legacy.raw(), neutral.raw());
+        assert_eq!(legacy.slot(), neutral.slot());
+        assert_eq!(legacy.generation(), neutral.generation());
+    }
 
     #[test]
     fn request_and_response_layouts_are_stable() {

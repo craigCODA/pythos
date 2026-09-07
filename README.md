@@ -313,6 +313,24 @@ Viewing-feature Clippy gate is clean, while the repository-wide Python suite
 still has the exact known unrelated Phase 13 baseline, so the branch is not
 fully green or merge-ready.
 
+ADR 0090 adds a separate Phase 13.5 Slice 1 delivery boundary beneath ADR 0089.
+The opt-in `session-input-bridge-probe` proves that one capability-authorized
+ring-3 consumer can receive recurring normalized input from the emulated PS/2
+IRQ path through the versioned 40-byte ABI. The queue has 16 slots, 15 usable
+entries, drops the newest candidate when full, and exposes later loss with the
+`GAP_BEFORE` flag. Run its independent COM1/COM2 QEMU oracle with:
+
+```powershell
+py -3 scripts/test-session-input-bridge-probe.py
+```
+
+It requires the deterministic Space, Space, Backspace, Backspace and
+relative-motion `(7, -7)` delivery, forged-capability denial, `NO_DISK_WRITES`,
+`SESSION_INPUT_BRIDGE_PROBE_OK`, and `QEMU_OUTCOME success`. This does not
+recognize the ADR 0089 activation sequence, activate or route Viewing, render a
+focus mark, cut over normal boot, establish physical or USB/xHCI input, or add
+a persistent Session Manager consumer.
+
 The physical target also has Linux Mint on its eMMC. Use
 `scripts/linux-usb-mouse-map.sh` as the Mint-side field kit for the next input
 work: stage it locally with `stage-local`, collect USB mouse and trackpad paths

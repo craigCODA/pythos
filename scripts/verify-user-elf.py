@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import struct
 import sys
+import argparse
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -181,9 +182,13 @@ def verify(data: bytes) -> None:
 
 
 def main() -> int:
-    if not SHELL_ELF.exists():
-        raise ElfVerifyError(f"missing built ELF: {SHELL_ELF}")
-    data = SHELL_ELF.read_bytes()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--elf", type=Path, default=SHELL_ELF)
+    args = parser.parse_args()
+    elf = args.elf
+    if not elf.exists():
+        raise ElfVerifyError(f"missing built ELF: {elf}")
+    data = elf.read_bytes()
     verify(data)
     print("USER_ELF_VERIFY_OK")
     return 0

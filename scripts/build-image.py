@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import importlib.util
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -61,6 +63,7 @@ MAX_PACKAGE_ARTIFACT_BYTES = 4 * 1024 * 1024
 MAX_PACKAGE_SOURCES = 8
 MAX_PACKAGE_SOURCE_LABEL_BYTES = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
+SESSION_INPUT_PROBE_PRINCIPAL_ID = 0x5059_5349_4E50_0001
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
 BUDGET_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0002
@@ -508,6 +511,7 @@ def build_default_init_pak(
     include_pythtig_default_services: bool = False,
     include_phase13_package_format_fixture: bool = False,
     phase13_package_sources: list[tuple[Path, bytes]] | None = None,
+    session_input_probe_elf: Path | None = None,
 ) -> bytes:
     selected_pythtig_sets = sum(
         [
@@ -531,6 +535,17 @@ def build_default_init_pak(
             build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, shell_elf),
         ),
     ]
+    if session_input_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"session-input-probe.elf",
+                    SESSION_INPUT_PROBE_PRINCIPAL_ID,
+                    require_file(session_input_probe_elf, "session input probe ELF"),
+                ),
+            )
+        )
     if include_pythtig:
         records.append(pyth_runtime_record())
         records.extend(phase2_pyth_graph_records())
@@ -601,6 +616,25 @@ def write_binary_if_changed(path: Path, content: bytes) -> None:
     path.write_bytes(content)
 
 
+def verify_session_input_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("session input probe ELF verification failed")
+
+
+def resolve_session_input_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing session input probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"session input probe ELF is not a file: {resolved}")
+    return resolved
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--loader", type=Path, default=BOOT_EFI)
@@ -612,6 +646,7 @@ def main() -> int:
     parser.add_argument("--with-pythtig-default-services", action="store_true")
     parser.add_argument("--with-phase13-package-format-fixture", action="store_true")
     parser.add_argument("--phase13-package-source", action="append", default=[])
+    parser.add_argument("--session-input-probe-elf", type=Path)
     args = parser.parse_args()
 
     loader = args.loader
@@ -620,6 +655,10 @@ def main() -> int:
     kernel = args.kernel
     if not kernel.exists():
         raise SystemExit(f"missing kernel: {kernel}")
+    session_input_probe_elf = None
+    if args.session_input_probe_elf is not None:
+        session_input_probe_elf = resolve_session_input_probe_elf(args.session_input_probe_elf)
+        verify_session_input_probe_elf(session_input_probe_elf)
 
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
@@ -642,6 +681,7 @@ def main() -> int:
                 parse_phase13_package_source_spec(source)
                 for source in args.phase13_package_source
             ],
+            session_input_probe_elf,
         ),
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)

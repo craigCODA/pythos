@@ -5,22 +5,27 @@
 //! the first module in the tree that performs real input-device port I/O;
 //! `input_drivers.rs`/`input_events.rs` are decode-only proofs fed
 //! already-supplied bytes, with no hardware access of their own.
-// Only `handle_keyboard_interrupt`/`handle_mouse_interrupt` are called from
-// `normal_boot.rs`'s only caller, `interrupts.rs` (unconditionally, in both
-// boot paths). `initialize`/`poll_event` and everything else are wired in by
-// `normal_boot.rs` itself (ADR 0053, Task D) and `normal_boot` is compiled
-// out entirely under `--features verify` (see `main.rs`'s `mod normal_boot`
-// gate), so the verify build sees most of this module as unused; the host
-// `cargo test` build never calls the hardware-facing functions at all, only
-// the pure decode/state-machine logic exercised by this file's own tests.
+// `normal_boot.rs` calls `initialize`; IRQ dispatch calls only the keyboard
+// and mouse top halves. Both producers publish device-neutral raw events to
+// `session_input`, whose compatibility consumer is the launcher screen.
+// `normal_boot` is compiled out entirely under `--features verify` (see
+// `main.rs`'s `mod normal_boot` gate), so the verify build sees most of this
+// module as unused; host tests exercise only the pure decoder/state-machine
+// logic below.
 #![cfg_attr(any(test, feature = "verify"), allow(dead_code))]
 
 use core::arch::asm;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+#[cfg(not(test))]
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::architecture::x86_64::interrupts;
-use crate::input_drivers::{RawInputEvent, mouse_byte0_is_valid, scancode_to_keycode};
+#[cfg(any(test, feature = "session-input-bridge-probe"))]
+use crate::input_drivers::PhysicalKeyboardDecoder;
+#[cfg(any(test, not(feature = "session-input-bridge-probe")))]
+use crate::input_drivers::scancode_to_keycode;
+use crate::input_drivers::{RawInputEvent, mouse_byte0_is_valid, normalize_ps2_relative_y};
+use crate::session_input;
 
 const PS2_DATA_PORT: u16 = 0x60;
 const PS2_STATUS_COMMAND_PORT: u16 = 0x64;
@@ -105,6 +110,11 @@ pub fn initialize() -> Result<(), Ps2Error> {
     // stream within a few bytes).
     flush_output_buffer();
 
+    // QEMU can deliver the acknowledgement already consumed above as the
+    // first IRQ12 byte. Filter only that one possible delayed acknowledgement
+    // so the first real packet begins at a known assembler boundary.
+    MOUSE_ASSEMBLER.arm_startup_ack_filter();
+
     interrupts::unmask_irq(1).map_err(|_| Ps2Error::Irq)?;
     // IRQ12 lives on the slave PIC; the slave's interrupts only ever reach
     // the CPU through the master PIC's cascade line, IRQ2. Without also
@@ -175,10 +185,10 @@ pub fn poll_raw_output_byte() -> Option<u8> {
     Some(inb(PS2_DATA_PORT))
 }
 
-/// IRQ1 top half: read the pending scancode from the data port and, if it
-/// decodes to a known key, enqueue a `KeyPressed` event. Unknown scancodes
-/// (e.g. key-release bytes, which set the high bit in scancode set 1 — this
-/// driver only tracks key-down) are silently dropped rather than queued.
+/// IRQ1 top half: read the pending scancode from the data port and enqueue a
+/// known key-down event. The session-input probe reuses the existing physical
+/// decoder because this controller deliberately supplies set-2 bytes; the
+/// default path preserves the original set-1-only behavior.
 #[cfg(not(test))]
 pub fn handle_keyboard_interrupt() {
     // First-fire-only marker (guarded so it doesn't spam COM1 on every
@@ -190,20 +200,54 @@ pub fn handle_keyboard_interrupt() {
         crate::serial::write_line("PYTHOS:CORE:PS2:KEYBOARD_IRQ_FIRED");
     }
     let scancode = inb(PS2_DATA_PORT);
+    #[cfg(feature = "session-input-bridge-probe")]
+    {
+        // SAFETY: this static decoder is accessed only by IRQ1. The PIC's
+        // single-core dispatch cannot re-enter this handler.
+        let decoder = unsafe { &mut *KEYBOARD_DECODER.0.get() };
+        publish_keyboard_byte(decoder, scancode);
+    }
+    #[cfg(not(feature = "session-input-bridge-probe"))]
     if let Some(key) = scancode_to_keycode(scancode) {
-        QUEUE.push(RawInputEvent::KeyPressed { scancode, key });
+        let _ = session_input::publish(RawInputEvent::KeyPressed { scancode, key });
     }
 }
+
+#[cfg(any(test, feature = "session-input-bridge-probe"))]
+fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
+    if let Some(event) = decoder.feed_raw_byte(byte) {
+        let _ = session_input::publish(event);
+    }
+}
+
+#[cfg(feature = "session-input-bridge-probe")]
+struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
+
+// SAFETY: IRQ1 is the sole producer and the platform's PIC dispatch never
+// re-enters that handler on this single-core kernel.
+#[cfg(feature = "session-input-bridge-probe")]
+unsafe impl Sync for KeyboardDecoder {}
+
+#[cfg(feature = "session-input-bridge-probe")]
+static KEYBOARD_DECODER: KeyboardDecoder =
+    KeyboardDecoder(UnsafeCell::new(PhysicalKeyboardDecoder::new()));
 
 /// IRQ12 top half: read the pending byte from the data port and feed it into
 /// the 3-byte mouse packet assembler.
 #[cfg(not(test))]
 pub fn handle_mouse_interrupt() {
-    // First-fire-only marker; see `handle_keyboard_interrupt`'s comment.
+    let byte = inb(PS2_DATA_PORT);
+    // The bridge arms a one-shot filter for the device-enable ACK. It is a
+    // setup response rather than QMP-delivered user input, so keep it out of
+    // the first-real-IRQ evidence used by the ordered bridge transcript.
+    #[cfg(feature = "session-input-bridge-probe")]
+    if byte != MOUSE_ACK && !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
+        crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
+    }
+    #[cfg(not(feature = "session-input-bridge-probe"))]
     if !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
         crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
     }
-    let byte = inb(PS2_DATA_PORT);
     MOUSE_ASSEMBLER.feed(byte);
 }
 
@@ -211,83 +255,6 @@ pub fn handle_mouse_interrupt() {
 static KEYBOARD_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
 #[cfg(not(test))]
 static MOUSE_IRQ_FIRED: AtomicBool = AtomicBool::new(false);
-
-/// Drain one queued input event, if any. Called from normal (non-interrupt)
-/// context — `launcher_screen.rs`'s poll loop (ADR 0053, Task D).
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn poll_event() -> Option<RawInputEvent> {
-    QUEUE.pop()
-}
-
-const QUEUE_CAPACITY: usize = 16;
-
-/// Single-producer (the keyboard/mouse IRQ handlers, which run serialized on
-/// this single core and never re-enter each other or themselves), single-
-/// consumer (`poll_event`, called from normal kernel-mode context) ring
-/// buffer. Interrupt-context handlers must stay allocation-free and fast;
-/// this is a fixed-size array with atomic head/tail indices, no heap use.
-struct EventQueue {
-    slots: UnsafeCell<[Option<RawInputEvent>; QUEUE_CAPACITY]>,
-    head: AtomicUsize,
-    tail: AtomicUsize,
-}
-
-// SAFETY:
-// 1. Invariant: `slots` is mutated only by `push` (IRQ context, one core, no
-//    handler nesting) and `pop` (normal context); the atomic head/tail pair
-//    ensures a push and a concurrent pop never touch the same slot index at
-//    the same time.
-// 2. Established by: ADR 0051's single-core constraint and the PIC's serial
-//    interrupt delivery on this platform.
-// 3. Lifetime: `QUEUE` is a static with `'static` lifetime.
-// 4. Pointer ownership: this module exclusively owns the queue.
-// 5. Alignment: `UnsafeCell<[Option<RawInputEvent>; N]>` preserves the
-//    array's alignment.
-// 6. Mapped length: exactly `QUEUE_CAPACITY` slots are ever indexed, each
-//    index taken modulo that capacity.
-// 7. Concurrency: single boot CPU; the producer only runs inside an
-//    interrupt handler, which cannot itself be interrupted by another
-//    instance of itself.
-// 8. Violation: concurrent unsynchronized access could tear an `Option`
-//    write/read, corrupting queued events.
-unsafe impl Sync for EventQueue {}
-
-static QUEUE: EventQueue = EventQueue {
-    slots: UnsafeCell::new([None; QUEUE_CAPACITY]),
-    head: AtomicUsize::new(0),
-    tail: AtomicUsize::new(0),
-};
-
-impl EventQueue {
-    fn push(&self, event: RawInputEvent) {
-        let tail = self.tail.load(Ordering::Relaxed);
-        let next = (tail + 1) % QUEUE_CAPACITY;
-        if next == self.head.load(Ordering::Acquire) {
-            // Full: drop the event rather than overwrite an unread slot or
-            // block interrupt context.
-            return;
-        }
-        // SAFETY: see the `EventQueue`/`unsafe impl Sync` block above -
-        // `tail` is owned exclusively by the single producer at this point.
-        unsafe {
-            (*self.slots.get())[tail] = Some(event);
-        }
-        self.tail.store(next, Ordering::Release);
-    }
-
-    fn pop(&self) -> Option<RawInputEvent> {
-        let head = self.head.load(Ordering::Relaxed);
-        if head == self.tail.load(Ordering::Acquire) {
-            return None;
-        }
-        // SAFETY: see the `EventQueue`/`unsafe impl Sync` block above -
-        // `head` is owned exclusively by the single consumer at this point.
-        let event = unsafe { (*self.slots.get())[head].take() };
-        self.head
-            .store((head + 1) % QUEUE_CAPACITY, Ordering::Release);
-        event
-    }
-}
 
 #[derive(Clone, Copy)]
 enum MouseStage {
@@ -299,6 +266,7 @@ enum MouseStage {
 struct MouseAssemblerState {
     stage: MouseStage,
     left_down: bool,
+    expect_startup_ack: bool,
 }
 
 struct MouseAssembler(UnsafeCell<MouseAssemblerState>);
@@ -321,6 +289,7 @@ unsafe impl Sync for MouseAssembler {}
 static MOUSE_ASSEMBLER: MouseAssembler = MouseAssembler(UnsafeCell::new(MouseAssemblerState {
     stage: MouseStage::Byte0,
     left_down: false,
+    expect_startup_ack: false,
 }));
 
 impl MouseAssembler {
@@ -335,6 +304,12 @@ impl MouseAssembler {
     fn feed(&self, byte: u8) {
         // SAFETY: see the `MouseAssembler`/`unsafe impl Sync` block above.
         let state = unsafe { &mut *self.0.get() };
+        if state.expect_startup_ack {
+            state.expect_startup_ack = false;
+            if byte == MOUSE_ACK {
+                return;
+            }
+        }
         match state.stage {
             MouseStage::Byte0 => {
                 if !mouse_byte0_is_valid(byte) {
@@ -353,15 +328,21 @@ impl MouseAssembler {
                 let left_down = byte0 & 0x01 != 0;
                 if left_down != state.left_down {
                     state.left_down = left_down;
-                    QUEUE.push(RawInputEvent::MouseButton { left: left_down });
+                    let _ = session_input::publish(RawInputEvent::MouseButton { left: left_down });
                 }
                 let dx = byte1 as i8;
-                let dy = byte as i8;
+                let dy = normalize_ps2_relative_y(byte);
                 if dx != 0 || dy != 0 {
-                    QUEUE.push(RawInputEvent::MouseMoved { dx, dy });
+                    let _ = session_input::publish(RawInputEvent::MouseMoved { dx, dy });
                 }
             }
         }
+    }
+
+    fn arm_startup_ack_filter(&self) {
+        // SAFETY: initialization runs before IRQ12 is unmasked, so it cannot
+        // race the sole mouse-IRQ producer described above.
+        unsafe { (*self.0.get()).expect_startup_ack = true };
     }
 }
 
@@ -462,63 +443,155 @@ fn inb(port: u16) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
 
-    #[test]
-    fn mouse_assembler_emits_move_for_a_complete_packet() {
-        // Drain anything a prior test in this process might have left
-        // queued, and reset the shared assembler state - `MOUSE_ASSEMBLER`
-        // and `QUEUE` are statics shared across the whole test binary, so
-        // tests in this module cannot assume a fresh `left_down: false`.
-        while QUEUE.pop().is_some() {}
-        // SAFETY (test-only): see the other tests in this module for the
-        // same reset pattern.
+    static SHARED_INPUT_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    fn shared_input_test_guard() -> MutexGuard<'static, ()> {
+        // A failing assertion poisons `Mutex`; keep subsequent independent
+        // tests serialized and able to report their own outcomes instead of
+        // cascading through `PoisonError`.
+        SHARED_INPUT_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn drain_published_events() {
+        while session_input::try_read_compatibility().unwrap().is_some() {}
+    }
+
+    fn reset_mouse_assembler(expect_startup_ack: bool) {
+        // SAFETY (test-only): the shared test guard serializes access to this
+        // static assembler state for every test below.
         unsafe {
             *MOUSE_ASSEMBLER.0.get() = MouseAssemblerState {
                 stage: MouseStage::Byte0,
                 left_down: false,
+                expect_startup_ack,
             };
         }
+    }
+
+    #[test]
+    fn ps2_keyboard_path_emits_exactly_four_qmp_set2_key_down_events() {
+        use crate::input_drivers::KeyCode;
+
+        let _guard = shared_input_test_guard();
+        drain_published_events();
+        let mut decoder = PhysicalKeyboardDecoder::new();
+
+        // QMP `send-key` produces set-2 transport bytes because the normal
+        // PS/2 controller path deliberately leaves translation disabled.
+        for byte in [
+            0x29, 0xF0, 0x29, 0x29, 0xF0, 0x29, 0x66, 0xF0, 0x66, 0x66, 0xF0, 0x66,
+        ] {
+            publish_keyboard_byte(&mut decoder, byte);
+        }
+
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x29,
+                key: KeyCode::Space,
+            })
+        );
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x29,
+                key: KeyCode::Space,
+            })
+        );
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x66,
+                key: KeyCode::Backspace,
+            })
+        );
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x66,
+                key: KeyCode::Backspace,
+            })
+        );
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
+    }
+
+    #[test]
+    fn startup_mouse_ack_filter_is_one_shot_and_preserves_real_first_packet() {
+        let _guard = shared_input_test_guard();
+        drain_published_events();
+        reset_mouse_assembler(true);
+
+        MOUSE_ASSEMBLER.feed(MOUSE_ACK);
+        MOUSE_ASSEMBLER.feed(0x08);
+        MOUSE_ASSEMBLER.feed(7);
+        MOUSE_ASSEMBLER.feed(7);
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::MouseMoved { dx: 7, dy: -7 })
+        );
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
+
+        reset_mouse_assembler(true);
+        MOUSE_ASSEMBLER.feed(0x08);
+        MOUSE_ASSEMBLER.feed(7);
+        MOUSE_ASSEMBLER.feed(7);
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::MouseMoved { dx: 7, dy: -7 })
+        );
+    }
+
+    #[test]
+    fn mouse_assembler_emits_move_for_a_complete_packet() {
+        let _guard = shared_input_test_guard();
+        // Drain anything a prior test in this process might have left
+        // queued, and reset the shared assembler state - `MOUSE_ASSEMBLER`
+        // and the session-input compatibility queue are shared across the test binary, so
+        // tests in this module cannot assume a fresh `left_down: false`.
+        drain_published_events();
+        // SAFETY (test-only): see the other tests in this module for the
+        // same reset pattern.
+        reset_mouse_assembler(false);
 
         MOUSE_ASSEMBLER.feed(0x08); // byte 0: valid, no buttons
         MOUSE_ASSEMBLER.feed(5); // dx
-        MOUSE_ASSEMBLER.feed((-3i8) as u8); // dy
+        MOUSE_ASSEMBLER.feed(3); // protocol dy; normalized to -3
 
         assert_eq!(
-            QUEUE.pop(),
+            session_input::try_read_compatibility().unwrap(),
             Some(RawInputEvent::MouseMoved { dx: 5, dy: -3 })
         );
-        assert_eq!(QUEUE.pop(), None);
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
     }
 
     #[test]
     fn mouse_assembler_emits_button_transition_on_change() {
-        while QUEUE.pop().is_some() {}
+        let _guard = shared_input_test_guard();
+        drain_published_events();
         // SAFETY (test-only): reset shared static state so this test is
         // independent of ordering against other tests in the same binary.
-        unsafe {
-            *MOUSE_ASSEMBLER.0.get() = MouseAssemblerState {
-                stage: MouseStage::Byte0,
-                left_down: false,
-            };
-        }
+        reset_mouse_assembler(false);
 
         MOUSE_ASSEMBLER.feed(0x09); // byte 0: valid, left button down
         MOUSE_ASSEMBLER.feed(0);
         MOUSE_ASSEMBLER.feed(0);
 
-        assert_eq!(QUEUE.pop(), Some(RawInputEvent::MouseButton { left: true }));
-        assert_eq!(QUEUE.pop(), None);
+        assert_eq!(
+            session_input::try_read_compatibility().unwrap(),
+            Some(RawInputEvent::MouseButton { left: true })
+        );
+        assert_eq!(session_input::try_read_compatibility().unwrap(), None);
     }
 
     #[test]
     fn mouse_assembler_resynchronizes_on_invalid_byte0() {
-        while QUEUE.pop().is_some() {}
-        unsafe {
-            *MOUSE_ASSEMBLER.0.get() = MouseAssemblerState {
-                stage: MouseStage::Byte0,
-                left_down: false,
-            };
-        }
+        let _guard = shared_input_test_guard();
+        drain_published_events();
+        reset_mouse_assembler(false);
 
         // Byte 0 without bit 3 set is invalid and must be dropped, not
         // treated as the start of a packet.
@@ -528,26 +601,9 @@ mod tests {
         MOUSE_ASSEMBLER.feed(0);
 
         assert_eq!(
-            QUEUE.pop(),
+            session_input::try_read_compatibility().unwrap(),
             Some(RawInputEvent::MouseMoved { dx: 2, dy: 0 })
         );
-    }
-
-    #[test]
-    fn event_queue_drops_events_when_full_without_panicking() {
-        let queue = EventQueue {
-            slots: UnsafeCell::new([None; QUEUE_CAPACITY]),
-            head: AtomicUsize::new(0),
-            tail: AtomicUsize::new(0),
-        };
-        for _ in 0..QUEUE_CAPACITY + 4 {
-            queue.push(RawInputEvent::MouseMoved { dx: 1, dy: 1 });
-        }
-        let mut popped = 0;
-        while queue.pop().is_some() {
-            popped += 1;
-        }
-        assert_eq!(popped, QUEUE_CAPACITY - 1);
     }
 
     #[test]

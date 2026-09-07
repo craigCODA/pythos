@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import importlib.util
+import io
+import sys
+import tempfile
 import unittest
+import unittest.mock
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -60,6 +65,20 @@ def build_valid_elf(phnum: int = 2) -> bytes:
 
 
 class VerifyUserElfTests(unittest.TestCase):
+    def test_elf_argument_selects_an_arbitrary_elf_without_changing_default_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            shell = Path(temp_dir) / "shell.elf"
+            elf = Path(temp_dir) / "probe.elf"
+            shell.write_bytes(build_valid_elf())
+            elf.write_bytes(build_valid_elf())
+            with unittest.mock.patch.object(verifier, "SHELL_ELF", shell):
+                output = io.StringIO()
+                with unittest.mock.patch.object(sys, "argv", [str(SCRIPT)]), redirect_stdout(output):
+                    self.assertEqual(verifier.main(), 0)
+                with unittest.mock.patch.object(sys, "argv", [str(SCRIPT), "--elf", str(elf)]), redirect_stdout(output):
+                    self.assertEqual(verifier.main(), 0)
+        self.assertEqual(output.getvalue(), "USER_ELF_VERIFY_OK\nUSER_ELF_VERIFY_OK\n")
+
     def test_rejects_bad_elf_ident_version(self) -> None:
         elf = bytearray(build_valid_elf())
         elf[6] = 0

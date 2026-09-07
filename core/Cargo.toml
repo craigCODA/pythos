@@ -15,6 +15,8 @@ pyth-tig-session-manager-fault-test = []
 # and exit via QEMU isa-debug-exit. Without it (the default), a normal boot
 # enters a persistent event loop instead of exiting (ADR 0049).
 verify = []
+# Opt-in only: the probe remains unavailable in default and phase13 builds.
+session-input-bridge-probe = ["verify"]
 evidence-terminal = ["verify"]
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
