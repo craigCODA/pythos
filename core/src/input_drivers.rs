@@ -301,6 +301,16 @@ impl PhysicalKeyboardDecoder {
         }
     }
 
+    /// Select set 2 when the controller path has explicitly disabled its
+    /// set-1 translation bit before accepting keyboard bytes.
+    pub(crate) const fn new_for_set2_transport() -> Self {
+        Self {
+            mode: PhysicalScanSet::Set2,
+            release_prefix: false,
+            extended_prefix: false,
+        }
+    }
+
     pub(crate) fn feed_raw_byte(&mut self, byte: u8) -> Option<RawInputEvent> {
         if self.consume_non_make_byte(byte) {
             return None;
@@ -621,6 +631,32 @@ mod tests {
             Some(RawInputEvent::KeyPressed {
                 scancode: 0x66,
                 key: KeyCode::Backspace,
+            })
+        );
+    }
+
+    #[test]
+    fn physical_keyboard_decoder_unknown_mode_preserves_set1_first_ambiguity() {
+        let mut decoder = PhysicalKeyboardDecoder::new();
+
+        assert_eq!(
+            decoder.feed_raw_byte(0x1C),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x1C,
+                key: KeyCode::Enter,
+            })
+        );
+    }
+
+    #[test]
+    fn physical_keyboard_decoder_explicit_set2_mode_decodes_first_a_byte() {
+        let mut decoder = PhysicalKeyboardDecoder::new_for_set2_transport();
+
+        assert_eq!(
+            decoder.feed_raw_byte(0x1C),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x1C,
+                key: KeyCode::A,
             })
         );
     }

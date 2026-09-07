@@ -249,6 +249,17 @@ fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
 }
 
 #[cfg(any(
+    test,
+    feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe"
+))]
+const fn session_probe_keyboard_decoder() -> PhysicalKeyboardDecoder {
+    // `initialize` clears controller translation before unmasking IRQ1, so
+    // these bounded probes receive set-2 bytes from the emulated controller.
+    PhysicalKeyboardDecoder::new_for_set2_transport()
+}
+
+#[cfg(any(
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe"
 ))]
@@ -274,7 +285,7 @@ unsafe impl Sync for KeyboardDecoder {}
     feature = "session-runtime-probe"
 ))]
 static KEYBOARD_DECODER: KeyboardDecoder =
-    KeyboardDecoder(UnsafeCell::new(PhysicalKeyboardDecoder::new()));
+    KeyboardDecoder(UnsafeCell::new(session_probe_keyboard_decoder()));
 
 /// IRQ12 top half: read the pending byte from the data port and feed it into
 /// the 3-byte mouse packet assembler.
@@ -567,6 +578,21 @@ mod tests {
             })
         );
         assert_eq!(session_input::try_read_compatibility().unwrap(), None);
+    }
+
+    #[test]
+    fn ps2_probe_decoder_decodes_first_qmp_set2_a_byte_as_a() {
+        use crate::input_drivers::KeyCode;
+
+        let mut decoder = session_probe_keyboard_decoder();
+
+        assert_eq!(
+            decoder.feed_raw_byte(0x1C),
+            Some(RawInputEvent::KeyPressed {
+                scancode: 0x1C,
+                key: KeyCode::A,
+            })
+        );
     }
 
     #[test]
