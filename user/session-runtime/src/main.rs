@@ -30,9 +30,9 @@ use pythos_shared::{
 use pythos_user_pyth_runtime::{interpreter::Interpreter, value::Value};
 #[cfg(not(test))]
 use pythos_user_session_runtime::{
-    InputSequenceValidator, SessionGraphLifecycleAction, SessionRuntimeState,
-    session_command_host::SessionCommandHost, validate_session_runtime_bootstrap_address,
-    validate_session_runtime_fixture_contract, validate_session_runtime_outer_bootstrap,
+    InputSequenceValidator, SessionGraphLifecycleAction, SessionRuntimeEffectError,
+    SessionRuntimeEffects, SessionRuntimeState, SessionRuntimeTerminalResult,
+    run_session_runtime_orchestration, session_command_host::SessionCommandHost,
     validate_session_runtime_package,
 };
 
@@ -113,6 +113,28 @@ impl ExecutionEvidence {
     }
 }
 
+#[cfg(not(test))]
+struct RuntimeEffects {
+    bootstrap_ptr: *const SessionRuntimeBootstrapV1,
+    storage: &'static mut RuntimeOwnedStorage,
+    evidence: ExecutionEvidence,
+    input_validator: InputSequenceValidator,
+    verified: Option<VerifiedGraph<'static>>,
+}
+
+#[cfg(not(test))]
+impl RuntimeEffects {
+    fn new(bootstrap_ptr: *const SessionRuntimeBootstrapV1) -> Self {
+        Self {
+            bootstrap_ptr,
+            storage: runtime_storage(),
+            evidence: ExecutionEvidence::new(0),
+            input_validator: InputSequenceValidator::new(),
+            verified: None,
+        }
+    }
+}
+
 /// Entry for the bounded retained ring-3 session runtime.
 ///
 /// # Safety
@@ -123,188 +145,171 @@ impl ExecutionEvidence {
 #[cfg(not(test))]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _start(bootstrap_ptr: *const SessionRuntimeBootstrapV1) -> ! {
-    let bootstrap_address = bootstrap_ptr as u64;
-    if validate_session_runtime_bootstrap_address(bootstrap_address).is_err() {
-        trap_and_spin();
+    let mut effects = RuntimeEffects::new(bootstrap_ptr);
+    run_session_runtime_orchestration(bootstrap_ptr as u64, &mut effects);
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+impl SessionRuntimeEffects for RuntimeEffects {
+    fn copy_bootstrap(&mut self) -> SessionRuntimeBootstrapV1 {
+        copy_bootstrap(self.bootstrap_ptr, &mut self.storage.bootstrap);
+        self.evidence = ExecutionEvidence::new(self.storage.bootstrap.session_service_id);
+        self.storage.bootstrap
     }
 
-    let storage = runtime_storage();
-    copy_bootstrap(bootstrap_ptr, &mut storage.bootstrap);
-    if validate_session_runtime_outer_bootstrap(&storage.bootstrap).is_err() {
-        trap_and_spin();
+    fn copy_fixture(&mut self) -> SessionRuntimeFixtureV1 {
+        copy_fixture(
+            self.storage.bootstrap.fixture_ptr as *const SessionRuntimeFixtureV1,
+            &mut self.storage.fixture,
+        );
+        self.storage.fixture
     }
 
-    let mut evidence = ExecutionEvidence::new(storage.bootstrap.session_service_id);
-    copy_fixture(
-        storage.bootstrap.fixture_ptr as *const SessionRuntimeFixtureV1,
-        &mut storage.fixture,
-    );
-    if validate_session_runtime_fixture_contract(&storage.bootstrap, &storage.fixture).is_err() {
-        recover(&storage.bootstrap, &evidence);
+    fn prepare_graph_package(
+        &mut self,
+        bootstrap: &SessionRuntimeBootstrapV1,
+    ) -> Result<(), SessionRuntimeEffectError> {
+        self.storage.graph = bootstrap.graph;
+        self.storage.imports.fill(PackedCapability::from_raw(0));
+        let import = self.storage.graph.imports[0];
+        self.storage.imports[usize::from(import.import_slot)] = import.capability;
+
+        let package_bytes = package_bytes(&self.storage.graph);
+        let package = validate_session_runtime_package(bootstrap, package_bytes)
+            .map_err(|_| SessionRuntimeEffectError::Package)?;
+        // SAFETY:
+        // 1. Invariant: this exact package was authenticated and verified by PythCore before entry.
+        // 2. Established by: the coordinator accepted the exact launch boundary and nested graph
+        //    metadata, while package length, digest, and decode all succeeded immediately above.
+        // 3. Lifetime: PythCore retains the read-only package page until this runtime traps once.
+        // 4. Pointer ownership: PythCore owns the mapping; this runtime holds only read-only slices.
+        // 5. Alignment: PythTIG decoding reads byte records and materializes aligned values by value.
+        // 6. Mapped length: the package is nonempty, one-page bounded, and all sections decoded.
+        // 7. Concurrency: no writer is mapped into this single-threaded runtime process.
+        // 8. Violation: bypassing this authenticated boundary would skip graph admission verification.
+        self.verified = Some(unsafe { VerifiedGraph::assume_kernel_verified_package(&package) });
+        Ok(())
     }
 
-    storage.graph = storage.bootstrap.graph;
-    storage.imports.fill(PackedCapability::from_raw(0));
-    let import = storage.graph.imports[0];
-    storage.imports[usize::from(import.import_slot)] = import.capability;
-
-    let package_bytes = package_bytes(&storage.graph);
-    let Ok(package) = validate_session_runtime_package(&storage.bootstrap, package_bytes) else {
-        recover(&storage.bootstrap, &evidence);
-    };
-    // SAFETY:
-    // 1. Invariant: this exact package was authenticated and verified by PythCore before entry.
-    // 2. Established by: the fixed launch map, exact identities, nested bootstrap/import validation,
-    //    immutable package length, and kernel-supplied digest were all validated above.
-    // 3. Lifetime: PythCore retains the read-only package page until this runtime traps once.
-    // 4. Pointer ownership: PythCore owns the mapping; this runtime holds only read-only slices.
-    // 5. Alignment: PythTIG decoding reads byte records and materializes aligned values by value.
-    // 6. Mapped length: the package range is nonempty, bounded to its one fixed read-only page,
-    //    and `PythGraphPackage::decode` validated every internal section range.
-    // 7. Concurrency: no writer is mapped into this single-threaded runtime process.
-    // 8. Violation: bypassing the authenticated boundary would skip capability and graph verification.
-    let verified = unsafe { VerifiedGraph::assume_kernel_verified_package(&package) };
-
-    let console = storage.bootstrap.console_capability;
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\r\n");
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1\r\n");
-
-    let mut input_validator = InputSequenceValidator::new();
-    if poll_input_event(storage.bootstrap.input_capability, &mut input_validator, 1).is_err() {
-        recover(&storage.bootstrap, &evidence);
+    fn poll_input(&mut self, ordinal: usize) -> Result<(), SessionRuntimeEffectError> {
+        poll_input_event(
+            self.storage.bootstrap.input_capability,
+            &mut self.input_validator,
+            ordinal + 1,
+        )
+        .map_err(|_| SessionRuntimeEffectError::Poll)?;
+        self.evidence.state.record_input_event();
+        Ok(())
     }
-    evidence.state.record_input_event();
-    syscalls::write_str(
-        console,
-        "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0\r\n",
-    );
 
-    let command_one = storage.fixture.commands[0];
-    let payload_one = fixture_payload(&storage.fixture, 0);
-    let (result_one, exit_one) = {
-        let Ok(mut command_host) =
-            SessionCommandHost::new(import.capability, &command_one, payload_one)
-        else {
-            recover(&storage.bootstrap, &evidence);
-        };
-        syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE\r\n");
+    fn run_command_host_and_graph(
+        &mut self,
+        ordinal: usize,
+    ) -> Result<(), SessionRuntimeEffectError> {
+        let command = self.storage.fixture.commands[ordinal];
+        let payload = fixture_payload(&self.storage.fixture, ordinal);
+        let import = self.storage.graph.imports[0];
+        let mut command_host = SessionCommandHost::new(import.capability, &command, payload)
+            .map_err(|_| SessionRuntimeEffectError::CommandHost)?;
+        let verified = self.verified.ok_or(SessionRuntimeEffectError::Graph)?;
         let exit = Interpreter::new(
             verified,
-            &storage.imports,
-            storage.graph.instruction_budget,
-            &mut storage.values,
-            &mut storage.host_results,
+            &self.storage.imports,
+            self.storage.graph.instruction_budget,
+            &mut self.storage.values,
+            &mut self.storage.host_results,
         )
         .execute(&mut command_host);
-        (command_host.result(), exit)
-    };
-    evidence.graph_exits[0] = exit_one;
-    if evidence.state.record_graph_exit(exit_one.status) != SessionGraphLifecycleAction::Reinvoke {
-        recover(&storage.bootstrap, &evidence);
-    }
-    let Some(result_one) = result_one else {
-        recover(&storage.bootstrap, &evidence);
-    };
-    if !invocation_is_valid(&command_one, payload_one, result_one, exit_one) {
-        recover(&storage.bootstrap, &evidence);
-    }
-    evidence.command_results[0] = result_one;
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:RESULT_1_SLICE2_ONE\r\n");
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_OK\r\n");
-    syscalls::write_str(
-        console,
-        "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1\r\n",
-    );
+        let result = command_host.result();
 
-    let command_two = storage.fixture.commands[1];
-    let payload_two = fixture_payload(&storage.fixture, 1);
-    let Ok(mut command_host) =
-        SessionCommandHost::new(import.capability, &command_two, payload_two)
-    else {
-        recover(&storage.bootstrap, &evidence);
-    };
-    storage.values.fill(Some(Value::U64(u64::MAX)));
-    storage
-        .host_results
-        .fill(Some(HostCallResult::empty(u16::MAX)));
-    {
-        let _reset_proof = Interpreter::new(
-            verified,
-            &storage.imports,
-            storage.graph.instruction_budget,
-            &mut storage.values,
-            &mut storage.host_results,
+        self.evidence.graph_exits[ordinal] = exit;
+        if self.evidence.state.record_graph_exit(exit.status)
+            != SessionGraphLifecycleAction::Reinvoke
+        {
+            return Err(SessionRuntimeEffectError::Graph);
+        }
+        let result = result.ok_or(SessionRuntimeEffectError::Result)?;
+        if !invocation_is_valid(&command, payload, result, exit) {
+            return Err(SessionRuntimeEffectError::Result);
+        }
+        self.evidence.command_results[ordinal] = result;
+        if ordinal == 1 {
+            self.evidence.retained_state_final = self.evidence.state.input_event_count;
+        }
+        Ok(())
+    }
+
+    fn reset_invocation_local(&mut self) -> Result<(), SessionRuntimeEffectError> {
+        self.storage.values.fill(Some(Value::U64(u64::MAX)));
+        self.storage
+            .host_results
+            .fill(Some(HostCallResult::empty(u16::MAX)));
+        {
+            let _reset_proof = Interpreter::new(
+                self.verified.ok_or(SessionRuntimeEffectError::Reset)?,
+                &self.storage.imports,
+                self.storage.graph.instruction_budget,
+                &mut self.storage.values,
+                &mut self.storage.host_results,
+            );
+        }
+        if self.storage.values.iter().any(Option::is_some)
+            || self.storage.host_results.iter().any(Option::is_some)
+        {
+            return Err(SessionRuntimeEffectError::Reset);
+        }
+        self.evidence.retained_state_before_second = self.evidence.state.input_event_count;
+        if self.evidence.retained_state_before_second != 1 {
+            return Err(SessionRuntimeEffectError::Reset);
+        }
+        Ok(())
+    }
+
+    fn final_state_is_valid(&self) -> bool {
+        self.evidence.retained_state_final == 2
+            && self.input_validator.is_complete()
+            && self.evidence.state.session_service_id == self.storage.bootstrap.session_service_id
+    }
+
+    fn write_terminal_result(
+        &mut self,
+        terminal: SessionRuntimeTerminalResult,
+    ) -> Result<(), SessionRuntimeEffectError> {
+        let (terminal_status, lifecycle) = match terminal {
+            SessionRuntimeTerminalResult::Complete => (
+                SESSION_RUNTIME_RESULT_COMPLETE,
+                SESSION_RUNTIME_LIFECYCLE_REINVOKE,
+            ),
+            SessionRuntimeTerminalResult::RequestRecovery => (
+                SESSION_RUNTIME_RESULT_REQUEST_RECOVERY,
+                SESSION_RUNTIME_LIFECYCLE_REQUEST_RECOVERY,
+            ),
+        };
+        let result = terminal_result(
+            &self.storage.bootstrap,
+            &self.evidence,
+            terminal_status,
+            lifecycle,
         );
+        if terminal == SessionRuntimeTerminalResult::Complete
+            && validate_session_runtime_result(&self.storage.bootstrap, &result).is_err()
+        {
+            return Err(SessionRuntimeEffectError::Result);
+        }
+        write_result(self.storage.bootstrap.result_ptr, result);
+        Ok(())
     }
-    if storage.values.iter().any(Option::is_some)
-        || storage.host_results.iter().any(Option::is_some)
-    {
-        recover(&storage.bootstrap, &evidence);
-    }
-    evidence.retained_state_before_second = evidence.state.input_event_count;
-    if evidence.retained_state_before_second != 1 {
-        recover(&storage.bootstrap, &evidence);
-    }
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_LOCAL_RESET\r\n");
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_2\r\n");
 
-    if poll_input_event(storage.bootstrap.input_capability, &mut input_validator, 2).is_err() {
-        recover(&storage.bootstrap, &evidence);
+    fn emit_marker(&mut self, marker: &'static str) {
+        syscalls::write_str(self.storage.bootstrap.console_capability, marker);
     }
-    evidence.state.record_input_event();
-    syscalls::write_str(
-        console,
-        "PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_1\r\n",
-    );
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_TWO\r\n");
-    let exit_two = Interpreter::new(
-        verified,
-        &storage.imports,
-        storage.graph.instruction_budget,
-        &mut storage.values,
-        &mut storage.host_results,
-    )
-    .execute(&mut command_host);
-    let result_two = command_host.result();
-    evidence.graph_exits[1] = exit_two;
-    if evidence.state.record_graph_exit(exit_two.status) != SessionGraphLifecycleAction::Reinvoke {
-        recover(&storage.bootstrap, &evidence);
-    }
-    let Some(result_two) = result_two else {
-        recover(&storage.bootstrap, &evidence);
-    };
-    if !invocation_is_valid(&command_two, payload_two, result_two, exit_two) {
-        recover(&storage.bootstrap, &evidence);
-    }
-    evidence.command_results[1] = result_two;
-    evidence.retained_state_final = evidence.state.input_event_count;
-    if evidence.retained_state_final != 2 || !input_validator.is_complete() {
-        recover(&storage.bootstrap, &evidence);
-    }
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_TWO\r\n");
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INVOCATION_2_EXIT_OK\r\n");
-    syscalls::write_str(
-        console,
-        "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_2_INVOCATIONS_2\r\n",
-    );
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:INPUT_CONTIGUOUS\r\n");
-    if evidence.state.session_service_id != storage.bootstrap.session_service_id {
-        recover(&storage.bootstrap, &evidence);
-    }
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE\r\n");
 
-    let result = terminal_result(
-        &storage.bootstrap,
-        &evidence,
-        SESSION_RUNTIME_RESULT_COMPLETE,
-        SESSION_RUNTIME_LIFECYCLE_REINVOKE,
-    );
-    if validate_session_runtime_result(&storage.bootstrap, &result).is_err() {
-        recover(&storage.bootstrap, &evidence);
+    fn trap(&mut self) {
+        trap_and_spin()
     }
-    write_result(storage.bootstrap.result_ptr, result);
-    syscalls::write_str(console, "PYTHOS:SESSION_RUNTIME:READY\r\n");
-    trap_and_spin()
 }
 
 #[cfg(not(test))]
@@ -482,26 +487,10 @@ fn terminal_result(
 }
 
 #[cfg(not(test))]
-fn recover(bootstrap: &SessionRuntimeBootstrapV1, evidence: &ExecutionEvidence) -> ! {
-    let result = terminal_result(
-        bootstrap,
-        evidence,
-        SESSION_RUNTIME_RESULT_REQUEST_RECOVERY,
-        SESSION_RUNTIME_LIFECYCLE_REQUEST_RECOVERY,
-    );
-    write_result(bootstrap.result_ptr, result);
-    syscalls::write_str(
-        bootstrap.console_capability,
-        "PYTHOS:SESSION_RUNTIME:ERROR\r\n",
-    );
-    trap_and_spin()
-}
-
-#[cfg(not(test))]
 fn write_result(result_address: u64, result: SessionRuntimeResultV1) {
     // SAFETY:
-    // 1. Invariant: outer validation accepted the exact fixed writable result address and size.
-    // 2. Established by: all callers run only after `validate_session_runtime_outer_bootstrap`.
+    // 1. Invariant: the recovery boundary accepted the exact writable result address and size.
+    // 2. Established by: the coordinator validates that boundary before every terminal write path.
     // 3. Lifetime: PythCore retains the result page until the expected breakpoint returns.
     // 4. Pointer ownership: this runtime performs one terminal write; PythCore reads afterward.
     // 5. Alignment: the page-aligned fixed address satisfies the result record alignment.

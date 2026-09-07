@@ -134,6 +134,149 @@ pub fn validate_session_runtime_launch(
     validate_session_runtime_fixture_contract(bootstrap, fixture)
 }
 
+pub fn validate_session_runtime_recovery_boundary(
+    bootstrap: &SessionRuntimeBootstrapV1,
+) -> Result<(), SessionRuntimeLaunchError> {
+    if bootstrap.console_capability.raw() == 0 {
+        return Err(SessionRuntimeLaunchError::InvalidBootstrap(
+            SessionRuntimeValidationError::ZeroCapability,
+        ));
+    }
+    if bootstrap.result_ptr != SESSION_RUNTIME_RESULT_ADDRESS
+        || bootstrap.result_len
+            != core::mem::size_of::<pythos_shared::session_runtime_abi::SessionRuntimeResultV1>()
+                as u64
+    {
+        return Err(SessionRuntimeLaunchError::UnexpectedResultRange);
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionRuntimeTerminalResult {
+    Complete,
+    RequestRecovery,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SessionRuntimeEffectError {
+    Package,
+    Poll,
+    CommandHost,
+    Graph,
+    Reset,
+    Result,
+}
+
+pub trait SessionRuntimeEffects {
+    fn copy_bootstrap(&mut self) -> SessionRuntimeBootstrapV1;
+    fn copy_fixture(&mut self) -> SessionRuntimeFixtureV1;
+    fn prepare_graph_package(
+        &mut self,
+        bootstrap: &SessionRuntimeBootstrapV1,
+    ) -> Result<(), SessionRuntimeEffectError>;
+    fn poll_input(&mut self, ordinal: usize) -> Result<(), SessionRuntimeEffectError>;
+    fn run_command_host_and_graph(
+        &mut self,
+        ordinal: usize,
+    ) -> Result<(), SessionRuntimeEffectError>;
+    fn reset_invocation_local(&mut self) -> Result<(), SessionRuntimeEffectError>;
+    fn final_state_is_valid(&self) -> bool;
+    fn write_terminal_result(
+        &mut self,
+        terminal: SessionRuntimeTerminalResult,
+    ) -> Result<(), SessionRuntimeEffectError>;
+    fn emit_marker(&mut self, marker: &'static str);
+    fn trap(&mut self);
+}
+
+pub fn run_session_runtime_orchestration<E: SessionRuntimeEffects>(
+    bootstrap_address: u64,
+    effects: &mut E,
+) {
+    if validate_session_runtime_bootstrap_address(bootstrap_address).is_err() {
+        effects.trap();
+        return;
+    }
+
+    let bootstrap = effects.copy_bootstrap();
+    if validate_session_runtime_recovery_boundary(&bootstrap).is_err() {
+        effects.trap();
+        return;
+    }
+    if validate_session_runtime_outer_bootstrap(&bootstrap).is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+
+    let fixture = effects.copy_fixture();
+    if validate_session_runtime_fixture_contract(&bootstrap, &fixture).is_err()
+        || effects.prepare_graph_package(&bootstrap).is_err()
+    {
+        recover_orchestration(effects);
+        return;
+    }
+
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1\r\n");
+    if effects.poll_input(0).is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE\r\n");
+    if effects.run_command_host_and_graph(0).is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:RESULT_1_SLICE2_ONE\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_OK\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1\r\n");
+
+    if effects.reset_invocation_local().is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:INVOCATION_LOCAL_RESET\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_2\r\n");
+    if effects.poll_input(1).is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects
+        .emit_marker("PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_1\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_TWO\r\n");
+    if effects.run_command_host_and_graph(1).is_err() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_TWO\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:INVOCATION_2_EXIT_OK\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:STATE_INPUTS_2_INVOCATIONS_2\r\n");
+
+    if !effects.final_state_is_valid() {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:INPUT_CONTIGUOUS\r\n");
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE\r\n");
+    if effects
+        .write_terminal_result(SessionRuntimeTerminalResult::Complete)
+        .is_err()
+    {
+        recover_orchestration(effects);
+        return;
+    }
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:READY\r\n");
+    effects.trap();
+}
+
+fn recover_orchestration<E: SessionRuntimeEffects>(effects: &mut E) {
+    let _ = effects.write_terminal_result(SessionRuntimeTerminalResult::RequestRecovery);
+    effects.emit_marker("PYTHOS:SESSION_RUNTIME:ERROR\r\n");
+    effects.trap();
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SessionRuntimeState {
     pub session_service_id: u64,
@@ -507,7 +650,7 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_gate_rejects_null_misaligned_and_wrong_fixed_addresses_before_work() {
+    fn bootstrap_gate_rejects_null_misaligned_and_wrong_fixed_addresses() {
         // Catches dereferencing an untrusted entry pointer or beginning work with a wrong launch map.
         let (bootstrap, fixture) = accepted_launch();
         let mutations = [
@@ -541,12 +684,12 @@ mod tests {
         ];
 
         for (bootstrap_address, candidate) in mutations {
-            assert_rejected_before_work(bootstrap_address, &candidate, &fixture);
+            assert_launch_rejected(bootstrap_address, &candidate, &fixture);
         }
     }
 
     #[test]
-    fn bootstrap_gate_rejects_wrong_lengths_versions_identities_and_reserved_fields_before_work() {
+    fn bootstrap_gate_rejects_wrong_lengths_versions_identities_and_reserved_fields() {
         // Catches accepting a structurally plausible but unauthenticated outer launch record.
         let (bootstrap, fixture) = accepted_launch();
         let mut candidates = [bootstrap; 12];
@@ -564,12 +707,12 @@ mod tests {
         candidates[11].graph.result_ptr = SESSION_RUNTIME_RESULT_ADDRESS + 8;
 
         for candidate in candidates {
-            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
+            assert_launch_rejected(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
         }
     }
 
     #[test]
-    fn bootstrap_gate_rejects_malformed_graph_imports_before_work() {
+    fn bootstrap_gate_rejects_malformed_graph_imports() {
         // Catches entering the interpreter with widened or fabricated graph command authority.
         let (bootstrap, fixture) = accepted_launch();
         let mut candidates = [bootstrap; 6];
@@ -581,13 +724,12 @@ mod tests {
         candidates[5].graph.imports[1].capability = PackedCapability::from_raw(1);
 
         for candidate in candidates {
-            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
+            assert_launch_rejected(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &candidate, &fixture);
         }
     }
 
     #[test]
-    fn bootstrap_gate_rejects_wrong_fixture_version_pointer_overlap_and_reserved_fields_before_work()
-     {
+    fn bootstrap_gate_rejects_wrong_fixture_version_pointer_overlap_and_reserved_fields() {
         // Catches reading commands from a malformed, aliased, or non-v1 fixture mapping.
         let (bootstrap, fixture) = accepted_launch();
         let mut fixtures = [fixture; 5];
@@ -597,14 +739,14 @@ mod tests {
         fixtures[3].reserved0 = 1;
         fixtures[4].reserved1[0] = 1;
         for candidate in fixtures {
-            assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &bootstrap, &candidate);
+            assert_launch_rejected(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &bootstrap, &candidate);
         }
 
         let overlap = SessionRuntimeBootstrapV1 {
             result_ptr: SESSION_RUNTIME_FIXTURE_ADDRESS,
             ..bootstrap
         };
-        assert_rejected_before_work(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &overlap, &fixture);
+        assert_launch_rejected(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &overlap, &fixture);
     }
 
     #[test]
@@ -654,19 +796,294 @@ mod tests {
         ));
     }
 
-    fn assert_rejected_before_work(
+    #[test]
+    fn orchestration_traps_once_without_effects_when_entry_or_recovery_boundary_is_untrusted() {
+        // Catches using console/result effects or beginning work before their exact trust boundary.
+        let (bootstrap, fixture) = accepted_launch();
+        let cases = [
+            (0, bootstrap, 0),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    console_capability: PackedCapability::from_raw(0),
+                    ..bootstrap
+                },
+                1,
+            ),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    result_ptr: SESSION_RUNTIME_RESULT_ADDRESS + 8,
+                    ..bootstrap
+                },
+                1,
+            ),
+            (
+                SESSION_RUNTIME_BOOTSTRAP_ADDRESS,
+                SessionRuntimeBootstrapV1 {
+                    result_len: bootstrap.result_len - 1,
+                    ..bootstrap
+                },
+                1,
+            ),
+        ];
+
+        for (bootstrap_address, candidate, expected_bootstrap_copies) in cases {
+            let mut effects = RecordingEffects::new(candidate, fixture);
+            run_session_runtime_orchestration(bootstrap_address, &mut effects);
+            assert_eq!(effects.bootstrap_copies, expected_bootstrap_copies);
+            assert_eq!(effects.fixture_copies, 0);
+            assert_eq!(effects.package_prepares, 0);
+            assert_eq!(effects.polls, 0);
+            assert_eq!(effects.host_attempts, 0);
+            assert_eq!(effects.graph_invocations, 0);
+            assert_eq!(effects.terminal_writes, [None, None]);
+            assert_eq!(effects.marker_count, 0);
+            assert_eq!(effects.traps, 1);
+        }
+    }
+
+    #[test]
+    fn trusted_graph_fixture_and_package_rejections_recover_once_before_work() {
+        // Catches treating post-trust graph, fixture, or package rejection as a no-write trap.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut malformed_graph = bootstrap;
+        malformed_graph.graph.imports[0].import_slot = 1;
+        let bad_fixture_range = SessionRuntimeBootstrapV1 {
+            fixture_ptr: SESSION_RUNTIME_FIXTURE_ADDRESS + 8,
+            ..bootstrap
+        };
+        let bad_package_range = SessionRuntimeBootstrapV1 {
+            graph: pythos_shared::pyth_runtime_abi::PythGraphBootstrapBlock {
+                package_ptr: SESSION_RUNTIME_PACKAGE_ADDRESS + 8,
+                ..bootstrap.graph
+            },
+            ..bootstrap
+        };
+        let mut malformed_fixture = fixture;
+        malformed_fixture.magic ^= 1;
+
+        for candidate in [malformed_graph, bad_fixture_range, bad_package_range] {
+            let mut effects = RecordingEffects::new(candidate, fixture);
+            run_session_runtime_orchestration(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &mut effects);
+            assert_recovered_before_work(&effects);
+            assert_eq!(effects.fixture_copies, 0);
+            assert_eq!(effects.package_prepares, 0);
+        }
+
+        let mut fixture_effects = RecordingEffects::new(bootstrap, malformed_fixture);
+        run_session_runtime_orchestration(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &mut fixture_effects);
+        assert_recovered_before_work(&fixture_effects);
+        assert_eq!(fixture_effects.fixture_copies, 1);
+        assert_eq!(fixture_effects.package_prepares, 0);
+
+        let mut package_effects = RecordingEffects::new(bootstrap, fixture);
+        package_effects.reject_package = true;
+        run_session_runtime_orchestration(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &mut package_effects);
+        assert_recovered_before_work(&package_effects);
+        assert_eq!(package_effects.fixture_copies, 1);
+        assert_eq!(package_effects.package_prepares, 1);
+    }
+
+    #[test]
+    fn orchestration_observes_host_failure_and_never_starts_a_graph_or_second_event() {
+        // Catches polling or graph execution after the first command host rejects its fixture.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut effects = RecordingEffects::new(bootstrap, fixture);
+        effects.reject_host_at = Some(0);
+
+        run_session_runtime_orchestration(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &mut effects);
+
+        assert_eq!(effects.polls, 1);
+        assert_eq!(effects.host_attempts, 1);
+        assert_eq!(effects.graph_invocations, 0);
+        assert_eq!(
+            effects.terminal_writes,
+            [Some(SessionRuntimeTerminalResult::RequestRecovery), None]
+        );
+        effects.assert_markers(&[
+            "PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\r\n",
+            "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1\r\n",
+            "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0\r\n",
+            "PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE\r\n",
+            "PYTHOS:SESSION_RUNTIME:ERROR\r\n",
+        ]);
+        assert_eq!(effects.traps, 1);
+    }
+
+    #[test]
+    fn production_orchestration_emits_exact_success_contract_and_one_terminal_write_and_trap() {
+        // Catches marker reordering, duplicate terminal effects, or skipped retained invocations.
+        let (bootstrap, fixture) = accepted_launch();
+        let mut effects = RecordingEffects::new(bootstrap, fixture);
+
+        run_session_runtime_orchestration(SESSION_RUNTIME_BOOTSTRAP_ADDRESS, &mut effects);
+
+        assert_eq!(effects.polls, 2);
+        assert_eq!(effects.host_attempts, 2);
+        assert_eq!(effects.graph_invocations, 2);
+        assert_eq!(effects.resets, 1);
+        assert_eq!(
+            effects.terminal_writes,
+            [Some(SessionRuntimeTerminalResult::Complete), None]
+        );
+        effects.assert_markers(&[
+            "PYTHOS:SESSION_RUNTIME:BOOT_STATE_0\r\n",
+            "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_1\r\n",
+            "PYTHOS:SESSION_RUNTIME:EVENT_1_KEY_A_SEQUENCE_0\r\n",
+            "PYTHOS:SESSION_RUNTIME:COMMAND_1_SLICE2_ONE\r\n",
+            "PYTHOS:SESSION_RUNTIME:RESULT_1_SLICE2_ONE\r\n",
+            "PYTHOS:SESSION_RUNTIME:INVOCATION_1_EXIT_OK\r\n",
+            "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_1_INVOCATIONS_1\r\n",
+            "PYTHOS:SESSION_RUNTIME:INVOCATION_LOCAL_RESET\r\n",
+            "PYTHOS:SESSION_RUNTIME:READY_FOR_EVENT_2\r\n",
+            "PYTHOS:SESSION_RUNTIME:EVENT_2_RELATIVE_MOTION_DX_7_DY_NEG_7_SEQUENCE_1\r\n",
+            "PYTHOS:SESSION_RUNTIME:COMMAND_2_SLICE2_TWO\r\n",
+            "PYTHOS:SESSION_RUNTIME:RESULT_2_SLICE2_TWO\r\n",
+            "PYTHOS:SESSION_RUNTIME:INVOCATION_2_EXIT_OK\r\n",
+            "PYTHOS:SESSION_RUNTIME:STATE_INPUTS_2_INVOCATIONS_2\r\n",
+            "PYTHOS:SESSION_RUNTIME:INPUT_CONTIGUOUS\r\n",
+            "PYTHOS:SESSION_RUNTIME:SESSION_ID_STABLE\r\n",
+            "PYTHOS:SESSION_RUNTIME:READY\r\n",
+        ]);
+        assert_eq!(effects.traps, 1);
+    }
+
+    struct RecordingEffects {
+        bootstrap: SessionRuntimeBootstrapV1,
+        fixture: SessionRuntimeFixtureV1,
+        reject_package: bool,
+        reject_host_at: Option<usize>,
+        bootstrap_copies: usize,
+        fixture_copies: usize,
+        package_prepares: usize,
+        polls: usize,
+        host_attempts: usize,
+        graph_invocations: usize,
+        resets: usize,
+        terminal_writes: [Option<SessionRuntimeTerminalResult>; 2],
+        markers: [Option<&'static str>; 20],
+        marker_count: usize,
+        traps: usize,
+    }
+
+    impl RecordingEffects {
+        fn new(bootstrap: SessionRuntimeBootstrapV1, fixture: SessionRuntimeFixtureV1) -> Self {
+            Self {
+                bootstrap,
+                fixture,
+                reject_package: false,
+                reject_host_at: None,
+                bootstrap_copies: 0,
+                fixture_copies: 0,
+                package_prepares: 0,
+                polls: 0,
+                host_attempts: 0,
+                graph_invocations: 0,
+                resets: 0,
+                terminal_writes: [None, None],
+                markers: [None; 20],
+                marker_count: 0,
+                traps: 0,
+            }
+        }
+
+        fn assert_markers(&self, expected: &[&'static str]) {
+            assert_eq!(self.marker_count, expected.len());
+            for (actual, expected) in self.markers.iter().zip(expected) {
+                assert_eq!(*actual, Some(*expected));
+            }
+        }
+    }
+
+    impl SessionRuntimeEffects for RecordingEffects {
+        fn copy_bootstrap(&mut self) -> SessionRuntimeBootstrapV1 {
+            self.bootstrap_copies += 1;
+            self.bootstrap
+        }
+
+        fn copy_fixture(&mut self) -> SessionRuntimeFixtureV1 {
+            self.fixture_copies += 1;
+            self.fixture
+        }
+
+        fn prepare_graph_package(
+            &mut self,
+            _bootstrap: &SessionRuntimeBootstrapV1,
+        ) -> Result<(), SessionRuntimeEffectError> {
+            self.package_prepares += 1;
+            if self.reject_package {
+                Err(SessionRuntimeEffectError::Package)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn poll_input(&mut self, _ordinal: usize) -> Result<(), SessionRuntimeEffectError> {
+            self.polls += 1;
+            Ok(())
+        }
+
+        fn run_command_host_and_graph(
+            &mut self,
+            ordinal: usize,
+        ) -> Result<(), SessionRuntimeEffectError> {
+            self.host_attempts += 1;
+            if self.reject_host_at == Some(ordinal) {
+                return Err(SessionRuntimeEffectError::CommandHost);
+            }
+            self.graph_invocations += 1;
+            Ok(())
+        }
+
+        fn reset_invocation_local(&mut self) -> Result<(), SessionRuntimeEffectError> {
+            self.resets += 1;
+            Ok(())
+        }
+
+        fn final_state_is_valid(&self) -> bool {
+            true
+        }
+
+        fn write_terminal_result(
+            &mut self,
+            terminal: SessionRuntimeTerminalResult,
+        ) -> Result<(), SessionRuntimeEffectError> {
+            let Some(slot) = self.terminal_writes.iter_mut().find(|slot| slot.is_none()) else {
+                return Err(SessionRuntimeEffectError::Result);
+            };
+            *slot = Some(terminal);
+            Ok(())
+        }
+
+        fn emit_marker(&mut self, marker: &'static str) {
+            self.markers[self.marker_count] = Some(marker);
+            self.marker_count += 1;
+        }
+
+        fn trap(&mut self) {
+            self.traps += 1;
+        }
+    }
+
+    fn assert_recovered_before_work(effects: &RecordingEffects) {
+        assert_eq!(effects.polls, 0);
+        assert_eq!(effects.host_attempts, 0);
+        assert_eq!(effects.graph_invocations, 0);
+        assert_eq!(
+            effects.terminal_writes,
+            [Some(SessionRuntimeTerminalResult::RequestRecovery), None]
+        );
+        effects.assert_markers(&["PYTHOS:SESSION_RUNTIME:ERROR\r\n"]);
+        assert_eq!(effects.traps, 1);
+    }
+
+    fn assert_launch_rejected(
         bootstrap_address: u64,
         bootstrap: &SessionRuntimeBootstrapV1,
         fixture: &SessionRuntimeFixtureV1,
     ) {
-        let mut input_polls = 0;
-        let mut graph_invocations = 0;
-        if validate_session_runtime_launch(bootstrap_address, bootstrap, fixture).is_ok() {
-            input_polls += 1;
-            graph_invocations += 1;
-        }
-        assert_eq!(input_polls, 0);
-        assert_eq!(graph_invocations, 0);
+        assert!(validate_session_runtime_launch(bootstrap_address, bootstrap, fixture).is_err());
     }
 
     fn accepted_launch() -> (SessionRuntimeBootstrapV1, SessionRuntimeFixtureV1) {
