@@ -166,6 +166,8 @@ pub fn validate_pyth_native_binding_payload_bytes<'a>(
 
 const MAX_NAMED_PROGRAM_RECORDS: usize = 8;
 const SHELL_PROGRAM_NAME: &[u8] = b"shell.elf";
+const SESSION_RUNTIME_PROGRAM_NAME: &[u8] = user_program_manifest::SESSION_RUNTIME_PROGRAM_NAME;
+const SESSION_RUNTIME_PRINCIPAL_ID: u64 = user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID;
 
 struct NamedProgramPolicy<'a> {
     names: [Option<&'a [u8]>; MAX_NAMED_PROGRAM_RECORDS],
@@ -188,6 +190,11 @@ impl<'a> NamedProgramPolicy<'a> {
     ) -> Result<(), RuntimeLoadError> {
         if manifest.name() != SHELL_PROGRAM_NAME
             && manifest.principal_id() == user_program_manifest::SHELL_PRINCIPAL_ID
+        {
+            return Err(RuntimeLoadError::DuplicateProgramPrincipal);
+        }
+        if manifest.name() != SESSION_RUNTIME_PROGRAM_NAME
+            && manifest.principal_id() == SESSION_RUNTIME_PRINCIPAL_ID
         {
             return Err(RuntimeLoadError::DuplicateProgramPrincipal);
         }
@@ -218,6 +225,11 @@ fn enforce_kernel_identity_policy(
 ) -> Result<(), RuntimeLoadError> {
     if manifest.name() == SHELL_PROGRAM_NAME
         && manifest.principal_id() != user_program_manifest::SHELL_PRINCIPAL_ID
+    {
+        return Err(RuntimeLoadError::BadUserElfPayload);
+    }
+    if manifest.name() == SESSION_RUNTIME_PROGRAM_NAME
+        && manifest.principal_id() != SESSION_RUNTIME_PRINCIPAL_ID
     {
         return Err(RuntimeLoadError::BadUserElfPayload);
     }
@@ -501,6 +513,62 @@ mod tests {
         assert_eq!(
             validate_named_user_program_payload_bytes(&bundle, b"shell.elf"),
             Err(RuntimeLoadError::DuplicateProgramName)
+        );
+    }
+
+    #[test]
+    fn session_runtime_named_program_accepts_only_its_reserved_principal() {
+        let runtime = build_named_user_program(
+            SESSION_RUNTIME_PROGRAM_NAME,
+            SESSION_RUNTIME_PRINCIPAL_ID,
+            b"\x7FELFsession-runtime",
+        );
+        let bundle = build_init_pak(&build_inner_bundle(&[(
+            pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+            runtime.as_slice(),
+        )]));
+
+        let loaded =
+            validate_named_user_program_payload_bytes(&bundle, SESSION_RUNTIME_PROGRAM_NAME)
+                .unwrap();
+
+        assert_eq!(loaded.name(), SESSION_RUNTIME_PROGRAM_NAME);
+        assert_eq!(loaded.principal_id(), SESSION_RUNTIME_PRINCIPAL_ID);
+    }
+
+    #[test]
+    fn session_runtime_reserved_name_rejects_every_other_principal() {
+        let runtime = build_named_user_program(
+            SESSION_RUNTIME_PROGRAM_NAME,
+            INTRUDER_PRINCIPAL_ID,
+            b"\x7FELFimpostor",
+        );
+        let bundle = build_init_pak(&build_inner_bundle(&[(
+            pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+            runtime.as_slice(),
+        )]));
+
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, SESSION_RUNTIME_PROGRAM_NAME),
+            Err(RuntimeLoadError::BadUserElfPayload)
+        );
+    }
+
+    #[test]
+    fn session_runtime_reserved_principal_rejects_every_other_name() {
+        let impostor = build_named_user_program(
+            b"other.elf",
+            SESSION_RUNTIME_PRINCIPAL_ID,
+            b"\x7FELFimpostor",
+        );
+        let bundle = build_init_pak(&build_inner_bundle(&[(
+            pythos_shared::init_bundle::TYPE_NAMED_USER_ELF,
+            impostor.as_slice(),
+        )]));
+
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, b"other.elf"),
+            Err(RuntimeLoadError::DuplicateProgramPrincipal)
         );
     }
 

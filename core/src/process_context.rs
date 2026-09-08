@@ -33,6 +33,19 @@ pub struct PythRuntimeCopyMapSpec {
     pub result_len: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct SessionRuntimeCopyMapSpec {
+    pub stack: user_stacks::UserStackRegion,
+    pub bootstrap_user_ptr: u64,
+    pub bootstrap_len: u64,
+    pub package_user_ptr: u64,
+    pub package_len: u64,
+    pub fixture_user_ptr: u64,
+    pub fixture_len: u64,
+    pub result_user_ptr: u64,
+    pub result_len: u64,
+}
+
 impl ActiveUserProcess {
     pub const fn new(service_id: ServiceId, principal_id: u64, program_digest: u64) -> Self {
         Self {
@@ -117,6 +130,21 @@ impl ActiveUserProcess {
         ))
     }
 
+    pub fn from_session_runtime_launch(
+        service_id: ServiceId,
+        principal_id: u64,
+        program_digest: u64,
+        image: &user_elf::UserElfImage,
+        copy_map: SessionRuntimeCopyMapSpec,
+    ) -> Result<Self, UserCopyError> {
+        Ok(Self::from_copy_map(
+            service_id,
+            principal_id,
+            program_digest,
+            copy_map_from_session_runtime_launch(image, copy_map)?,
+        ))
+    }
+
     #[cfg(test)]
     pub const fn with_copy_map(self, copy_map: UserCopyMap) -> Self {
         Self {
@@ -193,6 +221,20 @@ pub fn copy_map_from_pyth_native_launch(
 ) -> Result<UserCopyMap, UserCopyError> {
     let mut map = copy_map_from_pyth_runtime_launch(spec)?;
     add_validated_elf_segments(&mut map, image)?;
+    Ok(map)
+}
+
+pub fn copy_map_from_session_runtime_launch(
+    image: &user_elf::UserElfImage,
+    spec: SessionRuntimeCopyMapSpec,
+) -> Result<UserCopyMap, UserCopyError> {
+    let mut map = UserCopyMap::new();
+    add_validated_elf_segments(&mut map, image)?;
+    map.add_mapping(spec.stack.stack_start, spec.stack.stack_len, true, true)?;
+    map.add_mapping(spec.bootstrap_user_ptr, spec.bootstrap_len, true, false)?;
+    map.add_mapping(spec.package_user_ptr, spec.package_len, true, false)?;
+    map.add_mapping(spec.fixture_user_ptr, spec.fixture_len, true, false)?;
+    map.add_mapping(spec.result_user_ptr, spec.result_len, true, true)?;
     Ok(map)
 }
 
@@ -455,6 +497,136 @@ mod tests {
             map.validate_range(0x7100_2000, 64, UserCopyAccess::Write)
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn session_runtime_copy_map_retains_elf_stack_and_exact_payload_permissions() {
+        let image = user_elf::validate(&minimal_user_elf()).unwrap();
+        let stack = user_stacks::UserStackRegion {
+            guard_start: 0x0070_0000,
+            stack_start: 0x0070_1000,
+            stack_len: 0x1000,
+        };
+        let spec = SessionRuntimeCopyMapSpec {
+            stack,
+            bootstrap_user_ptr: 0x7200_0000,
+            bootstrap_len: 0x1000,
+            package_user_ptr: 0x7200_1000,
+            package_len: 0x1000,
+            fixture_user_ptr: 0x7200_2000,
+            fixture_len: 0x1000,
+            result_user_ptr: 0x7200_3000,
+            result_len: 0x1000,
+        };
+
+        let process = ActiveUserProcess::from_session_runtime_launch(
+            ServiceId::from_raw(0x5059_5345_5353_0001),
+            0x5059_5352_544D_0001,
+            0xA5A5,
+            &image,
+            spec,
+        )
+        .unwrap();
+        let map = process.copy_map();
+
+        assert!(image.segment(0).unwrap().executable());
+        assert!(!image.segment(1).unwrap().executable());
+        assert!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(0x0040_0000, 2, UserCopyAccess::Write),
+            Err(UserCopyError::PermissionDenied)
+        );
+        assert!(
+            map.validate_range(0x0040_1000, 16, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(0x0040_1000, 16, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(stack.stack_start, stack.stack_len, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(stack.stack_start, stack.stack_len, UserCopyAccess::Write)
+                .is_ok()
+        );
+        assert_eq!(
+            map.validate_range(stack.guard_start, 1, UserCopyAccess::Read),
+            Err(UserCopyError::OutOfRange)
+        );
+
+        for ptr in [0x7200_0000, 0x7200_1000, 0x7200_2000] {
+            assert!(
+                map.validate_range(ptr, 0x1000, UserCopyAccess::Read)
+                    .is_ok()
+            );
+            assert_eq!(
+                map.validate_range(ptr, 1, UserCopyAccess::Write),
+                Err(UserCopyError::PermissionDenied)
+            );
+        }
+        assert!(
+            map.validate_range(0x7200_3000, 0x1000, UserCopyAccess::Read)
+                .is_ok()
+        );
+        assert!(
+            map.validate_range(0x7200_3000, 0x1000, UserCopyAccess::Write)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn session_runtime_copy_map_rejects_overlap_overflow_and_missing_payloads() {
+        let image = user_elf::validate(&minimal_user_elf()).unwrap();
+        let stack = user_stacks::UserStackRegion {
+            guard_start: 0x0070_0000,
+            stack_start: 0x0070_1000,
+            stack_len: 0x1000,
+        };
+        let valid = SessionRuntimeCopyMapSpec {
+            stack,
+            bootstrap_user_ptr: 0x7200_0000,
+            bootstrap_len: 0x1000,
+            package_user_ptr: 0x7200_1000,
+            package_len: 0x1000,
+            fixture_user_ptr: 0x7200_2000,
+            fixture_len: 0x1000,
+            result_user_ptr: 0x7200_3000,
+            result_len: 0x1000,
+        };
+
+        let mut overlap = valid;
+        overlap.fixture_user_ptr = overlap.package_user_ptr;
+        assert_eq!(
+            copy_map_from_session_runtime_launch(&image, overlap),
+            Err(UserCopyError::OverlappingMapping)
+        );
+
+        let mut overflow = valid;
+        overflow.result_user_ptr = u64::MAX - 0x7FF;
+        assert_eq!(
+            copy_map_from_session_runtime_launch(&image, overflow),
+            Err(UserCopyError::LengthOverflow)
+        );
+
+        for missing_ordinal in 0..4 {
+            let mut missing = valid;
+            match missing_ordinal {
+                0 => missing.bootstrap_len = 0,
+                1 => missing.package_len = 0,
+                2 => missing.fixture_len = 0,
+                _ => missing.result_len = 0,
+            }
+            assert_eq!(
+                copy_map_from_session_runtime_launch(&image, missing),
+                Err(UserCopyError::EmptyRange)
+            );
+        }
     }
 
     fn minimal_user_elf() -> [u8; 8196] {

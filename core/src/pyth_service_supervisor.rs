@@ -1,3 +1,8 @@
+use pythos_shared::{
+    pyth_runtime_abi::{GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR},
+    session_runtime_lifecycle::{SessionGraphLifecycleAction, session_graph_lifecycle_action},
+};
+
 pub const SESSION_MANAGER_GRAPH_NAME: &[u8] = b"session-manager.tig";
 pub const TASK_STEWARD_GRAPH_NAME: &[u8] = b"task-steward.tig";
 pub const SESSION_MANAGER_GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
@@ -120,20 +125,30 @@ impl PythServiceSupervisor {
     }
 
     pub fn record_exit(&mut self, service: ServiceKind, status: GraphExitStatus) {
-        match (service, status) {
-            (ServiceKind::SessionManager, GraphExitStatus::Ok) => {
-                self.session_manager_faulted = false;
-                self.action = SupervisorAction::RelaunchSessionManager;
-            }
-            (ServiceKind::TaskSteward, GraphExitStatus::Ok) => {
+        let graph_status = match status {
+            GraphExitStatus::Ok => GRAPH_EXIT_OK,
+            GraphExitStatus::Fault => GRAPH_EXIT_RUNTIME_ERROR,
+        };
+        self.record_graph_exit_status(service, graph_status);
+    }
+
+    pub fn record_graph_exit_status(&mut self, service: ServiceKind, status: u16) {
+        match service {
+            ServiceKind::SessionManager => match session_graph_lifecycle_action(status) {
+                SessionGraphLifecycleAction::Reinvoke => {
+                    self.session_manager_faulted = false;
+                    self.action = SupervisorAction::RelaunchSessionManager;
+                }
+                SessionGraphLifecycleAction::RequestRecovery => {
+                    self.session_manager_faulted = true;
+                    self.action = self.fault_action();
+                }
+            },
+            ServiceKind::TaskSteward if status == GRAPH_EXIT_OK => {
                 self.task_steward_faulted = false;
                 self.action = SupervisorAction::RelaunchTaskSteward;
             }
-            (ServiceKind::SessionManager, GraphExitStatus::Fault) => {
-                self.session_manager_faulted = true;
-                self.action = self.fault_action();
-            }
-            (ServiceKind::TaskSteward, GraphExitStatus::Fault) => {
+            ServiceKind::TaskSteward => {
                 self.task_steward_faulted = true;
                 self.action = self.fault_action();
             }
@@ -163,6 +178,10 @@ impl PythServiceSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pythos_shared::{
+        pyth_runtime_abi::{GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR},
+        session_runtime_lifecycle::SessionGraphLifecycleAction,
+    };
 
     #[test]
     fn default_normal_boot_selects_pyth_services_and_legacy_feature_selects_shell() {
@@ -188,6 +207,35 @@ mod tests {
         assert_eq!(
             supervisor.next_action(),
             SupervisorAction::EnterRecoveryShell
+        );
+    }
+
+    #[test]
+    fn session_graph_exit_status_uses_the_shared_lifecycle_boundary() {
+        let mut supervisor = PythServiceSupervisor::new_for_test();
+        supervisor.record_graph_exit_status(ServiceKind::SessionManager, GRAPH_EXIT_OK);
+        assert_eq!(
+            supervisor.next_action(),
+            SupervisorAction::RelaunchSessionManager
+        );
+        assert!(!supervisor.service_faulted(ServiceKind::SessionManager));
+
+        for status in [
+            GRAPH_EXIT_RUNTIME_ERROR,
+            GRAPH_EXIT_BUDGET_EXHAUSTED,
+            u16::MAX,
+        ] {
+            supervisor.record_graph_exit_status(ServiceKind::SessionManager, status);
+            assert_eq!(
+                supervisor.next_action(),
+                SupervisorAction::EnterRecoveryShell
+            );
+            assert!(supervisor.service_faulted(ServiceKind::SessionManager));
+        }
+
+        assert_eq!(
+            SessionGraphLifecycleAction::Reinvoke,
+            pythos_shared::session_runtime_lifecycle::session_graph_lifecycle_action(GRAPH_EXIT_OK)
         );
     }
 

@@ -80,6 +80,7 @@ impl RightsMask {
     pub const SEND: u32 = 1 << 2;
     pub const LOG: u32 = 1 << 3;
     pub const INPUT: u32 = 1 << 4;
+    pub const APPEND: u32 = 1 << 5;
 
     pub const fn new(bits: u32) -> Self {
         Self(bits)
@@ -322,6 +323,27 @@ mod tests {
                 RightsMask::new(RightsMask::READ)
             ),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn append_is_a_distinct_right_and_does_not_authorize_write() {
+        let mut identities = ServiceIdentityTable::new();
+        let holder = identities.register_task(TaskId::new(36)).unwrap();
+        let mut table = CapabilityTable::new();
+        let read_append = RightsMask::new(RightsMask::READ | RightsMask::APPEND);
+        let handle = table.grant(holder, PROOF_RESOURCE_ID, read_append).unwrap();
+
+        assert_eq!(RightsMask::APPEND, 1 << 5);
+        assert_ne!(RightsMask::APPEND, RightsMask::WRITE);
+        assert_eq!(
+            table.validate(
+                holder,
+                handle,
+                PROOF_RESOURCE_ID,
+                RightsMask::new(RightsMask::WRITE)
+            ),
+            Err(CapabilityError::MissingRights)
         );
     }
 

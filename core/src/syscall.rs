@@ -129,6 +129,8 @@ use pythos_shared::session_input_abi::{
     SESSION_INPUT_RESOURCE_ID, SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT,
     SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1,
 };
+#[cfg(any(test, feature = "session-runtime-probe"))]
+use pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::task_abi::{
     MAX_TASK_PROPOSAL_RESULTS, OP_ABANDON_TASK, OP_APPEND_TASK_EVENT, OP_APPROVE_PROPOSAL,
@@ -708,6 +710,7 @@ fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R 
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
+    feature = "session-runtime-probe",
     all(not(test), not(feature = "verify"))
 ))]
 pub fn grant_console_capability(
@@ -734,6 +737,26 @@ pub fn grant_system_control_capability(
             RightsMask::new(RightsMask::WRITE),
         )
     })?;
+    Ok(pack_syscall_capability(handle))
+}
+
+#[cfg(any(test, feature = "session-runtime-probe"))]
+pub fn grant_session_command_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    with_syscall_capabilities(|table| grant_session_command_capability_with_table(table, process))
+}
+
+#[cfg(any(test, feature = "session-runtime-probe"))]
+fn grant_session_command_capability_with_table(
+    table: &mut CapabilityTable,
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    let handle = table.grant(
+        process.service_id(),
+        ResourceId::new(SESSION_COMMAND_RESOURCE_ID),
+        RightsMask::new(RightsMask::READ | RightsMask::APPEND),
+    )?;
     Ok(pack_syscall_capability(handle))
 }
 
@@ -2820,6 +2843,7 @@ mod tests {
         SESSION_INPUT_RESOURCE_ID, SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT,
         SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1,
     };
+    use pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID;
     use pythos_shared::task_abi::{
         MAX_TASK_PROPOSAL_RESULTS, OP_APPEND_TASK_EVENT, OP_CREATE_PROPOSAL, OP_CREATE_TASK,
         OP_LIST_PROPOSALS, OP_READ_ACTIVE_TASK, TASK_ABI_MAJOR, TASK_ABI_MINOR, TaskEventInput,
@@ -2863,6 +2887,88 @@ mod tests {
         let entry = lookup_syscall(SYSCALL_SESSION_INPUT_TRY_READ).unwrap();
         assert_eq!((entry.introduced_major, entry.introduced_minor), (1, 1));
         assert!(!entry.proof_only);
+    }
+
+    #[test]
+    fn session_command_capability_grant_is_exact_and_rejects_invalid_handles() {
+        let holder = ActiveUserProcess::new(ServiceId::from_raw(0x5059_5345_5353_0001), 1, 1);
+        let stranger = ActiveUserProcess::new(ServiceId::from_raw(0x5059_5345_5353_0002), 2, 2);
+        let resource = ResourceId::new(SESSION_COMMAND_RESOURCE_ID);
+        let required = RightsMask::new(RightsMask::READ | RightsMask::APPEND);
+        let mut table = CapabilityTable::new();
+
+        let capability = grant_session_command_capability_with_table(&mut table, holder).unwrap();
+        assert_eq!(
+            validate_syscall_capability_with_table(&table, holder, capability, resource, required),
+            Ok(())
+        );
+        assert_eq!(
+            validate_syscall_capability_with_table(
+                &table, stranger, capability, resource, required
+            ),
+            Err(SyscallError::Capability(CapabilityError::WrongHolder))
+        );
+        assert_eq!(
+            validate_syscall_capability_with_table(
+                &table,
+                holder,
+                capability,
+                ResourceId::new(SESSION_COMMAND_RESOURCE_ID + 1),
+                required
+            ),
+            Err(SyscallError::Capability(CapabilityError::WrongResource))
+        );
+
+        let missing_read = pack_syscall_capability(
+            table
+                .grant(
+                    holder.service_id(),
+                    resource,
+                    RightsMask::new(RightsMask::APPEND),
+                )
+                .unwrap(),
+        );
+        let missing_append = pack_syscall_capability(
+            table
+                .grant(
+                    holder.service_id(),
+                    resource,
+                    RightsMask::new(RightsMask::READ),
+                )
+                .unwrap(),
+        );
+        assert_eq!(
+            validate_syscall_capability_with_table(
+                &table,
+                holder,
+                missing_read,
+                resource,
+                required
+            ),
+            Err(SyscallError::Capability(CapabilityError::MissingRights))
+        );
+        assert_eq!(
+            validate_syscall_capability_with_table(
+                &table,
+                holder,
+                missing_append,
+                resource,
+                required
+            ),
+            Err(SyscallError::Capability(CapabilityError::MissingRights))
+        );
+
+        let stale = unpack_syscall_capability(capability);
+        table.revoke(stale).unwrap();
+        assert_eq!(
+            validate_syscall_capability_with_table(&table, holder, capability, resource, required),
+            Err(SyscallError::Capability(CapabilityError::InvalidHandle))
+        );
+        let forged_slot = PackedCapability::from_parts(u32::MAX, stale.generation());
+        assert_eq!(
+            validate_syscall_capability_with_table(&table, holder, forged_slot, resource, required),
+            Err(SyscallError::Capability(CapabilityError::InvalidHandle))
+        );
     }
 
     #[test]

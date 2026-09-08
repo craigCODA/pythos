@@ -76,8 +76,8 @@ use pythos_shared::{
     },
     pyth_tig::{
         opcode::{
-            RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK,
-            RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ,
+            RESOURCE_COMMAND, RESOURCE_OBJECT, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG,
+            RESOURCE_TASK, RIGHTS_APPEND, RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ,
         },
         verify::{VerifiedGraph, VerifyError},
     },
@@ -190,6 +190,7 @@ pub enum PythGraphDeferredImport {
 #[allow(clippy::large_enum_variant)]
 enum PythGraphBootstrapBinding {
     Complete(PythGraphImportCapabilities),
+    Command(PackedCapability),
     PackageLaunch(PythGraphPackageImportCapabilities),
     DeferredObjectWorkspace { system_log: PackedCapability },
     DeferredTaskSteward { system_log: PackedCapability },
@@ -355,6 +356,25 @@ pub fn build_pyth_graph_bootstrap(
     )
 }
 
+pub fn build_pyth_command_graph_bootstrap(
+    verified: &VerifiedGraph<'_>,
+    package_user_ptr: u64,
+    package_len: u64,
+    result_user_ptr: u64,
+    command_capability: PackedCapability,
+) -> Result<PythGraphBootstrapBlock, PythRuntimeLaunchError> {
+    if verified.package().imports().len() != 1 {
+        return Err(PythRuntimeLaunchError::UnauthorizedImport);
+    }
+    build_pyth_graph_bootstrap_with_binding(
+        verified,
+        package_user_ptr,
+        package_len,
+        result_user_ptr,
+        PythGraphBootstrapBinding::Command(command_capability),
+    )
+}
+
 pub fn prepare_package_launch_runtime_bootstrap(
     verified: &VerifiedGraph<'_>,
     package_len: u64,
@@ -497,6 +517,14 @@ fn bind_import_capability(
                 }
                 (RESOURCE_TASK, RIGHTS_READ) | (RESOURCE_TASK, RIGHTS_CREATE) => {
                     capabilities.task_steward
+                }
+                _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
+            }
+        }
+        PythGraphBootstrapBinding::Command(command_capability) => {
+            match (import.resource_kind, import.rights) {
+                (RESOURCE_COMMAND, rights) if rights == (RIGHTS_READ | RIGHTS_APPEND) => {
+                    command_capability
                 }
                 _ => return Err(PythRuntimeLaunchError::UnauthorizedImport),
             }
@@ -1595,8 +1623,9 @@ mod tests {
         },
         pyth_tig::{
             opcode::{
-                RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK, RIGHTS_CONTROL,
-                RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ, RIGHTS_REVISE,
+                RESOURCE_COMMAND, RESOURCE_OBJECT_WORKSPACE, RESOURCE_SYSTEM_LOG, RESOURCE_TASK,
+                RIGHTS_APPEND, RIGHTS_CONTROL, RIGHTS_CREATE, RIGHTS_QUERY, RIGHTS_READ,
+                RIGHTS_REVISE,
             },
             test_support,
             types::PythType,
@@ -1967,6 +1996,68 @@ mod tests {
                 Err(PythRuntimeLaunchError::MissingImport)
             );
         }
+    }
+
+    #[test]
+    fn command_graph_bootstrap_accepts_only_the_exact_session_command_import() {
+        let package =
+            test_support::command_read_result_emit_with_import_rights(RIGHTS_READ | RIGHTS_APPEND);
+        let verified = verify_bytes(&package).unwrap();
+        let command = PackedCapability::from_parts(11, 2);
+
+        let bootstrap = build_pyth_command_graph_bootstrap(
+            &verified,
+            0x7100_1000,
+            package.len() as u64,
+            0x7100_2000,
+            command,
+        )
+        .unwrap();
+
+        assert_eq!(bootstrap.import_count, 1);
+        assert_eq!(bootstrap.imports[0].import_slot, 0);
+        assert_eq!(bootstrap.imports[0].resource_kind, RESOURCE_COMMAND);
+        assert_eq!(bootstrap.imports[0].rights, RIGHTS_READ | RIGHTS_APPEND);
+        assert_eq!(bootstrap.imports[0].capability, command);
+
+        let excess_rights = test_support::command_read_result_emit_with_import_rights(
+            RIGHTS_READ | RIGHTS_APPEND | RIGHTS_CREATE,
+        );
+        let verified_excess_rights = verify_bytes(&excess_rights).unwrap();
+        assert_eq!(
+            build_pyth_command_graph_bootstrap(
+                &verified_excess_rights,
+                0x7100_1000,
+                excess_rights.len() as u64,
+                0x7100_2000,
+                command,
+            ),
+            Err(PythRuntimeLaunchError::UnauthorizedImport)
+        );
+
+        let other_resource = test_support::system_log_with_import_capability();
+        let verified_other_resource = verify_bytes(&other_resource).unwrap();
+        assert_eq!(
+            build_pyth_command_graph_bootstrap(
+                &verified_other_resource,
+                0x7100_1000,
+                other_resource.len() as u64,
+                0x7100_2000,
+                command,
+            ),
+            Err(PythRuntimeLaunchError::UnauthorizedImport)
+        );
+
+        assert_eq!(
+            build_pyth_command_graph_bootstrap(
+                &verified,
+                0x7100_1000,
+                package.len() as u64,
+                0x7100_2000,
+                PackedCapability::from_raw(0),
+            ),
+            Err(PythRuntimeLaunchError::MissingImport)
+        );
     }
 
     #[test]

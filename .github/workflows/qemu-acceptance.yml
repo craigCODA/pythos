@@ -97,6 +97,8 @@ jobs:
           cargo test -p pythc
           cargo test -p pythos-user-pyth-runtime
           cargo test -p pythos-user-session-input-probe
+          cargo test -p pythos-user-session-runtime
+          cargo test -p pythos-core session_runtime
 
       - name: PythTIG format harness
         run: python scripts/test-pyth-tig-format.py
@@ -115,19 +117,25 @@ jobs:
           python scripts/build-pyth-runtime.py
           python scripts/verify-pyth-runtime-elf.py
           python scripts/build-pyth-graph.py
+          python scripts/build-session-runtime.py --target-dir target/session-runtime-probe
+          python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime
 
       - name: Clippy
         run: |
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings
+          cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 
       - name: Phase 7 script import checks
-        run: python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/run-qemu.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py scripts/build-session-input-probe.py scripts/test-session-input-bridge-probe.py
+        run: |
+          python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/run-qemu.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py scripts/build-session-input-probe.py scripts/test-session-input-bridge-probe.py
+          python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py
 
       - name: Python harness tests
-        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze
+        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
 
       - name: QEMU milestone acceptance
         run: |
@@ -146,7 +154,10 @@ jobs:
           python scripts/test-boot.py --slice milestone-1 --media iso --timeout 60
           python scripts/test-persistent-storage.py
           python scripts/test-session-input-bridge-probe.py --self-test
+          python scripts/test-session-runtime-probe.py --self-test
           python scripts/test-session-input-bridge-probe.py
+          python scripts/test-session-runtime-probe.py --fault-test
+          python scripts/test-session-runtime-probe.py
 
       - name: PythTIG physical evidence tooling
         run: |

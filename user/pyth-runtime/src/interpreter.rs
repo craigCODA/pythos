@@ -226,6 +226,7 @@ impl<'a> Interpreter<'a> {
             Opcode::EffectStart => self.store_value(node_index, Value::Effect(node_index as u64)),
             Opcode::ConstBool => self.execute_const_bool(node_index, &node),
             Opcode::ConstU64 => self.execute_const_u64(node_index, &node),
+            Opcode::Eq => self.execute_eq(node_index, &node),
             Opcode::LessThanU64 => self.execute_less_than_u64(node_index, &node),
             Opcode::ConstBytes => self.execute_const_bytes(package, node_index, &node),
             Opcode::ConstUtf8 => self.execute_const_utf8(package, node_index, &node),
@@ -322,6 +323,21 @@ impl<'a> Interpreter<'a> {
         let lhs = self.expect_u64(node.input0)?;
         let rhs = self.expect_u64(node.input1)?;
         self.store_value(node_index, Value::Bool(lhs < rhs))
+    }
+
+    fn execute_eq(
+        &mut self,
+        node_index: usize,
+        node: &pythos_shared::pyth_tig::NodeRecord,
+    ) -> Result<(), RuntimeError> {
+        if PythType::try_from(node.result_type).map_err(|_| RuntimeError::InvalidValue)?
+            != PythType::Bool
+        {
+            return Err(RuntimeError::UnsupportedOpcode);
+        }
+        let lhs = self.expect_u64(node.input0)?;
+        let rhs = self.expect_u64(node.input1)?;
+        self.store_value(node_index, Value::Bool(lhs == rhs))
     }
 
     fn execute_const_utf8(
@@ -849,11 +865,14 @@ mod tests {
     use super::*;
     use pythos_shared::{
         object_shell_abi::PackedCapability,
-        pyth_command_abi::COMMAND_KIND_CREATE_NOTE,
+        pyth_command_abi::{COMMAND_KIND_CREATE_NOTE, COMMAND_KIND_REVISE_NOTE},
         pyth_runtime_abi::{HOST_RESULT_STATUS, HostCallResult, MAX_PYTH_GRAPH_IMPORTS},
         pyth_tig::{
-            format::PythGraphPackage,
-            opcode::{RIGHTS_CREATE, RIGHTS_READ},
+            format::{
+                BlockRecord, CapabilityImportRecord, NodeRecord, PYTH_TIG_MAGIC, PYTH_TIG_MAJOR,
+                PYTH_TIG_MINOR, PythGraphHeader, PythGraphPackage,
+            },
+            opcode::{RESOURCE_COMMAND, RIGHTS_CREATE, RIGHTS_READ},
             test_support,
             verify::verify_package,
         },
@@ -875,6 +894,275 @@ mod tests {
         proposal_count: usize,
         last_candidate_task_id: u64,
         last_score: u64,
+        command_kind: u16,
+    }
+
+    fn empty_recording_host() -> RecordingHost {
+        RecordingHost {
+            logs: [[0; 16]; 4],
+            log_count: 0,
+            create_count: 0,
+            revise_count: 0,
+            inspect_count: 0,
+            last_revise_capability: PackedCapability::from_raw(0),
+            last_inspect_capability: PackedCapability::from_raw(0),
+            last_text: [0; 16],
+            last_text_len: 0,
+            malformed_create: false,
+            deny_create: false,
+            proposal_count: 0,
+            last_candidate_task_id: 0,
+            last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
+        }
+    }
+
+    const COMMAND_KIND_BRANCH_PACKAGE_LEN: usize = core::mem::size_of::<PythGraphHeader>()
+        + 3 * core::mem::size_of::<BlockRecord>()
+        + 9 * core::mem::size_of::<NodeRecord>()
+        + core::mem::size_of::<CapabilityImportRecord>()
+        + 4;
+
+    #[repr(align(8))]
+    struct CommandKindBranchPackage {
+        bytes: [u8; COMMAND_KIND_BRANCH_PACKAGE_LEN],
+    }
+
+    impl core::ops::Deref for CommandKindBranchPackage {
+        type Target = [u8];
+
+        fn deref(&self) -> &Self::Target {
+            &self.bytes
+        }
+    }
+
+    struct CommandKindBranchNode {
+        opcode: Opcode,
+        result_type: PythType,
+        block_index: u16,
+        inputs: [u32; 4],
+        auxiliary0: u32,
+        auxiliary1: u32,
+        immediate: u64,
+    }
+
+    fn write_test_u16(bytes: &mut [u8], offset: usize, value: u16) {
+        bytes[offset..offset + 2].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_test_u32(bytes: &mut [u8], offset: usize, value: u32) {
+        bytes[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_test_u64(bytes: &mut [u8], offset: usize, value: u64) {
+        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    fn write_test_block(
+        bytes: &mut [u8],
+        offset: usize,
+        block_id: u32,
+        first_node: u32,
+        node_count: u32,
+        terminator_node: u32,
+    ) {
+        write_test_u32(bytes, offset, block_id);
+        write_test_u32(bytes, offset + 4, first_node);
+        write_test_u32(bytes, offset + 8, node_count);
+        write_test_u32(bytes, offset + 16, terminator_node);
+    }
+
+    fn write_command_kind_branch_node(
+        bytes: &mut [u8],
+        offset: usize,
+        node: CommandKindBranchNode,
+    ) {
+        write_test_u16(bytes, offset, node.opcode.code());
+        write_test_u16(bytes, offset + 2, node.result_type.code());
+        write_test_u16(bytes, offset + 6, node.block_index);
+        for (index, input) in node.inputs.into_iter().enumerate() {
+            write_test_u32(bytes, offset + 8 + index * 4, input);
+        }
+        write_test_u32(bytes, offset + 24, node.auxiliary0);
+        write_test_u32(bytes, offset + 28, node.auxiliary1);
+        write_test_u64(bytes, offset + 32, node.immediate);
+    }
+
+    fn refresh_test_checksum(bytes: &mut [u8]) {
+        write_test_u64(bytes, 84, 0);
+        let mut checksum = 0xcbf2_9ce4_8422_2325u64;
+        for &byte in bytes.iter() {
+            checksum ^= u64::from(byte);
+            checksum = checksum.wrapping_mul(0x0000_0100_0000_01B3);
+        }
+        write_test_u64(bytes, 84, checksum);
+    }
+
+    fn command_kind_equality_branch_package() -> CommandKindBranchPackage {
+        let header_size = core::mem::size_of::<PythGraphHeader>();
+        let block_size = core::mem::size_of::<BlockRecord>();
+        let node_size = core::mem::size_of::<NodeRecord>();
+        let import_size = core::mem::size_of::<CapabilityImportRecord>();
+        let blocks_offset = header_size;
+        let nodes_offset = blocks_offset + 3 * block_size;
+        let imports_offset = nodes_offset + 9 * node_size;
+        let string_table_offset = imports_offset + import_size;
+        let mut package = CommandKindBranchPackage {
+            bytes: [0; COMMAND_KIND_BRANCH_PACKAGE_LEN],
+        };
+        let bytes = &mut package.bytes;
+
+        bytes[0..8].copy_from_slice(&PYTH_TIG_MAGIC);
+        write_test_u16(bytes, 8, PYTH_TIG_MAJOR);
+        write_test_u16(bytes, 10, PYTH_TIG_MINOR);
+        write_test_u64(bytes, 16, 0x5059_5448_5449_4705);
+        write_test_u64(bytes, 24, 0x5059_5448_5052_4E05);
+        write_test_u32(bytes, 32, 0);
+        write_test_u32(bytes, 40, 3);
+        write_test_u32(bytes, 44, 9);
+        write_test_u32(bytes, 48, 1);
+        write_test_u32(bytes, 56, 4);
+        write_test_u32(bytes, 60, header_size as u32);
+        write_test_u32(bytes, 64, blocks_offset as u32);
+        write_test_u32(bytes, 68, nodes_offset as u32);
+        write_test_u32(bytes, 72, imports_offset as u32);
+        write_test_u32(bytes, 76, string_table_offset as u32);
+        write_test_u32(bytes, 80, string_table_offset as u32);
+
+        write_test_block(bytes, blocks_offset, 0, 0, 7, 6);
+        write_test_block(bytes, blocks_offset + block_size, 1, 7, 1, 7);
+        write_test_block(bytes, blocks_offset + 2 * block_size, 2, 8, 1, 8);
+
+        let mut write_node = |index: usize, node: CommandKindBranchNode| {
+            write_command_kind_branch_node(bytes, nodes_offset + index * node_size, node);
+        };
+        write_node(
+            0,
+            CommandKindBranchNode {
+                opcode: Opcode::EffectStart,
+                result_type: PythType::Effect,
+                block_index: 0,
+                inputs: [NO_VALUE; 4],
+                auxiliary0: 0,
+                auxiliary1: 0,
+                immediate: 0,
+            },
+        );
+        write_node(
+            1,
+            CommandKindBranchNode {
+                opcode: Opcode::BlockParam,
+                result_type: PythType::Capability,
+                block_index: 0,
+                inputs: [NO_VALUE; 4],
+                auxiliary0: 0,
+                auxiliary1: 0,
+                immediate: 0,
+            },
+        );
+        write_node(
+            2,
+            CommandKindBranchNode {
+                opcode: Opcode::CommandRead,
+                result_type: PythType::Effect,
+                block_index: 0,
+                inputs: [0, 1, NO_VALUE, NO_VALUE],
+                auxiliary0: 0,
+                auxiliary1: 0,
+                immediate: 0,
+            },
+        );
+        write_node(
+            3,
+            CommandKindBranchNode {
+                opcode: Opcode::HostResult,
+                result_type: PythType::U64,
+                block_index: 0,
+                inputs: [2, NO_VALUE, NO_VALUE, NO_VALUE],
+                auxiliary0: COMMAND_FIELD_KIND,
+                auxiliary1: 0,
+                immediate: 0,
+            },
+        );
+        write_node(
+            4,
+            CommandKindBranchNode {
+                opcode: Opcode::ConstU64,
+                result_type: PythType::U64,
+                block_index: 0,
+                inputs: [NO_VALUE; 4],
+                auxiliary0: 0,
+                auxiliary1: 0,
+                immediate: u64::from(COMMAND_KIND_CREATE_NOTE),
+            },
+        );
+        write_node(
+            5,
+            CommandKindBranchNode {
+                opcode: Opcode::Eq,
+                result_type: PythType::Bool,
+                block_index: 0,
+                inputs: [3, 4, NO_VALUE, NO_VALUE],
+                auxiliary0: 0,
+                auxiliary1: 0,
+                immediate: 0,
+            },
+        );
+        write_node(
+            6,
+            CommandKindBranchNode {
+                opcode: Opcode::Branch,
+                result_type: PythType::Unit,
+                block_index: 0,
+                inputs: [5, NO_VALUE, NO_VALUE, NO_VALUE],
+                auxiliary0: 1,
+                auxiliary1: 2,
+                immediate: 0,
+            },
+        );
+        for (index, block_index) in [(7, 1), (8, 2)] {
+            write_node(
+                index,
+                CommandKindBranchNode {
+                    opcode: Opcode::Return,
+                    result_type: PythType::Unit,
+                    block_index,
+                    inputs: [NO_VALUE; 4],
+                    auxiliary0: 0,
+                    auxiliary1: 0,
+                    immediate: 0,
+                },
+            );
+        }
+
+        write_test_u32(bytes, imports_offset, 0);
+        write_test_u16(bytes, imports_offset + 4, 4);
+        write_test_u16(bytes, imports_offset + 6, RESOURCE_COMMAND);
+        write_test_u64(bytes, imports_offset + 8, RIGHTS_READ);
+        write_test_u16(bytes, imports_offset + 16, PythType::Capability.code());
+        write_test_u16(bytes, imports_offset + 18, 0);
+        bytes[string_table_offset..string_table_offset + 4].copy_from_slice(b"cmds");
+        refresh_test_checksum(bytes);
+        package
+    }
+
+    fn typed_u64_equality_package(lhs: u64, rhs: u64) -> impl core::ops::Deref<Target = [u8]> {
+        let mut package = test_support::package_with_add_bool();
+        let nodes_offset = u32::from_le_bytes(package[68..72].try_into().unwrap()) as usize;
+        let node_size = core::mem::size_of::<pythos_shared::pyth_tig::NodeRecord>();
+
+        package[nodes_offset..nodes_offset + 2]
+            .copy_from_slice(&Opcode::ConstU64.code().to_le_bytes());
+        package[nodes_offset + 2..nodes_offset + 4]
+            .copy_from_slice(&PythType::U64.code().to_le_bytes());
+        let equality = nodes_offset + 2 * node_size;
+        package[equality..equality + 2].copy_from_slice(&Opcode::Eq.code().to_le_bytes());
+        package[equality + 2..equality + 4].copy_from_slice(&PythType::Bool.code().to_le_bytes());
+        let return_node = nodes_offset + 3 * node_size;
+        package[return_node + 8..return_node + 12].copy_from_slice(&NO_VALUE.to_le_bytes());
+        test_support::set_node_immediate(&mut package, 0, lhs);
+        test_support::set_node_immediate(&mut package, 1, rhs);
+        package
     }
 
     impl Host for RecordingHost {
@@ -1010,7 +1298,7 @@ mod tests {
         ) -> Result<HostCallResult, HostError> {
             self.create_count += 1;
             let mut result = HostCallResult::empty(0);
-            result.reserved0 = u32::from(COMMAND_KIND_CREATE_NOTE);
+            result.reserved0 = u32::from(self.command_kind);
             result.bytes_len = 16;
             result.bytes[..16].copy_from_slice(b"command-accepted");
             Ok(result)
@@ -1050,6 +1338,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1085,6 +1374,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1121,6 +1411,7 @@ mod tests {
                 proposal_count: 0,
                 last_candidate_task_id: 0,
                 last_score: 0,
+                command_kind: COMMAND_KIND_CREATE_NOTE,
             };
             let imports = [PackedCapability::from_parts(7, 1); MAX_PYTH_GRAPH_IMPORTS];
             let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1132,6 +1423,110 @@ mod tests {
             assert_eq!(exit.status, GRAPH_EXIT_OK);
             assert_eq!(exit.executed_nodes, 3);
             assert_eq!(exit.last_node, expected_last_node);
+        }
+    }
+
+    #[test]
+    fn typed_u64_equality_evaluates_true_and_false() {
+        for (lhs, rhs, expected) in [(3, 3, true), (3, 4, false)] {
+            let bytes = typed_u64_equality_package(lhs, rhs);
+            let package = PythGraphPackage::decode(&bytes).unwrap();
+            let verified = verify_package(&package).unwrap();
+            let mut host = empty_recording_host();
+            let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+            let mut values = [None; MAX_RUNTIME_VALUES];
+            let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+            let exit = Interpreter::new(verified, &imports, 16, &mut values, &mut host_results)
+                .execute(&mut host);
+
+            assert_ne!(
+                exit.error_code,
+                RuntimeError::UnsupportedOpcode.code(),
+                "typed U64 Eq reached UnsupportedOpcode"
+            );
+            assert_eq!(exit.status, GRAPH_EXIT_OK);
+            assert_eq!(values[2], Some(Value::Bool(expected)));
+        }
+    }
+
+    #[test]
+    fn typed_u64_equality_preserves_missing_and_invalid_operand_errors() {
+        let bytes = typed_u64_equality_package(3, 3);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = empty_recording_host();
+        let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+        let mut interpreter =
+            Interpreter::new(verified, &imports, 16, &mut values, &mut host_results);
+
+        assert_eq!(
+            interpreter.dispatch_node(&package, 2, &mut host),
+            Err(RuntimeError::InvalidInput)
+        );
+        interpreter.values[0] = Some(Value::Bool(true));
+        interpreter.values[1] = Some(Value::U64(3));
+        assert_eq!(
+            interpreter.dispatch_node(&package, 2, &mut host),
+            Err(RuntimeError::InvalidValue)
+        );
+    }
+
+    #[test]
+    fn command_kind_host_result_flows_into_typed_u64_equality() {
+        let bytes = typed_u64_equality_package(3, 3);
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut host = empty_recording_host();
+        let imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+        let mut interpreter =
+            Interpreter::new(verified, &imports, 16, &mut values, &mut host_results);
+        let mut result = HostCallResult::empty(0);
+        result.reserved0 = u32::from(COMMAND_KIND_CREATE_NOTE);
+        interpreter.values[0] = Some(
+            interpreter
+                .command_host_result_value(0, COMMAND_FIELD_KIND, result)
+                .unwrap(),
+        );
+        interpreter.values[1] = Some(Value::U64(u64::from(COMMAND_KIND_CREATE_NOTE)));
+
+        interpreter
+            .dispatch_node(&package, 2, &mut host)
+            .expect("typed command kind comparison must execute");
+
+        assert_eq!(interpreter.values[2], Some(Value::Bool(true)));
+    }
+
+    #[test]
+    fn command_read_kind_equality_drives_matching_and_nonmatching_branches() {
+        let bytes = command_kind_equality_branch_package();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+
+        for (command_kind, expected_equality, expected_last_node) in [
+            (COMMAND_KIND_CREATE_NOTE, true, 7),
+            (COMMAND_KIND_REVISE_NOTE, false, 8),
+        ] {
+            let mut host = empty_recording_host();
+            host.command_kind = command_kind;
+            let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+            imports[0] = PackedCapability::from_parts(12, 1);
+            let mut values = [None; MAX_RUNTIME_VALUES];
+            let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+            let exit = Interpreter::new(verified, &imports, 16, &mut values, &mut host_results)
+                .execute(&mut host);
+
+            assert_eq!(exit.status, GRAPH_EXIT_OK);
+            assert_eq!(exit.executed_nodes, 8);
+            assert_eq!(exit.last_node, expected_last_node);
+            assert_eq!(host.create_count, 1);
+            assert_eq!(values[3], Some(Value::U64(u64::from(command_kind))));
+            assert_eq!(values[5], Some(Value::Bool(expected_equality)));
         }
     }
 
@@ -1155,6 +1550,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
         imports[0] = PackedCapability::from_parts(4, 1);
@@ -1206,6 +1602,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
         imports[0] = PackedCapability::from_parts(4, 1);
@@ -1244,6 +1641,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
         imports[0] = PackedCapability::from_parts(4, 1);
@@ -1290,6 +1688,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(4, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1322,6 +1721,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(4, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1355,6 +1755,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(11, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1389,6 +1790,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(11, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
@@ -1423,6 +1825,7 @@ mod tests {
             proposal_count: 0,
             last_candidate_task_id: 0,
             last_score: 0,
+            command_kind: COMMAND_KIND_CREATE_NOTE,
         };
         let imports = [PackedCapability::from_parts(12, 1); MAX_PYTH_GRAPH_IMPORTS];
         let mut values = [None; MAX_RUNTIME_VALUES];
