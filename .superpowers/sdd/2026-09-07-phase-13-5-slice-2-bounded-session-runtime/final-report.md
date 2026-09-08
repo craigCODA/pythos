@@ -6,17 +6,20 @@ Date: 2026-09-07
 
 - Branch: `agent/phase13-5-session-runtime`
 - Merge base: `c189b15438a3727f730d50bf9509999b44e05e44`
-- Accepted implementation/evidence-source HEAD:
+- Original bounded lifecycle evidence source:
   `6109425047de86cf60e4367313811fc284c43bad`
-- Evidence-source status before Task 9: clean
-- Task 9 scope: CI contract/workflow and evidence documentation only
+- Reviewed returnable-fault containment:
+  `6dc1b4cfa47391472a7540375bd80fe7d7f8dd0c`
+- Reviewed fault harness and milestone-only CI gate:
+  `2441c6d442378609fb43a52c4e537c4cac1df740`
+- Evidence-source status before this documentation follow-up: clean
+- Documentation follow-up scope: ADR 0091, handover, and this report only
 - Canonical report directory:
   `.superpowers/sdd/2026-09-07-phase-13-5-slice-2-bounded-session-runtime/`
 
-The later `docs: accept bounded session runtime lifecycle` commit contains
-this report, so the report cannot contain that commit's own SHA. The exact
-self-containing branch tip and post-commit clean status are recorded in the
-external `D:\PythOS-Workspace\CURRENT-STATE.md` checkpoint after the commit.
+The documentation commit containing this follow-up cannot contain its own
+SHA. At evidence collection, the reviewed code tip was `2441c6d` and the
+worktree was clean before these documentation-only edits.
 
 ADR 0089 remains the semantic authority. ADR 0091 records evidence and the
 bounded lifecycle boundary; it does not define new Viewing behavior or alter
@@ -56,10 +59,12 @@ python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.te
 python scripts/test-session-input-bridge-probe.py --self-test
 python scripts/test-session-runtime-probe.py --self-test
 python scripts/test-session-input-bridge-probe.py
+python scripts/test-session-runtime-probe.py --fault-test
 python scripts/test-session-runtime-probe.py
 ```
 
-Both oracle self-tests precede both live oracles. The Slice 2 live oracle is
+Both oracle self-tests precede all live oracles, and the fault proof precedes
+the unchanged standard two-boot Slice 2 proof. The Slice 2 live oracles are
 absent from `handoff_acceptance`, as are every other command in the protected
 milestone-only list above. An adversarial test injects each protected command
 into the handoff job independently and requires the validator to reject every
@@ -104,7 +109,7 @@ py -3 -m unittest tests.test_build_orchestration tests.test_ci_workflow tests.te
 py -3 scripts/test-session-input-bridge-probe.py --self-test
   SESSION_INPUT_BRIDGE_ORACLE_SELF_TEST_OK
 py -3 scripts/test-session-runtime-probe.py --self-test
-  Ran 26 tests
+  Ran 33 tests
   OK
   SESSION_RUNTIME_ORACLE_SELF_TEST_OK
 ```
@@ -117,7 +122,53 @@ The full Python discovery gate immediately before Task 9 passed 152/152 at the
 accepted implementation checkpoint. Initial Task 9 added one CI contract test;
 full discovery passed 153/153, and the focused 54-test gate above included it.
 The review fix added one adversarial CI mutation test; the exact CI suite then
-passed 6/6 and fresh full discovery passed 154/154.
+passed 6/6 and full discovery passed 154/154. The contained-fault review added
+one boundary test; fresh full discovery at `2441c6d` passed 155/155. The final
+focused gates also passed 33/33 harness self-tests, 14/14 Slice 2 boundary
+tests, and 6/6 CI workflow tests.
+
+## Fresh local returnable-fault evidence
+
+The reviewed fault-containment implementation is commit `6dc1b4c`; the
+reviewed harness and CI gate are commit `2441c6d`. The harness builds a
+synthetic `session-runtime.elf` through the shared image-builder helper with
+entry `0x0000000000400000` and bytes `UD2; HLT`, packages it under the existing
+runtime identity, and performs one no-input boot.
+
+Command and terminal result on local QEMU 11.0.50:
+
+```text
+py -3 scripts/test-session-runtime-probe.py --fault-test
+SESSION_RUNTIME_FAULT_PROBE_OK
+```
+
+Exact contained-fault evidence:
+
+```text
+PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED principal:50595352544D0001 vector:6 rip:0000000000400000 rsp:FFFFFFFF80084FF0 cr2:0000000000000000
+PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED
+QEMU_OUTCOME success
+SESSION_RUNTIME_FAULT_BOOT_PROCESS_TREE_REAPED
+```
+
+The RSP is the value recorded in this live run; it is not specified as a
+fixed address. The transcript contains no panic, normal `USER_MODE:RETURN`,
+`RING3_RETURN`, `PYTHOS:CORE:SESSION_RUNTIME:READY`, or COM2 session-runtime
+output. Storage was unchanged across the single boot:
+
+```text
+SESSION_RUNTIME_FAULT_IMAGE_INITIAL size=16777216 sha256=080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e
+SESSION_RUNTIME_FAULT_IMAGE_AFTER_BOOT size=16777216 sha256=080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e
+```
+
+Canonical disposable artifacts:
+
+```text
+target/session-runtime-probe/session-runtime-fault.elf
+target/session-runtime-probe/session-runtime-fault-com1.log
+target/session-runtime-probe/session-runtime-fault-com2.log
+target/session-runtime-probe/session-runtime-fault-store.img
+```
 
 ## Fresh local two-boot Slice 2 evidence
 
@@ -257,18 +308,26 @@ target/session-runtime-probe/session-runtime-boot-2-com1-esp.img
 
 ## Independent Windows/QEMU evidence
 
-JacesPC independently checked out implementation checkpoint `6109425` and ran
-the exact two-boot oracle with QEMU 11.1.0. Each boot reached the exact
-per-channel terminal markers with exactly one `QEMU_OUTCOME success`; both
-process trees were reaped; both COM2 transcripts began
-`PYTHOS:SESSION_RUNTIME:BOOT_STATE_0`; and the 16,777,216-byte storage image
-retained SHA-256
-`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`
-before, between, and after the boots. The harness emitted
-`SESSION_RUNTIME_PROBE_OK` once after the completed two-boot acceptance.
+JacesPC verified the exact `2441c6d` Git bundle with SHA-256
+`6A8604E5EE66CF66165E11F26F9CB7CC899CFF97C9500612C6404AF72B022FFC`.
+At that exact checkpoint, formatting, all 33 harness self-tests, and the paired
+boundary/CI suites at 20/20 passed.
 
-GitHub Actions is pinned to QEMU 11.1.1. Hosted acceptance of the later Task 9
-commit is not claimed by this report before that workflow actually passes.
+QEMU 11.1.0 independently reproduced the native-fault boot with the exact
+principal `50595352544D0001`, vector 6, RIP `0000000000400000`, CR2 zero, and
+recovery outcome. It produced exactly one `QEMU_OUTCOME success`, reaped the
+complete process tree, and retained the 16,777,216-byte storage image at
+SHA-256
+`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
+JacesPC then ran the unchanged two-boot oracle. Each boot reached the exact
+per-channel terminal markers with one success outcome; both process trees
+were reaped; both COM2 transcripts began
+`PYTHOS:SESSION_RUNTIME:BOOT_STATE_0`; the same storage hash remained unchanged
+before, between, and after the boots; and the harness emitted
+`SESSION_RUNTIME_PROBE_OK` once.
+
+GitHub Actions is pinned to QEMU 11.1.1. Hosted acceptance of the reviewed
+fault commits remains unproven until that workflow actually passes them.
 
 ## Regression gates
 
@@ -303,6 +362,12 @@ py -3 scripts/test-persistent-storage.py
 - Session state begins at zero again on boot 2; no reboot durability is claimed.
 - Shared lifecycle policy reinvokes after a clean exit and requests recovery
   after failure or an unknown exit.
+- A CPL3 fault in the active returnable path returns a typed fault context
+  after recording principal/vector/RIP/RSP/CR2, disarming the normal expected
+  breakpoint, clearing the active caller, and restoring the kernel root.
+- The session fault path accepts only the exact session principal after caller
+  clearing and root restoration, then requests recovery without normal
+  readiness; all transient returnable state is cleared on exit.
 - PythCore restores its root, clears the active caller, and validates the
   terminal result before acceptance.
 - The bounded result page and one expected ring-3 `int3` return are

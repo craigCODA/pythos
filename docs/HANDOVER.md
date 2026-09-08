@@ -17,10 +17,11 @@ proof reaches `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 ## Phase 13.5 Slice 2 Bounded Session Runtime (2026-09-07)
 
-The implementation evidence source is
-`6109425047de86cf60e4367313811fc284c43bad`. The exact later documentation
-commit is recorded in `D:\PythOS-Workspace\CURRENT-STATE.md` because a commit
-cannot contain its own SHA.
+The original bounded lifecycle evidence source is
+`6109425047de86cf60e4367313811fc284c43bad`. Reviewed returnable-fault
+containment is commit `6dc1b4cfa47391472a7540375bd80fe7d7f8dd0c`; the
+reviewed fault harness and milestone-only CI gate are commit
+`2441c6d442378609fb43a52c4e537c4cac1df740`.
 
 The opt-in `session-runtime-probe` launches one separately named retained
 ring-3 runtime under one stable `ServiceId`, binds ADR 0090 input once, and
@@ -38,6 +39,13 @@ The bounded result page and one expected ring-3 `int3` return are
 acceptance-only. They do not establish production waiting, wakeup, or return
 semantics.
 
+Returnable user entry now uses a dedicated transient fault context. A CPL3
+fault records its principal, vector, RIP, RSP, and CR2, clears the caller and
+normal expected-breakpoint state, restores the kernel root, and returns a
+typed contained-fault result. The session probe validates the exact principal
+after restoration and requests recovery without reaching normal readiness;
+all transient returnable state is cleared on exit.
+
 Fresh acceptance passed locally on QEMU 11.0.50 and independently on JacesPC
 QEMU 11.1.0. Each machine completed two fresh boots with exactly one
 `QEMU_OUTCOME success` per boot, `SESSION_RUNTIME_PROBE_OK`, both runner trees
@@ -50,9 +58,25 @@ Local COM1 logs were each 1,573 bytes at
 local COM2 logs were each 1,102 bytes at
 `0D185C2E936796449852BE48CB5B0EC5C104F0C6FD88CF31201EC5ACE507C66A`.
 
+The local QEMU 11.0.50 fault probe executed a synthetic `UD2` runtime and
+recorded vector 6, principal `50595352544D0001`, RIP
+`0000000000400000`, RSP `FFFFFFFF80084FF0`, and CR2 zero, followed by
+`PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED`. That RSP is the recorded
+live value, not a fixed-address contract. The fault boot produced no normal
+return, `PYTHOS:CORE:SESSION_RUNTIME:READY`, or COM2 session-runtime evidence,
+emitted exactly one `QEMU_OUTCOME success`, reaped its process tree, retained
+the same 16 MiB storage size/hash, and ended
+`SESSION_RUNTIME_FAULT_PROBE_OK`.
+
+JacesPC verified the exact `2441c6d` Git bundle at SHA-256
+`6A8604E5EE66CF66165E11F26F9CB7CC899CFF97C9500612C6404AF72B022FFC`.
+On QEMU 11.1.0 it independently reproduced the fault containment/recovery
+proof and the unchanged standard two-boot proof, including success outcomes,
+complete process-tree reaping, and the same unchanged storage size/hash.
+
 Fresh gates passed: `cargo fmt --check`, `cargo test --workspace`, both strict
 session-runtime Clippy profiles, 54 focused Python tests, full Python discovery
-at 153/153, both oracle self-tests, the live Slice 1 bridge, normal fast boot,
+at 155/155, both oracle self-tests, the live Slice 1 bridge, normal fast boot,
 and persistent storage.
 GitHub CI is pinned to QEMU 11.1.1; that hosted-version claim remains pending
 until the workflow runs this branch tip.
@@ -65,6 +89,10 @@ target/session-runtime-probe/session-runtime-boot-1-com2.log
 target/session-runtime-probe/session-runtime-boot-2-com1.log
 target/session-runtime-probe/session-runtime-boot-2-com2.log
 target/session-runtime-probe/session-runtime-store.img
+target/session-runtime-probe/session-runtime-fault.elf
+target/session-runtime-probe/session-runtime-fault-com1.log
+target/session-runtime-probe/session-runtime-fault-com2.log
+target/session-runtime-probe/session-runtime-fault-store.img
 ```
 
 Next, and only after a separate invocation, Slice 3 may bind ADR 0089's

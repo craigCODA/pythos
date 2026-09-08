@@ -59,13 +59,22 @@ empty-poll limit is not a production wait/wakeup contract, scheduler
 integration, or timing guarantee. PythCore restores its root, clears the
 active caller, and validates the terminal result before accepting the proof.
 
+Returnable user entry also has a dedicated, transient fault context rather
+than reusing the normal expected-breakpoint state. A CPL3 fault while that
+context is active records the principal, vector, RIP, RSP, and CR2, disarms
+the expected breakpoint, clears the active caller, restores the saved kernel
+root, and returns a typed contained-fault result to the session probe. The
+probe accepts that result only after root restoration, caller clearing, and
+an exact principal match, then requests recovery instead of continuing the
+normal readiness path. All returnable transient state is cleared on exit.
+
 ## Evidence
 
-The implementation evidence source is clean commit
-`6109425047de86cf60e4367313811fc284c43bad`. Documentation and CI integration
-are committed later; their exact self-containing commit cannot be written
-inside that same commit and is recorded in the external `CURRENT-STATE.md`
-checkpoint.
+The original bounded lifecycle implementation evidence source is clean commit
+`6109425047de86cf60e4367313811fc284c43bad`. The reviewed returnable-fault
+containment is commit `6dc1b4cfa47391472a7540375bd80fe7d7f8dd0c`; its
+reviewed fault harness and milestone-only CI gate are commit
+`2441c6d442378609fb43a52c4e537c4cac1df740`.
 
 The complete fast gate passed on Windows:
 
@@ -83,7 +92,28 @@ py -3 scripts/test-session-runtime-probe.py --self-test
 The initial focused Python gate passed 54 tests. The Slice 1 and Slice 2 oracle
 self-tests passed. The strict Clippy invocations completed without warnings.
 After review added the adversarial milestone-only CI mutation test, the exact
-CI suite passed 6 tests and fresh full Python discovery passed 154 tests.
+CI suite passed 6 tests. After the contained-fault review commits, the Slice 2
+oracle self-test passed 33 tests, the boundary suite passed 14 tests, the CI
+suite again passed 6 tests, and fresh full Python discovery passed 155 tests.
+
+`py -3 scripts/test-session-runtime-probe.py --fault-test` passed one fresh
+boot on local QEMU 11.0.50. The synthetic `session-runtime.elf` entered at
+`0x0000000000400000` and executed `UD2`. COM1 recorded exactly:
+
+```text
+PYTHOS:CORE:SESSION_RUNTIME:FAULT_CONTAINED principal:50595352544D0001 vector:6 rip:0000000000400000 rsp:FFFFFFFF80084FF0 cr2:0000000000000000
+PYTHOS:CORE:SESSION_RUNTIME:RECOVERY_REQUESTED
+```
+
+The RSP above is the value recorded by this live boot, not a fixed-address
+contract. The fault path emitted no normal `USER_MODE:RETURN`,
+`RING3_RETURN`, or `PYTHOS:CORE:SESSION_RUNTIME:READY` marker and no COM2
+session-runtime output. It
+produced exactly one `QEMU_OUTCOME success`, reaped the complete runner tree,
+and ended with `SESSION_RUNTIME_FAULT_PROBE_OK`. Its disposable storage image
+remained 16,777,216 bytes with SHA-256
+`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`
+before and after the boot.
 
 `py -3 scripts/test-session-runtime-probe.py` then passed two fresh boots on
 local QEMU 11.0.50. Each boot emitted exactly one `QEMU_OUTCOME success`, each
@@ -104,11 +134,16 @@ byte-identical at 1,573 bytes with SHA-256
 The two local COM2 logs were byte-identical at 1,102 bytes with SHA-256
 `0D185C2E936796449852BE48CB5B0EC5C104F0C6FD88CF31201EC5ACE507C66A`.
 
-An independent Windows runner on JacesPC repeated the two-boot proof with
-QEMU 11.1.0: each boot reached the exact per-channel terminal markers and one
-exact `QEMU_OUTCOME success`, both process trees were reaped, both COM2
-transcripts began at boot state zero, and the same 16 MiB storage hash was
-unchanged at all three checkpoints. The harness emitted
+An independent Windows runner on JacesPC verified the exact `2441c6d` Git
+bundle at SHA-256
+`6A8604E5EE66CF66165E11F26F9CB7CC899CFF97C9500612C6404AF72B022FFC`
+and reproduced the proof with QEMU 11.1.0. The native-fault boot reached the
+same exact principal, vector 6, RIP, CR2, and recovery outcome, produced one
+success outcome, reaped its process tree, and retained the same storage size
+and hash. The unchanged two-boot oracle then reached the exact per-channel
+terminal markers with one `QEMU_OUTCOME success` per boot; both process trees
+were reaped, both COM2 transcripts began at boot state zero, and the storage
+hash was unchanged at all three checkpoints. The harness emitted
 `SESSION_RUNTIME_PROBE_OK` once after the completed two-boot acceptance.
 
 The predecessor/regression gate also passed:
