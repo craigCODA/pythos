@@ -129,6 +129,7 @@ use pythos_shared::session_input_abi::{
     SESSION_INPUT_RESOURCE_ID, SESSION_INPUT_RESULT_EMPTY, SESSION_INPUT_RESULT_EVENT,
     SYSCALL_SESSION_INPUT_TRY_READ, SessionInputEventV1,
 };
+#[cfg(any(test, feature = "session-runtime-probe"))]
 use pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::task_abi::{
@@ -739,12 +740,14 @@ pub fn grant_system_control_capability(
     Ok(pack_syscall_capability(handle))
 }
 
+#[cfg(any(test, feature = "session-runtime-probe"))]
 pub fn grant_session_command_capability(
     process: ActiveUserProcess,
 ) -> Result<PackedCapability, SyscallError> {
     with_syscall_capabilities(|table| grant_session_command_capability_with_table(table, process))
 }
 
+#[cfg(any(test, feature = "session-runtime-probe"))]
 fn grant_session_command_capability_with_table(
     table: &mut CapabilityTable,
     process: ActiveUserProcess,
