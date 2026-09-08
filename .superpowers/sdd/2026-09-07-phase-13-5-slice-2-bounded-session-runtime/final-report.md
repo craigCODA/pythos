@@ -114,9 +114,9 @@ py -3 scripts/test-session-runtime-probe.py --self-test
   SESSION_RUNTIME_ORACLE_SELF_TEST_OK
 ```
 
-The workspace run included 768 PythCore tests, 128 shared-library tests, and
-the bounded session-runtime tests. Both strict Clippy profiles completed
-without warnings.
+The current workspace run included 773 PythCore tests, 128 shared-library
+tests, and the bounded session-runtime tests. Both strict Clippy profiles
+completed without warnings.
 
 The full Python discovery gate immediately before Task 9 passed 152/152 at the
 accepted implementation checkpoint. Initial Task 9 added one CI contract test;
@@ -213,10 +213,10 @@ COM1 artifacts:
 ```text
 target/session-runtime-probe/session-runtime-boot-1-com1.log
   size 1573
-  SHA-256 4863AFE1A482286A54CACA7C6072DBFE5668E7D11758B5A0E11FD9DFE464F4F1
+  SHA-256 BD1566B684490F12DEAB50960EA90C6364FB323053F526F0D902333DA77BDFEC
 target/session-runtime-probe/session-runtime-boot-2-com1.log
   size 1573
-  SHA-256 4863AFE1A482286A54CACA7C6072DBFE5668E7D11758B5A0E11FD9DFE464F4F1
+  SHA-256 BD1566B684490F12DEAB50960EA90C6364FB323053F526F0D902333DA77BDFEC
 ```
 
 Each COM1 log contains the exact bounded lifecycle acceptance markers through:
@@ -300,10 +300,10 @@ target/session-runtime-probe/session-runtime-store.img
   SHA-256 080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E
 target/session-runtime-probe/session-runtime-boot-1-com1-esp.img
   size 16777216
-  SHA-256 D783E97441A3F7DF48AC3DC17435DA74EC8422C970ABCC0EA16F3800FF87D8E3
+  SHA-256 3C19CBC6236350D638031434361F6861AC80879DCCE17B9A552B72FD00C2B083
 target/session-runtime-probe/session-runtime-boot-2-com1-esp.img
   size 16777216
-  SHA-256 D783E97441A3F7DF48AC3DC17435DA74EC8422C970ABCC0EA16F3800FF87D8E3
+  SHA-256 3C19CBC6236350D638031434361F6861AC80879DCCE17B9A552B72FD00C2B083
 ```
 
 ## Independent Windows/QEMU evidence
