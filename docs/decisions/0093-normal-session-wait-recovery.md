@@ -111,6 +111,14 @@ IDs, write objects, create tasks, or claim full shell-command parity. Unknown
 or unsupported commands are explicitly rejected without graph or storage
 effects. The existing recovery shell retains its current command surface.
 
+The old Session Manager source acknowledges only CREATE_NOTE. Normal operation
+therefore uses a separate `programs/normal-session-manager/main.pyth` source
+that handles SYSTEM_STATUS through those same frozen operations, under the
+same graph principal. Its isolated artifact is packaged as the normal bundle's
+`session-manager.tig`; old probe/compatibility sources and artifacts stay
+unchanged. Host tests compile the real source using a dev-only dependency on
+the existing local compiler; no third-party or production dependency is added.
+
 Provide an explicit ring-3 `recover` request so the owner can enter that existing
 shell without injecting a fault. It ends this session through the same typed
 cleanup path as a failure; it is not a magic raw key or a kernel text parser.
