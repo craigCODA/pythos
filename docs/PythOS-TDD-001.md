@@ -1,6 +1,9 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
-Status: Active for milestone 1.
+Status: Accepted boot-core design and cumulative acceptance reference. The
+current authorized implementation is Phase 13.5 Slices 3 and 4, stopping before Slice 5; see
+[ROADMAP.md](ROADMAP.md#current-phase-135-boundary) and
+[HANDOVER.md](HANDOVER.md) for current scope and merged acceptance evidence.
 
 ## Required EFI Partition Structure
 
@@ -146,7 +149,14 @@ Verified vertical slices:
 
 The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to make boot progress visible early, then moved after `PYTHOS:CORE:IDT_READY` when those slices landed so the milestone 1 marker order is preserved.
 
-Phase 7 `persistent-object-storage`, Phase 8 `real-hardware-isolation`, Phase 9 `general-purpose-process-model`, Phase 10 `general-purpose-storage`, Phase 12 `general-purpose-object-locator-namespace`, and Phase 13 `applications-and-packaging` are complete through `PYTHOS:CORE:PHASE_13_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that evidence is target-specific and does not claim generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`, `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`, ADR 0071 records the finite loader read-bound extension, and `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package lifecycle and schema extensibility are recorded through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`. Halt at the Phase 13 -> Phase 13.5 boundary. Do not begin persistent Pyth sessions, Kai/Waking, networking, AI, SMP, updates, hardware expansion, or later PythTIG work before explicit re-invocation.
+Phase 7 `persistent-object-storage`, Phase 8 `real-hardware-isolation`, Phase 9 `general-purpose-process-model`, Phase 10 `general-purpose-storage`, Phase 12 `general-purpose-object-locator-namespace`, and Phase 13 `applications-and-packaging` are complete through `PYTHOS:CORE:PHASE_13_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that evidence is target-specific and does not claim generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`, `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`, ADR 0071 records the finite loader read-bound extension, and `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package lifecycle and schema extensibility are recorded through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
+
+Phase 13.5 Slices 1 and 2 are merged and accepted in opt-in QEMU profiles
+through ADRs 0090 and 0091. Slices 3 and 4 are now explicitly invoked under
+ADR 0092; the linked implementation map records verification. Halt before
+Slice 5: default-boot cutover, production wait/wakeup, durable
+session state, USB/xHCI integration, physical acceptance, and later phases
+remain outside these proofs.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
@@ -1316,9 +1326,11 @@ launcher markers. Historical Pointer/Window marker names remain unchanged.
 ADR 0089 is accepted in QEMU; physical validation remains pending. The exact
 required cross-target Clippy command is clean after the scoped lint-cleanup
 follow-up, and the full USB/Viewing, milestone-1, normal-fast-boot, and
-persistence matrix passes. The repository-wide Python command separately
-reproduces the known unrelated Phase 13 baseline of 116 tests with 2 failures
-and 1 error, so the branch is not fully green or merge-ready. There is no
+persistence matrix passed at that checkpoint. Its repository-wide Python
+command separately reproduced the then-known unrelated Phase 13 baseline of
+116 tests with 2 failures and 1 error. That historical candidate result is not
+the current `main` status: the later Slice 2 merge passed hosted QEMU acceptance
+and recorded Python discovery 155/155, as linked in the handover. There is no
 default normal-boot cutover, durable cursor state, or physical Lenovo acceptance
 claim.
 

@@ -22,6 +22,12 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-session-runtime-probe.py --self-test",
         "python scripts/test-session-runtime-probe.py --fault-test",
         "python scripts/test-session-runtime-probe.py",
+        "cargo test -p pythos-user-session-runtime --features session-viewing",
+        "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-viewing-probe -- -D warnings",
+        "python -m py_compile scripts/test-session-viewing-probe.py",
+        "python scripts/test-session-viewing-probe.py --self-test",
+        "python scripts/test-session-viewing-probe.py",
     )
 
     @staticmethod
@@ -213,8 +219,14 @@ class CiWorkflowTest(unittest.TestCase):
         last_self_test = max(
             milestone_commands.index("python scripts/test-session-input-bridge-probe.py --self-test"),
             milestone_commands.index("python scripts/test-session-runtime-probe.py --self-test"),
+            milestone_commands.index("python scripts/test-session-viewing-probe.py --self-test"),
         )
         self.assertLess(last_self_test, first_live, "all oracle self-tests must precede live QEMU")
+        self.assertLess(
+            milestone_commands.index("python scripts/test-session-runtime-probe.py"),
+            milestone_commands.index("python scripts/test-session-viewing-probe.py"),
+            "accepted runtime predecessor must pass before the Viewing profile",
+        )
 
         self._assert_handoff_excludes_session_runtime_gates(workflow)
         self.assertEqual(workflow.count("  qemu_acceptance:\n"), 1)

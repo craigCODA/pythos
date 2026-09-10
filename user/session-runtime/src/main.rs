@@ -28,12 +28,13 @@ use pythos_shared::{
 };
 #[cfg(not(test))]
 use pythos_user_pyth_runtime::{interpreter::Interpreter, value::Value};
+#[cfg(all(not(test), not(feature = "session-viewing")))]
+use pythos_user_session_runtime::run_session_runtime_orchestration;
 #[cfg(not(test))]
 use pythos_user_session_runtime::{
     InputSequenceValidator, SessionGraphLifecycleAction, SessionRuntimeEffectError,
     SessionRuntimeEffects, SessionRuntimeState, SessionRuntimeTerminalResult,
-    run_session_runtime_orchestration, session_command_host::SessionCommandHost,
-    validate_session_runtime_package,
+    session_command_host::SessionCommandHost, validate_session_runtime_package,
 };
 
 #[cfg(not(test))]
@@ -120,6 +121,8 @@ struct RuntimeEffects {
     evidence: ExecutionEvidence,
     input_validator: InputSequenceValidator,
     verified: Option<VerifiedGraph<'static>>,
+    #[cfg(feature = "session-viewing")]
+    presentation: PackedCapability,
 }
 
 #[cfg(not(test))]
@@ -131,6 +134,8 @@ impl RuntimeEffects {
             evidence: ExecutionEvidence::new(0),
             input_validator: InputSequenceValidator::new(),
             verified: None,
+            #[cfg(feature = "session-viewing")]
+            presentation: PackedCapability::from_raw(0),
         }
     }
 }
@@ -146,7 +151,13 @@ impl RuntimeEffects {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _start(bootstrap_ptr: *const SessionRuntimeBootstrapV1) -> ! {
     let mut effects = RuntimeEffects::new(bootstrap_ptr);
+    #[cfg(not(feature = "session-viewing"))]
     run_session_runtime_orchestration(bootstrap_ptr as u64, &mut effects);
+    #[cfg(feature = "session-viewing")]
+    pythos_user_session_runtime::viewing_orchestration::run_viewing_orchestration(
+        bootstrap_ptr as u64,
+        &mut effects,
+    );
     loop {
         core::hint::spin_loop();
     }
@@ -262,7 +273,12 @@ impl SessionRuntimeEffects for RuntimeEffects {
             return Err(SessionRuntimeEffectError::Reset);
         }
         self.evidence.retained_state_before_second = self.evidence.state.input_event_count;
-        if self.evidence.retained_state_before_second != 1 {
+        let expected_retained = if cfg!(feature = "session-viewing") {
+            3
+        } else {
+            1
+        };
+        if self.evidence.retained_state_before_second != expected_retained {
             return Err(SessionRuntimeEffectError::Reset);
         }
         Ok(())
@@ -309,6 +325,114 @@ impl SessionRuntimeEffects for RuntimeEffects {
 
     fn trap(&mut self) {
         trap_and_spin()
+    }
+}
+
+#[cfg(all(not(test), feature = "session-viewing"))]
+impl pythos_user_session_runtime::viewing_orchestration::ViewingRuntimeEffects for RuntimeEffects {
+    fn prepare_viewing(
+        &mut self,
+        bootstrap: &SessionRuntimeBootstrapV1,
+    ) -> Result<pythos_shared::viewing::ViewingExtent, SessionRuntimeEffectError> {
+        use pythos_shared::session_viewing_abi::{
+            SESSION_VIEWING_BOOTSTRAP_OFFSET, SESSION_VIEWING_HEIGHT, SESSION_VIEWING_WIDTH,
+            SessionViewingBootstrapV1, validate_session_viewing_bootstrap,
+        };
+        let address =
+            pythos_user_session_runtime::viewing_orchestration::viewing_extension_address(
+                self.bootstrap_ptr as u64,
+                SESSION_VIEWING_BOOTSTRAP_OFFSET as u64,
+                core::mem::size_of::<SessionViewingBootstrapV1>() as u64,
+            )?;
+        // SAFETY:
+        // 1. Invariant: the fixed bootstrap page holds a separately versioned integer-only extension.
+        // 2. Established by: outer admission and `viewing_extension_address` validated its exact range.
+        // 3. Lifetime: PythCore retains the complete read-only page until this runtime's terminal trap.
+        // 4. Pointer ownership: PythCore owns the source; this process copies metadata by value only.
+        // 5. Alignment: the validated fixed page plus offset 2048 satisfies the record's 8-byte alignment.
+        // 6. Mapped length: the checked 64-byte record lies wholly inside the mapped 4096-byte page.
+        // 7. Concurrency: the page has no writable user alias or concurrent kernel writer.
+        // 8. Violation: absent mapping faults; malformed bytes fail full validation before authority use.
+        let extension = unsafe { (address as *const SessionViewingBootstrapV1).read() };
+        validate_session_viewing_bootstrap(
+            &extension,
+            bootstrap.input_capability,
+            bootstrap.console_capability,
+            bootstrap.graph.imports[0].capability,
+        )
+        .map_err(|_| SessionRuntimeEffectError::Package)?;
+        self.presentation = extension.presentation_capability;
+        pythos_shared::viewing::ViewingExtent::new(SESSION_VIEWING_WIDTH, SESSION_VIEWING_HEIGHT)
+            .map_err(|_| SessionRuntimeEffectError::Package)
+    }
+
+    fn next_viewing_event(&mut self) -> Result<SessionInputEventV1, SessionRuntimeEffectError> {
+        for _ in 0..SESSION_RUNTIME_EMPTY_POLL_LIMIT {
+            match try_read_input(self.storage.bootstrap.input_capability) {
+                SESSION_INPUT_RESULT_EVENT => {
+                    self.evidence.state.record_input_event();
+                    return Ok(read_input());
+                }
+                SESSION_INPUT_RESULT_EMPTY => core::hint::spin_loop(),
+                _ => return Err(SessionRuntimeEffectError::Poll),
+            }
+        }
+        Err(SessionRuntimeEffectError::Poll)
+    }
+
+    fn present_viewing(
+        &mut self,
+        revision: u64,
+        snapshot: pythos_shared::viewing::ViewingSnapshot,
+    ) -> Result<(), SessionRuntimeEffectError> {
+        if syscalls::present(self.presentation, revision, snapshot)
+            != pythos_shared::object_shell_abi::SYSCALL_OK
+        {
+            return Err(SessionRuntimeEffectError::Result);
+        }
+        Ok(())
+    }
+
+    fn write_viewing_result(
+        &mut self,
+        result: &pythos_shared::session_viewing_result::SessionViewingResultV1,
+    ) -> Result<(), SessionRuntimeEffectError> {
+        use pythos_shared::session_viewing_result::{
+            SESSION_VIEWING_RESULT_COMPLETE, SESSION_VIEWING_RESULT_OFFSET,
+        };
+        let mut result = *result;
+        if result.terminal_status == SESSION_VIEWING_RESULT_COMPLETE
+            && (self.evidence.state.input_event_count != result.input_event_count
+                || self.evidence.state.graph_invocation_count != result.invocation_count
+                || self.evidence.retained_state_before_second != 3
+                || self.evidence.retained_state_final != 6
+                || self.evidence.state.session_service_id != result.session_service_id
+                || self.evidence.state.recovery_requested)
+        {
+            return Err(SessionRuntimeEffectError::Result);
+        }
+        result.command_results = self.evidence.command_results;
+        result.graph_exits = self.evidence.graph_exits;
+        let address =
+            pythos_user_session_runtime::viewing_orchestration::viewing_extension_address(
+                self.storage.bootstrap.result_ptr,
+                SESSION_VIEWING_RESULT_OFFSET,
+                core::mem::size_of_val(&result) as u64,
+            )?;
+        // SAFETY:
+        // 1. Invariant: one initialized Viewing result is written into the separate writable extension.
+        // 2. Established by: recovery-boundary validation and `viewing_extension_address` range checks.
+        // 3. Lifetime: PythCore retains this writable result page until the runtime's terminal trap.
+        // 4. Pointer ownership: the sole runtime thread owns the write; PythCore reads only after return.
+        // 5. Alignment: the fixed page and offset 2048 satisfy SessionViewingResultV1's 8-byte alignment.
+        // 6. Mapped length: the checked 432-byte record fits wholly inside the 4096-byte retained page.
+        // 7. Concurrency: no second runtime thread or simultaneous kernel reader can race this write.
+        // 8. Violation: a broken mapping faults the process; corrupt evidence cannot establish readiness.
+        unsafe {
+            (address as *mut pythos_shared::session_viewing_result::SessionViewingResultV1)
+                .write(result);
+        }
+        Ok(())
     }
 }
 

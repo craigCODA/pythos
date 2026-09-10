@@ -16,6 +16,7 @@ RUNTIME_LINKER = ROOT / "user" / "session-runtime" / "linker.ld"
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-dir", type=Path)
+    parser.add_argument("--features", choices=["session-viewing"])
     args = parser.parse_args()
 
     env = os.environ.copy()
@@ -37,6 +38,10 @@ def main() -> int:
         "--target",
         "x86_64-unknown-none",
     ]
+    if args.features:
+        command.extend(["--features", args.features])
+        if args.target_dir is None:
+            args.target_dir = ROOT / "target" / "session-viewing-probe"
     if args.target_dir is not None:
         command.extend(["--target-dir", args.target_dir])
     return subprocess.call(command, cwd=ROOT, env=env)

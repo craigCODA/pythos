@@ -8,11 +8,14 @@
 use crate::font;
 #[cfg(any(test, feature = "physical-input-event-diagnostic"))]
 use crate::input_drivers::KeyCode;
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
+use crate::viewing::{FocusMarkPosition, ViewingSnapshot};
 #[cfg(any(test, feature = "viewing-input-probe"))]
-use crate::{
-    viewing::{FocusMarkPosition, ViewingSnapshot},
-    viewing_input_probe::ViewingInputPresentationStatus,
-};
+use crate::viewing_input_probe::ViewingInputPresentationStatus;
 use pythos_shared::boot_protocol::{
     PIXEL_FORMAT_BGR_RESERVED_8BIT, PIXEL_FORMAT_BITMASK, PIXEL_FORMAT_RGB_RESERVED_8BIT,
     PythFramebufferInfo,
@@ -81,23 +84,43 @@ const PROBE_PANEL_BODY: Rgb = Rgb {
     green: 245,
     blue: 235,
 };
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 const FOCUS_MARK_COLOR: Rgb = Rgb {
     red: 255,
     green: 96,
     blue: 208,
 };
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 const VIEWING_INPUT_BACKGROUND: Rgb = Rgb {
     red: 0,
     green: 0,
     blue: 0,
 };
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 const FOCUS_MARK_HALF_SPAN: u64 = 12;
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 const FOCUS_MARK_ARM_LENGTH: u64 = 6;
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 const FOCUS_MARK_THICKNESS: u64 = 2;
 // Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
 // is a dark vertical gradient through these stops so the wake text and sigil
@@ -685,6 +708,59 @@ pub fn render_cinematic_frame(framebuffer: &PythFramebufferInfo, p: f32) -> Resu
     Ok(())
 }
 
+/// Preflight the whole fixed viewport before any write. The surface retains
+/// the real framebuffer pitch while clipping drawing to 640 x 480.
+#[cfg(any(test, feature = "session-viewing-probe"))]
+fn session_viewport(info: &PythFramebufferInfo) -> Result<Surface, ()> {
+    use pythos_shared::session_viewing_abi::{SESSION_VIEWING_HEIGHT, SESSION_VIEWING_WIDTH};
+    let mut surface = Surface::new(info)?;
+    if info.width < SESSION_VIEWING_WIDTH
+        || info.height < SESSION_VIEWING_HEIGHT
+        || !info.mapped_virtual_base.is_multiple_of(4)
+        || info.byte_length > isize::MAX as u64
+        || info
+            .mapped_virtual_base
+            .checked_add(info.byte_length)
+            .is_none()
+    {
+        return Err(());
+    }
+    surface.width = u64::from(SESSION_VIEWING_WIDTH);
+    surface.height = u64::from(SESSION_VIEWING_HEIGHT);
+    Ok(surface)
+}
+
+/// # Safety
+/// Metadata must describe exclusively owned, aligned writable mapped pixels
+/// throughout this call. No IRQ or other presenter may modify this viewport.
+#[cfg(any(test, feature = "session-viewing-probe"))]
+pub(crate) unsafe fn initialize_session_viewport(info: &PythFramebufferInfo) -> Result<(), ()> {
+    let surface = session_viewport(info)?;
+    surface.clear(VIEWING_INPUT_BACKGROUND);
+    Ok(())
+}
+
+/// # Safety
+/// The same mapping and exclusive ownership requirements as initialization
+/// apply. Both snapshots must already be kernel-validated for this viewport.
+/// All fallible work precedes writes; each recurring call writes at most
+/// 192 pixels (8 rectangles * 12 pixels * erase/draw), independent of GOP size.
+#[cfg(any(test, feature = "session-viewing-probe"))]
+pub(crate) unsafe fn render_session_snapshot(
+    info: &PythFramebufferInfo,
+    previous: Option<ViewingSnapshot>,
+    next: ViewingSnapshot,
+) -> Result<(), ()> {
+    let surface = session_viewport(info)?;
+    if let Some(position) = previous.and_then(|snapshot| snapshot.focus_mark) {
+        surface.paint_focus_mark(position, VIEWING_INPUT_BACKGROUND);
+    }
+    if let Some(position) = next.focus_mark {
+        surface.draw_focus_mark(position);
+    }
+    Ok(())
+}
+
 struct Surface {
     base: *mut u32,
     width: u64,
@@ -1019,8 +1095,21 @@ impl Surface {
         }
     }
 
-    #[cfg(any(test, feature = "viewing-input-probe"))]
+    #[cfg(any(
+        test,
+        feature = "viewing-input-probe",
+        feature = "session-viewing-probe"
+    ))]
     fn draw_focus_mark(&self, position: FocusMarkPosition) {
+        self.paint_focus_mark(position, FOCUS_MARK_COLOR);
+    }
+
+    #[cfg(any(
+        test,
+        feature = "viewing-input-probe",
+        feature = "session-viewing-probe"
+    ))]
+    fn paint_focus_mark(&self, position: FocusMarkPosition, color: Rgb) {
         let x = i64::from(position.x);
         let y = i64::from(position.y);
         let half_span = FOCUS_MARK_HALF_SPAN as i64;
@@ -1035,18 +1124,34 @@ impl Surface {
         let right_edge_start = right + 1 - thickness;
         let bottom_edge_start = bottom + 1 - thickness;
 
-        self.fill_focus_rect(left, top, arm_length, thickness);
-        self.fill_focus_rect(left, top, thickness, arm_length);
-        self.fill_focus_rect(right_arm_start, top, arm_length, thickness);
-        self.fill_focus_rect(right_edge_start, top, thickness, arm_length);
-        self.fill_focus_rect(left, bottom_edge_start, arm_length, thickness);
-        self.fill_focus_rect(left, bottom_arm_start, thickness, arm_length);
-        self.fill_focus_rect(right_arm_start, bottom_edge_start, arm_length, thickness);
-        self.fill_focus_rect(right_edge_start, bottom_arm_start, thickness, arm_length);
+        self.fill_focus_rect(left, top, arm_length, thickness, color);
+        self.fill_focus_rect(left, top, thickness, arm_length, color);
+        self.fill_focus_rect(right_arm_start, top, arm_length, thickness, color);
+        self.fill_focus_rect(right_edge_start, top, thickness, arm_length, color);
+        self.fill_focus_rect(left, bottom_edge_start, arm_length, thickness, color);
+        self.fill_focus_rect(left, bottom_arm_start, thickness, arm_length, color);
+        self.fill_focus_rect(
+            right_arm_start,
+            bottom_edge_start,
+            arm_length,
+            thickness,
+            color,
+        );
+        self.fill_focus_rect(
+            right_edge_start,
+            bottom_arm_start,
+            thickness,
+            arm_length,
+            color,
+        );
     }
 
-    #[cfg(any(test, feature = "viewing-input-probe"))]
-    fn fill_focus_rect(&self, x: i64, y: i64, width: i64, height: i64) {
+    #[cfg(any(
+        test,
+        feature = "viewing-input-probe",
+        feature = "session-viewing-probe"
+    ))]
+    fn fill_focus_rect(&self, x: i64, y: i64, width: i64, height: i64, color: Rgb) {
         let right = x.saturating_add(width).min(self.width as i64);
         let bottom = y.saturating_add(height).min(self.height as i64);
         let left = x.max(0);
@@ -1060,7 +1165,7 @@ impl Surface {
             top as u64,
             (right - left) as u64,
             (bottom - top) as u64,
-            FOCUS_MARK_COLOR,
+            color,
         );
     }
 

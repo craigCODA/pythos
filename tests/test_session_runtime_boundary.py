@@ -8,6 +8,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -47,6 +48,22 @@ FORBIDDEN_DECLARATIONS = {
     "UsbDevice",
     "XhciController",
 }
+
+# ADR 0092 authorizes retained semantic policy only in these concrete owners.
+# Hardware and rendering implementation dependencies remain forbidden everywhere.
+VIEWING_OWNERS = {
+    "user/session-runtime/src/session_viewing.rs",
+    "user/session-runtime/src/viewing_orchestration.rs",
+    "user/session-runtime/src/main.rs",
+}
+VIEWING_DEPENDENCIES = {"viewing", "session_controls"}
+
+
+def forbidden_dependencies(root: Path, path: Path, statement: str) -> set[str]:
+    forbidden = dependency_components(statement) & FORBIDDEN_MODULES
+    if path.relative_to(root).as_posix() in VIEWING_OWNERS:
+        forbidden -= VIEWING_DEPENDENCIES
+    return forbidden
 
 
 def load_session_runtime_harness():
@@ -105,8 +122,8 @@ def assert_cargo_dependency_boundary(cargo: dict) -> None:
         raise AssertionError(
             f"session-runtime dependency boundary mismatch: {discovered!r}"
         )
-    if cargo.get("features", {}) != {}:
-        raise AssertionError("session-runtime crate may not define feature escape hatches")
+    if cargo.get("features", {}) != {"default": [], "session-viewing": []}:
+        raise AssertionError("session-runtime permits only the opt-in ADR 0092 viewing feature")
 
 
 def probe_rust_source_paths(root: Path) -> list[Path]:
@@ -125,7 +142,7 @@ def assert_probe_source_boundary(root: Path) -> None:
     for path in probe_rust_source_paths(root):
         source = path.read_text(encoding="utf-8")
         for statement in rust_dependency_statements(source):
-            forbidden = dependency_components(statement) & FORBIDDEN_MODULES
+            forbidden = forbidden_dependencies(root, path, statement)
             if forbidden:
                 raise AssertionError(
                     f"{path}: forbidden dependency components {sorted(forbidden)!r}"
@@ -270,6 +287,14 @@ def sha256(path: Path) -> str:
 
 
 class SessionRuntimeBoundaryTest(unittest.TestCase):
+    def test_viewing_build_is_opt_in_and_default_command_is_preserved(self) -> None:
+        from tests.test_build_orchestration import load_script
+        builder = load_script("build-session-runtime.py")
+        for arguments, expected in [([], []), (["--features", "session-viewing"], ["--features", "session-viewing", "--target-dir", ROOT / "target/session-viewing-probe"] )]:
+            with self.subTest(arguments=arguments), patch.object(sys, "argv", ["builder", *arguments]), patch.object(builder.subprocess, "call", return_value=0) as call:
+                self.assertEqual(builder.main(), 0)
+                self.assertEqual(call.call_args.args[0], ["cargo", "build", "-p", "pythos-user-session-runtime", "--target", "x86_64-unknown-none", *expected])
+
     def test_fault_probe_builds_an_exact_ud2_user_elf_through_the_shared_builder(self) -> None:
         harness = load_session_runtime_harness()
         payload = harness.build_fault_runtime_payload()
@@ -358,7 +383,7 @@ pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }
                 with self.assertRaises(AssertionError):
                     assert_cargo_dependency_boundary(tomllib.loads(source))
 
-    def test_probe_sources_import_no_viewing_framebuffer_usb_or_xhci_modules(self) -> None:
+    def test_probe_sources_keep_viewing_in_authorized_owners_and_exclude_hardware(self) -> None:
         self.assertIn(
             "probe_rust_source_paths",
             globals(),
@@ -369,7 +394,7 @@ pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }
             statements = rust_dependency_statements(path.read_text(encoding="utf-8"))
             for statement in statements:
                 with self.subTest(path=path.relative_to(ROOT), statement=statement):
-                    self.assertFalse(dependency_components(statement) & FORBIDDEN_MODULES)
+                    self.assertFalse(forbidden_dependencies(ROOT, path, statement))
 
     def test_probe_sources_declare_no_viewing_framebuffer_usb_or_xhci_types(self) -> None:
         self.assertIn(

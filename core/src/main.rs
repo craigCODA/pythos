@@ -222,6 +222,8 @@ mod session_controls;
 mod session_input;
 #[cfg(all(not(test), feature = "session-input-bridge-probe"))]
 mod session_input_probe;
+#[cfg(any(test, feature = "session-viewing-probe"))]
+mod session_presentation;
 #[cfg(any(test, feature = "session-runtime-probe"))]
 mod session_runtime_probe;
 mod shared_memory;
@@ -258,7 +260,11 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
-#[cfg(any(test, feature = "viewing-input-probe"))]
+#[cfg(any(
+    test,
+    feature = "viewing-input-probe",
+    feature = "session-viewing-probe"
+))]
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;

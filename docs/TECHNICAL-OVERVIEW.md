@@ -12,13 +12,19 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-The current checked-in stop boundary is Phase 13 -> Phase 13.5: ADR 0069,
+The active authorized scope is Phase 13.5 Slices 3 and 4, stopping before Slice 5. ADR 0069,
 `docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072,
 ADR 0073, `PYTHOS:CORE:PHASE_12_COMPLETE`, and
-`PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. Phase 13.5 package-session
-runtime, presentation/input bridges, WakeContext/Waking, Kai, networking, and
-AI work remain unimplemented and require explicit owner invocation. The
-SDHCI/eMMC backend has
+`PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. ADRs 0090 and 0091 add the
+merged, opt-in QEMU proofs of capability-gated session input and a retained
+ring-3 runtime across two fresh Session Manager graph invocations, including
+fault containment. The owner invoked retained Viewing and snapshot presentation
+under ADR 0092; the roadmap's implementation map records verification. Default normal-boot
+cutover, production wait/wakeup, durable session state, USB/xHCI integration,
+and new physical acceptance remain pending. See [HANDOVER.md](HANDOVER.md)
+for the exact PR #24 merge and successful hosted QEMU runs.
+
+The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro
 `1217:8620` target. ADR 0063's evidence terminal is implemented on `main` with
 QEMU acceptance through `scripts/test-evidence-terminal.py`. On 2026-08-08 the
@@ -324,8 +330,10 @@ and where the boundary of the work still is.
 | ADR 0084 USB/xHCI Configuration Descriptor probe QEMU-accepted and physically accepted on Lenovo `81VS`; bounded 9-byte header plus exact 34-byte read, boot-mouse `03/01/02`, interrupt-IN endpoint `0x81`, attributes `03`, MPS `4`, physical interval `10`, and `NO_DISK_WRITES` | `SET_CONFIGURATION`, endpoint configuration, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0085 USB/xHCI Endpoint Configuration probe QEMU-accepted and physically accepted on Lenovo `81VS`; endpoint `0x81` mapped to DCI 3, Configure Endpoint CC `01`, USB SET_CONFIGURATION CC `01`, configured Slot state `03`, configured Endpoint state `01`, and `NO_DISK_WRITES` | Interrupt transfers, HID report parsing/polling, cursor movement, IRQ input, or trackpad support |
 | ADR 0086 USB/xHCI one-shot interrupt transfer probe QEMU-accepted with one four-byte raw report `00 08 FC 00`, completion code `01`, exact event identity checks, and `NO_DISK_WRITES` | Physical interrupt-transfer acceptance, HID decoding, recurring reports, cursor movement, IRQ input, or trackpad support |
-| ADR 0089 accepted in QEMU: opt-in Traversal default, one-way session cursor activation, exclusive FocusMark routing, preserved ADR 0088 no-write evidence, and a clean strict Viewing-feature Clippy gate | Physical validation; default boot cutover, deactivation, durable cursor state, or generic physical input support; the unrelated Phase 13 Python baseline remains non-green |
+| ADR 0089 accepted in QEMU: opt-in Traversal default, one-way session cursor activation, exclusive FocusMark routing, preserved ADR 0088 no-write evidence, and a clean strict Viewing-feature Clippy gate | Physical validation; default boot cutover, deactivation, durable cursor state, or generic physical input support |
 | ADR 0090 accepted in QEMU: one capability-authorized ring-3 consumer receives recurring normalized emulated-PS/2 input through ABI 1.0, with sequence-gap evidence and independent COM1/COM2 no-write proof | Physical or production USB/xHCI input, persistent Session Manager consumption, ADR 0089 activation/routing/presentation behavior, or normal-boot cutover |
+| ADR 0091 accepted in QEMU and merged through PR #24: one retained ring-3 runtime, stable per-boot session identity, fresh graph invocations, retained neutral state, and contained native faults | Session-owned Viewing integration, production wait/wakeup, durable state across reboot, default-boot cutover, or physical acceptance |
+| ADR 0092 accepted locally in QEMU: retained session-owned Viewing, activation spanning fresh graph invocations, capability-checked synchronous snapshots, and live FocusMark projection | Production wait/wakeup, default-boot cutover, durable state, production USB/xHCI input, or physical acceptance |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -357,10 +365,11 @@ Phase 13, `applications-and-packaging`, in QEMU. `main` also contains the first
 persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
 PythTIG Phase 1-7 acceptance implementation, the Phase 12 object-locator
 resolver plus adversarial denial suite, and the Phase 13 local package
-lifecycle. Later implementation work such as Phase 13.5 persistent package
-sessions, networking, updates, broad physical hardware expansion, SMP, semantic
-indexing, and optional AI remains intentionally unimplemented until explicitly
-invoked.
+lifecycle. Phase 13.5 Slices 1 and 2 add the bounded session-input bridge and
+retained runtime. Slices 3 and 4 are owner-invoked: session-owned Viewing and
+bounded snapshot presentation. Production session operation, networking, updates, broad physical
+hardware expansion, SMP, semantic indexing, and optional AI remain later work
+requiring explicit invocation.
 
 ## Development Method
 
@@ -1056,7 +1065,8 @@ implemented or not claimed:
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * POSIX paths as authoritative object identity;
-* persistent package-session runtime or presentation/input bridges;
+* production persistent Session Manager, durable session state, or production
+  USB/xHCI input delivery;
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;

@@ -14,6 +14,7 @@ use crate::{
     service_identity::{ServiceId, ServiceIdentityTable},
     tasks::TaskId,
 };
+pub use pythos_shared::input_types::{InputEvent, InputEventKind, InputSource, RelativeMotion};
 use pythos_shared::session_input_abi::SESSION_INPUT_RESOURCE_ID;
 
 const INPUT_EVENT_STREAM: ResourceId = ResourceId::new(SESSION_INPUT_RESOURCE_ID);
@@ -29,34 +30,6 @@ impl From<CapabilityError> for InputEventError {
     fn from(error: CapabilityError) -> Self {
         Self::Capability(error)
     }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InputSource {
-    Keyboard,
-    Mouse,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct RelativeMotion {
-    pub dx: i8,
-    pub dy: i8,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum InputEventKind {
-    KeyDown(KeyCode),
-    RelativeMotion(RelativeMotion),
-    /// A left mouse button state transition (ADR 0053).
-    PointerButton {
-        left: bool,
-    },
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct InputEvent {
-    pub source: InputSource,
-    pub kind: InputEventKind,
 }
 
 pub struct InputEventService {

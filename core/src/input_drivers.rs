@@ -13,6 +13,7 @@ use crate::{
     service_identity::{ServiceId, ServiceIdentityTable},
     tasks::TaskId,
 };
+pub use pythos_shared::input_types::KeyCode;
 
 const KEYBOARD_RESOURCE: ResourceId = ResourceId::new(0x1A50_0001);
 const MOUSE_RESOURCE: ResourceId = ResourceId::new(0x1A50_0002);
@@ -156,50 +157,6 @@ pub fn decode_usb_boot_mouse_report(report: &[u8]) -> Result<UsbBootMouseReport,
 /// (ADR 0053) and any future text entry need: A-Z, 0-9, Enter, Escape, Space,
 /// Backspace. Not a complete keyboard layout — extend as further keys are
 /// needed.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum KeyCode {
-    A,
-    B,
-    C,
-    D,
-    E,
-    F,
-    G,
-    H,
-    I,
-    J,
-    K,
-    L,
-    M,
-    N,
-    O,
-    P,
-    Q,
-    R,
-    S,
-    T,
-    U,
-    V,
-    W,
-    X,
-    Y,
-    Z,
-    Digit0,
-    Digit1,
-    Digit2,
-    Digit3,
-    Digit4,
-    Digit5,
-    Digit6,
-    Digit7,
-    Digit8,
-    Digit9,
-    Enter,
-    Escape,
-    Space,
-    Backspace,
-}
-
 /// Decode a scancode-set-1 make code to a [`KeyCode`], independent of any
 /// capability check. `KeyboardDriver::decode` wraps this with the
 /// capability-gated shape; `ps2::handle_keyboard_interrupt` (the real IRQ1
