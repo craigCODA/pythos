@@ -91,7 +91,15 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     match pyth_service_supervisor::normal_program() {
         NormalProgram::NormalSession => {
             #[cfg(feature = "normal-session")]
-            crate::normal_session::run(boot_info, &substrate);
+            {
+                // ADR 0093 keeps the bounded boot presentation, but never
+                // gives the compatibility launcher ownership of session input.
+                diag(boot_info, NormalBootDiagnosticStage::Cinematic);
+                if play_boot_cinematic_and_audio(&boot_info.framebuffer).is_err() {
+                    serial::write_line("PYTHOS:CORE:NORMAL_BOOT:AUDIO_VISUAL_SKIPPED");
+                }
+                crate::normal_session::run(boot_info, &substrate);
+            }
             #[cfg(not(feature = "normal-session"))]
             unreachable!();
         }
