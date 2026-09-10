@@ -1,16 +1,17 @@
 # PythOS Handover
 
-Local continuation: the owner invoked Slice 5 and approved recovery-shell
-fallback without automatic restart. The new branch is
-`agent/phase13-5-normal-session`, based on `cb86242`; PR #25 is unchanged.
-[ADR 0093](decisions/0093-normal-session-wait-recovery.md) is approved for local
-implementation in this session; use the
-[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
-Fresh predecessor
-host baselines passed (1029 Rust; 176 Python plus 148 subtests). Slice 5's
-shared contract/controller is implemented and independently reviewed at
-`f22bfab` (180 relevant tests passed). Kernel integration and new QEMU
-acceptance remain pending. No remote or physical write is claimed.
+Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
+on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
+unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
+normal-session waiting and one-way recovery without automatic restart; the
+[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
+records the exact evidence. Fresh closeout passed 1,070 Rust tests, 193 Python
+tests plus 219 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
+normal acceptance, and the separate native-fault acceptance. The actual normal
+core strict Clippy profile still fails on 871 dead-code diagnostics versus 874
+for the compatibility baseline; strict complete proof profiles and both normal
+user binaries pass. Final controller whole-branch review remains. No remote,
+merge, publication, USB, or physical write is claimed.
 
 The following is the completed Slice 3-4 checkpoint:
 
@@ -1296,7 +1297,8 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap scope is Phase 13.5 Slices 3 and 4, stopping before Slice 5. The
+The current numbered-roadmap boundary is the locally accepted Phase 13.5 Slice
+5 branch, stopping before Phase 14. The
 current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.

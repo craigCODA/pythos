@@ -12,16 +12,18 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-The active authorized scope is Phase 13.5 Slices 3 and 4, stopping before Slice 5. ADR 0069,
+Phase 13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged
+branch. ADR 0069,
 `docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072,
 ADR 0073, `PYTHOS:CORE:PHASE_12_COMPLETE`, and
 `PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. ADRs 0090 and 0091 add the
 merged, opt-in QEMU proofs of capability-gated session input and a retained
 ring-3 runtime across two fresh Session Manager graph invocations, including
-fault containment. The owner invoked retained Viewing and snapshot presentation
-under ADR 0092; the roadmap's implementation map records verification. Default normal-boot
-cutover, production wait/wakeup, durable session state, USB/xHCI integration,
-and new physical acceptance remain pending. See [HANDOVER.md](HANDOVER.md)
+fault containment. ADR 0092 adds retained Viewing and snapshot presentation;
+ADR 0093 now adds the locally accepted default normal-session boot,
+interrupt-backed waiting and one-way recovery-shell fallback. Durable session
+state, USB/xHCI session integration, new physical acceptance, publication, and
+later phases remain pending. See [HANDOVER.md](HANDOVER.md)
 for the exact PR #24 merge and successful hosted QEMU runs.
 
 The SDHCI/eMMC backend has
@@ -366,10 +368,12 @@ persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
 PythTIG Phase 1-7 acceptance implementation, the Phase 12 object-locator
 resolver plus adversarial denial suite, and the Phase 13 local package
 lifecycle. Phase 13.5 Slices 1 and 2 add the bounded session-input bridge and
-retained runtime. Slices 3 and 4 are owner-invoked: session-owned Viewing and
-bounded snapshot presentation. Production session operation, networking, updates, broad physical
-hardware expansion, SMP, semantic indexing, and optional AI remain later work
-requiring explicit invocation.
+retained runtime. Slices 3 and 4 add session-owned Viewing and bounded snapshot
+presentation. Slice 5 locally accepts default normal-session operation,
+interrupt-backed waiting and one-way recovery. Durable sessions, USB/xHCI
+session integration, networking, updates, broad physical hardware expansion,
+SMP, semantic indexing, and optional AI remain later work requiring explicit
+invocation.
 
 ## Development Method
 

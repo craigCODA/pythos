@@ -99,7 +99,10 @@ jobs:
           cargo test -p pythos-user-session-input-probe
           cargo test -p pythos-user-session-runtime
           cargo test -p pythos-user-session-runtime --features session-viewing
+          cargo test -p pythos-user-session-runtime --features normal-session
+          cargo test -p pythos-user-session-runtime --features normal-session-fault-test
           cargo test -p pythos-core session_runtime
+          cargo test -p pythos-core normal_session
 
       - name: PythTIG format harness
         run: python scripts/test-pyth-tig-format.py
@@ -109,6 +112,9 @@ jobs:
           mkdir -p target/pyth-tig
           cargo run -p pythc -- build programs/session-manager/main.pyth -o target/pyth-tig/session-manager.tig
           cargo run -p pyth-tig-tool -- verify target/pyth-tig/session-manager.tig
+          mkdir -p target/normal-session/pyth-tig
+          cargo run -p pythc -- build programs/normal-session-manager/main.pyth -o target/normal-session/pyth-tig/session-manager.tig
+          cargo run -p pyth-tig-tool -- verify target/normal-session/pyth-tig/session-manager.tig
           python scripts/test-pythc.py
 
       - name: User and PythTIG ELFs
@@ -120,6 +126,8 @@ jobs:
           python scripts/build-pyth-graph.py
           python scripts/build-session-runtime.py --target-dir target/session-runtime-probe
           python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime
+          python scripts/build-session-runtime.py --features normal-session
+          python scripts/build-session-runtime.py --features normal-session-fault-test
 
       - name: Clippy
         run: |
@@ -129,6 +137,8 @@ jobs:
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings
+          cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --bin pythos-normal-session --features normal-session -- -D warnings
+          cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --bin pythos-normal-session --features normal-session-fault-test -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-viewing-probe -- -D warnings
           cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings
 
@@ -137,9 +147,12 @@ jobs:
           python -m py_compile scripts/build-pyth-graph.py scripts/build-image.py scripts/build-iso.py scripts/run-qemu.py scripts/test-pyth-default-boot.py scripts/test-normal-fast-boot.py scripts/test-object-shell.py scripts/test-com2-shell-transport.py scripts/test-normal-boot-interactive.py scripts/test-pyth-graph-runtime.py scripts/test-pyth-graph-object-flow.py scripts/test-pyth-native-codegen.py scripts/pyth_cross_target.py scripts/test-pyth-cross-target.py scripts/prepare-pyth-physical-image.py scripts/verify-pyth-physical-log.py scripts/test-physical-keyboard-console.py scripts/build-session-input-probe.py scripts/test-session-input-bridge-probe.py
           python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py
           python -m py_compile scripts/test-session-viewing-probe.py
+          python -m py_compile scripts/test-normal-session.py
 
       - name: Python harness tests
-        run: python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
+        run: |
+          python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
+          python -m unittest tests.test_normal_session
 
       - name: QEMU milestone acceptance
         run: |
@@ -164,6 +177,9 @@ jobs:
           python scripts/test-session-runtime-probe.py --fault-test
           python scripts/test-session-runtime-probe.py
           python scripts/test-session-viewing-probe.py
+          python scripts/test-normal-session.py --self-test
+          python scripts/test-normal-session.py
+          python scripts/test-normal-session.py --fault
 
       - name: PythTIG physical evidence tooling
         run: |

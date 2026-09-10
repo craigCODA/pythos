@@ -1,9 +1,10 @@
 # ADR 0093: Normal session operation, interrupt-backed waiting and recovery
 
-Status: written contract approved by the owner on 2026-09-09 for local
-implementation in this session. The single task/evidence map is
+Status: accepted design, locally implemented and QEMU-accepted on 2026-09-10;
+the branch remains unmerged and unpublished pending final controller review.
+The single task/evidence map is
 `../superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md`.
-Implementation and acceptance remain separately evidenced there.
+Implementation and acceptance are separately evidenced there.
 
 ## Scope and base
 
@@ -238,3 +239,24 @@ or completion of the whole operating system.
   176 passed and 148 subtests passed.
 - No implementation, new QEMU acceptance, remote mutation or physical write
   has occurred in preparing this design.
+
+## Local implementation and acceptance evidence
+
+- `scripts/test-normal-session.py` passes a separate native-fault boot and an
+  ordinary two-boot acceptance. The ordinary run proves live idle/wake/status,
+  exact inactive/active/moved pixels, explicit recovery, recovery-shell `help`,
+  six captures, fresh per-boot state, byte-exact raw COM2 capture, and unchanged
+  disposable storage.
+- The native-fault run proves the captured vector 6 context, ELF-derived RIP,
+  restored kernel/caller state, checked grant cleanup, and actual recovery-shell
+  command handling. The normal-only fault context diagnostic is emitted only
+  after restoration and before the recovery marker.
+- Fresh closeout passed 1,070 Rust tests, 193 Python tests plus 219 subtests, all
+  16 required predecessor QEMU gates, both strict normal user-binary profiles,
+  and five strict complete kernel proof profiles.
+- The actual default-normal core strict Clippy check fails with 871 dead-code
+  diagnostics; the separately run compatibility baseline fails with 874. This
+  is baseline debt plus profile-induced unused compatibility code, not an
+  identical inherited diagnostic set, and no warning suppression was added.
+- No remote mutation, merge, publication, USB write, physical acceptance, or
+  later-phase implementation is claimed.

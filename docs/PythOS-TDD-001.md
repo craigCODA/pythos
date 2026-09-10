@@ -1,7 +1,8 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
-Status: Accepted boot-core design and cumulative acceptance reference. The
-current authorized implementation is Phase 13.5 Slices 3 and 4, stopping before Slice 5; see
+Status: Accepted boot-core design and cumulative acceptance reference. Phase
+13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged branch;
+halt before Phase 14; see
 [ROADMAP.md](ROADMAP.md#current-phase-135-boundary) and
 [HANDOVER.md](HANDOVER.md) for current scope and merged acceptance evidence.
 
@@ -152,11 +153,12 @@ The framebuffer slice was implemented ahead of memory ownership, GDT, and IDT to
 Phase 7 `persistent-object-storage`, Phase 8 `real-hardware-isolation`, Phase 9 `general-purpose-process-model`, Phase 10 `general-purpose-storage`, Phase 12 `general-purpose-object-locator-namespace`, and Phase 13 `applications-and-packaging` are complete through `PYTHOS:CORE:PHASE_13_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that evidence is target-specific and does not claim generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`, `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`, ADR 0071 records the finite loader read-bound extension, and `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package lifecycle and schema extensibility are recorded through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 Phase 13.5 Slices 1 and 2 are merged and accepted in opt-in QEMU profiles
-through ADRs 0090 and 0091. Slices 3 and 4 are now explicitly invoked under
-ADR 0092; the linked implementation map records verification. Halt before
-Slice 5: default-boot cutover, production wait/wakeup, durable
-session state, USB/xHCI integration, physical acceptance, and later phases
-remain outside these proofs.
+through ADRs 0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092.
+Slice 5 is implemented and locally accepted under ADR 0093: default normal boot
+uses the retained session, interrupt-backed waiting, and one-way recovery-shell
+fallback. Durable session state, USB/xHCI session integration, physical
+acceptance, publication, and later phases remain outside these proofs. Halt
+before Phase 14.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 

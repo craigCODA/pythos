@@ -334,23 +334,39 @@ pub(crate) fn run(
         } else {
             None
         };
-        recovery_reason(outcome, record)
+        recovery_decision(outcome, record)
     })();
     let invalid_return = if supervisor.state == State::Running {
         launch.err()
     } else {
         None
     };
-    let reason = match launch {
-        Ok(reason) => reason,
+    let decision = match launch {
+        Ok(decision) => decision,
         Err(error) => {
             serial::write_str("PYTHOS:CORE:NORMAL_SESSION:LAUNCH_FAILED stage=");
             serial::write_line(error);
-            RecoveryReason::Launch
+            RecoveryDecision {
+                reason: RecoveryReason::Launch,
+                fault: None,
+            }
         }
     };
+    if let Some(context) = decision.fault {
+        serial::write_str("PYTHOS:CORE:NORMAL_SESSION:FAULT_CONTAINED principal:");
+        serial::write_hex_u64_value(context.principal);
+        serial::write_str(" vector:");
+        serial::write_dec_u64_value(context.vector);
+        serial::write_str(" rip:");
+        serial::write_hex_u64_value(context.rip);
+        serial::write_str(" rsp:");
+        serial::write_hex_u64_value(context.rsp);
+        serial::write_str(" cr2:");
+        serial::write_hex_u64_value(context.cr2);
+        serial::write_str("\r\n");
+    }
     serial::write_str("PYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=");
-    serial::write_line(match reason {
+    serial::write_line(match decision.reason {
         RecoveryReason::Explicit => "explicit",
         RecoveryReason::NativeFault => "native-fault",
         RecoveryReason::Input => "input",
@@ -397,35 +413,46 @@ enum RecoveryReason {
     Launch,
 }
 
-fn recovery_reason(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct RecoveryDecision {
+    reason: RecoveryReason,
+    fault: Option<UserFaultContext>,
+}
+
+fn recovery_decision(
     outcome: Result<(), UserModeError>,
     record: Option<NormalSessionReturnV1>,
-) -> Result<RecoveryReason, &'static str> {
+) -> Result<RecoveryDecision, &'static str> {
     match outcome {
-        Err(UserModeError::FaultContained(UserFaultContext {
-            principal,
-            vector: 6 | 13 | 14,
-            rip,
-            ..
-        })) if principal == pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID
-            && rip != 0 =>
+        Err(UserModeError::FaultContained(context))
+            if context.principal
+                == pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID
+                && matches!(context.vector, 6 | 13 | 14)
+                && context.rip != 0 =>
         {
-            Ok(RecoveryReason::NativeFault)
+            Ok(RecoveryDecision {
+                reason: RecoveryReason::NativeFault,
+                fault: Some(context),
+            })
         }
         Err(_) => Err("return-outcome"),
         Ok(()) => {
             let record = record.ok_or("return-record")?;
             validate_normal_session_return(&record).map_err(|_| "return-record")?;
-            match NormalSessionReturnReason::from_wire(record.reason) {
-                Some(NormalSessionReturnReason::ExplicitRecovery) => Ok(RecoveryReason::Explicit),
-                Some(NormalSessionReturnReason::Input) => Ok(RecoveryReason::Input),
-                Some(NormalSessionReturnReason::Presentation) => Ok(RecoveryReason::Presentation),
-                Some(NormalSessionReturnReason::Graph) => Ok(RecoveryReason::Graph),
-                Some(NormalSessionReturnReason::Console) => Ok(RecoveryReason::Console),
-                Some(NormalSessionReturnReason::Bootstrap) => Ok(RecoveryReason::Bootstrap),
-                Some(NormalSessionReturnReason::CounterOverflow) => Ok(RecoveryReason::Counter),
-                None => Err("return-record"),
-            }
+            let reason = match NormalSessionReturnReason::from_wire(record.reason) {
+                Some(NormalSessionReturnReason::ExplicitRecovery) => RecoveryReason::Explicit,
+                Some(NormalSessionReturnReason::Input) => RecoveryReason::Input,
+                Some(NormalSessionReturnReason::Presentation) => RecoveryReason::Presentation,
+                Some(NormalSessionReturnReason::Graph) => RecoveryReason::Graph,
+                Some(NormalSessionReturnReason::Console) => RecoveryReason::Console,
+                Some(NormalSessionReturnReason::Bootstrap) => RecoveryReason::Bootstrap,
+                Some(NormalSessionReturnReason::CounterOverflow) => RecoveryReason::Counter,
+                None => return Err("return-record"),
+            };
+            Ok(RecoveryDecision {
+                reason,
+                fault: None,
+            })
         }
     }
 }
@@ -741,10 +768,13 @@ mod tests {
             reserved1: 0,
         };
         assert_eq!(
-            recovery_reason(Ok(()), Some(record)),
-            Ok(RecoveryReason::Explicit)
+            recovery_decision(Ok(()), Some(record)),
+            Ok(RecoveryDecision {
+                reason: RecoveryReason::Explicit,
+                fault: None,
+            })
         );
-        assert!(recovery_reason(Ok(()), None).is_err());
+        assert!(recovery_decision(Ok(()), None).is_err());
         for malformed in [
             NormalSessionReturnV1 {
                 reserved1: 1,
@@ -755,7 +785,7 @@ mod tests {
                 ..record
             },
         ] {
-            assert!(recovery_reason(Ok(()), Some(malformed)).is_err());
+            assert!(recovery_decision(Ok(()), Some(malformed)).is_err());
         }
         let fault = crate::user_mode::UserFaultContext {
             principal: pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
@@ -765,14 +795,17 @@ mod tests {
             cr2: 0,
         };
         assert_eq!(
-            recovery_reason(
+            recovery_decision(
                 Err(crate::user_mode::UserModeError::FaultContained(fault)),
                 None
             ),
-            Ok(RecoveryReason::NativeFault)
+            Ok(RecoveryDecision {
+                reason: RecoveryReason::NativeFault,
+                fault: Some(fault),
+            })
         );
         assert!(
-            recovery_reason(
+            recovery_decision(
                 Err(crate::user_mode::UserModeError::FaultContained(
                     crate::user_mode::UserFaultContext {
                         principal: 7,
@@ -784,7 +817,7 @@ mod tests {
             .is_err()
         );
         assert!(
-            recovery_reason(
+            recovery_decision(
                 Err(crate::user_mode::UserModeError::DidNotReturn),
                 Some(record)
             )

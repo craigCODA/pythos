@@ -55,8 +55,8 @@ These values must appear in shared code before their consumers are implemented.
 - [x] Owner approved ADR 0093 and local execution in this session.
 - [x] Isolated worktree; baseline 1029 Rust tests, 176 Python tests plus 148 subtests.
 - [x] Task 1 reviewed complete (`f22bfab`; spec and quality review clean).
-- [ ] Task 2 reviewed complete.
-- [ ] Task 3 reviewed complete.
+- [x] Task 2 reviewed complete.
+- [x] Task 3 reviewed complete.
 - [x] Task 4 reviewed complete.
 - [ ] Task 5 reviewed complete.
 - [ ] Whole-branch review and final regression/acceptance closeout.
@@ -200,16 +200,47 @@ Task 4 reviewed complete through `b3c4a36`: 798 core tests, 63 Python tests plus
 
 **Consumes:** Task 4 default image and compile-time native fault profile, live protocol in Locked additive interfaces. **Produces:** distinct default normal-session acceptance, explicit-recovery acceptance and native-fault recovery acceptance without weakening predecessors.
 
+Approved fault-observability supplement: Task 5 may change only
+`core/src/normal_session.rs` and its focused host test to expose the already
+captured and validated `UserModeError::FaultContained(UserFaultContext)` through
+one normal-only COM1 diagnostic. The exact
+`PYTHOS:CORE:NORMAL_SESSION:FAULT_CONTAINED` line uses the existing probe field
+and number conventions, is emitted after kernel-root/caller/transient
+restoration and before `RECOVERY`, and is absent for explicit return, failed
+validation, and launch failure. This adds no trap, lifecycle, user/shared ABI,
+fault-injection, or old-profile output change.
+
 Normal build prerequisite: compile/verify actual `programs/normal-session-manager/main.pyth` into `target/normal-session/pyth-tig/session-manager.tig` and pass it explicitly through `--normal-session-graph` paired with `--normal-session-elf`. The old `programs/session-manager/main.pyth` is fixture/compatibility-specific and emits no result for SYSTEM_STATUS. Preserve old graph source/artifacts. Ordinary and native-fault images share this normal graph and kernel; only their independently built user ELF differs. Test the paired-selector behavior and actual graph identity without replacing kernel/graph failures with a fabricated status reply.
 
-- [ ] Write failing behavioral Python tests for command/result parser, independent expected status progression, complete transcript ordering, screenshot live-barrier ordering and literal pixel/color checks, duplicate/missing/error records, stale image/incorrect profile, failure cleanup, timeouts and storage hash changes. Use repository QEMU support; no source-grep tests or screenshot-only verdicts. Record RED.
-- [ ] Implement `scripts/test-normal-session.py` with ordinary two-boot mode and explicit `--fault` acceptance mode. Each ordinary boot starts with zero counters/inactive Viewing, lives through idle, receives more than seven valid PS/2 events and more than two real status requests. Split Space Space Backspace Backspace across idle and a status command. Validate inactive/active/moved live screenshots (three per boot, six total), motion after wake, exact payloads and revision/count continuity after subsequent status. Account for actual make/break events using existing QEMU injection contract, not fixture seven-event assumptions. Ensure Enter does not terminate. Normal image has no acceptance terminal/exit-device dependency; external harness ends its bounded run. Verify no duplicate READY/restart.
-- [ ] Prove `recover` separately after live input/presentation and status, verify checked cleanup markers and actual recovery shell read-only COM2 `help` or `status` response under old shell contract. Separate fault image reaches its genuine UD2 only after live acceptance prerequisites; validate native-fault vector/context plus cleanup/root/caller/grant evidence and real shell command response. Neither fault nor explicit recovery writes storage; compare the same disposable fixture's hash before/after every boot. Missing shell response or timed-out screenshot is failure. Bounded process-tree cleanup must execute on success and every failure.
-- [ ] Run focused new Python tests GREEN and the ordinary/fault QEMU harnesses. Capture exact commands, output, logs, image identity, six screenshots and storage hashes under target, not fabricated documentation claims.
-- [ ] Add host/strict Clippy/new QEMU gates to existing CI file while retaining every predecessor gate. Do not query hosted CI. Run fresh `cargo test --workspace --quiet`, `uv run --no-project --with pytest python -m pytest tests -q --tb=short`, `cargo fmt --all -- --check`, strict affected bare-metal profiles, and `git diff --check`.
-- [ ] Run fresh predecessor QEMU gates: `scripts/test-boot.py`, `test-persistent-storage.py`, `test-normal-fast-boot.py`, `test-normal-boot-interactive.py` (retained explicit legacy semantics), `test-pyth-default-boot.py` including its package-fault coverage, `test-com2-shell-transport.py`, `test-object-shell.py`, `test-physical-keyboard-console.py` (QEMU only), `test-session-input-bridge-probe.py`, `test-session-runtime-probe.py` ordinary and fault modes, `test-viewing-input-probe.py`, `test-session-viewing-probe.py`. Read exact supported CLI flags before running. Run heavy image builds/QEMU profiles sequentially unless artifact directories are demonstrably isolated. Diagnose failures, don't weaken gates or claim historical runs as fresh.
-- [ ] Update current-state docs/map with actual accepted vs deferred boundaries and counts/evidence, still local/unmerged/unpublished. Report any blocker accurately. Self-review/commit task-owned files and report. The controller then runs whole-branch review, handles findings and verifies final tree/protected refs before final handoff. Do not begin Phase 14 or any later milestone.
+- [x] Write failing behavioral Python tests for command/result parser, independent expected status progression, complete transcript ordering, screenshot live-barrier ordering and literal pixel/color checks, duplicate/missing/error records, stale image/incorrect profile, failure cleanup, timeouts and storage hash changes. Use repository QEMU support; no source-grep tests or screenshot-only verdicts. Record RED.
+- [x] Implement `scripts/test-normal-session.py` with ordinary two-boot mode and explicit `--fault` acceptance mode. Each ordinary boot starts with zero counters/inactive Viewing, lives through idle, receives more than seven valid PS/2 events and more than two real status requests. Split Space Space Backspace Backspace across idle and a status command. Validate inactive/active/moved live screenshots (three per boot, six total), motion after wake, exact payloads and revision/count continuity after subsequent status. Account for actual make/break events using existing QEMU injection contract, not fixture seven-event assumptions. Ensure Enter does not terminate. Normal image has no acceptance terminal/exit-device dependency; external harness ends its bounded run. Verify no duplicate READY/restart.
+- [x] Prove `recover` separately after live input/presentation and status, verify checked cleanup markers and actual recovery shell read-only COM2 `help` or `status` response under old shell contract. Separate fault image reaches its genuine UD2 only after live acceptance prerequisites; validate native-fault vector/context plus cleanup/root/caller/grant evidence and real shell command response. Neither fault nor explicit recovery writes storage; compare the same disposable fixture's hash before/after every boot. Missing shell response or timed-out screenshot is failure. Bounded process-tree cleanup must execute on success and every failure.
+- [x] Run focused new Python tests GREEN and the ordinary/fault QEMU harnesses. Capture exact commands, output, logs, image identity, six screenshots and storage hashes under target, not fabricated documentation claims.
+- [x] Add host/strict Clippy/new QEMU gates to existing CI file while retaining every predecessor gate. Do not query hosted CI. Run fresh `cargo test --workspace --quiet`, `uv run --no-project --with pytest python -m pytest tests -q --tb=short`, `cargo fmt --all -- --check`, strict affected bare-metal profiles, and `git diff --check`.
+- [x] Run fresh predecessor QEMU gates: `scripts/test-boot.py`, `test-persistent-storage.py`, `test-normal-fast-boot.py`, `test-normal-boot-interactive.py` (retained explicit legacy semantics), `test-pyth-default-boot.py` including its package-fault coverage, `test-com2-shell-transport.py`, `test-object-shell.py`, `test-physical-keyboard-console.py` (QEMU only), `test-session-input-bridge-probe.py`, `test-session-runtime-probe.py` ordinary and fault modes, `test-viewing-input-probe.py`, `test-session-viewing-probe.py`. Read exact supported CLI flags before running. Run heavy image builds/QEMU profiles sequentially unless artifact directories are demonstrably isolated. Diagnose failures, don't weaken gates or claim historical runs as fresh.
+- [x] Update current-state docs/map with actual accepted vs deferred boundaries and counts/evidence, still local/unmerged/unpublished. Report any blocker accurately. Self-review/commit task-owned files and report. The controller then runs whole-branch review, handles findings and verifies final tree/protected refs before final handoff. Do not begin Phase 14 or any later milestone.
 
 ## Evidence ledger
 
-Preparation: baseline Rust 1029 passed (`target/slice5-baseline-rust.log`); Python 176 passed, 148 subtests. Implementation/acceptance evidence will be appended only after execution. Approval is authorization, not acceptance evidence.
+Preparation: baseline Rust 1029 passed (`target/slice5-baseline-rust.log`); Python 176 passed, 148 subtests. Approval was authorization, not acceptance evidence.
+
+Task 5 closeout (2026-09-10): focused harness tests pass 10 tests plus 16
+subtests; the fresh workspace totals are 1,070 Rust and 193 Python tests plus
+219 subtests. All 16 required predecessor QEMU gates passed sequentially. Fresh
+fault acceptance is under `target/normal-session-fault-acceptance/run-6dqnzk_v`;
+fresh ordinary two-boot evidence and six captures are under
+`target/normal-session-acceptance/run-90llzb1d`. Raw COM2 captures contain CRLF
+and zero CRCRLF sequences. The shared normal kernel and graph hashes are
+`ecd249034e57d9b083ec9c12f0512f706ff7add005fc525b43a03bf69e05c31f`
+and `14a5ef6e8c4a0fbcaa4a12dd9aef9e2b499932c05a396af809a3561da53c4fdb`;
+ordinary and fault user ELF hashes are
+`bd0b81628c54c939e9b90016dd713b9edf481f014c7cbaa05c0342cfd60cba46`
+and `8e64ade46a4dd74996019b8983c9787a2c215cb3f26ffd35836a6869e90dcc0b`.
+All three storage observations per ordinary run and both fault observations are
+`080acf35a507ac9849cfcba47dc2ad83e01b75663a516279c8b9d243b719643e`.
+Strict normal/fault user binaries and five complete kernel proof profiles pass.
+The actual default-normal kernel strict gate fails with 871 dead-code errors;
+the compatibility baseline fails with 874, reflecting baseline debt plus
+profile-induced unused compatibility code rather than identical inherited
+diagnostics. No suppression or misleading verify-only normal gate was added.
+The branch remains local, unmerged and unpublished pending controller review.
