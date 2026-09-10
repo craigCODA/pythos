@@ -81,14 +81,26 @@ universal-device work.
 
 ## Active Milestone
 
+The owner invoked Phase 13.5 Slice 5 locally and approved the architectural
+direction on 2026-09-09: interrupt-backed waiting, continuous session-owned
+Viewing, normal-boot integration, and recovery-shell fallback without automatic
+restart. The written contract is
+`docs/decisions/0093-normal-session-wait-recovery.md`; it awaits owner review
+before the detailed task plan and implementation. Work only on
+`agent/phase13-5-normal-session`, based on `cb86242`. Preserve the Slice 3-4
+branch and PR #25. No remote writes, CI polling, durable sessions, broad command
+migration, USB/xHCI integration, physical acceptance or later phase work.
+
+The following is the completed Slice 3-4 checkpoint, not the new invocation:
+
 The owner invoked Phase 13.5 Slices 3 and 4 together on 2026-09-09. This branch
 binds ADR 0089 session controls and Viewing state to the retained owner and
 delivers read-only snapshots through ADR 0092's bounded presentation bridge.
 The single implementation map is
 `docs/superpowers/plans/2026-09-09-phase13-5-slices3-4.md`; consult its verification
 state before claiming completion. Preserve the merged ADR 0090/0091 profiles.
-Stop before Slice 5. Default normal-boot cutover, production wait/wakeup, durable
-state, USB/xHCI integration and new physical acceptance are not authorized.
+That invocation stopped before Slice 5. The separate approved Slice 5 direction
+above does not expand durable-state or physical-input authority.
 
 Milestone 1.5 and Phases 2 through 10 are complete through
 `PYTHOS:CORE:PHASE_10_COMPLETE`. Phase 11 physical-hardware smoke-test findings

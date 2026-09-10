@@ -1,5 +1,15 @@
 # PythOS Handover
 
+Local continuation: the owner invoked Slice 5 and approved recovery-shell
+fallback without automatic restart. The new branch is
+`agent/phase13-5-normal-session`, based on `cb86242`; PR #25 is unchanged.
+[ADR 0093](decisions/0093-normal-session-wait-recovery.md) is the written design
+awaiting review before detailed planning and implementation. Fresh predecessor
+host baselines passed (1029 Rust; 176 Python plus 148 subtests). No Slice 5
+implementation, new QEMU acceptance, remote write or physical write is claimed.
+
+The following is the completed Slice 3-4 checkpoint:
+
 Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
 on 2026-09-09. Implementation and current verification live in the
 [single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md), with new boundary
