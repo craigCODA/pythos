@@ -103,8 +103,8 @@ fn run_viewing<E: ViewingRuntimeEffects>(
     let mut viewing = SessionViewing::new(extent);
     effects.emit_marker("PYTHOS:USER:SESSION_VIEWING:BOOT_STATE_0\r\n");
     present(effects, result, 0, viewing.snapshot())?;
-    for index in 0..7 {
-        effects.emit_marker(WAIT_MARKERS[index]);
+    for (index, marker) in WAIT_MARKERS.iter().enumerate() {
+        effects.emit_marker(marker);
         let event = effects.next_viewing_event()?;
         let receipt = viewing
             .observe(event)
