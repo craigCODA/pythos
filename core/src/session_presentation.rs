@@ -35,14 +35,28 @@ struct Binding {
 
 pub(crate) struct PresentationService {
     binding: Option<Binding>,
+    disabled_holder: Option<ServiceId>,
 }
 
 impl PresentationService {
-    pub(crate) fn disable(&mut self, _holder: ServiceId) -> Result<(), PresentationError> {
+    #[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+    pub(crate) fn disable(&mut self, holder: ServiceId) -> Result<(), PresentationError> {
+        let owner = self
+            .disabled_holder
+            .or_else(|| self.binding.as_ref().map(|binding| binding.holder))
+            .ok_or(PresentationError::Unbound)?;
+        if holder != owner {
+            return Err(PresentationError::WrongHolder);
+        }
+        self.binding = None;
+        self.disabled_holder = Some(holder);
         Ok(())
     }
     pub(crate) const fn new() -> Self {
-        Self { binding: None }
+        Self {
+            binding: None,
+            disabled_holder: None,
+        }
     }
 
     /// # Safety
@@ -55,7 +69,7 @@ impl PresentationService {
         framebuffer: PythFramebufferInfo,
         extent: ViewingExtent,
     ) -> Result<(), PresentationError> {
-        if self.binding.is_some() {
+        if self.binding.is_some() || self.disabled_holder.is_some() {
             return Err(PresentationError::AlreadyBound);
         }
         if extent != ViewingExtent::new(SESSION_VIEWING_WIDTH, SESSION_VIEWING_HEIGHT).unwrap() {
@@ -157,6 +171,16 @@ struct PresentationStorage(UnsafeCell<PresentationService>);
 unsafe impl Sync for PresentationStorage {}
 static PRESENTATION: PresentationStorage =
     PresentationStorage(UnsafeCell::new(PresentationService::new()));
+
+/// Permanently retire this holder's presenter without touching pixels or input ownership.
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+pub(crate) fn disable(holder: ServiceId) -> Result<(), PresentationError> {
+    // SAFETY: the single CPU calls this only after contained user return, with
+    // no concurrent presenter or outstanding service borrow. The static owns
+    // one aligned, boot-long mapped service; no pixel pointer is dereferenced
+    // and no borrow escapes. Violating serialization would race service state.
+    unsafe { (&mut *PRESENTATION.0.get()).disable(holder) }
+}
 
 /// # Safety
 /// Caller must retain exclusive ownership of the mapped framebuffer until
@@ -265,11 +289,17 @@ pub(crate) mod tests {
         let mut service = bound(info);
         service.present(holder(), 0, 1, coords(20, 30), 0).unwrap();
         let before = pixels.clone();
-        assert_eq!(service.disable(ServiceId::from_raw(8)), Err(PresentationError::WrongHolder));
+        assert_eq!(
+            service.disable(ServiceId::from_raw(8)),
+            Err(PresentationError::WrongHolder)
+        );
         assert!(service.accepted_snapshot().is_some());
         service.disable(holder()).unwrap();
         service.disable(holder()).unwrap();
-        assert_eq!(service.disable(ServiceId::from_raw(8)), Err(PresentationError::WrongHolder));
+        assert_eq!(
+            service.disable(ServiceId::from_raw(8)),
+            Err(PresentationError::WrongHolder)
+        );
         assert_eq!(service.accepted_snapshot(), None);
         assert!(service.present(holder(), 1, 0, 0, 0).is_err());
         // SAFETY: fixture pixels remain allocated, aligned and exclusively owned

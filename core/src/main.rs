@@ -222,7 +222,11 @@ mod session_controls;
 mod session_input;
 #[cfg(all(not(test), feature = "session-input-bridge-probe"))]
 mod session_input_probe;
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 mod session_presentation;
 #[cfg(any(test, feature = "session-runtime-probe"))]
 mod session_runtime_probe;
@@ -263,7 +267,8 @@ mod value_validation;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]

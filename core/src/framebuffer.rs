@@ -11,7 +11,8 @@ use crate::input_drivers::KeyCode;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 use crate::viewing::{FocusMarkPosition, ViewingSnapshot};
 #[cfg(any(test, feature = "viewing-input-probe"))]
@@ -87,7 +88,8 @@ const PROBE_PANEL_BODY: Rgb = Rgb {
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const FOCUS_MARK_COLOR: Rgb = Rgb {
     red: 255,
@@ -97,7 +99,8 @@ const FOCUS_MARK_COLOR: Rgb = Rgb {
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const VIEWING_INPUT_BACKGROUND: Rgb = Rgb {
     red: 0,
@@ -107,19 +110,22 @@ const VIEWING_INPUT_BACKGROUND: Rgb = Rgb {
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const FOCUS_MARK_HALF_SPAN: u64 = 12;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const FOCUS_MARK_ARM_LENGTH: u64 = 6;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const FOCUS_MARK_THICKNESS: u64 = 2;
 // Cinematic palette (ADR 0047): Black / Violet / Electric Blue. The background
@@ -710,7 +716,11 @@ pub fn render_cinematic_frame(framebuffer: &PythFramebufferInfo, p: f32) -> Resu
 
 /// Preflight the whole fixed viewport before any write. The surface retains
 /// the real framebuffer pitch while clipping drawing to 640 x 480.
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 fn session_viewport(info: &PythFramebufferInfo) -> Result<Surface, ()> {
     use pythos_shared::session_viewing_abi::{SESSION_VIEWING_HEIGHT, SESSION_VIEWING_WIDTH};
     let mut surface = Surface::new(info)?;
@@ -733,7 +743,11 @@ fn session_viewport(info: &PythFramebufferInfo) -> Result<Surface, ()> {
 /// # Safety
 /// Metadata must describe exclusively owned, aligned writable mapped pixels
 /// throughout this call. No IRQ or other presenter may modify this viewport.
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 pub(crate) unsafe fn initialize_session_viewport(info: &PythFramebufferInfo) -> Result<(), ()> {
     let surface = session_viewport(info)?;
     surface.clear(VIEWING_INPUT_BACKGROUND);
@@ -745,7 +759,11 @@ pub(crate) unsafe fn initialize_session_viewport(info: &PythFramebufferInfo) -> 
 /// apply. Both snapshots must already be kernel-validated for this viewport.
 /// All fallible work precedes writes; each recurring call writes at most
 /// 192 pixels (8 rectangles * 12 pixels * erase/draw), independent of GOP size.
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 pub(crate) unsafe fn render_session_snapshot(
     info: &PythFramebufferInfo,
     previous: Option<ViewingSnapshot>,
@@ -1098,7 +1116,8 @@ impl Surface {
     #[cfg(any(
         test,
         feature = "viewing-input-probe",
-        feature = "session-viewing-probe"
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))]
     fn draw_focus_mark(&self, position: FocusMarkPosition) {
         self.paint_focus_mark(position, FOCUS_MARK_COLOR);
@@ -1107,7 +1126,8 @@ impl Surface {
     #[cfg(any(
         test,
         feature = "viewing-input-probe",
-        feature = "session-viewing-probe"
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))]
     fn paint_focus_mark(&self, position: FocusMarkPosition, color: Rgb) {
         let x = i64::from(position.x);
@@ -1149,7 +1169,8 @@ impl Surface {
     #[cfg(any(
         test,
         feature = "viewing-input-probe",
-        feature = "session-viewing-probe"
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))]
     fn fill_focus_rect(&self, x: i64, y: i64, width: i64, height: i64, color: Rgb) {
         let right = x.saturating_add(width).min(self.width as i64);

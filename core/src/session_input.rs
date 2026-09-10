@@ -111,7 +111,10 @@ impl SessionInputQueue {
         PublishOutcome::Enqueued
     }
 
-    pub(crate) fn bind_session_consumer_quiescent(&self, holder: ServiceId) -> Result<(), SessionInputError> {
+    pub(crate) fn bind_session_consumer_quiescent(
+        &self,
+        holder: ServiceId,
+    ) -> Result<(), SessionInputError> {
         if self
             .mode
             .compare_exchange(
@@ -187,8 +190,14 @@ impl SessionInputQueue {
         }
     }
 
-    pub(crate) fn session_ready(&self, _holder: ServiceId) -> Result<bool, SessionInputError> {
-        Ok(false)
+    pub(crate) fn session_ready(&self, holder: ServiceId) -> Result<bool, SessionInputError> {
+        if self.mode.load(Ordering::Acquire) != MODE_SESSION {
+            return Err(SessionInputError::SessionUnbound);
+        }
+        if self.holder.load(Ordering::Relaxed) != holder.raw() {
+            return Err(SessionInputError::WrongHolder);
+        }
+        Ok(self.head.load(Ordering::Relaxed) != self.tail.load(Ordering::Acquire))
     }
 
     fn pop(&self) -> Option<SequencedRawInputEvent> {
@@ -206,6 +215,11 @@ impl SessionInputQueue {
 }
 
 static SESSION_INPUT_QUEUE: SessionInputQueue = SessionInputQueue::new();
+
+/// Observe readiness without borrowing a slot or changing delivery sequence.
+pub fn session_ready(holder: ServiceId) -> Result<bool, SessionInputError> {
+    SESSION_INPUT_QUEUE.session_ready(holder)
+}
 
 /// Publish a normalized-raw device event from IRQ context. This only writes a
 /// bounded queue and never normalizes, looks up capability, renders, blocks,
@@ -344,12 +358,18 @@ mod tests {
     fn readiness_checks_owner_without_consuming_or_advancing_sequence() {
         let queue = SessionInputQueue::new();
         let holder = ServiceId::from_raw(7);
-        assert_eq!(queue.session_ready(holder), Err(SessionInputError::SessionUnbound));
+        assert_eq!(
+            queue.session_ready(holder),
+            Err(SessionInputError::SessionUnbound)
+        );
         queue.bind_session_consumer_quiescent(holder).unwrap();
         assert_eq!(queue.session_ready(holder), Ok(false));
         queue.publish(mouse(3));
         for _ in 0..2 {
-            assert_eq!(queue.session_ready(ServiceId::from_raw(8)), Err(SessionInputError::WrongHolder));
+            assert_eq!(
+                queue.session_ready(ServiceId::from_raw(8)),
+                Err(SessionInputError::WrongHolder)
+            );
             assert_eq!(queue.session_ready(holder), Ok(true));
             assert_eq!(queue.expected.load(Ordering::Relaxed), 0);
             assert_eq!(queue.head.load(Ordering::Relaxed), 0);
@@ -357,8 +377,14 @@ mod tests {
         }
         assert_eq!(queue.try_read_session(holder).unwrap().unwrap().sequence, 0);
         assert_eq!(queue.session_ready(holder), Ok(false));
-        assert_eq!(queue.try_read_compatibility(), Err(SessionInputError::SessionBound));
-        assert_eq!(queue.bind_session_consumer_quiescent(holder), Err(SessionInputError::AlreadyBound));
+        assert_eq!(
+            queue.try_read_compatibility(),
+            Err(SessionInputError::SessionBound)
+        );
+        assert_eq!(
+            queue.bind_session_consumer_quiescent(holder),
+            Err(SessionInputError::AlreadyBound)
+        );
     }
 
     fn key(key: KeyCode) -> RawInputEvent {
