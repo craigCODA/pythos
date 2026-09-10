@@ -59,6 +59,7 @@ dependencies = [
 name = "pythos-user-session-runtime"
 version = "0.1.0"
 dependencies = [
+ "pythc",
  "pythos-shared",
  "pythos-user-pyth-runtime",
 ]

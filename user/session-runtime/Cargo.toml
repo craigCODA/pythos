@@ -9,14 +9,26 @@ rust-version.workspace = true
 [features]
 default = []
 session-viewing = []
+normal-session = []
+normal-session-fault-test = ["normal-session"]
 
 [dependencies]
 pythos-shared = { path = "../../shared", features = ["pyth-tig"] }
 pythos-user-pyth-runtime = { path = "../pyth-runtime" }
 
 [dev-dependencies]
+pythc = { path = "../../tools/pythc" }
 pythos-shared = { path = "../../shared", features = ["pyth-tig-test-support"] }
 
 [lib]
 name = "pythos_user_session_runtime"
 path = "src/lib.rs"
+
+[[bin]]
+name = "pythos-user-session-runtime"
+path = "src/main.rs"
+
+[[bin]]
+name = "pythos-normal-session"
+path = "src/normal_main.rs"
+required-features = ["normal-session"]

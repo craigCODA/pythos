@@ -16,7 +16,10 @@ RUNTIME_LINKER = ROOT / "user" / "session-runtime" / "linker.ld"
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--target-dir", type=Path)
-    parser.add_argument("--features", choices=["session-viewing"])
+    parser.add_argument(
+        "--features",
+        choices=["session-viewing", "normal-session", "normal-session-fault-test"],
+    )
     args = parser.parse_args()
 
     env = os.environ.copy()
@@ -38,10 +41,20 @@ def main() -> int:
         "--target",
         "x86_64-unknown-none",
     ]
+    binary = "pythos-normal-session" if args.features in {
+        "normal-session",
+        "normal-session-fault-test",
+    } else "pythos-user-session-runtime"
+    command.extend(["--bin", binary])
     if args.features:
         command.extend(["--features", args.features])
         if args.target_dir is None:
-            args.target_dir = ROOT / "target" / "session-viewing-probe"
+            target_names = {
+                "session-viewing": "session-viewing-probe",
+                "normal-session": "normal-session",
+                "normal-session-fault-test": "normal-session-fault-test",
+            }
+            args.target_dir = ROOT / "target" / target_names[args.features]
     if args.target_dir is not None:
         command.extend(["--target-dir", args.target_dir])
     return subprocess.call(command, cwd=ROOT, env=env)

@@ -315,7 +315,7 @@ class BuildOrchestrationTest(unittest.TestCase):
         command, kwargs = calls[0]
         normalized = normalize(command)
         self.assertEqual(
-            normalized[:7],
+            normalized[:9],
             [
                 "cargo",
                 "build",
@@ -323,10 +323,12 @@ class BuildOrchestrationTest(unittest.TestCase):
                 "pythos-user-session-runtime",
                 "--target",
                 "x86_64-unknown-none",
+                "--bin",
+                "pythos-user-session-runtime",
                 "--target-dir",
             ],
         )
-        self.assertEqual(normalized[7], str(target_dir).replace("\\", "/"))
+        self.assertEqual(normalized[9], str(target_dir).replace("\\", "/"))
         rustflags = str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/")
         self.assertIn("user/session-runtime/linker.ld", rustflags)
         self.assertNotIn("user/pyth-runtime/linker.ld", rustflags)
