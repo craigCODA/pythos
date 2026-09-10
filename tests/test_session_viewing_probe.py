@@ -251,6 +251,37 @@ class ViewingAcceptanceTests(unittest.TestCase):
 
 
 class ViewingRunnerTests(unittest.TestCase):
+    def test_windows_reset_after_complete_is_eof_but_partial_tail_is_not(self):
+        sock = mock.Mock()
+        sock.recv.side_effect = ConnectionResetError(10054, "QEMU exited")
+        collector = HARNESS.Com2Collector(sock, HARNESS.AcceptanceTimeline())
+        collector._record_complete_lines(b"PYTHOS:USER:SESSION_VIEWING:COMPLETE\r\n")
+        HARNESS.drain_com2(collector)
+        collector.remainder = b"PYTHOS:USER:SESSION_VIEWING:RECOV"
+        with self.assertRaisesRegex(AssertionError, "truncated"):
+            HARNESS.drain_com2(collector)
+
+    def test_eof_without_complete_cannot_be_drained_as_success(self):
+        sock = mock.Mock()
+        sock.recv.return_value = b""
+        collector = HARNESS.Com2Collector(sock, HARNESS.AcceptanceTimeline())
+        with self.assertRaisesRegex(AssertionError, "COMPLETE"):
+            HARNESS.drain_com2(collector)
+
+    def test_final_enter_is_one_atomic_qmp_batch_without_late_key_release(self):
+        timeline = HARNESS.AcceptanceTimeline()
+        with mock.patch.object(HARNESS.QEMU, "run_qmp_commands") as qmp, mock.patch.object(HARNESS.launcher_click, "press_qcode_keys") as delayed:
+            HARNESS.send_input(6, timeline)
+        delayed.assert_not_called()
+        qmp.assert_called_once_with(({
+            "execute": "input-send-event",
+            "arguments": {"events": [
+                {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "ret"}}},
+                {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": "ret"}}},
+            ]},
+        },))
+        self.assertEqual(timeline.events, [("HARNESS", "INPUT:6:DISPATCH"), ("HARNESS", "INPUT:6:SENT")])
+
     def test_connect_failure_still_reaps_the_runner_and_preserves_evidence(self):
         runner = mock.Mock()
         tracker = mock.Mock()

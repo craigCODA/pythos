@@ -1,7 +1,11 @@
 # PythOS Handover
 
-Current checked-in boundary: Phase 13.5 Slice 2 is accepted on the opt-in
-session-runtime profile and the tree is stopped before Slice 3. ADR 0090
+Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
+on 2026-09-09. Implementation and current verification live in the
+[single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md), with new boundary
+decisions in [ADR 0092](decisions/0092-retained-viewing-presentation.md).
+Stop before Slice 5; no default boot cutover or new physical acceptance.
+The merged baseline remains the accepted opt-in Slice 2 profile. ADR 0090
 records Slice 1's capability-gated ring-3 input delivery. ADR 0091 records
 Slice 2's bounded retained session-runtime lifecycle. ADR 0089 remains the
 semantic authority for Viewing, and neither Slice 1 nor Slice 2 cuts Viewing
@@ -16,6 +20,27 @@ lifecycle and schema-extensibility ABI, and the final independent package QEMU
 proof reaches `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
 ## Phase 13.5 Slice 2 Bounded Session Runtime (2026-09-07)
+
+Merge and hosted acceptance verified on 2026-09-09:
+
+- [PR #24](https://github.com/craigCODA/pythos/pull/24) was normally merged on
+  2026-09-08T02:00:16Z at `8c2d3a83cef5388dd091f0acc1676bebfe8bbc44`.
+  Local `main`, `origin/main`, and the live remote `main` match that commit.
+- [PR QEMU Acceptance run 34174272240](https://github.com/craigCODA/pythos/actions/runs/34174272240)
+  passed at exact feature tip `5f14d2ae2fe0638be41f05dd03683a71283f7185`.
+- [Post-merge QEMU Acceptance run 34178544696](https://github.com/craigCODA/pythos/actions/runs/34178544696)
+  passed at the exact merge commit. Both runs completed `qemu-milestones`,
+  `qemu-handoff`, and the aggregate `qemu-acceptance` gate.
+- The merged-main local verification record reports formatting, 1,008 Rust
+  workspace tests, and Python discovery 155/155 passing. These are retained
+  merge-time results; no build or QEMU suite was rerun for this documentation
+  refresh.
+
+The authoritative checkout is `D:\PythOS-Workspace\repo\pythos`. The completed
+feature worktree remains at `.worktrees/phase13-5-session-runtime` on
+`agent/phase13-5-session-runtime`; its ignored `.superpowers/sdd/` ledger and
+`target/session-runtime-probe/` logs are retained evidence, not active Slice 3
+work. No Slice 3 implementation has started.
 
 The original bounded lifecycle evidence source is
 `6109425047de86cf60e4367313811fc284c43bad`. Reviewed returnable-fault
@@ -78,8 +103,9 @@ Fresh gates passed: `cargo fmt --check`, `cargo test --workspace`, both strict
 session-runtime Clippy profiles, 54 focused Python tests, full Python discovery
 at 155/155, both oracle self-tests, the live Slice 1 bridge, normal fast boot,
 and persistent storage.
-GitHub CI is pinned to QEMU 11.1.1; that hosted-version claim remains pending
-until the workflow runs this branch tip.
+GitHub CI is pinned to QEMU 11.1.1 and OVMF `2024.02-2ubuntu0.9`.
+The successful hosted runs at the feature and merge commits are linked above;
+their acceptance remains emulator evidence only.
 
 Canonical artifacts:
 
@@ -565,11 +591,24 @@ not claimed until a physical headphone-jack boot records evidence.
 
 ## Verify First
 
-Run these from `C:\Users\NeverAMoment\pythos` before continuing work:
+Run these from `D:\PythOS-Workspace\repo\pythos` before implementation work.
+Use Git and the checkpoint above to confirm the baseline first; the remaining
+commands are the acceptance checks to reproduce when implementation is invoked.
 
 ```powershell
 git status --short --branch
 git log --oneline -8
+git ls-remote origin refs/heads/main
+cargo fmt --check
+cargo test --workspace
+py -3 -m unittest discover -s tests -p "test_*.py"
+py -3 scripts/test-session-input-bridge-probe.py --self-test
+py -3 scripts/test-session-runtime-probe.py --self-test
+py -3 scripts/test-session-input-bridge-probe.py
+py -3 scripts/test-session-runtime-probe.py --fault-test
+py -3 scripts/test-session-runtime-probe.py
+py -3 scripts/test-viewing-input-probe.py
+py -3 scripts/test-normal-fast-boot.py
 python scripts\test-boot.py --slice object-browser
 python scripts\test-boot.py --slice save-and-restore-across-reboot
 python scripts\test-boot.py --slice ring-3-execution
@@ -629,10 +668,13 @@ Phase 12 loader read-bound extension recorded through ADR 0071
 Phase 12 path-adversarial-suite recorded through ADR 0072
 Phase 13 package lifecycle and schema extensibility recorded through ADR 0073
 Phase 13 independent package lifecycle proof reaches PYTHOS:CORE:PHASE_13_COMPLETE
-Next allowed work: none by momentum. Phase 13.5, persistent Pyth sessions,
-presentation/input bridges, WakeContext/Waking, Kai, later PythTIG phases,
-networking, updates, AI, SMP, or hardware expansion require explicit
-re-invocation and the corresponding roadmap or phase plan.
+Phase 13.5 Slice 1 session-input bridge accepted in QEMU through ADR 0090
+Phase 13.5 Slice 2 retained runtime and fault containment accepted through ADR 0091
+PR #24 normally merged; exact merge has passed hosted QEMU acceptance
+Owner-invoked units: Slices 3 and 4, retained Viewing and bounded presentation.
+Current verification is in the linked implementation map. No default-boot,
+production wait/wakeup, durable session, USB/xHCI integration, or new physical
+acceptance is implied. Later phases also retain their own invocation gates.
 ```
 
 ADR 0022 records the on-disk typed-object format. ADR 0023 records the
@@ -1202,31 +1244,28 @@ Do not assume any of the following exists:
 ```text
 filesystem
 general-purpose file allocation
-dynamic object database
 user-configurable boot themes
 physical audio hardware support beyond QEMU AC97
 networking
 AI inside the trusted core
-dynamic user process stacks
-user pointer copy-in/copy-out
-general-purpose hostile-code service isolation
-general-purpose userspace ABI
 SMP
 remote package registry, dependency solving, or package updates
-persistent package-session runtime
-presentation/input package bridges
+production session runtime with accepted wait/wakeup and default-boot integration
+session-owned Viewing integration across the retained runtime lifetime
+durable session state restored after reboot
+production USB/xHCI-to-session input integration
 WakeContext, First Waking, or Kai
 Open Surface
 Patch
 ```
 
-Ring-3 execution, the distinct user CR3, the syscall ABI, the guarded
-user-stack pool, service-local runtime roots, guarded shared-memory proof,
-process-termination proof, quota proofs, crash-containment proof, and
-capability-boundary proof exist only for bounded proof paths. Phase 8 proves the
-current hardware-backed authority boundary for those paths. Do not claim a
-general-purpose userspace ABI or arbitrary hostile-code service environment
-until a later phase defines one.
+Phase 8's isolation proofs were extended by Phase 9's dynamic ELF process
+model, versioned syscall ABI, copy-in/copy-out validation, capability grants,
+and fault-isolation adversarial suite. Phase 10 adds dynamic object allocation
+and recovery, Phase 13 adds local package lifecycle, and Phase 13.5 Slices 1
+and 2 add bounded input delivery and a retained runtime with fault containment.
+These accepted surfaces do not establish unrestricted hostile-code security,
+a production persistent Session Manager, or generic physical hardware support.
 
 ## Next Boundary
 
@@ -1240,7 +1279,7 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap stop boundary is Phase 13 -> Phase 13.5. The
+The current numbered-roadmap scope is Phase 13.5 Slices 3 and 4, stopping before Slice 5. The
 current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
@@ -1254,8 +1293,15 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-Do not begin Phase 13.5, persistent Pyth sessions, presentation/input bridges,
+The owner-invoked work binds ADR 0089's `SessionControlInterpreter`
+and session-lifetime `ViewingState` to the ADR 0091 retained owner. Preserve
+one-way, idempotent `Space Space Backspace Backspace` activation, exclusive
+Traversal/FocusMark motion routing, non-durable state, and presentation that
+only renders a supplied snapshot. Prove the integrated behavior and regressions
+under QEMU before accepting Slices 3 and 4; see the implementation map above.
+
+This boundary does not authorize default normal-boot cutover, production
+wait/wakeup, durable sessions, USB/xHCI integration, physical Lenovo acceptance,
 WakeContext/Waking, Kai, networking, updates, AI, SMP, hardware expansion, or
-later PythTIG work by momentum. Pick one later phase, write its detailed slice
-sequence and required artifacts, then start with a failing automated test where
-code is involved.
+later PythTIG work. Keep implementation details in the invoked slice's existing
+map and tests; add an ADR only for a new architectural decision.

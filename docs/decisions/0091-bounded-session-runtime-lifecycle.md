@@ -160,8 +160,12 @@ py -3 scripts/test-persistent-storage.py
 ```
 
 GitHub Actions remains pinned to QEMU 11.1.1 and OVMF
-`2024.02-2ubuntu0.9`. That hosted version is a CI contract, not local or remote
-runtime evidence until the hosted workflow passes the documentation commit.
+`2024.02-2ubuntu0.9`. Hosted acceptance subsequently passed on the final
+feature tip and PR #24's normal merge commit. The exact identities and both
+successful run links are recorded in
+[the handover checkpoint](../HANDOVER.md#phase-135-slice-2-bounded-session-runtime-2026-09-07).
+This adds hosted QEMU evidence without changing the decision's normal-boot,
+physical, or Viewing integration boundaries.
 
 ## Consequences
 

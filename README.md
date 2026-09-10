@@ -7,7 +7,19 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-Current `main` is stopped at the Phase 13 -> Phase 13.5 boundary. Phase 12
+The merged baseline contains Phase 13.5 Slices 1 and 2, accepted in bounded,
+opt-in QEMU profiles:
+ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
+ADR 0091 retains one session runtime across two fresh Session Manager graph
+invocations with fault containment. The owner invoked Slices 3 and 4 together:
+retained session-owned Viewing and capability-checked snapshot presentation.
+See the [implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
+for current verification. Slice 5 normal-boot cutover, production wait/wakeup, durable
+session state, USB/xHCI integration, and physical Lenovo acceptance remain
+pending. See the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary)
+and [handover](docs/HANDOVER.md) for scope and merged acceptance evidence.
+
+Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
 capability-scoped object locator namespace, not POSIX paths. ADR 0070 records
 the internal `object-locator 0.1` resolver ABI, ADR 0071 records the finite
@@ -309,9 +321,11 @@ This is opt-in QEMU evidence, not default input, generic physical support, or
 physical Lenovo acceptance. Normal boot still uses the compatibility launcher,
 and cursor activation is non-durable and has no deactivation behavior. ADR
 0089 is accepted in QEMU; physical validation remains pending. The strict
-Viewing-feature Clippy gate is clean, while the repository-wide Python suite
-still has the exact known unrelated Phase 13 baseline, so the branch is not
-fully green or merge-ready.
+Viewing-feature Clippy gate was clean. The repository-wide Python failures
+recorded for that historical ADR 0089 candidate are not the current `main`
+status: the later Slice 2 merge passed hosted QEMU acceptance, and its recorded
+merged-main Python discovery passed 155/155. See the handover for exact commits
+and evidence; physical Viewing validation remains pending.
 
 ADR 0090 adds a separate Phase 13.5 Slice 1 delivery boundary beneath ADR 0089.
 The opt-in `session-input-bridge-probe` proves that one capability-authorized

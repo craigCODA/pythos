@@ -30,12 +30,27 @@ Phase 12 slice 2 recorded   path-resolution
 Phase 12 slice 3 recorded   path-adversarial-suite
                               ADR 0072
                               marker: PYTHOS:CORE:PHASE_12_COMPLETE
+Phase 13         complete   local package lifecycle and schema extensibility
+                              ADR 0073
+                              marker: PYTHOS:CORE:PHASE_13_COMPLETE
+Phase 13.5 slice 1 accepted in QEMU   session-input bridge, ADR 0090
+Phase 13.5 slice 2 accepted in QEMU   bounded retained runtime, ADR 0091
+Phase 13.5 slices 3 and 4 invoked   retained Viewing and bounded presentation, ADR 0092
 ```
 
-Next unallocated ADR number: **0074**. Hard stop is the Phase 13 -> Phase 13.5
-boundary, already recorded in `AGENTS.md`. Phase 13.5 and later work are not
-authorized to start without explicit re-invocation, same as every phase before
-them.
+The current authorized scope is Phase 13.5 Slices 3 and 4; stop before Slice 5. See the
+[current roadmap boundary](ROADMAP.md#current-phase-135-boundary) and
+[handover](HANDOVER.md) for the accepted scope and merged QEMU evidence.
+Slice 3 binds ADR 0089's session controls and Viewing state to the retained
+owner; Slice 4 projects snapshots through ADR 0092. Both are owner-invoked;
+the implementation map linked from the roadmap records current verification.
+Default-boot cutover, production
+wait/wakeup, durable session state, USB/xHCI integration, and new physical
+acceptance are not established by Slices 1 and 2.
+
+ADRs are allocated through 0092 in this checkout. Check `docs/decisions/` and
+in-progress branches before allocating another number; this recap does not
+reserve one. Phases 14-17 below remain later, separately invoked work.
 
 ---
 

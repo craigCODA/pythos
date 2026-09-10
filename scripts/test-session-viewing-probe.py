@@ -207,20 +207,37 @@ def send_input(index: int, timeline: AcceptanceTimeline) -> None:
     timeline.record("HARNESS", f"INPUT:{index}:DISPATCH")
     if index in (0, 5):
         launcher_click.send_relative_mouse_motion(7, -7)
+    elif index == 6:
+        # Enter releases the bounded runtime to exit. Queue its make and break
+        # together; a delayed second QMP call can arrive after successful exit.
+        QEMU.run_qmp_commands(({
+            "execute": "input-send-event",
+            "arguments": {"events": [
+                {"type": "key", "data": {"down": True, "key": {"type": "qcode", "data": "ret"}}},
+                {"type": "key", "data": {"down": False, "key": {"type": "qcode", "data": "ret"}}},
+            ]},
+        },))
     else:
-        key = {1: "spc", 2: "spc", 3: "backspace", 4: "backspace", 6: "ret"}[index]
+        key = {1: "spc", 2: "spc", 3: "backspace", 4: "backspace"}[index]
         launcher_click.press_qcode_keys([key])
     timeline.record("HARNESS", f"INPUT:{index}:SENT")
 
 
 def drain_com2(collector: Com2Collector) -> None:
     """Do not accept an unobserved trailing recovery/error after COMPLETE."""
+    if USER_PREFIX + "COMPLETE" not in collector.complete_lines:
+        raise AssertionError("COM2 drain requires the observed COMPLETE record")
     deadline = time.monotonic() + 5.0
     while time.monotonic() < deadline:
         try:
             chunk = collector.sock.recv(512)
         except socket.timeout:
             continue
+        except ConnectionResetError:
+            # Windows QEMU closes this socket with RST on normal process exit.
+            # Caller already observed kernel readiness and exit code zero; this
+            # is EOF only, never a replacement for the other acceptance gates.
+            chunk = b""
         if not chunk:
             if collector.remainder:
                 raise AssertionError("truncated trailing COM2 line")

@@ -28,14 +28,17 @@ JacesPC QEMU 11.1.0 each passed two fresh boots with state zero at each boot,
 both process trees reaped, and the disposable 16 MiB image unchanged at
 SHA-256
 `080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
-The CI workflow remains pinned to QEMU 11.1.1; hosted acceptance of the later
-documentation commit must be recorded separately after that workflow runs.
+Hosted QEMU 11.1.1 acceptance also passed on the final feature tip and the
+normal merge commit. See [HANDOVER.md](HANDOVER.md#phase-135-slice-2-bounded-session-runtime-2026-09-07)
+for PR #24, exact commit identities, and the PR and post-merge run links.
 
-Stop at the Slice 2 -> Slice 3 boundary. Slice 3 is the next separately
-invoked unit: bind ADR 0089 `SessionControlInterpreter` and session-lifetime
-`ViewingState` to the retained owner. Do not infer a normal-boot cutover,
-production wait/wakeup, durable session state, Viewing behavior, USB/xHCI
-integration, or physical Lenovo acceptance from Slice 2.
+The owner invoked Slices 3 and 4 together on 2026-09-09: retain ADR 0089
+session controls and Viewing state, then deliver read-only snapshots through
+ADR 0092's capability-checked presentation bridge. The
+[single implementation map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
+records current acceptance and regressions. Stop before Slice 5: normal-boot
+cutover, production wait/wakeup, durable state, USB/xHCI integration and new
+physical acceptance remain outside this invocation.
 
 ## Accepted PythTIG Program Boundary
 
@@ -1277,9 +1280,9 @@ copy-in/copy-out pointer policy is complete. ADR 0040 for dynamic capability
 grants is complete. ADR 0041 for process argv/environment launch data is
 complete. ADR 0042 for dynamic general fault isolation is complete. ADR 0043
 for the process-model adversarial suite is complete. Phase 9 is complete;
-Phase 10 follows below as historical context. The active hard stop is now the
-Phase 13 -> Phase 13.5 boundary recorded by ADR 0073 and
-`PYTHOS:CORE:PHASE_13_COMPLETE`.
+Phase 10 follows below as historical context. The active hard stop is the
+Phase 13.5 boundary described at the top of this roadmap, following the
+accepted ADR 0090/0091 proofs and owner-invoked ADR 0092 work.
 
 ---
 
@@ -1327,10 +1330,10 @@ physical-hardware smoke-test findings are recorded through ADR 0046 and
 recorded through ADR 0070, the loader bound is recorded through ADR 0071, and
 `path-adversarial-suite` is recorded through ADR 0072. Phase 13 package
 lifecycle and schema extensibility are recorded through ADR 0073 and
-`PYTHOS:CORE:PHASE_13_COMPLETE`. Halt at the Phase 13 -> Phase 13.5 boundary;
-do not begin persistent Pyth sessions, presentation/input bridges,
-WakeContext/Waking, Kai, networking, AI, updates, SMP, or hardware expansion
-without explicit re-invocation.
+`PYTHOS:CORE:PHASE_13_COMPLETE`. Subsequent Phase 13.5 Slices 1 and 2 are
+accepted in opt-in QEMU profiles through ADRs 0090 and 0091. The current
+Slices 3 and 4 scope and the separate Slice 5 invocation requirement are
+recorded at the top of this roadmap.
 
 ### Scope boundary
 
