@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod normal_session;
 pub mod session_command_host;
 pub mod session_viewing;
 #[cfg(any(test, feature = "session-viewing"))]
