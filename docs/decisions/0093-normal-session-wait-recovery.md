@@ -70,6 +70,12 @@ Keep `SESSION_INPUT_TRY_READ` nonblocking and unchanged. Add a separately named,
 capability-checked scalar wait operation for the normal session. A wait must
 not consume an input event or retain a user buffer pointer.
 
+The implementation map pins this additive call at `0x5059_0152`, introduced in
+the advertised general syscall ABI 1.2. Existing syscall numbers, error values,
+input/presentation records and graph ABI versions remain unchanged. Update the
+old compatibility test's exact minor expectation to 2, not a relaxed version
+check; no existing in-tree user binary negotiates an exact 1.1 minor.
+
 The wait contract is readiness, not delivery: the caller rechecks its input
 and command sources after a wake. Spurious/unrelated interrupt wakes are legal.
 The readiness check and transition to interrupt-enabled CPU sleep must exclude

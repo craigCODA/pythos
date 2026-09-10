@@ -7,8 +7,10 @@ fallback without automatic restart. The new branch is
 implementation in this session; use the
 [Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
 Fresh predecessor
-host baselines passed (1029 Rust; 176 Python plus 148 subtests). No Slice 5
-implementation, new QEMU acceptance, remote write or physical write is claimed.
+host baselines passed (1029 Rust; 176 Python plus 148 subtests). Slice 5's
+shared contract/controller is implemented and independently reviewed at
+`f22bfab` (180 relevant tests passed). Kernel integration and new QEMU
+acceptance remain pending. No remote or physical write is claimed.
 
 The following is the completed Slice 3-4 checkpoint:
 
