@@ -344,10 +344,15 @@ impl pythos_user_session_runtime::viewing_orchestration::ViewingRuntimeEffects f
                 SESSION_VIEWING_BOOTSTRAP_OFFSET as u64,
                 core::mem::size_of::<SessionViewingBootstrapV1>() as u64,
             )?;
-        // SAFETY: outer admission validated the exact fixed read-only bootstrap page.
-        // The checked extension subrange is aligned and lies wholly inside that page;
-        // PythCore initialized and retains it without writers until the terminal trap.
-        // Integer-only record bytes are copied by value and validated before authority use.
+        // SAFETY:
+        // 1. Invariant: the fixed bootstrap page holds a separately versioned integer-only extension.
+        // 2. Established by: outer admission and `viewing_extension_address` validated its exact range.
+        // 3. Lifetime: PythCore retains the complete read-only page until this runtime's terminal trap.
+        // 4. Pointer ownership: PythCore owns the source; this process copies metadata by value only.
+        // 5. Alignment: the validated fixed page plus offset 2048 satisfies the record's 8-byte alignment.
+        // 6. Mapped length: the checked 64-byte record lies wholly inside the mapped 4096-byte page.
+        // 7. Concurrency: the page has no writable user alias or concurrent kernel writer.
+        // 8. Violation: absent mapping faults; malformed bytes fail full validation before authority use.
         let extension = unsafe { (address as *const SessionViewingBootstrapV1).read() };
         validate_session_viewing_bootstrap(
             &extension,
@@ -414,10 +419,15 @@ impl pythos_user_session_runtime::viewing_orchestration::ViewingRuntimeEffects f
                 SESSION_VIEWING_RESULT_OFFSET,
                 core::mem::size_of_val(&result) as u64,
             )?;
-        // SAFETY: the coordinator validated the exact writable result page before any
-        // recovery write. The aligned checked extension fits the whole retained page.
-        // This sole runtime thread writes one initialized integer-only record; the
-        // kernel reads it only after the terminal trap, with no concurrent access.
+        // SAFETY:
+        // 1. Invariant: one initialized Viewing result is written into the separate writable extension.
+        // 2. Established by: recovery-boundary validation and `viewing_extension_address` range checks.
+        // 3. Lifetime: PythCore retains this writable result page until the runtime's terminal trap.
+        // 4. Pointer ownership: the sole runtime thread owns the write; PythCore reads only after return.
+        // 5. Alignment: the fixed page and offset 2048 satisfy SessionViewingResultV1's 8-byte alignment.
+        // 6. Mapped length: the checked 432-byte record fits wholly inside the 4096-byte retained page.
+        // 7. Concurrency: no second runtime thread or simultaneous kernel reader can race this write.
+        // 8. Violation: a broken mapping faults the process; corrupt evidence cannot establish readiness.
         unsafe {
             (address as *mut pythos_shared::session_viewing_result::SessionViewingResultV1)
                 .write(result);

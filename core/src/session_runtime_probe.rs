@@ -681,10 +681,15 @@ pub fn run(
             SESSION_VIEWING_HEIGHT,
         )
         .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
-        // SAFETY: this single retained launch owns the framebuffer until its terminal return.
-        // Both the current kernel root and prepared user root map its entire validated range
-        // supervisor-only/NX. No other presenter runs in this opt-in branch, and the
-        // framebuffer metadata is copied by value; no user pointer is retained.
+        // SAFETY:
+        // 1. Invariant: this opt-in launch exclusively owns the framebuffer presentation surface.
+        // 2. Established by: boot validation and `prepare` install and validate supervisor mappings.
+        // 3. Lifetime: both kernel and retained user roots outlive this single runtime and its return.
+        // 4. Pointer ownership: PythCore owns the framebuffer; bind retains only by-value metadata.
+        // 5. Alignment: validated GOP metadata and renderer surface checks establish pixel alignment.
+        // 6. Mapped length: both roots cover the complete validated framebuffer byte range with NX.
+        // 7. Concurrency: the single-core opt-in branch runs no second presenter or framebuffer writer.
+        // 8. Violation: missing mappings or competing writers could fault or corrupt presentation.
         unsafe {
             crate::session_presentation::bind(process.service_id(), boot_info.framebuffer, extent)
         }
@@ -845,9 +850,15 @@ fn write_extension_to_frame<T: Copy>(
         return Err(SessionRuntimeProbeError::Bootstrap);
     }
     crate::memory::r#virtual::with_writable_physical_frame(physical, |page| {
-        // SAFETY: the checked aligned subrange fits the exclusively scratch-mapped page.
-        // The initialized Copy ABI value is borrowed through this synchronous write;
-        // the retained bootstrap page has no concurrent reader before ring-3 entry.
+        // SAFETY:
+        // 1. Invariant: one initialized Copy ABI record fits the selected bootstrap extension.
+        // 2. Established by: the checked end and alignment guards above and validated caller record.
+        // 3. Lifetime: source borrow and scratch alias remain live for this synchronous closure.
+        // 4. Pointer ownership: PythCore owns the exclusive frame and borrows the source read-only.
+        // 5. Alignment: page alignment plus the checked offset satisfies T's alignment.
+        // 6. Mapped length: the closure maps 4096 bytes and the complete T lies inside that range.
+        // 7. Concurrency: writing occurs before ring-3 entry with no reader or competing frame writer.
+        // 8. Violation: a wrong range or uninitialized source could corrupt the authenticated bootstrap.
         unsafe {
             page.as_mut_ptr().add(start).cast::<T>().write(*value);
         }
@@ -870,9 +881,15 @@ fn read_extension_from_frame<T: Copy>(
         return Err(SessionRuntimeProbeError::Result);
     }
     crate::memory::r#virtual::with_writable_physical_frame(physical, |page| {
-        // SAFETY: the aligned bounded subrange is retained and scratch-mapped after the
-        // single user writer terminated. Caller selects an integer-only ABI record
-        // (all bit patterns valid) and validates the copied value before acceptance.
+        // SAFETY:
+        // 1. Invariant: caller selects the integer-only Viewing result ABI, valid for all bit patterns.
+        // 2. Established by: the sole concrete call uses SessionViewingResultV1 after user return.
+        // 3. Lifetime: the retained frame and scratch alias outlive this synchronous by-value read.
+        // 4. Pointer ownership: PythCore owns the frame; the user writer has terminated.
+        // 5. Alignment: page alignment and the checked offset satisfy T's natural alignment.
+        // 6. Mapped length: checked end bounds the full record within the mapped 4096-byte page.
+        // 7. Concurrency: no user execution or second result writer remains during this read.
+        // 8. Violation: a torn or malformed result must fail full validation and cannot grant readiness.
         unsafe { page.as_ptr().add(start).cast::<T>().read() }
     })
     .map_err(SessionRuntimeProbeError::AddressSpace)
