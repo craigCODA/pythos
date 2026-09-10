@@ -5,6 +5,8 @@ on 2026-09-09. Implementation and current verification live in the
 [single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md), with new boundary
 decisions in [ADR 0092](decisions/0092-retained-viewing-presentation.md).
 Stop before Slice 5; no default boot cutover or new physical acceptance.
+Slices 3 and 4 are accepted locally in the bounded QEMU profile, with all seven
+predecessor regressions passing. They are not merged or published.
 The merged baseline remains the accepted opt-in Slice 2 profile. ADR 0090
 records Slice 1's capability-gated ring-3 input delivery. ADR 0091 records
 Slice 2's bounded retained session-runtime lifecycle. ADR 0089 remains the
@@ -40,7 +42,7 @@ The authoritative checkout is `D:\PythOS-Workspace\repo\pythos`. The completed
 feature worktree remains at `.worktrees/phase13-5-session-runtime` on
 `agent/phase13-5-session-runtime`; its ignored `.superpowers/sdd/` ledger and
 `target/session-runtime-probe/` logs are retained evidence, not active Slice 3
-work. No Slice 3 implementation has started.
+work. At that Slice 2 checkpoint, no Slice 3 implementation had started.
 
 The original bounded lifecycle evidence source is
 `6109425047de86cf60e4367313811fc284c43bad`. Reviewed returnable-fault
@@ -1251,7 +1253,6 @@ AI inside the trusted core
 SMP
 remote package registry, dependency solving, or package updates
 production session runtime with accepted wait/wakeup and default-boot integration
-session-owned Viewing integration across the retained runtime lifetime
 durable session state restored after reboot
 production USB/xHCI-to-session input integration
 WakeContext, First Waking, or Kai
@@ -1264,6 +1265,8 @@ model, versioned syscall ABI, copy-in/copy-out validation, capability grants,
 and fault-isolation adversarial suite. Phase 10 adds dynamic object allocation
 and recovery, Phase 13 adds local package lifecycle, and Phase 13.5 Slices 1
 and 2 add bounded input delivery and a retained runtime with fault containment.
+ADRs 0089/0092 now add session-owned Viewing across that retained lifetime and
+bounded synchronous snapshot presentation in the opt-in QEMU profile.
 These accepted surfaces do not establish unrestricted hostile-code security,
 a production persistent Session Manager, or generic physical hardware support.
 

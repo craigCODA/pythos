@@ -13,6 +13,7 @@ ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
 ADR 0091 retains one session runtime across two fresh Session Manager graph
 invocations with fault containment. The owner invoked Slices 3 and 4 together:
 retained session-owned Viewing and capability-checked snapshot presentation.
+The combined opt-in profile is locally QEMU-verified; it is not a normal-boot cutover.
 See the [implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
 for current verification. Slice 5 normal-boot cutover, production wait/wakeup, durable
 session state, USB/xHCI integration, and physical Lenovo acceptance remain

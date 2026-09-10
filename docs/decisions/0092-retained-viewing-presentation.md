@@ -1,7 +1,9 @@
 # ADR 0092: Retained Viewing and bounded snapshot presentation
 
-Status: implementation decision for the owner-invoked Phase 13.5 Slices 3 and 4
-(2026-09-09); acceptance pending. Does not authorize Slice 5.
+Status: accepted in local QEMU for the owner-invoked Phase 13.5 Slices 3 and 4
+(2026-09-09). Default boot, production wait/wakeup and physical acceptance remain
+deferred. Does not authorize Slice 5. Evidence is recorded in the single
+[implementation map](../superpowers/plans/2026-09-09-phase13-5-slices3-4.md).
 
 ## Context and preserved contracts
 

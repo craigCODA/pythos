@@ -333,6 +333,7 @@ and where the boundary of the work still is.
 | ADR 0089 accepted in QEMU: opt-in Traversal default, one-way session cursor activation, exclusive FocusMark routing, preserved ADR 0088 no-write evidence, and a clean strict Viewing-feature Clippy gate | Physical validation; default boot cutover, deactivation, durable cursor state, or generic physical input support |
 | ADR 0090 accepted in QEMU: one capability-authorized ring-3 consumer receives recurring normalized emulated-PS/2 input through ABI 1.0, with sequence-gap evidence and independent COM1/COM2 no-write proof | Physical or production USB/xHCI input, persistent Session Manager consumption, ADR 0089 activation/routing/presentation behavior, or normal-boot cutover |
 | ADR 0091 accepted in QEMU and merged through PR #24: one retained ring-3 runtime, stable per-boot session identity, fresh graph invocations, retained neutral state, and contained native faults | Session-owned Viewing integration, production wait/wakeup, durable state across reboot, default-boot cutover, or physical acceptance |
+| ADR 0092 accepted locally in QEMU: retained session-owned Viewing, activation spanning fresh graph invocations, capability-checked synchronous snapshots, and live FocusMark projection | Production wait/wakeup, default-boot cutover, durable state, production USB/xHCI input, or physical acceptance |
 | PythTIG Phase 1-7 implementation and acceptance records on `main` | Later PythTIG phases or AI authority |
 | ADR 0069/0070/0072 object-locator decision, resolver implementation, and adversarial suite | POSIX paths as authoritative object identity |
 | ADR 0073 and Phase 13 local package lifecycle through `PYTHOS:CORE:PHASE_13_COMPLETE` | Remote registries, dependency solving, persistent package sessions, or general desktop apps |
@@ -1064,8 +1065,8 @@ implemented or not claimed:
 * interrupt-driven or DMA-backed storage;
 * partitions or filesystems on the SDHCI/eMMC target;
 * POSIX paths as authoritative object identity;
-* production persistent Session Manager, session-owned Viewing integration,
-  durable session state, or production USB/xHCI input delivery;
+* production persistent Session Manager, durable session state, or production
+  USB/xHCI input delivery;
 * WakeContext, First Waking, or Kai;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
