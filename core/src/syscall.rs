@@ -40,6 +40,8 @@ use crate::retained_services::{self, RetainedServiceError};
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
 use crate::session_input::{self, SessionInputError};
+#[cfg(any(test, feature = "session-viewing-probe"))]
+use crate::session_presentation::{self, PresentationError};
 #[cfg(any(
     test,
     all(
@@ -131,6 +133,10 @@ use pythos_shared::session_input_abi::{
 };
 #[cfg(any(test, feature = "session-runtime-probe"))]
 use pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID;
+#[cfg(any(test, feature = "session-viewing-probe"))]
+use pythos_shared::session_viewing_abi::{
+    SESSION_VIEWING_RESOURCE_ID, SYSCALL_SESSION_VIEWING_PRESENT,
+};
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 use pythos_shared::task_abi::{
     MAX_TASK_PROPOSAL_RESULTS, OP_ABANDON_TASK, OP_APPEND_TASK_EVENT, OP_APPROVE_PROPOSAL,
@@ -240,6 +246,8 @@ pub enum SyscallError {
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
     SessionInput(SessionInputError),
+    #[cfg(any(test, feature = "session-viewing-probe"))]
+    SessionPresentation(PresentationError),
     UserCopy(UserCopyError),
     #[cfg(any(
         test,
@@ -292,6 +300,8 @@ enum SyscallDispatchKind {
     PythGraphExit,
     PackageContext,
     SessionInputTryRead,
+    #[cfg(any(test, feature = "session-viewing-probe"))]
+    SessionViewingPresent,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -376,6 +386,15 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         introduced_minor: 1,
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::SessionInputTryRead,
+    },
+    #[cfg(any(test, feature = "session-viewing-probe"))]
+    SyscallEntry {
+        number: SYSCALL_SESSION_VIEWING_PRESENT,
+        name: "SYSCALL_SESSION_VIEWING_PRESENT",
+        introduced_major: 1,
+        introduced_minor: 1,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::SessionViewingPresent,
     },
     SyscallEntry {
         number: SYSCALL_PYTH_GRAPH_LOG,
@@ -654,6 +673,10 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
         SyscallDispatchKind::PackageContext => dispatch_package_context(args),
         SyscallDispatchKind::SessionInputTryRead => dispatch_session_input_try_read(args),
+        #[cfg(any(test, feature = "session-viewing-probe"))]
+        SyscallDispatchKind::SessionViewingPresent => with_syscall_capabilities(|table| {
+            dispatch_session_viewing_present_with_table(args, table, session_presentation::present)
+        }),
     }
 }
 
@@ -868,6 +891,66 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     {
         Ok(console_read_result(None, || None))
     }
+}
+
+#[cfg(any(test, feature = "session-viewing-probe"))]
+fn dispatch_session_viewing_present_with_table(
+    args: SyscallArgs,
+    capabilities: &CapabilityTable,
+    present: impl FnOnce(ServiceId, u64, u64, u64, u64) -> Result<(), PresentationError>,
+) -> Result<u64, SyscallError> {
+    let caller = process_context::current_caller()?;
+    validate_syscall_capability_with_table(
+        capabilities,
+        caller,
+        PackedCapability::from_raw(args.arg0),
+        ResourceId::new(SESSION_VIEWING_RESOURCE_ID),
+        RightsMask::new(RightsMask::SEND),
+    )?;
+    if caller.principal_id() != pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID {
+        return Err(SyscallError::SessionPresentation(
+            PresentationError::WrongHolder,
+        ));
+    }
+    present(
+        caller.service_id(),
+        args.arg1,
+        args.arg2,
+        args.arg3,
+        args.arg4,
+    )
+    .map_err(SyscallError::SessionPresentation)?;
+    Ok(SYSCALL_OK)
+}
+
+#[cfg(any(test, feature = "session-viewing-probe"))]
+fn grant_session_presentation_capability_with_table(
+    table: &mut CapabilityTable,
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    if process.principal_id() != pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID
+    {
+        return Err(SyscallError::SessionPresentation(
+            PresentationError::WrongHolder,
+        ));
+    }
+    let handle = table.grant(
+        process.service_id(),
+        ResourceId::new(SESSION_VIEWING_RESOURCE_ID),
+        RightsMask::new(RightsMask::SEND),
+    )?;
+    Ok(pack_syscall_capability(handle))
+}
+
+/// The opt-in runtime bootstrap is the sole grant site; graph bindings never
+/// receive this distinct presentation authority.
+#[cfg(any(test, feature = "session-viewing-probe"))]
+pub(crate) fn grant_session_presentation_capability(
+    process: ActiveUserProcess,
+) -> Result<PackedCapability, SyscallError> {
+    with_syscall_capabilities(|table| {
+        grant_session_presentation_capability_with_table(table, process)
+    })
 }
 
 fn dispatch_session_input_try_read(args: SyscallArgs) -> Result<u64, SyscallError> {
@@ -2851,6 +2934,130 @@ mod tests {
     };
 
     static EXPECTED_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn session_presentation_grant_is_separate_and_only_for_runtime_principal() {
+        let mut table = CapabilityTable::new();
+        let service = ServiceId::from_raw(7);
+        for principal in [0, 0x5059_5448_534D_0001] {
+            assert!(
+                grant_session_presentation_capability_with_table(
+                    &mut table,
+                    ActiveUserProcess::new(service, principal, 1)
+                )
+                .is_err()
+            );
+        }
+        let runtime = ActiveUserProcess::new(
+            service,
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        let cap = grant_session_presentation_capability_with_table(&mut table, runtime).unwrap();
+        assert_eq!(
+            validate_syscall_capability_with_table(
+                &table,
+                runtime,
+                cap,
+                ResourceId::new(SESSION_VIEWING_RESOURCE_ID),
+                RightsMask::new(RightsMask::SEND)
+            ),
+            Ok(())
+        );
+        assert!(
+            validate_syscall_capability_with_table(
+                &table,
+                runtime,
+                cap,
+                ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                RightsMask::new(RightsMask::INPUT)
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn session_presentation_syscall_requires_live_caller_generation_holder_resource_and_send() {
+        use crate::session_presentation::{PresentationService, tests::fixture};
+        use crate::viewing::ViewingExtent;
+        let _guard = process_context_test_lock();
+        let holder = ServiceId::from_raw(7);
+        let process = ActiveUserProcess::new(
+            holder,
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        for case in 0..8 {
+            let (pixels, info) = fixture();
+            let mut service = PresentationService::new();
+            // SAFETY: the local aligned pixel Vec remains live and exclusive.
+            unsafe {
+                service
+                    .bind(holder, info, ViewingExtent::new(640, 480).unwrap())
+                    .unwrap();
+            }
+            service.present(holder, 0, 1, (240 << 32) | 320, 0).unwrap();
+            let before = pixels.clone();
+            let accepted = service.accepted_snapshot();
+            let mut table = CapabilityTable::new();
+            let resource = if case == 4 {
+                SESSION_INPUT_RESOURCE_ID
+            } else {
+                SESSION_VIEWING_RESOURCE_ID
+            };
+            let rights = if case == 5 {
+                RightsMask::INPUT
+            } else {
+                RightsMask::SEND
+            };
+            let handle = table
+                .grant(holder, ResourceId::new(resource), RightsMask::new(rights))
+                .unwrap();
+            let mut cap = pack_syscall_capability(handle);
+            let mut caller = process;
+            match case {
+                1 => cap = PackedCapability::from_parts(31, 1),
+                2 => {
+                    table.revoke(handle).unwrap();
+                }
+                3 => {
+                    caller =
+                        ActiveUserProcess::new(ServiceId::from_raw(8), process.principal_id(), 1)
+                }
+                6 => caller = ActiveUserProcess::new(holder, 0x5059_5448_534D_0001, 1),
+                _ => {}
+            }
+            if case == 0 {
+                process_context::clear_current_process();
+            } else {
+                process_context::bind_current_process(caller);
+            }
+            let result = dispatch_session_viewing_present_with_table(
+                SyscallArgs {
+                    number: SYSCALL_SESSION_VIEWING_PRESENT,
+                    arg0: cap.raw(),
+                    arg1: 1,
+                    arg2: 1,
+                    arg3: (233 << 32) | 327,
+                    arg4: 0,
+                },
+                &table,
+                |who, revision, flags, coordinates, reserved| {
+                    service.present(who, revision, flags, coordinates, reserved)
+                },
+            );
+            if case == 7 {
+                assert_eq!(result, Ok(SYSCALL_OK));
+                assert_ne!(pixels, before);
+                assert_eq!(service.accepted_snapshot().unwrap().0, 1);
+            } else {
+                assert!(result.is_err(), "case {case}");
+                assert_eq!(pixels, before, "case {case}");
+                assert_eq!(service.accepted_snapshot(), accepted, "case {case}");
+            }
+        }
+        process_context::clear_current_process();
+    }
 
     #[test]
     fn syscall_star_value_selects_kernel_and_ring3_segments() {

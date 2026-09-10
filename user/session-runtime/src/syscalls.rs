@@ -68,3 +68,25 @@ pub fn try_read(input: PackedCapability, output: &mut SessionInputEventV1) -> u6
         0,
     )
 }
+
+/// Synchronously project a by-value snapshot through the distinct SEND grant.
+/// No address, input capability, or graph command capability crosses this ABI.
+#[cfg(feature = "session-viewing")]
+pub fn present(
+    capability: PackedCapability,
+    revision: u64,
+    snapshot: pythos_shared::viewing::ViewingSnapshot,
+) -> u64 {
+    let (flags, coordinates) = match snapshot.focus_mark {
+        None => (0, 0),
+        Some(position) => (1, u64::from(position.x) | (u64::from(position.y) << 32)),
+    };
+    syscall5(
+        pythos_shared::session_viewing_abi::SYSCALL_SESSION_VIEWING_PRESENT,
+        capability.raw(),
+        revision,
+        flags,
+        coordinates,
+        0,
+    )
+}
