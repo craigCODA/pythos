@@ -264,9 +264,11 @@ mod tests {
     use super::*;
     use pythos_shared::{
         session_input_abi::{
-            KEY_BACKSPACE, KEY_SPACE, SESSION_INPUT_KIND_KEY_DOWN,
-            SESSION_INPUT_KIND_MOUSE_BUTTON_STATE, SESSION_INPUT_KIND_RELATIVE_MOTION,
-            SESSION_INPUT_SOURCE_KEYBOARD, SESSION_INPUT_SOURCE_MOUSE,
+            KEY_A, KEY_BACKSPACE, KEY_DIGIT0, KEY_DIGIT1, KEY_DIGIT2, KEY_DIGIT3, KEY_DIGIT4,
+            KEY_DIGIT5, KEY_DIGIT6, KEY_DIGIT7, KEY_DIGIT8, KEY_DIGIT9, KEY_ENTER, KEY_ESCAPE,
+            KEY_SPACE, KEY_Z, SESSION_INPUT_KIND_KEY_DOWN, SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+            SESSION_INPUT_KIND_RELATIVE_MOTION, SESSION_INPUT_SOURCE_KEYBOARD,
+            SESSION_INPUT_SOURCE_MOUSE,
         },
         viewing::{FocusMarkPosition, TraversalIntent},
     };
@@ -467,5 +469,106 @@ mod tests {
         assert_eq!(receipt.command, None);
         assert_eq!(receipt.motion_route, None);
         assert_eq!(wrapping.traversal_intent_count(), 1);
+    }
+
+    #[test]
+    fn decoder_admits_every_v1_key_tag_and_rejects_every_incompatible_source_kind_or_shape() {
+        // Catches a future key-tag addition or source/kind widening silently bypassing the V1 boundary.
+        let key_tags = [
+            KEY_A,
+            0x0002,
+            0x0003,
+            0x0004,
+            0x0005,
+            0x0006,
+            0x0007,
+            0x0008,
+            0x0009,
+            0x000A,
+            0x000B,
+            0x000C,
+            0x000D,
+            0x000E,
+            0x000F,
+            0x0010,
+            0x0011,
+            0x0012,
+            0x0013,
+            0x0014,
+            0x0015,
+            0x0016,
+            0x0017,
+            0x0018,
+            0x0019,
+            KEY_Z,
+            KEY_DIGIT0,
+            KEY_DIGIT1,
+            KEY_DIGIT2,
+            KEY_DIGIT3,
+            KEY_DIGIT4,
+            KEY_DIGIT5,
+            KEY_DIGIT6,
+            KEY_DIGIT7,
+            KEY_DIGIT8,
+            KEY_DIGIT9,
+            KEY_ENTER,
+            KEY_ESCAPE,
+            KEY_SPACE,
+            KEY_BACKSPACE,
+        ];
+        for tag in key_tags {
+            let mut viewing = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
+            assert_eq!(viewing.observe(key(0, tag)).unwrap().command, None);
+        }
+
+        let incompatible_or_malformed = [
+            SessionInputEventV1 {
+                source: SESSION_INPUT_SOURCE_KEYBOARD,
+                kind: SESSION_INPUT_KIND_RELATIVE_MOTION,
+                ..motion(0, 0, 0)
+            },
+            SessionInputEventV1 {
+                source: SESSION_INPUT_SOURCE_MOUSE,
+                kind: SESSION_INPUT_KIND_KEY_DOWN,
+                ..key(0, KEY_SPACE)
+            },
+            SessionInputEventV1 {
+                source: SESSION_INPUT_SOURCE_KEYBOARD,
+                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                ..motion(0, 0, 0)
+            },
+            SessionInputEventV1 {
+                value0: 0x001B,
+                ..key(0, KEY_SPACE)
+            },
+            SessionInputEventV1 {
+                value0: -129,
+                ..motion(0, 0, 0)
+            },
+            SessionInputEventV1 {
+                value1: 128,
+                ..motion(0, 0, 0)
+            },
+            SessionInputEventV1 {
+                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                source: SESSION_INPUT_SOURCE_MOUSE,
+                value0: 2,
+                ..motion(0, 0, 0)
+            },
+            SessionInputEventV1 {
+                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                source: SESSION_INPUT_SOURCE_MOUSE,
+                value0: 1,
+                value1: 1,
+                ..motion(0, 0, 0)
+            },
+        ];
+        for event in incompatible_or_malformed {
+            let mut viewing = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
+            assert!(matches!(
+                viewing.observe(event),
+                Err(SessionViewingError::Malformed(_))
+            ));
+        }
     }
 }
