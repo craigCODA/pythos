@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod session_command_host;
+pub mod session_viewing;
 
 use pythos_shared::session_input_abi::{
     KEY_A, SESSION_INPUT_KIND_KEY_DOWN, SESSION_INPUT_KIND_RELATIVE_MOTION,

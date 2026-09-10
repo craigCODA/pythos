@@ -1,4 +1,4 @@
-use crate::input_events::RelativeMotion;
+use crate::input_types::RelativeMotion;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TraversalIntent {
@@ -12,7 +12,7 @@ pub struct TraversalState {
 }
 
 impl TraversalState {
-    pub(super) const fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             motion_count: 0,
             last_motion: None,
@@ -25,7 +25,7 @@ impl TraversalState {
         TraversalIntent { motion }
     }
 
-    pub(super) const fn motion_count(&self) -> u32 {
+    pub const fn motion_count(&self) -> u32 {
         self.motion_count
     }
 }

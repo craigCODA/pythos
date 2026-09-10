@@ -1,4 +1,4 @@
-use crate::{input_events::RelativeMotion, viewing::ViewingExtent};
+use crate::{input_types::RelativeMotion, viewing::ViewingExtent};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FocusMarkPosition {
@@ -17,8 +17,8 @@ impl CursorFeatureState {
         Self {
             active: false,
             position: FocusMarkPosition {
-                x: extent.width / 2,
-                y: extent.height / 2,
+                x: extent.width() / 2,
+                y: extent.height() / 2,
             },
         }
     }
@@ -27,7 +27,7 @@ impl CursorFeatureState {
         self.active = true;
     }
 
-    pub(super) const fn is_active(&self) -> bool {
+    pub const fn is_active(&self) -> bool {
         self.active
     }
 
@@ -37,13 +37,13 @@ impl CursorFeatureState {
         extent: ViewingExtent,
     ) -> FocusMarkPosition {
         self.position.x = (i64::from(self.position.x) + i64::from(motion.dx))
-            .clamp(0, i64::from(extent.width - 1)) as u32;
+            .clamp(0, i64::from(extent.width() - 1)) as u32;
         self.position.y = (i64::from(self.position.y) + i64::from(motion.dy))
-            .clamp(0, i64::from(extent.height - 1)) as u32;
+            .clamp(0, i64::from(extent.height() - 1)) as u32;
         self.position
     }
 
-    pub(super) const fn position(&self) -> FocusMarkPosition {
+    pub const fn position(&self) -> FocusMarkPosition {
         self.position
     }
 }
