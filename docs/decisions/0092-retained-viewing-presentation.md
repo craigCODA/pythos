@@ -87,6 +87,22 @@ an unchanged V1 result; an independent versioned Viewing result may occupy
 offset 2048 in its writable result page. Its exact layout and validation must
 be recorded here before implementation is accepted.
 
+SessionViewingResultV1 is 432 bytes, aligned to 8. Its independently versioned
+header is magic u64 (0x3152_5745_4956_5950, PYVIEWR1), major/minor/status/reserved0
+u16 at offsets 8/10/12/14. Status 1 is complete and 2 requests recovery. Three
+u64 service/runtime/graph identities start at 16; u64 input/invocation/Traversal/
+activation counts start at 40. Two u64 graph event checkpoints start at 72.
+Eight snapshot records start at 88; each is 16 bytes (revision u64, flags u32,
+x u16, y u16). These compact coordinates describe only this bounded acceptance
+viewport, not the scalar syscall's general u32 coordinates. Two unchanged
+48-byte PythCommandResult records start at 216; two unchanged 32-byte
+GraphExitRecord records start at 312; seven reserved zero u64 words start at
+376. Complete validation requires seven events, two invocations, one Traversal,
+one activation, checkpoints [3, 6], exact revisions 0..7 and expected snapshots,
+independently validated fixture outputs/graph exits, identities and reserved
+fields. The old V1 result remains unwritten in this opt-in profile. A recovery
+record cannot satisfy complete acceptance.
+
 The two immutable CREATE_NOTE fixtures, graph package and independent graph
 invocation validation are reused. The bounded seven-event script is motion,
 Space, Space, Backspace, Backspace, motion, Enter (sequences 0 through 6).
