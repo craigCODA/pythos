@@ -309,16 +309,9 @@ class SessionRuntimeBoundaryTest(unittest.TestCase):
             source.index("copy_bootstrap("),
         )
         self.assertEqual(source.count("static NORMAL_STORAGE"), 1)
-        self.assertIn(
-            "output: storage.bootstrap.graph.result_ptr as *mut GraphExitRecord",
-            source,
-        )
-        self.assertIn("unsafe { self.output.write_volatile(exit) }", source)
-        self.assertIn("return_with_reason(&storage.bootstrap", source)
-        self.assertIn("bootstrap.return_ptr", source)
         self.assertIn('cfg(feature = "normal-session-fault-test")', source)
         self.assertIn('asm!("ud2"', source)
-        self.assertIn('asm!("int3"', source)
+        self.assertIn('asm!("int3", options(nostack))', source)
         self.assertNotIn("qemu_exit", source)
 
     def test_runtime_builder_selects_explicit_isolated_binary_variants(self) -> None:

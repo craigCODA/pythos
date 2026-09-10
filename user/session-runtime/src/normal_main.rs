@@ -19,7 +19,7 @@ use pythos_shared::{
 use pythos_user_pyth_runtime::value::Value;
 #[cfg(not(test))]
 use pythos_user_session_runtime::{
-    normal_graph::{NormalGraphExitSink, NormalGraphRunner},
+    normal_graph::{NormalGraphExitSink, NormalGraphExitSlot, NormalGraphRunner},
     normal_session::{
         NormalSession, NormalSessionEffects, validate_normal_session_bootstrap_address,
         validate_normal_session_launch, validate_normal_session_package,
@@ -72,22 +72,27 @@ struct RuntimeEffects<'package, 'storage> {
 
 #[cfg(not(test))]
 struct MappedGraphExitSink {
-    output: *mut GraphExitRecord,
+    output_page: *mut u8,
 }
 
 #[cfg(not(test))]
 impl NormalGraphExitSink for MappedGraphExitSink {
-    fn write_exit(&mut self, exit: GraphExitRecord) {
+    fn write_exit(&mut self, slot: NormalGraphExitSlot, exit: GraphExitRecord) {
         // SAFETY:
-        // 1. Invariant: output is the exact graph-result address from the validated bootstrap.
-        // 2. Established by: validate_normal_session_launch accepted the fixed offset-64 range.
+        // 1. Invariant: output_page plus the selected slot is the validated graph-result address.
+        // 2. Established by: launch validation accepted both fixed addresses and layout constants.
         // 3. Lifetime: PythCore retains the writable result page through contained return.
         // 4. Pointer ownership: this runtime is the sole writer; PythCore observes the exchange.
         // 5. Alignment: the fixed address satisfies GraphExitRecord's alignment requirement.
         // 6. Mapped length: exactly one 32-byte graph-exit record is written at offset 64.
         // 7. Concurrency: one ring-3 thread completes each interpreter invocation serially.
         // 8. Violation: a broken mapping faults this process instead of forging graph success.
-        unsafe { self.output.write_volatile(exit) };
+        unsafe {
+            self.output_page
+                .add(slot.page_offset())
+                .cast::<GraphExitRecord>()
+                .write_volatile(exit)
+        };
     }
 }
 
@@ -153,7 +158,7 @@ pub unsafe extern "C" fn _start(bootstrap_ptr: *const NormalSessionBootstrapV1) 
             &mut storage.host_results,
         ),
         graph_exit: MappedGraphExitSink {
-            output: storage.bootstrap.graph.result_ptr as *mut GraphExitRecord,
+            output_page: storage.bootstrap.return_ptr as *mut u8,
         },
     };
     if let Err(reason) = session.initialize(&mut effects) {
@@ -333,7 +338,7 @@ fn contained_return() -> ! {
     // 6. Mapped length: no memory range is accessed.
     // 7. Concurrency: the runtime has one thread and one terminal path.
     // 8. Violation: if PythCore unexpectedly returns, UD2 contains the invalid continuation.
-    unsafe { core::arch::asm!("int3", options(nomem, nostack)) };
+    unsafe { core::arch::asm!("int3", options(nostack)) };
     invalid_instruction();
 }
 

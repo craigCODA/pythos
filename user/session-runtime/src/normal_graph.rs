@@ -2,7 +2,10 @@
 
 use pythos_shared::{
     capability_abi::PackedCapability,
-    normal_session_abi::NormalSessionReturnReason,
+    normal_session_abi::{
+        NORMAL_SESSION_GRAPH_RESULT_ADDRESS, NORMAL_SESSION_RETURN_ADDRESS,
+        NormalSessionReturnReason,
+    },
     pyth_command_abi::{
         COMMAND_KIND_SYSTEM_STATUS, COMMAND_RESULT_STATUS_OK, PythCommand, PythCommandResult,
     },
@@ -22,8 +25,23 @@ pub struct NormalGraphInvocation {
     pub exit: GraphExitRecord,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct NormalGraphExitSlot {
+    page_offset: usize,
+}
+
+impl NormalGraphExitSlot {
+    pub const fn page_offset(self) -> usize {
+        self.page_offset
+    }
+}
+
+const NORMAL_GRAPH_EXIT_SLOT: NormalGraphExitSlot = NormalGraphExitSlot {
+    page_offset: (NORMAL_SESSION_GRAPH_RESULT_ADDRESS - NORMAL_SESSION_RETURN_ADDRESS) as usize,
+};
+
 pub trait NormalGraphExitSink {
-    fn write_exit(&mut self, exit: GraphExitRecord);
+    fn write_exit(&mut self, slot: NormalGraphExitSlot, exit: GraphExitRecord);
 }
 
 pub struct NormalGraphRunner<'package, 'storage> {
@@ -71,7 +89,7 @@ impl<'package, 'storage> NormalGraphRunner<'package, 'storage> {
             self.host_results,
         )
         .execute(&mut host);
-        exit_sink.write_exit(exit);
+        exit_sink.write_exit(NORMAL_GRAPH_EXIT_SLOT, exit);
         let result = host.result().ok_or(NormalSessionReturnReason::Graph)?;
         if !invocation_is_valid(&command, payload, result, exit) {
             return Err(NormalSessionReturnReason::Graph);
@@ -116,7 +134,12 @@ mod tests {
     use pythc::{encode::encode_verified_graph, lower::lower_program, typecheck::typecheck_source};
     use pythos_shared::{
         capability_abi::PackedCapability,
-        normal_session_abi::NORMAL_SESSION_GRAPH_INSTRUCTION_BUDGET,
+        normal_session_abi::{
+            NORMAL_SESSION_ABI_MAJOR, NORMAL_SESSION_ABI_MINOR,
+            NORMAL_SESSION_GRAPH_INSTRUCTION_BUDGET, NORMAL_SESSION_PAGE_SIZE,
+            NORMAL_SESSION_RETURN_MAGIC, NORMAL_SESSION_SERVICE_ID, NormalSessionReturnReason,
+            NormalSessionReturnV1,
+        },
         pyth_command_abi::{
             COMMAND_KIND_SYSTEM_STATUS, COMMAND_RESULT_STATUS_OK, PythCommandResult,
         },
@@ -141,9 +164,63 @@ mod tests {
     }
 
     impl NormalGraphExitSink for RecordedExitSink {
-        fn write_exit(&mut self, exit: GraphExitRecord) {
+        fn write_exit(&mut self, _slot: NormalGraphExitSlot, exit: GraphExitRecord) {
             self.records.push(exit);
         }
+    }
+
+    struct OutputPageExitSink {
+        page: [u8; NORMAL_SESSION_PAGE_SIZE as usize],
+    }
+
+    impl NormalGraphExitSink for OutputPageExitSink {
+        fn write_exit(&mut self, slot: NormalGraphExitSlot, exit: GraphExitRecord) {
+            let bytes = encode_exit(exit);
+            let offset = slot.page_offset();
+            self.page[offset..offset + bytes.len()].copy_from_slice(&bytes);
+        }
+    }
+
+    #[test]
+    fn runner_writes_exact_exit_only_to_the_production_graph_result_slot() {
+        // Catches selecting return offset zero or overwriting any non-graph-result page byte.
+        let return_record = NormalSessionReturnV1 {
+            magic: NORMAL_SESSION_RETURN_MAGIC,
+            abi_major: NORMAL_SESSION_ABI_MAJOR,
+            abi_minor: NORMAL_SESSION_ABI_MINOR,
+            reason: NormalSessionReturnReason::CounterOverflow.as_wire(),
+            reserved0: 0,
+            service_id: NORMAL_SESSION_SERVICE_ID,
+            reserved1: 0,
+        };
+        let return_bytes = encode_return(return_record);
+        let mut page = [0xa5; NORMAL_SESSION_PAGE_SIZE as usize];
+        page[..return_bytes.len()].copy_from_slice(&return_bytes);
+        let mut sink = OutputPageExitSink { page };
+        let bytes = compile_source(include_str!(
+            "../../../programs/normal-session-manager/main.pyth"
+        ));
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        imports[0] = COMMAND_CAPABILITY;
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+        let mut runner = NormalGraphRunner::new(
+            verified,
+            COMMAND_CAPABILITY,
+            NORMAL_SESSION_GRAPH_INSTRUCTION_BUDGET,
+            &imports,
+            &mut values,
+            &mut host_results,
+        );
+
+        let invocation = runner.run_status(FIRST_PAYLOAD, &mut sink).unwrap();
+
+        let mut expected = [0xa5; NORMAL_SESSION_PAGE_SIZE as usize];
+        expected[..return_bytes.len()].copy_from_slice(&return_bytes);
+        expected[64..96].copy_from_slice(&encode_exit(invocation.exit));
+        assert_eq!(sink.page, expected);
     }
 
     #[test]
@@ -306,6 +383,31 @@ mod tests {
         let bytes = encode_verified_graph(&graph).unwrap();
         let package = PythGraphPackage::decode(&bytes).unwrap();
         verify_package(&package).unwrap();
+        bytes
+    }
+
+    fn encode_return(record: NormalSessionReturnV1) -> [u8; 32] {
+        let mut bytes = [0; 32];
+        bytes[0..8].copy_from_slice(&record.magic.to_le_bytes());
+        bytes[8..10].copy_from_slice(&record.abi_major.to_le_bytes());
+        bytes[10..12].copy_from_slice(&record.abi_minor.to_le_bytes());
+        bytes[12..14].copy_from_slice(&record.reason.to_le_bytes());
+        bytes[14..16].copy_from_slice(&record.reserved0.to_le_bytes());
+        bytes[16..24].copy_from_slice(&record.service_id.to_le_bytes());
+        bytes[24..32].copy_from_slice(&record.reserved1.to_le_bytes());
+        bytes
+    }
+
+    fn encode_exit(exit: GraphExitRecord) -> [u8; 32] {
+        let mut bytes = [0; 32];
+        bytes[0..2].copy_from_slice(&exit.status.to_le_bytes());
+        bytes[2..4].copy_from_slice(&exit.error_code.to_le_bytes());
+        bytes[4..8].copy_from_slice(&exit.last_node.to_le_bytes());
+        bytes[8..16].copy_from_slice(&exit.executed_nodes.to_le_bytes());
+        bytes[16..18].copy_from_slice(&exit.result_type.to_le_bytes());
+        bytes[18..20].copy_from_slice(&exit.reserved0.to_le_bytes());
+        bytes[20..24].copy_from_slice(&exit.reserved1.to_le_bytes());
+        bytes[24..32].copy_from_slice(&exit.result_raw.to_le_bytes());
         bytes
     }
 }
