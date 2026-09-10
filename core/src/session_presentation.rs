@@ -61,8 +61,16 @@ impl PresentationService {
         if holder.raw() == 0 {
             return Err(PresentationError::WrongHolder);
         }
-        // SAFETY: the caller establishes the mapped lifetime and exclusive
-        // viewport ownership required by this bind operation.
+        // SAFETY:
+        // 1. Invariant: the fixed viewport names writable framebuffer pixels.
+        // 2. Established by: the unsafe bind contract and renderer preflight.
+        // 3. Lifetime: caller retains the framebuffer for this service lifetime.
+        // 4. Pointer ownership: this service exclusively owns the viewport.
+        // 5. Alignment: renderer preflight requires the pixel base aligned to 4.
+        // 6. Mapped length: preflight validates pitch, height, byte length and
+        //    checked address end before writing the contained 640 x 480 region.
+        // 7. Concurrency: binding occurs before user entry; no IRQ renders.
+        // 8. Violation: invalid retained mappings could fault or corrupt memory.
         unsafe { framebuffer::initialize_session_viewport(&framebuffer) }
             .map_err(|_| PresentationError::Render)?;
         self.binding = Some(Binding {
@@ -101,9 +109,18 @@ impl PresentationService {
             extent: binding.extent,
             focus_mark: active.then_some(FocusMarkPosition { x, y }),
         };
-        // SAFETY: bind established persistent, exclusive framebuffer ownership;
-        // scalar validation above confines both retained and next snapshots to
-        // the fixed viewport. No user pointer is accepted or retained.
+        // SAFETY:
+        // 1. Invariant: both copied snapshots are confined to the fixed viewport.
+        // 2. Established by: successful bind and scalar validation before commit.
+        // 3. Lifetime: bind requires mappings to outlive every service request.
+        // 4. Pointer ownership: only this service owns the framebuffer viewport;
+        //    requests contain scalars and never introduce a user pointer.
+        // 5. Alignment: renderer preflight rechecks the 4-byte-aligned pixel base.
+        // 6. Mapped length: preflight validates the framebuffer byte range; the
+        //    renderer clips old/new footprints to the contained 640 x 480 region.
+        // 7. Concurrency: the sole runtime's syscall masks IRQs and is non-reentrant.
+        // 8. Violation: broken mapping/ownership contracts could fault or race
+        //    writes; these are not recoverable preflight validation failures.
         unsafe {
             framebuffer::render_session_snapshot(
                 &binding.framebuffer,
@@ -123,11 +140,17 @@ impl PresentationService {
 
 struct PresentationStorage(UnsafeCell<PresentationService>);
 
-// SAFETY: the accepted profile has one CPU and one retained user process.
-// Initialization runs before entry; syscalls mask interrupts and no IRQ calls
-// this service. The static owns one aligned service for the full boot; each
-// access is a non-reentrant synchronous borrow. SMP or another presenter would
-// violate this contract and must introduce synchronization before use.
+// SAFETY:
+// 1. Invariant: only one synchronous borrower accesses the service at a time.
+// 2. Established by: the accepted single-CPU, single retained runtime profile,
+//    pre-entry initialization, masked syscall IRQs and no IRQ service caller.
+// 3. Lifetime: the kernel-owned static and its service live for the entire boot.
+// 4. Pointer ownership: UnsafeCell is owned here; no borrowed reference escapes.
+// 5. Alignment: UnsafeCell<PresentationService> preserves service alignment.
+// 6. Mapped length: exactly one complete PresentationService is accessed.
+// 7. Concurrency: access is non-reentrant; SMP/multiple presenters require new
+//    synchronization before they can use this storage.
+// 8. Violation: concurrent borrowers could race state and framebuffer writes.
 unsafe impl Sync for PresentationStorage {}
 static PRESENTATION: PresentationStorage =
     PresentationStorage(UnsafeCell::new(PresentationService::new()));
@@ -141,8 +164,17 @@ pub(crate) unsafe fn bind(
     framebuffer: PythFramebufferInfo,
     extent: ViewingExtent,
 ) -> Result<(), PresentationError> {
-    // SAFETY: pre-entry single-CPU exclusive access and framebuffer lifetime
-    // are required by this function; no reference escapes this call.
+    // SAFETY:
+    // 1. Invariant: this is the sole mutable service borrow before user entry.
+    // 2. Established by: this unsafe function's initialization contract.
+    // 3. Lifetime: the static is boot-long; caller retains framebuffer mappings.
+    // 4. Pointer ownership: the static owns the cell; this borrow never escapes.
+    // 5. Alignment: UnsafeCell preserves service alignment; bind preflights
+    //    the framebuffer pixel alignment before writing.
+    // 6. Mapped length: the cell contains one service; bind validates framebuffer
+    //    length/pitch and requires all addressed pixels to remain mapped.
+    // 7. Concurrency: only the pre-entry single CPU initializes this service.
+    // 8. Violation: overlap or invalid mappings could alias state or corrupt pixels.
     unsafe { (&mut *PRESENTATION.0.get()).bind(holder, framebuffer, extent) }
 }
 
@@ -153,8 +185,17 @@ pub(crate) fn present(
     coordinates: u64,
     reserved: u64,
 ) -> Result<(), PresentationError> {
-    // SAFETY: syscall dispatch is non-reentrant, interrupts are masked and
-    // only this service owns these pixels. The static outlives every request.
+    // SAFETY:
+    // 1. Invariant: exactly one mutable borrow projects the validated request.
+    // 2. Established by: the single retained runtime's non-reentrant syscall.
+    // 3. Lifetime: the static and bind-required mappings outlive all requests.
+    // 4. Pointer ownership: this cell owns the service; no reference escapes.
+    // 5. Alignment: UnsafeCell preserves service alignment; renderer preflights
+    //    the framebuffer's aligned pixel base on every accepted request.
+    // 6. Mapped length: one complete service is accessed; renderer validates
+    //    pixel byte bounds before touching either fixed-size footprint.
+    // 7. Concurrency: syscall entry masks IRQs; no IRQ or other CPU presents.
+    // 8. Violation: overlapping access could race revisions or framebuffer writes.
     unsafe {
         (&mut *PRESENTATION.0.get()).present(holder, revision, flags, coordinates, reserved)?;
     }
@@ -175,8 +216,15 @@ pub(crate) fn present(
 }
 
 pub(crate) fn accepted_snapshot() -> Option<(u64, ViewingSnapshot)> {
-    // SAFETY: called after the retained runtime has returned, on the sole CPU,
-    // with no concurrent syscall. Copies the value; no borrow escapes.
+    // SAFETY:
+    // 1. Invariant: terminal validation reads a stable accepted snapshot.
+    // 2. Established by: callers invoke this after retained user entry returns.
+    // 3. Lifetime: the kernel-owned static lives through terminal validation.
+    // 4. Pointer ownership: only a value is copied; no reference escapes.
+    // 5. Alignment: UnsafeCell preserves PresentationService alignment.
+    // 6. Mapped length: exactly one complete service is read; pixels are not read.
+    // 7. Concurrency: the sole CPU has returned from user code; no IRQ presents.
+    // 8. Violation: concurrent mutation would race this snapshot read.
     unsafe { (&*PRESENTATION.0.get()).accepted_snapshot() }
 }
 
@@ -215,8 +263,15 @@ pub(crate) mod tests {
     }
     fn bound(info: PythFramebufferInfo) -> PresentationService {
         let mut service = PresentationService::new();
-        // SAFETY: each caller retains its exclusively owned pixel Vec until
-        // after the service is dropped; metadata uses its aligned full buffer.
+        // SAFETY:
+        // 1. Invariant: fixture metadata names this test's writable pixel buffer.
+        // 2. Established by: fixture derives address/length from its real Vec.
+        // 3. Lifetime: each caller keeps the Vec until after the service drops.
+        // 4. Pointer ownership: the test exclusively owns its independent Vec.
+        // 5. Alignment: Vec<u32> supplies at least 4-byte pixel alignment.
+        // 6. Mapped length: fixture reports all 648 * 484 allocated u32 pixels.
+        // 7. Concurrency: the service is local; parallel tests use other Vecs.
+        // 8. Violation: dropping/resizing the Vec early would invalidate the base.
         unsafe {
             service.bind(holder(), info, extent()).unwrap();
         }
@@ -337,7 +392,15 @@ pub(crate) mod tests {
             service.present(holder(), 0, 0, 0, 0),
             Err(PresentationError::Unbound)
         );
-        // SAFETY: the pixel buffer remains exclusively owned and live below.
+        // SAFETY:
+        // 1. Invariant: each bind candidate names the same valid local buffer.
+        // 2. Established by: fixture derives metadata from the allocated Vec.
+        // 3. Lifetime: pixels was declared before service and outlives its drop.
+        // 4. Pointer ownership: this test exclusively owns pixels and service.
+        // 5. Alignment: Vec<u32> supplies at least 4-byte alignment.
+        // 6. Mapped length: all 648 * 484 pixels in metadata are allocated.
+        // 7. Concurrency: calls and reads below are sequential in this test.
+        // 8. Violation: early Vec destruction or resizing would invalidate pixels.
         unsafe {
             assert_eq!(
                 service.bind(holder(), info, ViewingExtent::new(639, 480).unwrap()),

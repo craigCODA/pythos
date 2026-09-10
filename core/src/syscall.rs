@@ -2990,7 +2990,16 @@ mod tests {
         for case in 0..8 {
             let (pixels, info) = fixture();
             let mut service = PresentationService::new();
-            // SAFETY: the local aligned pixel Vec remains live and exclusive.
+            // SAFETY:
+            // 1. Invariant: fixture metadata names this test's writable pixels.
+            // 2. Established by: fixture derives address/length from a real Vec.
+            // 3. Lifetime: pixels outlives the service throughout this iteration.
+            // 4. Pointer ownership: the local Vec is exclusively test-owned.
+            // 5. Alignment: Vec<u32> supplies at least 4-byte pixel alignment.
+            // 6. Mapped length: metadata covers all 648 * 484 allocated pixels.
+            // 7. Concurrency: process-context lock serializes caller changes;
+            //    other tests do not share this service or framebuffer.
+            // 8. Violation: dropping/resizing pixels could invalidate the base.
             unsafe {
                 service
                     .bind(holder, info, ViewingExtent::new(640, 480).unwrap())
