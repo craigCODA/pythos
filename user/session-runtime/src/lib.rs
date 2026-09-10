@@ -2,6 +2,8 @@
 
 pub mod session_command_host;
 pub mod session_viewing;
+#[cfg(any(test, feature = "session-viewing"))]
+pub mod viewing_orchestration;
 
 use pythos_shared::session_input_abi::{
     KEY_A, SESSION_INPUT_KIND_KEY_DOWN, SESSION_INPUT_KIND_RELATIVE_MOTION,
@@ -1087,7 +1089,7 @@ mod tests {
         assert!(validate_session_runtime_launch(bootstrap_address, bootstrap, fixture).is_err());
     }
 
-    fn accepted_launch() -> (SessionRuntimeBootstrapV1, SessionRuntimeFixtureV1) {
+    pub(super) fn accepted_launch() -> (SessionRuntimeBootstrapV1, SessionRuntimeFixtureV1) {
         let mut bootstrap = SessionRuntimeBootstrapV1::empty();
         bootstrap.magic = SESSION_RUNTIME_BOOTSTRAP_MAGIC;
         bootstrap.abi_major = SESSION_RUNTIME_ABI_MAJOR;

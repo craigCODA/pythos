@@ -41,45 +41,97 @@ pub struct SessionViewingResultV1 {
 impl SessionViewingResultV1 {
     pub const fn new(service: u64, runtime: u64, graph: u64) -> Self {
         Self {
-            magic: SESSION_VIEWING_RESULT_MAGIC, abi_major: 1, abi_minor: 0,
-            terminal_status: 0, reserved0: 0, session_service_id: service,
-            runtime_principal_id: runtime, graph_principal_id: graph,
-            input_event_count: 0, invocation_count: 0, traversal_count: 0,
-            activation_count: 0, graph_checkpoint_events: [0; 2],
-            snapshots: [ViewingSnapshotRecord { revision: 0, flags: 0, x: 0, y: 0 }; 8],
+            magic: SESSION_VIEWING_RESULT_MAGIC,
+            abi_major: 1,
+            abi_minor: 0,
+            terminal_status: 0,
+            reserved0: 0,
+            session_service_id: service,
+            runtime_principal_id: runtime,
+            graph_principal_id: graph,
+            input_event_count: 0,
+            invocation_count: 0,
+            traversal_count: 0,
+            activation_count: 0,
+            graph_checkpoint_events: [0; 2],
+            snapshots: [ViewingSnapshotRecord {
+                revision: 0,
+                flags: 0,
+                x: 0,
+                y: 0,
+            }; 8],
             command_results: [PythCommandResult::empty(0, 0); 2],
             graph_exits: [GraphExitRecord {
-                status: 0, error_code: 0, last_node: 0, executed_nodes: 0,
+                status: 0,
+                error_code: 0,
+                last_node: 0,
+                executed_nodes: 0,
                 result_type: crate::pyth_runtime_abi::GRAPH_RESULT_UNIT,
-                reserved0: 0, reserved1: 0, result_raw: 0,
-            }; 2], reserved1: [0; 7],
+                reserved0: 0,
+                reserved1: 0,
+                result_raw: 0,
+            }; 2],
+            reserved1: [0; 7],
         }
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ViewingResultError { Header, Identity, Status, Counters, Snapshot }
+pub enum ViewingResultError {
+    Header,
+    Identity,
+    Status,
+    Counters,
+    Snapshot,
+}
 
 /// Validate completion evidence; graph outputs are independently checked against
 /// the immutable fixture and admitted instruction budget by the kernel caller.
-pub fn validate_session_viewing_result(result: &SessionViewingResultV1, identities: [u64; 3]) -> Result<(), ViewingResultError> {
-    if result.magic != SESSION_VIEWING_RESULT_MAGIC || result.abi_major != 1 || result.abi_minor != 0
-        || result.reserved0 != 0 || result.reserved1 != [0; 7] {
+pub fn validate_session_viewing_result(
+    result: &SessionViewingResultV1,
+    identities: [u64; 3],
+) -> Result<(), ViewingResultError> {
+    if result.magic != SESSION_VIEWING_RESULT_MAGIC
+        || result.abi_major != 1
+        || result.abi_minor != 0
+        || result.reserved0 != 0
+        || result.reserved1 != [0; 7]
+    {
         return Err(ViewingResultError::Header);
     }
-    if identities.contains(&0) || identities[0] == identities[1] || identities[0] == identities[2]
+    if identities.contains(&0)
+        || identities[0] == identities[1]
+        || identities[0] == identities[2]
         || identities[1] == identities[2]
-        || identities != [result.session_service_id, result.runtime_principal_id, result.graph_principal_id] {
+        || identities
+            != [
+                result.session_service_id,
+                result.runtime_principal_id,
+                result.graph_principal_id,
+            ]
+    {
         return Err(ViewingResultError::Identity);
     }
-    if result.terminal_status != SESSION_VIEWING_RESULT_COMPLETE { return Err(ViewingResultError::Status); }
-    if result.input_event_count != 7 || result.invocation_count != 2 || result.traversal_count != 1
-        || result.activation_count != 1 || result.graph_checkpoint_events != [3, 6] {
+    if result.terminal_status != SESSION_VIEWING_RESULT_COMPLETE {
+        return Err(ViewingResultError::Status);
+    }
+    if result.input_event_count != 7
+        || result.invocation_count != 2
+        || result.traversal_count != 1
+        || result.activation_count != 1
+        || result.graph_checkpoint_events != [3, 6]
+    {
         return Err(ViewingResultError::Counters);
     }
     for (index, snapshot) in result.snapshots.iter().enumerate() {
-        let (flags, x, y) = match index { 0..=4 => (0, 0, 0), 5 => (1, 320, 240), _ => (1, 327, 233) };
-        if snapshot.revision != index as u64 || (snapshot.flags, snapshot.x, snapshot.y) != (flags, x, y) {
+        let (flags, x, y) = match index {
+            0..=4 => (0, 0, 0),
+            5 => (1, 320, 240),
+            _ => (1, 327, 233),
+        };
+        if snapshot.revision != index as u64
+            || (snapshot.flags, snapshot.x, snapshot.y) != (flags, x, y)
+        {
             return Err(ViewingResultError::Snapshot);
         }
     }
@@ -95,26 +147,53 @@ mod tests {
         assert_eq!(core::mem::size_of::<SessionViewingResultV1>(), 432);
         assert_eq!(core::mem::align_of::<SessionViewingResultV1>(), 8);
         assert_eq!(core::mem::offset_of!(SessionViewingResultV1, snapshots), 88);
-        assert_eq!(core::mem::offset_of!(SessionViewingResultV1, command_results), 216);
-        assert_eq!(core::mem::offset_of!(SessionViewingResultV1, graph_exits), 312);
-        assert_eq!(core::mem::offset_of!(SessionViewingResultV1, reserved1), 376);
+        assert_eq!(
+            core::mem::offset_of!(SessionViewingResultV1, command_results),
+            216
+        );
+        assert_eq!(
+            core::mem::offset_of!(SessionViewingResultV1, graph_exits),
+            312
+        );
+        assert_eq!(
+            core::mem::offset_of!(SessionViewingResultV1, reserved1),
+            376
+        );
         let result = SessionViewingResultV1::new(11, 12, 13);
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Status));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Err(ViewingResultError::Status)
+        );
     }
 
     #[test]
     fn malformed_identity_version_reserved_and_snapshot_are_rejected() {
         let mut result = complete_result();
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Ok(()));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Ok(())
+        );
         result.abi_major = 2;
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Header));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Err(ViewingResultError::Header)
+        );
         result = complete_result();
         result.reserved1[6] = 1;
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Header));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Err(ViewingResultError::Header)
+        );
         result = complete_result();
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 14]), Err(ViewingResultError::Identity));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 14]),
+            Err(ViewingResultError::Identity)
+        );
         result.snapshots[5].x = 319;
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Snapshot));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Err(ViewingResultError::Snapshot)
+        );
     }
 
     #[test]
@@ -122,11 +201,17 @@ mod tests {
         for status in [0, 2, 3, u16::MAX] {
             let mut result = complete_result();
             result.terminal_status = status;
-            assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Status));
+            assert_eq!(
+                validate_session_viewing_result(&result, [11, 12, 13]),
+                Err(ViewingResultError::Status)
+            );
         }
         let mut result = complete_result();
         result.graph_checkpoint_events = [3, 5];
-        assert_eq!(validate_session_viewing_result(&result, [11, 12, 13]), Err(ViewingResultError::Counters));
+        assert_eq!(
+            validate_session_viewing_result(&result, [11, 12, 13]),
+            Err(ViewingResultError::Counters)
+        );
     }
 
     fn complete_result() -> SessionViewingResultV1 {
@@ -141,8 +226,20 @@ mod tests {
             result.snapshots[index] = ViewingSnapshotRecord {
                 revision: index as u64,
                 flags: u32::from(index >= 5),
-                x: if index < 5 { 0 } else if index == 5 { 320 } else { 327 },
-                y: if index < 5 { 0 } else if index == 5 { 240 } else { 233 },
+                x: if index < 5 {
+                    0
+                } else if index == 5 {
+                    320
+                } else {
+                    327
+                },
+                y: if index < 5 {
+                    0
+                } else if index == 5 {
+                    240
+                } else {
+                    233
+                },
             };
         }
         result

@@ -284,7 +284,12 @@ pub fn validate_session_runtime_return(
     {
         return Err(SessionRuntimeProbeError::Result);
     }
-    validate_invocation_results(bootstrap, fixture, &result.command_results, &result.graph_exits)
+    validate_invocation_results(
+        bootstrap,
+        fixture,
+        &result.command_results,
+        &result.graph_exits,
+    )
 }
 
 #[cfg(any(test, feature = "session-viewing-probe"))]
@@ -295,13 +300,29 @@ pub fn validate_session_viewing_return(
     kernel_root_restored: bool,
     caller_cleared: bool,
 ) -> Result<(), SessionRuntimeProbeError> {
-    if !kernel_root_restored { return Err(SessionRuntimeProbeError::KernelRootNotRestored); }
-    if !caller_cleared { return Err(SessionRuntimeProbeError::CallerStillBound); }
-    validate_session_runtime_fixture(bootstrap, fixture).map_err(|_| SessionRuntimeProbeError::Fixture)?;
-    pythos_shared::session_viewing_result::validate_session_viewing_result(result, [
-        bootstrap.session_service_id, bootstrap.runtime_principal_id, bootstrap.graph_principal_id,
-    ]).map_err(|_| SessionRuntimeProbeError::Result)?;
-    validate_invocation_results(bootstrap, fixture, &result.command_results, &result.graph_exits)
+    if !kernel_root_restored {
+        return Err(SessionRuntimeProbeError::KernelRootNotRestored);
+    }
+    if !caller_cleared {
+        return Err(SessionRuntimeProbeError::CallerStillBound);
+    }
+    validate_session_runtime_fixture(bootstrap, fixture)
+        .map_err(|_| SessionRuntimeProbeError::Fixture)?;
+    pythos_shared::session_viewing_result::validate_session_viewing_result(
+        result,
+        [
+            bootstrap.session_service_id,
+            bootstrap.runtime_principal_id,
+            bootstrap.graph_principal_id,
+        ],
+    )
+    .map_err(|_| SessionRuntimeProbeError::Result)?;
+    validate_invocation_results(
+        bootstrap,
+        fixture,
+        &result.command_results,
+        &result.graph_exits,
+    )
 }
 
 fn validate_invocation_results(
@@ -456,8 +477,11 @@ pub fn prepare(
         ),
     ];
     #[cfg(feature = "session-viewing-probe")]
-    let supervisor_mappings = [Some((boot_info.framebuffer.physical_base,
-        boot_info.framebuffer.mapped_virtual_base, boot_info.framebuffer.byte_length))];
+    let supervisor_mappings = [Some((
+        boot_info.framebuffer.physical_base,
+        boot_info.framebuffer.mapped_virtual_base,
+        boot_info.framebuffer.byte_length,
+    ))];
     #[cfg(not(feature = "session-viewing-probe"))]
     let supervisor_mappings = [];
     let (address_space, loaded) =
@@ -482,14 +506,28 @@ pub fn prepare(
     #[cfg(feature = "session-viewing-probe")]
     {
         let fb = boot_info.framebuffer;
-        let last = fb.byte_length.checked_sub(1).ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
+        let last = fb
+            .byte_length
+            .checked_sub(1)
+            .ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
         for offset in [0, last] {
-            let virt = fb.mapped_virtual_base.checked_add(offset).ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
-            let phys = fb.physical_base.checked_add(offset).ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
+            let virt = fb
+                .mapped_virtual_base
+                .checked_add(offset)
+                .ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
+            let phys = fb
+                .physical_base
+                .checked_add(offset)
+                .ok_or(SessionRuntimeProbeError::PreparedLaunch)?;
             // The shared supervisor-map builder installs WRITE | NX | CACHE_DISABLE,
             // without USER; validate both ends against physical identity and CPL3 exclusion.
-            address_space.validate_supervisor_mapping(virt, phys).map_err(SessionRuntimeProbeError::AddressSpace)?;
-            for access in [crate::user_copy::UserCopyAccess::Read, crate::user_copy::UserCopyAccess::Write] {
+            address_space
+                .validate_supervisor_mapping(virt, phys)
+                .map_err(SessionRuntimeProbeError::AddressSpace)?;
+            for access in [
+                crate::user_copy::UserCopyAccess::Read,
+                crate::user_copy::UserCopyAccess::Write,
+            ] {
                 if process.copy_map().validate_range(virt, 1, access).is_ok() {
                     return Err(SessionRuntimeProbeError::PreparedLaunch);
                 }
@@ -634,23 +672,38 @@ pub fn run(
 
     #[cfg(feature = "session-viewing-probe")]
     {
-        use pythos_shared::session_viewing_abi::{SessionViewingBootstrapV1,
-            SESSION_VIEWING_BOOTSTRAP_OFFSET, SESSION_VIEWING_WIDTH, SESSION_VIEWING_HEIGHT,
-            validate_session_viewing_bootstrap};
-        let extent = pythos_shared::viewing::ViewingExtent::new(SESSION_VIEWING_WIDTH, SESSION_VIEWING_HEIGHT)
-            .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
+        use pythos_shared::session_viewing_abi::{
+            SESSION_VIEWING_BOOTSTRAP_OFFSET, SESSION_VIEWING_HEIGHT, SESSION_VIEWING_WIDTH,
+            SessionViewingBootstrapV1, validate_session_viewing_bootstrap,
+        };
+        let extent = pythos_shared::viewing::ViewingExtent::new(
+            SESSION_VIEWING_WIDTH,
+            SESSION_VIEWING_HEIGHT,
+        )
+        .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
         // SAFETY: this single retained launch owns the framebuffer until its terminal return.
         // Both the current kernel root and prepared user root map its entire validated range
         // supervisor-only/NX. No other presenter runs in this opt-in branch, and the
         // framebuffer metadata is copied by value; no user pointer is retained.
-        unsafe { crate::session_presentation::bind(process.service_id(), boot_info.framebuffer, extent) }
-            .map_err(SessionRuntimeProbeError::Presentation)?;
+        unsafe {
+            crate::session_presentation::bind(process.service_id(), boot_info.framebuffer, extent)
+        }
+        .map_err(SessionRuntimeProbeError::Presentation)?;
         let presentation = crate::syscall::grant_session_presentation_capability(process)
             .map_err(SessionRuntimeProbeError::ConsoleCapability)?;
         let extension = SessionViewingBootstrapV1::new(presentation);
-        validate_session_viewing_bootstrap(&extension, authority.input, authority.console, authority.command)
-            .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
-        write_extension_to_frame(prepared.bootstrap_physical, SESSION_VIEWING_BOOTSTRAP_OFFSET, &extension)?;
+        validate_session_viewing_bootstrap(
+            &extension,
+            authority.input,
+            authority.console,
+            authority.command,
+        )
+        .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
+        write_extension_to_frame(
+            prepared.bootstrap_physical,
+            SESSION_VIEWING_BOOTSTRAP_OFFSET,
+            &extension,
+        )?;
         crate::serial::write_line("PYTHOS:CORE:SESSION_VIEWING:PRESENTATION_BOUND");
         crate::serial::write_line("PYTHOS:CORE:SESSION_VIEWING:FRAMEBUFFER_ISOLATED");
     }
@@ -714,33 +767,50 @@ pub fn run(
     }
     #[cfg(not(feature = "session-viewing-probe"))]
     {
-    crate::serial::write_line(SESSION_RUNTIME_COM1_CONTRACT[8]);
-    let result = read_result_from_frame(prepared.result_physical)?;
-    validate_session_runtime_return(
-        &bootstrap,
-        &prepared.fixture,
-        &result,
-        kernel_root_restored,
-        caller_cleared,
-    )?;
-    for marker in &SESSION_RUNTIME_COM1_CONTRACT[9..] {
-        crate::serial::write_line(marker);
-    }
+        crate::serial::write_line(SESSION_RUNTIME_COM1_CONTRACT[8]);
+        let result = read_result_from_frame(prepared.result_physical)?;
+        validate_session_runtime_return(
+            &bootstrap,
+            &prepared.fixture,
+            &result,
+            kernel_root_restored,
+            caller_cleared,
+        )?;
+        for marker in &SESSION_RUNTIME_COM1_CONTRACT[9..] {
+            crate::serial::write_line(marker);
+        }
     }
     #[cfg(feature = "session-viewing-probe")]
     {
-        use pythos_shared::session_viewing_result::{SessionViewingResultV1, SESSION_VIEWING_RESULT_OFFSET};
+        use pythos_shared::session_viewing_result::{
+            SESSION_VIEWING_RESULT_OFFSET, SessionViewingResultV1,
+        };
         crate::serial::write_line("PYTHOS:CORE:SESSION_VIEWING:RING3_RETURN");
-        let result: SessionViewingResultV1 = read_extension_from_frame(prepared.result_physical, SESSION_VIEWING_RESULT_OFFSET)?;
-        validate_session_viewing_return(&bootstrap, &prepared.fixture, &result, kernel_root_restored, caller_cleared)?;
-        let accepted = crate::session_presentation::accepted_snapshot().ok_or(SessionRuntimeProbeError::Result)?;
-        if accepted.0 != 7 || accepted.1.focus_mark != Some(pythos_shared::viewing::FocusMarkPosition { x: 327, y: 233 }) {
+        let result: SessionViewingResultV1 =
+            read_extension_from_frame(prepared.result_physical, SESSION_VIEWING_RESULT_OFFSET)?;
+        validate_session_viewing_return(
+            &bootstrap,
+            &prepared.fixture,
+            &result,
+            kernel_root_restored,
+            caller_cleared,
+        )?;
+        let accepted = crate::session_presentation::accepted_snapshot()
+            .ok_or(SessionRuntimeProbeError::Result)?;
+        if accepted.0 != 7
+            || accepted.1.focus_mark
+                != Some(pythos_shared::viewing::FocusMarkPosition { x: 327, y: 233 })
+        {
             return Err(SessionRuntimeProbeError::Result);
         }
-        for marker in ["PYTHOS:CORE:SESSION_VIEWING:INVOCATION_1_VALID",
-            "PYTHOS:CORE:SESSION_VIEWING:REINVOKE_VALID", "PYTHOS:CORE:SESSION_VIEWING:INVOCATION_2_VALID",
-            "PYTHOS:CORE:SESSION_VIEWING:STATE_RETENTION_VALID", "PYTHOS:CORE:SESSION_VIEWING:NO_DISK_WRITES",
-            "PYTHOS:CORE:SESSION_VIEWING:READY"] {
+        for marker in [
+            "PYTHOS:CORE:SESSION_VIEWING:INVOCATION_1_VALID",
+            "PYTHOS:CORE:SESSION_VIEWING:REINVOKE_VALID",
+            "PYTHOS:CORE:SESSION_VIEWING:INVOCATION_2_VALID",
+            "PYTHOS:CORE:SESSION_VIEWING:STATE_RETENTION_VALID",
+            "PYTHOS:CORE:SESSION_VIEWING:NO_DISK_WRITES",
+            "PYTHOS:CORE:SESSION_VIEWING:READY",
+        ] {
             crate::serial::write_line(marker);
         }
     }
@@ -760,25 +830,43 @@ fn write_bytes_to_frame(physical: u64, bytes: &[u8]) -> Result<(), SessionRuntim
 }
 
 #[cfg(all(not(test), feature = "session-viewing-probe"))]
-fn write_extension_to_frame<T: Copy>(physical: u64, offset: u64, value: &T) -> Result<(), SessionRuntimeProbeError> {
+fn write_extension_to_frame<T: Copy>(
+    physical: u64,
+    offset: u64,
+    value: &T,
+) -> Result<(), SessionRuntimeProbeError> {
     let start = offset as usize;
-    let end = start.checked_add(core::mem::size_of::<T>()).ok_or(SessionRuntimeProbeError::Bootstrap)?;
-    if end > SESSION_RUNTIME_PAYLOAD_PAGE_LEN as usize || !start.is_multiple_of(core::mem::align_of::<T>()) {
+    let end = start
+        .checked_add(core::mem::size_of::<T>())
+        .ok_or(SessionRuntimeProbeError::Bootstrap)?;
+    if end > SESSION_RUNTIME_PAYLOAD_PAGE_LEN as usize
+        || !start.is_multiple_of(core::mem::align_of::<T>())
+    {
         return Err(SessionRuntimeProbeError::Bootstrap);
     }
     crate::memory::r#virtual::with_writable_physical_frame(physical, |page| {
         // SAFETY: the checked aligned subrange fits the exclusively scratch-mapped page.
         // The initialized Copy ABI value is borrowed through this synchronous write;
         // the retained bootstrap page has no concurrent reader before ring-3 entry.
-        unsafe { page.as_mut_ptr().add(start).cast::<T>().write(*value); }
-    }).map_err(SessionRuntimeProbeError::AddressSpace)
+        unsafe {
+            page.as_mut_ptr().add(start).cast::<T>().write(*value);
+        }
+    })
+    .map_err(SessionRuntimeProbeError::AddressSpace)
 }
 
 #[cfg(all(not(test), feature = "session-viewing-probe"))]
-fn read_extension_from_frame<T: Copy>(physical: u64, offset: u64) -> Result<T, SessionRuntimeProbeError> {
+fn read_extension_from_frame<T: Copy>(
+    physical: u64,
+    offset: u64,
+) -> Result<T, SessionRuntimeProbeError> {
     let start = offset as usize;
-    let end = start.checked_add(core::mem::size_of::<T>()).ok_or(SessionRuntimeProbeError::Result)?;
-    if end > SESSION_RUNTIME_PAYLOAD_PAGE_LEN as usize || !start.is_multiple_of(core::mem::align_of::<T>()) {
+    let end = start
+        .checked_add(core::mem::size_of::<T>())
+        .ok_or(SessionRuntimeProbeError::Result)?;
+    if end > SESSION_RUNTIME_PAYLOAD_PAGE_LEN as usize
+        || !start.is_multiple_of(core::mem::align_of::<T>())
+    {
         return Err(SessionRuntimeProbeError::Result);
     }
     crate::memory::r#virtual::with_writable_physical_frame(physical, |page| {
@@ -786,7 +874,8 @@ fn read_extension_from_frame<T: Copy>(physical: u64, offset: u64) -> Result<T, S
         // single user writer terminated. Caller selects an integer-only ABI record
         // (all bit patterns valid) and validates the copied value before acceptance.
         unsafe { page.as_ptr().add(start).cast::<T>().read() }
-    }).map_err(SessionRuntimeProbeError::AddressSpace)
+    })
+    .map_err(SessionRuntimeProbeError::AddressSpace)
 }
 
 #[cfg(not(test))]
@@ -843,7 +932,9 @@ mod tests {
         let fixture = build_session_runtime_fixture().unwrap();
         let runtime = accepted_result(&bootstrap, &fixture);
         let mut result = pythos_shared::session_viewing_result::SessionViewingResultV1::new(
-            bootstrap.session_service_id, bootstrap.runtime_principal_id, bootstrap.graph_principal_id,
+            bootstrap.session_service_id,
+            bootstrap.runtime_principal_id,
+            bootstrap.graph_principal_id,
         );
         result.terminal_status = 1;
         result.input_event_count = 7;
@@ -854,21 +945,47 @@ mod tests {
         result.command_results = runtime.command_results;
         result.graph_exits = runtime.graph_exits;
         for index in 0..8 {
-            result.snapshots[index] = pythos_shared::session_viewing_result::ViewingSnapshotRecord {
-                revision: index as u64, flags: u32::from(index >= 5),
-                x: if index < 5 { 0 } else if index == 5 { 320 } else { 327 },
-                y: if index < 5 { 0 } else if index == 5 { 240 } else { 233 },
-            };
+            result.snapshots[index] =
+                pythos_shared::session_viewing_result::ViewingSnapshotRecord {
+                    revision: index as u64,
+                    flags: u32::from(index >= 5),
+                    x: if index < 5 {
+                        0
+                    } else if index == 5 {
+                        320
+                    } else {
+                        327
+                    },
+                    y: if index < 5 {
+                        0
+                    } else if index == 5 {
+                        240
+                    } else {
+                        233
+                    },
+                };
         }
         assert!(validate_session_viewing_return(&bootstrap, &fixture, &result, true, true).is_ok());
-        assert_eq!(validate_session_viewing_return(&bootstrap, &fixture, &result, false, true), Err(SessionRuntimeProbeError::KernelRootNotRestored));
-        assert_eq!(validate_session_viewing_return(&bootstrap, &fixture, &result, true, false), Err(SessionRuntimeProbeError::CallerStillBound));
+        assert_eq!(
+            validate_session_viewing_return(&bootstrap, &fixture, &result, false, true),
+            Err(SessionRuntimeProbeError::KernelRootNotRestored)
+        );
+        assert_eq!(
+            validate_session_viewing_return(&bootstrap, &fixture, &result, true, false),
+            Err(SessionRuntimeProbeError::CallerStillBound)
+        );
         let valid = result;
         result.graph_exits[1].status = u16::MAX;
-        assert_eq!(validate_session_viewing_return(&bootstrap, &fixture, &result, true, true), Err(SessionRuntimeProbeError::Result));
+        assert_eq!(
+            validate_session_viewing_return(&bootstrap, &fixture, &result, true, true),
+            Err(SessionRuntimeProbeError::Result)
+        );
         result = valid;
         result.command_results[1].object_id = result.command_results[0].object_id;
-        assert_eq!(validate_session_viewing_return(&bootstrap, &fixture, &result, true, true), Err(SessionRuntimeProbeError::Result));
+        assert_eq!(
+            validate_session_viewing_return(&bootstrap, &fixture, &result, true, true),
+            Err(SessionRuntimeProbeError::Result)
+        );
     }
     use core::mem::{offset_of, size_of};
     use pythos_shared::object_shell_abi::PackedCapability;
