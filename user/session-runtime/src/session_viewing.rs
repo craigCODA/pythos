@@ -74,10 +74,7 @@ impl SessionViewing {
             Ok(decoded) => decoded,
             Err(error) => return Err(self.poison(error)),
         };
-        let continuity = match self.continuity(event.sequence, decoded.gap_before) {
-            Ok(continuity) => continuity,
-            Err(error) => return Err(error),
-        };
+        let continuity = self.continuity(event.sequence, decoded.gap_before)?;
 
         if decoded.gap_before {
             self.controls.reset();
@@ -404,43 +401,75 @@ mod tests {
             discontinuous.observe(key(3, KEY_SPACE)),
             Err(SessionViewingError::RecoveryRequired)
         );
+
+        let mut duplicate = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
+        duplicate.observe(key(0, KEY_SPACE)).unwrap();
+        assert_eq!(
+            duplicate.observe(key(0, KEY_SPACE)),
+            Err(SessionViewingError::UnflaggedDiscontinuity {
+                expected: 1,
+                actual: 0
+            })
+        );
+        assert_eq!(
+            duplicate.observe(key(1, KEY_SPACE)),
+            Err(SessionViewingError::RecoveryRequired)
+        );
     }
 
     #[test]
     fn decoder_checks_tag_shapes_ranges_and_wrapping_continuity_without_button_semantics() {
         // Catches silently truncating wire motion or granting mouse buttons a Viewing action.
         let malformed = [
-            SessionInputEventV1 {
-                source: 9,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                kind: 9,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                value1: 1,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                value0: 128,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                flags: 2,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                reserved1: 1,
-                ..key(0, KEY_SPACE)
-            },
+            (
+                SessionInputEventV1 {
+                    source: 9,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::SourceKind,
+            ),
+            (
+                SessionInputEventV1 {
+                    kind: 9,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::SourceKind,
+            ),
+            (
+                SessionInputEventV1 {
+                    value1: 1,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::Shape,
+            ),
+            (
+                SessionInputEventV1 {
+                    value0: 128,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::MotionRange,
+            ),
+            (
+                SessionInputEventV1 {
+                    flags: 2,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::Flags,
+            ),
+            (
+                SessionInputEventV1 {
+                    reserved1: 1,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::Reserved,
+            ),
         ];
-        for event in malformed {
+        for (event, malformed_error) in malformed {
             let mut viewing = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
-            assert!(matches!(
+            assert_eq!(
                 viewing.observe(event),
-                Err(SessionViewingError::Malformed(_))
-            ));
+                Err(SessionViewingError::Malformed(malformed_error))
+            );
             assert_eq!(
                 viewing.observe(key(1, KEY_SPACE)),
                 Err(SessionViewingError::RecoveryRequired)
@@ -475,100 +504,129 @@ mod tests {
     fn decoder_admits_every_v1_key_tag_and_rejects_every_incompatible_source_kind_or_shape() {
         // Catches a future key-tag addition or source/kind widening silently bypassing the V1 boundary.
         let key_tags = [
-            KEY_A,
-            0x0002,
-            0x0003,
-            0x0004,
-            0x0005,
-            0x0006,
-            0x0007,
-            0x0008,
-            0x0009,
-            0x000A,
-            0x000B,
-            0x000C,
-            0x000D,
-            0x000E,
-            0x000F,
-            0x0010,
-            0x0011,
-            0x0012,
-            0x0013,
-            0x0014,
-            0x0015,
-            0x0016,
-            0x0017,
-            0x0018,
-            0x0019,
-            KEY_Z,
-            KEY_DIGIT0,
-            KEY_DIGIT1,
-            KEY_DIGIT2,
-            KEY_DIGIT3,
-            KEY_DIGIT4,
-            KEY_DIGIT5,
-            KEY_DIGIT6,
-            KEY_DIGIT7,
-            KEY_DIGIT8,
-            KEY_DIGIT9,
-            KEY_ENTER,
-            KEY_ESCAPE,
-            KEY_SPACE,
-            KEY_BACKSPACE,
+            (KEY_A, KeyCode::A),
+            (0x0002, KeyCode::B),
+            (0x0003, KeyCode::C),
+            (0x0004, KeyCode::D),
+            (0x0005, KeyCode::E),
+            (0x0006, KeyCode::F),
+            (0x0007, KeyCode::G),
+            (0x0008, KeyCode::H),
+            (0x0009, KeyCode::I),
+            (0x000A, KeyCode::J),
+            (0x000B, KeyCode::K),
+            (0x000C, KeyCode::L),
+            (0x000D, KeyCode::M),
+            (0x000E, KeyCode::N),
+            (0x000F, KeyCode::O),
+            (0x0010, KeyCode::P),
+            (0x0011, KeyCode::Q),
+            (0x0012, KeyCode::R),
+            (0x0013, KeyCode::S),
+            (0x0014, KeyCode::T),
+            (0x0015, KeyCode::U),
+            (0x0016, KeyCode::V),
+            (0x0017, KeyCode::W),
+            (0x0018, KeyCode::X),
+            (0x0019, KeyCode::Y),
+            (KEY_Z, KeyCode::Z),
+            (KEY_DIGIT0, KeyCode::Digit0),
+            (KEY_DIGIT1, KeyCode::Digit1),
+            (KEY_DIGIT2, KeyCode::Digit2),
+            (KEY_DIGIT3, KeyCode::Digit3),
+            (KEY_DIGIT4, KeyCode::Digit4),
+            (KEY_DIGIT5, KeyCode::Digit5),
+            (KEY_DIGIT6, KeyCode::Digit6),
+            (KEY_DIGIT7, KeyCode::Digit7),
+            (KEY_DIGIT8, KeyCode::Digit8),
+            (KEY_DIGIT9, KeyCode::Digit9),
+            (KEY_ENTER, KeyCode::Enter),
+            (KEY_ESCAPE, KeyCode::Escape),
+            (KEY_SPACE, KeyCode::Space),
+            (KEY_BACKSPACE, KeyCode::Backspace),
         ];
-        for tag in key_tags {
-            let mut viewing = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
-            assert_eq!(viewing.observe(key(0, tag)).unwrap().command, None);
+        for (tag, expected_key) in key_tags {
+            assert_eq!(
+                decode(key(0, tag)).unwrap().input,
+                InputEvent {
+                    source: InputSource::Keyboard,
+                    kind: InputEventKind::KeyDown(expected_key),
+                }
+            );
         }
 
         let incompatible_or_malformed = [
-            SessionInputEventV1 {
-                source: SESSION_INPUT_SOURCE_KEYBOARD,
-                kind: SESSION_INPUT_KIND_RELATIVE_MOTION,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                source: SESSION_INPUT_SOURCE_MOUSE,
-                kind: SESSION_INPUT_KIND_KEY_DOWN,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                source: SESSION_INPUT_SOURCE_KEYBOARD,
-                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                value0: 0x001B,
-                ..key(0, KEY_SPACE)
-            },
-            SessionInputEventV1 {
-                value0: -129,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                value1: 128,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
-                source: SESSION_INPUT_SOURCE_MOUSE,
-                value0: 2,
-                ..motion(0, 0, 0)
-            },
-            SessionInputEventV1 {
-                kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
-                source: SESSION_INPUT_SOURCE_MOUSE,
-                value0: 1,
-                value1: 1,
-                ..motion(0, 0, 0)
-            },
+            (
+                SessionInputEventV1 {
+                    source: SESSION_INPUT_SOURCE_KEYBOARD,
+                    kind: SESSION_INPUT_KIND_RELATIVE_MOTION,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::SourceKind,
+            ),
+            (
+                SessionInputEventV1 {
+                    source: SESSION_INPUT_SOURCE_MOUSE,
+                    kind: SESSION_INPUT_KIND_KEY_DOWN,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::SourceKind,
+            ),
+            (
+                SessionInputEventV1 {
+                    source: SESSION_INPUT_SOURCE_KEYBOARD,
+                    kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::SourceKind,
+            ),
+            (
+                SessionInputEventV1 {
+                    value0: 0x001B,
+                    ..key(0, KEY_SPACE)
+                },
+                SessionViewingMalformedEvent::Shape,
+            ),
+            (
+                SessionInputEventV1 {
+                    value0: -129,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::MotionRange,
+            ),
+            (
+                SessionInputEventV1 {
+                    value1: 128,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::MotionRange,
+            ),
+            (
+                SessionInputEventV1 {
+                    kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                    source: SESSION_INPUT_SOURCE_MOUSE,
+                    value0: 2,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::Shape,
+            ),
+            (
+                SessionInputEventV1 {
+                    kind: SESSION_INPUT_KIND_MOUSE_BUTTON_STATE,
+                    source: SESSION_INPUT_SOURCE_MOUSE,
+                    value0: 1,
+                    value1: 1,
+                    ..motion(0, 0, 0)
+                },
+                SessionViewingMalformedEvent::Shape,
+            ),
         ];
-        for event in incompatible_or_malformed {
+        for (event, malformed_error) in incompatible_or_malformed {
             let mut viewing = SessionViewing::new(ViewingExtent::new(10, 10).unwrap());
-            assert!(matches!(
+            assert_eq!(
                 viewing.observe(event),
-                Err(SessionViewingError::Malformed(_))
-            ));
+                Err(SessionViewingError::Malformed(malformed_error))
+            );
         }
     }
 }

@@ -12,7 +12,7 @@ pub struct TraversalState {
 }
 
 impl TraversalState {
-    pub const fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             motion_count: 0,
             last_motion: None,
