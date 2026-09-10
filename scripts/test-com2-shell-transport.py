@@ -86,7 +86,7 @@ def build_pyth_graph_artifacts() -> None:
 
 def build_boot_image() -> None:
     run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
-    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none"])
+    run(["cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none", "--no-default-features", "--features", "legacy-shell"])
     build_verified_user_shell()
     build_pyth_graph_artifacts()
     run([sys.executable, "scripts/build-image.py", "--with-pythtig-default-services"])

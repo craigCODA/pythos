@@ -584,6 +584,22 @@ fn captured_returnable_user_fault() -> Option<UserFaultContext> {
     })
 }
 
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+pub(crate) fn returnable_transients_cleared() -> bool {
+    !EXPECTED_USER_BREAKPOINT.load(Ordering::SeqCst)
+        && EXPECTED_USER_FAULT_VECTOR.load(Ordering::SeqCst) == 0
+        && !RETURNABLE_USER_PROCESS_ACTIVE.load(Ordering::SeqCst)
+        && RETURNABLE_USER_PRINCIPAL.load(Ordering::SeqCst) == 0
+        && !RETURNABLE_USER_FAULT_CAPTURED.load(Ordering::SeqCst)
+        && RETURNABLE_USER_FAULT_VECTOR.load(Ordering::SeqCst) == 0
+        && RETURNABLE_USER_FAULT_RIP.load(Ordering::SeqCst) == 0
+        && RETURNABLE_USER_FAULT_RSP.load(Ordering::SeqCst) == 0
+        && RETURNABLE_USER_FAULT_CR2.load(Ordering::SeqCst) == 0
+        && !USER_RETURNED.load(Ordering::SeqCst)
+        && KERNEL_RECOVERY_RIP.load(Ordering::SeqCst) == 0
+        && KERNEL_RECOVERY_RSP.load(Ordering::SeqCst) == 0
+}
+
 fn clear_returnable_user_process_state() {
     EXPECTED_USER_BREAKPOINT.store(false, Ordering::SeqCst);
     EXPECTED_USER_FAULT_VECTOR.store(0, Ordering::SeqCst);
@@ -990,6 +1006,7 @@ mod tests {
         );
 
         activate_returnable_user_process_for_test(process);
+        assert!(!returnable_transients_cleared());
         assert!(handle_user_fault(
             USER_INVALID_OPCODE_VECTOR,
             u64::from(gdt::USER_CODE_SELECTOR),
@@ -1077,6 +1094,7 @@ mod tests {
     }
 
     fn assert_returnable_transients_cleared() {
+        assert!(returnable_transients_cleared());
         assert!(!RETURNABLE_USER_PROCESS_ACTIVE.load(Ordering::SeqCst));
         assert_eq!(RETURNABLE_USER_PRINCIPAL.load(Ordering::SeqCst), 0);
         assert!(!RETURNABLE_USER_FAULT_CAPTURED.load(Ordering::SeqCst));

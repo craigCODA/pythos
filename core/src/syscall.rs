@@ -1072,6 +1072,7 @@ fn dispatch_session_wait(args: SyscallArgs) -> Result<u64, SyscallError> {
 #[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
 #[derive(Debug)]
 pub struct NormalSessionGrants {
+    holder: ServiceId,
     handles: [PackedCapability; 4],
     owned: [bool; 4],
 }
@@ -1105,6 +1106,7 @@ fn grant_normal_session_capabilities_with_table(
         ),
     ];
     let mut grants = NormalSessionGrants {
+        holder: process.service_id(),
         handles: [PackedCapability::from_raw(0); 4],
         owned: [false; 4],
     };
@@ -1162,7 +1164,7 @@ pub fn grant_normal_session_capabilities(
 }
 
 /// Revoke precisely the supplied slot/generation; never revoke a replacement.
-#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+#[cfg(test)]
 pub fn revoke_syscall_capability(capability: PackedCapability) -> Result<(), SyscallError> {
     with_syscall_capabilities(|table| revoke_syscall_capability_with_table(table, capability))
 }
@@ -1200,7 +1202,45 @@ fn revoke_normal_session_capabilities_with_table(
             }
         }
     }
-    failure.map_or(Ok(()), Err)
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    // Check the actual table, not only the ownership ledger: each old exact
+    // generation must now be rejected before holder/resource/rights checks.
+    for capability in grants.handles {
+        if !matches!(
+            table.validate(
+                grants.holder,
+                unpack_syscall_capability(capability),
+                CONSOLE_COM2_RESOURCE,
+                RightsMask::new(RightsMask::READ)
+            ),
+            Err(CapabilityError::InvalidHandle | CapabilityError::Revoked)
+        ) {
+            return Err(SyscallError::BadResult);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod normal_grant_test_support {
+    use super::*;
+    pub(crate) fn grant(
+        table: &mut CapabilityTable,
+        process: ActiveUserProcess,
+        queue: &session_input::SessionInputQueue,
+    ) -> Result<NormalSessionGrants, SyscallError> {
+        grant_normal_session_capabilities_with_table(table, process, |holder| {
+            queue.bind_session_consumer_quiescent(holder)
+        })
+    }
+    pub(crate) fn revoke(
+        table: &mut CapabilityTable,
+        grants: &mut NormalSessionGrants,
+    ) -> Result<(), SyscallError> {
+        revoke_normal_session_capabilities_with_table(table, grants)
+    }
 }
 
 fn validate_session_wait_with_table(
@@ -3553,6 +3593,34 @@ mod tests {
             .is_err()
         );
         assert_eq!(table, CapabilityTable::new());
+    }
+
+    #[test]
+    fn normal_grants_cleanup_checks_table_not_only_retired_ownership_flags() {
+        let process = ActiveUserProcess::new(
+            ServiceId::from_raw(7),
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        for live in 0..4 {
+            let mut table = CapabilityTable::new();
+            let mut grants =
+                grant_normal_session_capabilities_with_table(&mut table, process, |_| Ok(()))
+                    .unwrap();
+            for (index, handle) in grants.handles.iter().enumerate() {
+                if index != live {
+                    table.revoke(unpack_syscall_capability(*handle)).unwrap();
+                }
+            }
+            // Simulate incorrect bookkeeping: even without a current caller,
+            // no live exact handle may pass the production post-cleanup gate.
+            grants.owned = [false; 4];
+            assert!(grants.is_revoked());
+            assert_eq!(
+                revoke_normal_session_capabilities_with_table(&mut table, &mut grants),
+                Err(SyscallError::BadResult)
+            );
+        }
     }
 
     #[test]

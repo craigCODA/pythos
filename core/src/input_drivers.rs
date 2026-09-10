@@ -212,12 +212,20 @@ pub(crate) fn scancode_to_keycode(scancode: u8) -> Option<KeyCode> {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify")),
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
 ))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum PhysicalScanSet {
+    #[cfg(any(
+        test,
+        not(all(feature = "normal-session", not(feature = "verify"))),
+        feature = "viewing-input-probe",
+        feature = "physical-input-event-diagnostic",
+        feature = "physical-keyboard-console"
+    ))]
     Unknown,
     Set1,
     Set2,
@@ -231,6 +239,7 @@ enum PhysicalScanSet {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify")),
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
@@ -245,11 +254,19 @@ pub(crate) struct PhysicalKeyboardDecoder {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify")),
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"
 ))]
 impl PhysicalKeyboardDecoder {
+    #[cfg(any(
+        test,
+        not(all(feature = "normal-session", not(feature = "verify"))),
+        feature = "viewing-input-probe",
+        feature = "physical-input-event-diagnostic",
+        feature = "physical-keyboard-console"
+    ))]
     pub(crate) const fn new() -> Self {
         Self {
             mode: PhysicalScanSet::Unknown,
@@ -299,8 +316,7 @@ impl PhysicalKeyboardDecoder {
             self.release_prefix = false;
             return true;
         }
-        if matches!(self.mode, PhysicalScanSet::Set1 | PhysicalScanSet::Unknown) && byte & 0x80 != 0
-        {
+        if self.mode != PhysicalScanSet::Set2 && byte & 0x80 != 0 {
             self.mode = PhysicalScanSet::Set1;
             return true;
         }
@@ -309,6 +325,13 @@ impl PhysicalKeyboardDecoder {
 
     fn decode_make_byte(&mut self, byte: u8) -> Option<KeyCode> {
         match self.mode {
+            #[cfg(any(
+                test,
+                not(all(feature = "normal-session", not(feature = "verify"))),
+                feature = "viewing-input-probe",
+                feature = "physical-input-event-diagnostic",
+                feature = "physical-keyboard-console"
+            ))]
             PhysicalScanSet::Unknown => {
                 if let Some(key) = scancode_to_keycode(byte) {
                     self.mode = PhysicalScanSet::Set1;
@@ -330,6 +353,7 @@ impl PhysicalKeyboardDecoder {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify")),
     feature = "physical-input-event-diagnostic",
     feature = "physical-keyboard-console",
     feature = "viewing-input-probe"

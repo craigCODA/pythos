@@ -7,7 +7,7 @@ publish.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["pyth-tig-default"]
+default = ["normal-session"]
 pyth-tig-default = []
 legacy-shell = []
 normal-session = []

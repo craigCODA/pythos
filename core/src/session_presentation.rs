@@ -150,6 +150,7 @@ impl PresentationService {
         Ok(())
     }
 
+    #[cfg(any(test, feature = "session-viewing-probe"))]
     pub(crate) fn accepted_snapshot(&self) -> Option<(u64, ViewingSnapshot)> {
         self.binding.as_ref().and_then(|binding| binding.accepted)
     }
@@ -242,6 +243,7 @@ pub(crate) fn present(
     Ok(())
 }
 
+#[cfg(any(test, feature = "session-viewing-probe"))]
 pub(crate) fn accepted_snapshot() -> Option<(u64, ViewingSnapshot)> {
     // SAFETY:
     // 1. Invariant: terminal validation reads a stable accepted snapshot.

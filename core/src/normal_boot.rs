@@ -3,7 +3,7 @@
 //! Skips the verification proof sequence entirely and constructs only the
 //! production substrate a running system needs, initializes COM2 (the
 //! interactive object-shell transport), initializes the retained object service,
-//! then enters `shell.elf` as the persistent ring-3 program.
+//! then enters the selected retained normal session or compatibility program.
 
 use crate::memory::physical::PhysicalMemory;
 use crate::normal_boot_diagnostic::{self, InitErrorDiagnostic, NormalBootDiagnosticStage};
@@ -40,8 +40,13 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
                 &boot_info.framebuffer,
                 InitErrorDiagnostic::from(error),
             );
-            serial::write_line("PYTHOS:PANIC");
-            qemu_exit::panic();
+            #[cfg(feature = "normal-session")]
+            crate::normal_session::fatal(InitErrorDiagnostic::from(error).label());
+            #[cfg(not(feature = "normal-session"))]
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
         }
     };
     let _ = &substrate.kernel_address_space;
@@ -61,19 +66,35 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     if retained_services::initialize_object_service_from_device(substrate.block_device).is_err() {
         diag(boot_info, NormalBootDiagnosticStage::StoreError);
         serial::write_line("PYTHOS:CORE:NORMAL_INIT:OBJECT_SERVICE_RESTORE_FAILED");
-        serial::write_line("PYTHOS:PANIC");
-        qemu_exit::panic();
+        #[cfg(feature = "normal-session")]
+        crate::normal_session::fatal("object-service-restore");
+        #[cfg(not(feature = "normal-session"))]
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
     }
     diag(boot_info, NormalBootDiagnosticStage::PkgRestore);
     if package_service::initialize_package_service_from_device(substrate.block_device).is_err() {
         diag(boot_info, NormalBootDiagnosticStage::PkgError);
-        serial::write_line("PYTHOS:PANIC");
-        qemu_exit::panic();
+        #[cfg(feature = "normal-session")]
+        crate::normal_session::fatal("package-service-restore");
+        #[cfg(not(feature = "normal-session"))]
+        {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
     }
     serial::write_line("PYTHOS:CORE:NORMAL_INIT:SUBSTRATE_READY");
 
     diag(boot_info, NormalBootDiagnosticStage::Services);
     match pyth_service_supervisor::normal_program() {
+        NormalProgram::NormalSession => {
+            #[cfg(feature = "normal-session")]
+            crate::normal_session::run(boot_info, &substrate);
+            #[cfg(not(feature = "normal-session"))]
+            unreachable!();
+        }
         NormalProgram::PythServices => {
             if run_selected_pyth_services(&substrate).is_err() {
                 diag(boot_info, NormalBootDiagnosticStage::ServiceError);
@@ -596,6 +617,29 @@ fn build_shell_process(launch: &normal_init::PreparedShellLaunch) -> Result<Acti
         launch.bootstrap_user_ptr,
     )
     .map_err(|_| ())
+}
+
+#[cfg(all(not(test), feature = "normal-session"))]
+pub(crate) fn enter_recovery_shell(substrate: &normal_init::NormalBootSubstrate) -> ! {
+    let process = build_shell_process(&substrate.shell_launch)
+        .unwrap_or_else(|_| crate::normal_session::fatal("recovery-process"));
+    retained_services::bind_shell_process(process)
+        .unwrap_or_else(|_| crate::normal_session::fatal("recovery-bind"));
+    let bootstrap = build_bootstrap_block(process)
+        .unwrap_or_else(|_| crate::normal_session::fatal("recovery-bootstrap"));
+    substrate.shell_launch.write_bootstrap_block(&bootstrap);
+    // SAFETY: the recovery root and private shell frames were constructed
+    // before kernel activation, map only stack 1 and exclude all failed-session
+    // backing frames at CPL3. The retained root lives until reboot; single CPU.
+    unsafe {
+        substrate.shell_launch.address_space.activate();
+    }
+    user_mode::enter_persistent_user_process(
+        process,
+        substrate.shell_launch.entry,
+        substrate.shell_launch.user_stack_top(),
+        substrate.shell_launch.bootstrap_user_ptr,
+    )
 }
 
 #[cfg(not(test))]
