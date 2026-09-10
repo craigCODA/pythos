@@ -85,8 +85,9 @@ The owner invoked Phase 13.5 Slice 5 locally and approved the architectural
 direction on 2026-09-09: interrupt-backed waiting, continuous session-owned
 Viewing, normal-boot integration, and recovery-shell fallback without automatic
 restart. The written contract is
-`docs/decisions/0093-normal-session-wait-recovery.md`; it awaits owner review
-before the detailed task plan and implementation. Work only on
+`docs/decisions/0093-normal-session-wait-recovery.md`; the owner has approved it
+for implementation in this session. Use the single task/evidence map
+`docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md`. Work only on
 `agent/phase13-5-normal-session`, based on `cb86242`. Preserve the Slice 3-4
 branch and PR #25. No remote writes, CI polling, durable sessions, broad command
 migration, USB/xHCI integration, physical acceptance or later phase work.

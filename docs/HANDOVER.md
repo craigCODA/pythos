@@ -3,8 +3,10 @@
 Local continuation: the owner invoked Slice 5 and approved recovery-shell
 fallback without automatic restart. The new branch is
 `agent/phase13-5-normal-session`, based on `cb86242`; PR #25 is unchanged.
-[ADR 0093](decisions/0093-normal-session-wait-recovery.md) is the written design
-awaiting review before detailed planning and implementation. Fresh predecessor
+[ADR 0093](decisions/0093-normal-session-wait-recovery.md) is approved for local
+implementation in this session; use the
+[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
+Fresh predecessor
 host baselines passed (1029 Rust; 176 Python plus 148 subtests). No Slice 5
 implementation, new QEMU acceptance, remote write or physical write is claimed.
 

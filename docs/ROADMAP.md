@@ -15,8 +15,10 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 The owner has separately invoked Slice 5 locally and approved normal-session
 waiting, lifetime and recovery-shell direction. The written
-[ADR 0093 contract](decisions/0093-normal-session-wait-recovery.md) awaits review
-before detailed planning and implementation. No Slice 5 completion is claimed.
+[ADR 0093 contract](decisions/0093-normal-session-wait-recovery.md) is approved
+for implementation in this session, tracked in the
+[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
+No Slice 5 completion is claimed.
 The Slice 3-4 PR branch remains unchanged; no remote writes or CI polling.
 
 The accepted predecessor boundary is recorded below:

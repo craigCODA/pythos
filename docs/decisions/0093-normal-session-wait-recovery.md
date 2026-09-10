@@ -1,8 +1,9 @@
 # ADR 0093: Normal session operation, interrupt-backed waiting and recovery
 
-Status: architectural direction approved by the owner on 2026-09-09. This
-written contract awaits the owner's review before the detailed task plan and
-implementation. No Slice 5 implementation or acceptance is claimed.
+Status: written contract approved by the owner on 2026-09-09 for local
+implementation in this session. The single task/evidence map is
+`../superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md`.
+Implementation and acceptance remain separately evidenced there.
 
 ## Scope and base
 
@@ -96,7 +97,7 @@ an acknowledgement as a completed object/task operation. Graph invocations
 must be caused by admitted live commands, with one actual command read/result
 exchange and a fresh invocation context each time.
 
-The proposed initial normal-session command surface is a read-only `status`
+The initial normal-session command surface is a read-only `status`
 request over existing COM2 transport, parsed only in ring 3. It uses the existing
 `COMMAND_KIND_SYSTEM_STATUS` type and reports real session/input/presentation
 state through the unchanged graph command interface. It does not mint object
@@ -107,9 +108,9 @@ effects. The existing recovery shell retains its current command surface.
 Provide an explicit ring-3 `recover` request so the owner can enter that existing
 shell without injecting a fault. It ends this session through the same typed
 cleanup path as a failure; it is not a magic raw key or a kernel text parser.
-No automatic restart follows either kind of transition. These two COM2 command
-choices are concrete refinements for the written-contract review, not claims
-that the previous fixture adapter already implements them.
+No automatic restart follows either kind of transition. These two COM2 commands
+are the approved initial surface, not claims that the previous fixture adapter
+already implements them.
 
 This boundary deliberately does not migrate every shell command or add a new
 graph opcode, source language, semantic action, click/scroll/zoom behavior or
@@ -124,9 +125,12 @@ explicit recovery request leaves the failed session unable to execute again.
 
 The supervisor must, in order:
 
-1. Recover control through a kernel-owned continuation and restore the kernel
-   address-space root before preparing another user entry.
-2. Clear the active caller and returnable-process state, and invalidate the
+1. Recover control through a kernel-owned continuation. The existing return
+   mechanism clears the active caller and returnable-process state during this
+   return, before the supervisor restores and verifies the kernel address-space
+   root. Preserve that earlier deauthorization; both must be complete before
+   preparing another user entry.
+2. Invalidate the
    session's console, input, command and presentation grants. Track every grant
    made during construction so partial launch failures unwind their own grants.
 3. Make the old presenter unavailable and keep the input queue unavailable to
