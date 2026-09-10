@@ -701,7 +701,7 @@ pub fn run(
         .map_err(|_| SessionRuntimeProbeError::Bootstrap)?;
         write_extension_to_frame(
             prepared.bootstrap_physical,
-            SESSION_VIEWING_BOOTSTRAP_OFFSET,
+            SESSION_VIEWING_BOOTSTRAP_OFFSET as u64,
             &extension,
         )?;
         crate::serial::write_line("PYTHOS:CORE:SESSION_VIEWING:PRESENTATION_BOUND");

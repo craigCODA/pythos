@@ -341,7 +341,7 @@ impl pythos_user_session_runtime::viewing_orchestration::ViewingRuntimeEffects f
         let address =
             pythos_user_session_runtime::viewing_orchestration::viewing_extension_address(
                 self.bootstrap_ptr as u64,
-                SESSION_VIEWING_BOOTSTRAP_OFFSET,
+                SESSION_VIEWING_BOOTSTRAP_OFFSET as u64,
                 core::mem::size_of::<SessionViewingBootstrapV1>() as u64,
             )?;
         // SAFETY: outer admission validated the exact fixed read-only bootstrap page.
