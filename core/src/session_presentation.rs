@@ -38,6 +38,9 @@ pub(crate) struct PresentationService {
 }
 
 impl PresentationService {
+    pub(crate) fn disable(&mut self, _holder: ServiceId) -> Result<(), PresentationError> {
+        Ok(())
+    }
     pub(crate) const fn new() -> Self {
         Self { binding: None }
     }
@@ -254,6 +257,25 @@ pub(crate) mod tests {
 
     fn extent() -> ViewingExtent {
         ViewingExtent::new(640, 480).unwrap()
+    }
+
+    #[test]
+    fn disable_is_holder_checked_permanent_and_preserves_pixels() {
+        let (pixels, info) = fixture();
+        let mut service = bound(info);
+        service.present(holder(), 0, 1, coords(20, 30), 0).unwrap();
+        let before = pixels.clone();
+        assert_eq!(service.disable(ServiceId::from_raw(8)), Err(PresentationError::WrongHolder));
+        assert!(service.accepted_snapshot().is_some());
+        service.disable(holder()).unwrap();
+        service.disable(holder()).unwrap();
+        assert_eq!(service.disable(ServiceId::from_raw(8)), Err(PresentationError::WrongHolder));
+        assert_eq!(service.accepted_snapshot(), None);
+        assert!(service.present(holder(), 1, 0, 0, 0).is_err());
+        // SAFETY: fixture pixels remain allocated, aligned and exclusively owned
+        // for the call; the tombstone must reject without touching them.
+        assert!(unsafe { service.bind(holder(), info, extent()) }.is_err());
+        assert_eq!(pixels, before);
     }
     fn holder() -> ServiceId {
         ServiceId::from_raw(7)

@@ -54,7 +54,7 @@ pub enum SessionInputError {
 /// session. Binding is a pre-initialization, quiescent operation: it must run
 /// before `ps2::initialize()` permits producers to publish, and there is no
 /// live producer/consumer transition or reset path in this slice.
-struct SessionInputQueue {
+pub(crate) struct SessionInputQueue {
     slots: UnsafeCell<[Option<SequencedRawInputEvent>; QUEUE_CAPACITY]>,
     head: AtomicUsize,
     tail: AtomicUsize,
@@ -79,7 +79,7 @@ struct SessionInputQueue {
 unsafe impl Sync for SessionInputQueue {}
 
 impl SessionInputQueue {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             slots: UnsafeCell::new([None; QUEUE_CAPACITY]),
             head: AtomicUsize::new(0),
@@ -91,7 +91,7 @@ impl SessionInputQueue {
         }
     }
 
-    fn publish(&self, raw: RawInputEvent) -> PublishOutcome {
+    pub(crate) fn publish(&self, raw: RawInputEvent) -> PublishOutcome {
         // A candidate has a sequence even when it cannot occupy a physical
         // slot, so a session consumer can observe loss without producer-side
         // policy or blocking.
@@ -111,7 +111,7 @@ impl SessionInputQueue {
         PublishOutcome::Enqueued
     }
 
-    fn bind_session_consumer_quiescent(&self, holder: ServiceId) -> Result<(), SessionInputError> {
+    pub(crate) fn bind_session_consumer_quiescent(&self, holder: ServiceId) -> Result<(), SessionInputError> {
         if self
             .mode
             .compare_exchange(
@@ -149,7 +149,7 @@ impl SessionInputQueue {
         }
     }
 
-    fn try_read_session(
+    pub(crate) fn try_read_session(
         &self,
         holder: ServiceId,
     ) -> Result<Option<SessionInputEventV1>, SessionInputError> {
@@ -185,6 +185,10 @@ impl SessionInputQueue {
             },
             _ => ConsumerMode::Compatibility,
         }
+    }
+
+    pub(crate) fn session_ready(&self, _holder: ServiceId) -> Result<bool, SessionInputError> {
+        Ok(false)
     }
 
     fn pop(&self) -> Option<SequencedRawInputEvent> {
@@ -334,6 +338,27 @@ mod tests {
             dx: ordinal,
             dy: -ordinal,
         }
+    }
+
+    #[test]
+    fn readiness_checks_owner_without_consuming_or_advancing_sequence() {
+        let queue = SessionInputQueue::new();
+        let holder = ServiceId::from_raw(7);
+        assert_eq!(queue.session_ready(holder), Err(SessionInputError::SessionUnbound));
+        queue.bind_session_consumer_quiescent(holder).unwrap();
+        assert_eq!(queue.session_ready(holder), Ok(false));
+        queue.publish(mouse(3));
+        for _ in 0..2 {
+            assert_eq!(queue.session_ready(ServiceId::from_raw(8)), Err(SessionInputError::WrongHolder));
+            assert_eq!(queue.session_ready(holder), Ok(true));
+            assert_eq!(queue.expected.load(Ordering::Relaxed), 0);
+            assert_eq!(queue.head.load(Ordering::Relaxed), 0);
+            assert_eq!(queue.next_sequence.load(Ordering::Relaxed), 1);
+        }
+        assert_eq!(queue.try_read_session(holder).unwrap().unwrap().sequence, 0);
+        assert_eq!(queue.session_ready(holder), Ok(false));
+        assert_eq!(queue.try_read_compatibility(), Err(SessionInputError::SessionBound));
+        assert_eq!(queue.bind_session_consumer_quiescent(holder), Err(SessionInputError::AlreadyBound));
     }
 
     fn key(key: KeyCode) -> RawInputEvent {
