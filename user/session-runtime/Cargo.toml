@@ -6,6 +6,10 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[features]
+default = []
+session-viewing = []
+
 [dependencies]
 pythos-shared = { path = "../../shared", features = ["pyth-tig"] }
 pythos-user-pyth-runtime = { path = "../pyth-runtime" }

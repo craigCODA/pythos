@@ -20,6 +20,7 @@ session-input-bridge-probe = ["verify"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]
+session-viewing-probe = ["session-runtime-probe"]
 evidence-terminal = ["verify"]
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.

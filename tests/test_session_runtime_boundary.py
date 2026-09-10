@@ -8,6 +8,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -270,6 +271,14 @@ def sha256(path: Path) -> str:
 
 
 class SessionRuntimeBoundaryTest(unittest.TestCase):
+    def test_viewing_build_is_opt_in_and_default_command_is_preserved(self) -> None:
+        from tests.test_build_orchestration import load_script
+        builder = load_script("build-session-runtime.py")
+        for arguments, expected in [([], []), (["--features", "session-viewing"], ["--features", "session-viewing", "--target-dir", ROOT / "target/session-viewing-probe"] )]:
+            with self.subTest(arguments=arguments), patch.object(sys, "argv", ["builder", *arguments]), patch.object(builder.subprocess, "call", return_value=0) as call:
+                self.assertEqual(builder.main(), 0)
+                self.assertEqual(call.call_args.args[0], ["cargo", "build", "-p", "pythos-user-session-runtime", "--target", "x86_64-unknown-none", *expected])
+
     def test_fault_probe_builds_an_exact_ud2_user_elf_through_the_shared_builder(self) -> None:
         harness = load_session_runtime_harness()
         payload = harness.build_fault_runtime_payload()

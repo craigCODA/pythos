@@ -22,6 +22,7 @@ pub mod session_input_abi;
 pub mod session_runtime_abi;
 pub mod session_runtime_lifecycle;
 pub mod session_viewing_abi;
+pub mod session_viewing_result;
 pub mod sha256;
 pub mod task_abi;
 pub mod user_program_manifest;
