@@ -1,7 +1,8 @@
 # ADR 0093: Normal session operation, interrupt-backed waiting and recovery
 
 Status: accepted design, locally implemented and QEMU-accepted on 2026-09-10;
-the branch remains unmerged and unpublished pending final controller review.
+final controller review of `cb86242..69d304f` completed on 2026-09-14 with no
+Critical or Important findings. The branch remains unmerged and unpublished.
 The single task/evidence map is
 `../superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md`.
 Implementation and acceptance are separately evidenced there.

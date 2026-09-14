@@ -10,8 +10,11 @@ tests plus 229 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
 normal acceptance, and the separate native-fault acceptance. The actual normal
 core strict Clippy profile still fails on 871 dead-code diagnostics versus 874
 for the compatibility baseline; strict complete proof profiles and both normal
-user binaries pass. Final controller whole-branch review remains. No remote,
-merge, publication, USB, or physical write is claimed.
+user binaries pass. Final controller whole-branch review of
+`cb86242..69d304f` found no Critical or Important findings. Minor deferred
+items are the isolated unknown-exit fixture, stale PS/2 commentary, and the
+disclosed strict-normal lint debt. No remote, merge, publication, USB, or
+physical write is claimed.
 
 The following is the completed Slice 3-4 checkpoint:
 

@@ -85,7 +85,8 @@ The owner invoked Phase 13.5 Slice 5 locally and approved the architectural
 direction on 2026-09-09: interrupt-backed waiting, continuous session-owned
 Viewing, normal-boot integration, and recovery-shell fallback without automatic
 restart. The slice is implemented and locally QEMU-accepted on the unmerged,
-unpublished branch; final controller whole-branch review remains. The written
+unpublished branch; final controller whole-branch review of
+`cb86242..69d304f` found no Critical or Important findings. The written
 contract is `docs/decisions/0093-normal-session-wait-recovery.md`. Use the single
 task/evidence map
 `docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md`. Work only on

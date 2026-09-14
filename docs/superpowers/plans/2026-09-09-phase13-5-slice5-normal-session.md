@@ -58,8 +58,8 @@ These values must appear in shared code before their consumers are implemented.
 - [x] Task 2 reviewed complete.
 - [x] Task 3 reviewed complete.
 - [x] Task 4 reviewed complete.
-- [ ] Task 5 reviewed complete.
-- [ ] Whole-branch review and final regression/acceptance closeout.
+- [x] Task 5 reviewed complete (`69d304f`; initial Important harness findings fixed and re-reviewed).
+- [x] Whole-branch review and final regression/acceptance closeout (`cb86242..69d304f`; no Critical or Important findings).
 
 ### Task 1: Shared normal-session contract and retained controller
 
@@ -243,4 +243,9 @@ The actual default-normal kernel strict gate fails with 871 dead-code errors;
 the compatibility baseline fails with 874, reflecting baseline debt plus
 profile-induced unused compatibility code rather than identical inherited
 diagnostics. No suppression or misleading verify-only normal gate was added.
-The branch remains local, unmerged and unpublished pending controller review.
+Fresh post-closeout verification passed full Python discovery (195 tests, 229
+subtests), the full Rust workspace suite (1,070 tests), formatting, and diff
+checks. The final review deferred only three Minor items: the Task 3
+unknown-exit fixture does not isolate status rejection, a stale PS/2 comment,
+and the disclosed strict-normal lint debt. The branch remains local, unmerged
+and unpublished, technically ready for owner handoff.
