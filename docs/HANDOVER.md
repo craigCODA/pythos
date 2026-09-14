@@ -5,8 +5,8 @@ on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
 unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
 normal-session waiting and one-way recovery without automatic restart; the
 [Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
-records the exact evidence. Fresh closeout passed 1,070 Rust tests, 193 Python
-tests plus 219 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
+records the exact evidence. Fresh closeout passed 1,070 Rust tests, 195 Python
+tests plus 229 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
 normal acceptance, and the separate native-fault acceptance. The actual normal
 core strict Clippy profile still fails on 871 dead-code diagnostics versus 874
 for the compatibility baseline; strict complete proof profiles and both normal

@@ -15,7 +15,6 @@ import time
 import unittest
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, TypeVar
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -372,16 +371,6 @@ def assert_storage_unchanged(snapshots: tuple[StorageSnapshot, ...]) -> None:
             raise AssertionError("storage bytes changed during normal session")
 
 
-T = TypeVar("T")
-
-
-def run_with_cleanup(action: Callable[[], T], cleanup: Callable[[], None]) -> T:
-    try:
-        return action()
-    finally:
-        cleanup()
-
-
 def persist_capture(path: Path, captured: bytes) -> None:
     """Retain the serial stream byte-for-byte, including guest CRLF."""
     path.write_bytes(captured)
@@ -467,9 +456,14 @@ def assert_com1_common(com1: str) -> None:
 
 def assert_explicit_recovery(com1: str) -> None:
     lines = complete_lines(com1)
+    recovery = CORE_PREFIX + "RECOVERY reason=explicit"
+    if [line for line in lines if line.startswith(CORE_PREFIX + "RECOVERY reason=")] != [recovery]:
+        raise AssertionError("explicit recovery requires exactly one allowed recovery reason")
+    if any(line.startswith(FAULT_CONTEXT_PREFIX) for line in lines):
+        raise AssertionError("explicit recovery must not contain a native-fault context")
     required = (
         "PYTHOS:CORE:USER_MODE:RETURN",
-        CORE_PREFIX + "RECOVERY reason=explicit",
+        recovery,
         CORE_PREFIX + "CLEANUP_OK",
         "PYTHOS:SHELL:RING3_ENTER",
     )
@@ -484,6 +478,9 @@ def assert_explicit_recovery(com1: str) -> None:
 
 def assert_fault_recovery(com1: str, expected_rip: int) -> None:
     lines = complete_lines(com1)
+    recovery = CORE_PREFIX + "RECOVERY reason=native-fault"
+    if [line for line in lines if line.startswith(CORE_PREFIX + "RECOVERY reason=")] != [recovery]:
+        raise AssertionError("native fault requires exactly one allowed recovery reason")
     contexts = [line for line in lines if line.startswith(FAULT_CONTEXT_PREFIX)]
     if len(contexts) != 1:
         raise AssertionError("native fault requires one exact context record")
@@ -499,11 +496,15 @@ def assert_fault_recovery(com1: str, expected_rip: int) -> None:
         raise AssertionError("native fault stack/CR2 context is invalid")
     required = (
         contexts[0],
-        CORE_PREFIX + "RECOVERY reason=native-fault",
+        recovery,
         CORE_PREFIX + "CLEANUP_OK",
         "PYTHOS:SHELL:RING3_ENTER",
     )
-    positions = [lines.index(marker) for marker in required]
+    positions = []
+    for marker in required:
+        if lines.count(marker) != 1:
+            raise AssertionError(f"native fault recovery requires exactly one {marker!r}")
+        positions.append(lines.index(marker))
     if positions != sorted(positions):
         raise AssertionError("native fault recovery markers are out of order")
 
@@ -533,17 +534,25 @@ def run_boot(
     if sys.platform != "win32":
         kwargs["start_new_session"] = True
     runner = spawn_runner_process(command, **kwargs)
-    timeline = AcceptanceTimeline()
-    serial = SerialTail(serial_path, timeline)
-    observer = Com1Observer(serial)
-    capture = RunnerCapture(runner.process, timeline)
+    timeline: AcceptanceTimeline | None = None
+    serial: SerialTail | None = None
+    observer: Com1Observer | None = None
+    capture: RunnerCapture | None = None
     collector: Com2Collector | None = None
     screenshots: list[bytes] = []
     errors: list[BaseException] = []
     tree_reaped = False
-    capture.start()
-    observer.start()
+    observer_started = False
+    capture_started = False
     try:
+        timeline = AcceptanceTimeline()
+        serial = SerialTail(serial_path, timeline)
+        observer = Com1Observer(serial)
+        capture = RunnerCapture(runner.process, timeline)
+        capture.start()
+        capture_started = True
+        observer.start()
+        observer_started = True
         with connect_com2(SHELL_PORT, 25.0) as sock:
             collector = Com2Collector(sock, timeline)
             collector.read_until(READY.encode(), 35.0)
@@ -626,7 +635,8 @@ def run_boot(
         errors.append(error)
     finally:
         try:
-            observer.stop_join()
+            if observer is not None and observer_started:
+                observer.stop_join()
         except BaseException as error:
             errors.append(error)
         tracker = None
@@ -643,18 +653,24 @@ def run_boot(
                 tree_reaped = tracker.wait_reaped(5.0)
             except BaseException as error:
                 errors.append(error)
-    output = capture.finish()
-    com1 = serial.transcript()
+    output = ""
+    if capture is not None and capture_started:
+        try:
+            output = capture.finish()
+        except BaseException as error:
+            errors.append(error)
+    com1 = serial.transcript() if serial is not None else ""
     raw_com2 = bytes(collector.captured) if collector else b""
     com2 = raw_com2.decode("utf-8", errors="replace")
     persist_capture(com2_path, raw_com2)
     runner_path.write_text(output, encoding="utf-8")
-    timeline_path.write_text("\n".join(f"{source} {value}" for source, value in timeline.events) + "\n", encoding="utf-8")
+    events = tuple(timeline.events) if timeline is not None else ()
+    timeline_path.write_text("\n".join(f"{source} {value}" for source, value in events) + "\n", encoding="utf-8")
     if errors:
         raise AssertionError(
             f"boot {ordinal}: {'; '.join(str(error) for error in errors)}\nCOM1:\n{com1}\nCOM2:\n{com2}\nrunner:\n{output}"
         ) from errors[0]
-    evidence = BootEvidence(com1, com2, output, tuple(timeline.events), tuple(screenshots), tree_reaped)
+    evidence = BootEvidence(com1, com2, output, events, tuple(screenshots), tree_reaped)
     assert_com1_common(com1)
     if not tree_reaped:
         raise AssertionError("runner/QEMU process tree survived cleanup")

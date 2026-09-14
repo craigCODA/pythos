@@ -251,7 +251,7 @@ or completion of the whole operating system.
   restored kernel/caller state, checked grant cleanup, and actual recovery-shell
   command handling. The normal-only fault context diagnostic is emitted only
   after restoration and before the recovery marker.
-- Fresh closeout passed 1,070 Rust tests, 193 Python tests plus 219 subtests, all
+- Fresh closeout passed 1,070 Rust tests, 195 Python tests plus 229 subtests, all
   16 required predecessor QEMU gates, both strict normal user-binary profiles,
   and five strict complete kernel proof profiles.
 - The actual default-normal core strict Clippy check fails with 871 dead-code

@@ -5,7 +5,10 @@ import struct
 import sys
 import tempfile
 import unittest
+import unittest.mock
+from contextlib import ExitStack, nullcontext
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -163,17 +166,114 @@ class NormalSessionHarnessTest(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 self.harness.assert_storage_unchanged((baseline, changed))
 
-    def test_cleanup_runs_on_success_failure_and_timeout(self) -> None:
-        events: list[str] = []
-        self.assertEqual(self.harness.run_with_cleanup(lambda: 7, lambda: events.append("cleanup")), 7)
-        self.assertEqual(events, ["cleanup"])
-        for error in (RuntimeError("failure"), TimeoutError("timeout")):
-            events.clear()
-            def fail(error=error):
-                raise error
-            with self.assertRaises(type(error)):
-                self.harness.run_with_cleanup(fail, lambda: events.append("cleanup"))
-            self.assertEqual(events, ["cleanup"])
+    def _run_boot_failure(
+        self, directory: str, failure: str
+    ) -> tuple[unittest.mock.Mock, unittest.mock.Mock, BaseException, object]:
+        runner = SimpleNamespace(process=unittest.mock.Mock())
+        runner.process.poll.return_value = None
+        serial = unittest.mock.Mock()
+        serial.transcript.return_value = ""
+        observer = unittest.mock.Mock()
+        capture = unittest.mock.Mock()
+        capture.finish.return_value = ""
+        collector = unittest.mock.Mock()
+        collector.captured = bytearray(b"PYTHOS:USER:NORMAL_SESSION:READY\r\n")
+        tracker = unittest.mock.Mock()
+        tracker.wait_reaped.return_value = True
+        cleanup = unittest.mock.Mock()
+        observer_factory = unittest.mock.Mock(return_value=observer)
+        capture_factory = unittest.mock.Mock(return_value=capture)
+        if failure == "observer-construction":
+            observer_factory.side_effect = RuntimeError("observer construction")
+        elif failure == "capture-construction":
+            capture_factory.side_effect = RuntimeError("capture construction")
+        elif failure == "capture-start":
+            capture.start.side_effect = RuntimeError("capture start")
+        elif failure == "observer-start":
+            observer.start.side_effect = RuntimeError("observer start")
+
+        root = Path(directory)
+        with ExitStack() as patches:
+            patches.enter_context(unittest.mock.patch.object(self.harness, "spawn_runner_process", return_value=runner))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "SerialTail", return_value=serial))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "Com1Observer", observer_factory))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "RunnerCapture", capture_factory))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "connect_com2", return_value=nullcontext(unittest.mock.Mock())))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "Com2Collector", return_value=collector))
+            patches.enter_context(unittest.mock.patch.object(self.harness, "cleanup_runner_process", cleanup))
+            patches.enter_context(unittest.mock.patch.object(self.harness.RUNTIME, "track_runner_tree", return_value=tracker))
+            if failure == "screenshot-timeout":
+                patches.enter_context(
+                    unittest.mock.patch.object(
+                        self.harness,
+                        "capture_live",
+                        side_effect=TimeoutError("screendump timeout"),
+                    )
+                )
+            with self.assertRaises(BaseException) as caught:
+                self.harness.run_boot(1, root, root / "storage.img", fault=False, recover=False)
+        return cleanup, tracker, caught.exception, runner
+
+    def test_run_boot_cleans_spawned_process_after_construction_and_start_failures(self) -> None:
+        for failure in (
+            "observer-construction",
+            "capture-construction",
+            "capture-start",
+            "observer-start",
+        ):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                cleanup, tracker, error, runner = self._run_boot_failure(directory, failure)
+                self.assertIn(failure.split("-")[0], str(error))
+                self.assertNotIn("before it is started", str(error))
+                cleanup.assert_called_once_with(runner)
+                tracker.wait_reaped.assert_called_once_with(5.0)
+
+    def test_run_boot_cleans_spawned_process_after_screenshot_timeout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            cleanup, tracker, error, runner = self._run_boot_failure(directory, "screenshot-timeout")
+            self.assertIn("screendump timeout", str(error))
+            cleanup.assert_called_once_with(runner)
+            tracker.wait_reaped.assert_called_once_with(5.0)
+
+    def test_recovery_oracles_reject_duplicates_contradictions_and_wrong_mode_context(self) -> None:
+        context = (
+            "PYTHOS:CORE:NORMAL_SESSION:FAULT_CONTAINED principal:50595352544D0001 "
+            "vector:6 rip:0000000000601551 rsp:FFFFFFFF80191988 cr2:0000000000000000"
+        )
+        fault = "\n".join(
+            (
+                context,
+                "PYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=native-fault",
+                "PYTHOS:CORE:NORMAL_SESSION:CLEANUP_OK",
+                "PYTHOS:SHELL:RING3_ENTER",
+            )
+        )
+        explicit = "\n".join(
+            (
+                "PYTHOS:CORE:USER_MODE:RETURN",
+                "PYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=explicit",
+                "PYTHOS:CORE:NORMAL_SESSION:CLEANUP_OK",
+                "PYTHOS:SHELL:RING3_ENTER",
+            )
+        )
+        self.harness.assert_fault_recovery(fault, 0x601551)
+        self.harness.assert_explicit_recovery(explicit)
+        for invalid in (
+            fault + "\nPYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=explicit",
+            fault + "\nPYTHOS:CORE:NORMAL_SESSION:CLEANUP_OK",
+            fault + "\nPYTHOS:SHELL:RING3_ENTER",
+            fault + "\nPYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=native-fault",
+        ):
+            with self.subTest(mode="fault", invalid=invalid):
+                with self.assertRaises(AssertionError):
+                    self.harness.assert_fault_recovery(invalid, 0x601551)
+        for invalid in (
+            explicit + "\n" + context,
+            explicit + "\nPYTHOS:CORE:NORMAL_SESSION:RECOVERY reason=native-fault",
+        ):
+            with self.subTest(mode="explicit", invalid=invalid):
+                with self.assertRaises(AssertionError):
+                    self.harness.assert_explicit_recovery(invalid)
 
     def test_com2_capture_persistence_preserves_raw_crlf_bytes(self) -> None:
         raw = b"PYTHOS:USER:NORMAL_SESSION:READY\r\nPYTHOS:SHELL:READY\r\n"

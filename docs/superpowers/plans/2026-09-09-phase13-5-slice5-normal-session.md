@@ -224,14 +224,14 @@ Normal build prerequisite: compile/verify actual `programs/normal-session-manage
 
 Preparation: baseline Rust 1029 passed (`target/slice5-baseline-rust.log`); Python 176 passed, 148 subtests. Approval was authorization, not acceptance evidence.
 
-Task 5 closeout (2026-09-10): focused harness tests pass 10 tests plus 16
-subtests; the fresh workspace totals are 1,070 Rust and 193 Python tests plus
-219 subtests. All 16 required predecessor QEMU gates passed sequentially. Fresh
-fault acceptance is under `target/normal-session-fault-acceptance/run-6dqnzk_v`;
+Task 5 closeout (2026-09-10): focused harness tests pass 12 tests plus 26
+subtests; the fresh workspace totals are 1,070 Rust and 195 Python tests plus
+229 subtests. All 16 required predecessor QEMU gates passed sequentially. Fresh
+fault acceptance is under `target/normal-session-fault-acceptance/run-x3_z096f`;
 fresh ordinary two-boot evidence and six captures are under
-`target/normal-session-acceptance/run-90llzb1d`. Raw COM2 captures contain CRLF
+`target/normal-session-acceptance/run-iwq7ezpb`. Raw COM2 captures contain CRLF
 and zero CRCRLF sequences. The shared normal kernel and graph hashes are
-`ecd249034e57d9b083ec9c12f0512f706ff7add005fc525b43a03bf69e05c31f`
+`dcde94c8a4e0a23b8b681e8b476a49f4f57b400ecb54f46751f538ce9cbaba0a`
 and `14a5ef6e8c4a0fbcaa4a12dd9aef9e2b499932c05a396af809a3561da53c4fdb`;
 ordinary and fault user ELF hashes are
 `bd0b81628c54c939e9b90016dd713b9edf481f014c7cbaa05c0342cfd60cba46`
