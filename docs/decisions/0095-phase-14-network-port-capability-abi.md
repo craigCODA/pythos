@@ -2,7 +2,8 @@
 
 Date: 2026-09-15
 
-Status: Proposed for owner review; no implementation authorization
+Status: Accepted by owner on 2026-09-15; implementation requires a separate
+accepted plan and invocation
 
 ## Context
 
