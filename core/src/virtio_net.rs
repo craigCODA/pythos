@@ -39,10 +39,12 @@ const RX_DESCRIPTOR_COUNT: u16 = 4;
 const PACKET_SLOT_COUNT: usize = RX_DESCRIPTOR_COUNT as usize + 1;
 const TX_PACKET_SLOT: usize = RX_DESCRIPTOR_COUNT as usize;
 const PACKET_BUFFER_BYTES: usize = VIRTIO_NET_HEADER_BYTES + MAX_ETHERNET_FRAME_BYTES;
+const PACKET_DMA_SLOT_BYTES: usize = 4096;
 const VIRTQUEUE_BYTES: usize = 12 * 1024;
 const NIC_POLL_LIMIT: usize = 1_000_000;
+const LEGACY_DMA_EXCLUSIVE_END: u64 = 1 << 32;
 
-#[repr(align(4096))]
+#[repr(C, align(4096))]
 struct DmaBytes<const N: usize>(UnsafeCell<[u8; N]>);
 
 // SAFETY: the NIC module owns these static buffers and only uses them through
@@ -51,8 +53,8 @@ unsafe impl<const N: usize> Sync for DmaBytes<N> {}
 
 static RX_QUEUE: DmaBytes<VIRTQUEUE_BYTES> = DmaBytes(UnsafeCell::new([0; VIRTQUEUE_BYTES]));
 static TX_QUEUE: DmaBytes<VIRTQUEUE_BYTES> = DmaBytes(UnsafeCell::new([0; VIRTQUEUE_BYTES]));
-static PACKET_BUFFERS: DmaBytes<{ PACKET_SLOT_COUNT * PACKET_BUFFER_BYTES }> = DmaBytes(
-    UnsafeCell::new([0; PACKET_SLOT_COUNT * PACKET_BUFFER_BYTES]),
+static PACKET_BUFFERS: DmaBytes<{ PACKET_SLOT_COUNT * PACKET_DMA_SLOT_BYTES }> = DmaBytes(
+    UnsafeCell::new([0; PACKET_SLOT_COUNT * PACKET_DMA_SLOT_BYTES]),
 );
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -152,16 +154,14 @@ impl VirtioNetDevice {
         match self.initialize_inner() {
             Ok(()) => Ok(()),
             Err(error) => {
-                self.write_status(VIRTIO_STATUS_FAILED);
+                self.fail_device();
                 Err(error)
             }
         }
     }
 
     pub fn send_raw(&mut self, frame: &EthernetFrame) -> Result<(), VirtioNetError> {
-        if !self.initialized {
-            return Err(VirtioNetError::DeviceFailed);
-        }
+        self.ensure_operational()?;
 
         let queue = queue_ptr(TX_QUEUE_INDEX);
         let packet = packet_slot_ptr(TX_PACKET_SLOT);
@@ -169,40 +169,31 @@ impl VirtioNetDevice {
         write_bytes(packet, &header.as_bytes());
         write_bytes_at(packet, VIRTIO_NET_HEADER_BYTES, frame.bytes());
 
-        let packet_phys = dma_physical(packet as u64)?;
+        let header_phys = dma_physical_span(packet as u64, VIRTIO_NET_HEADER_BYTES)?;
+        let frame_phys = dma_physical_span(
+            packet as u64 + VIRTIO_NET_HEADER_BYTES as u64,
+            frame.bytes().len(),
+        )?;
         write_descriptor(
             queue,
             0,
-            packet_phys,
+            header_phys,
             VIRTIO_NET_HEADER_BYTES as u32,
             VRING_DESC_F_NEXT,
             1,
         );
-        write_descriptor(
-            queue,
-            1,
-            packet_phys + VIRTIO_NET_HEADER_BYTES as u64,
-            frame.bytes().len() as u32,
-            0,
-            0,
-        );
+        write_descriptor(queue, 1, frame_phys, frame.bytes().len() as u32, 0, 0);
         self.publish_available(TX_QUEUE_INDEX, 0, self.tx_available_index)?;
         self.tx_available_index = self.tx_available_index.wrapping_add(1);
         let mut used_index = self.tx_used_index;
         let result = self.wait_for_used(TX_QUEUE_INDEX, &mut used_index, 0);
         self.tx_used_index = used_index;
-        result.map(|_| ())
+        self.finish_transmit(result).map(|_| ())
     }
 
     pub fn receive_raw(&mut self) -> Result<EthernetFrame<'_>, VirtioNetError> {
-        if !self.initialized {
-            return Err(VirtioNetError::DeviceFailed);
-        }
-
-        if let Some(descriptor) = self.rx_recycle.take() {
-            self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
-            self.rx_available_index = self.rx_available_index.wrapping_add(1);
-        }
+        self.ensure_operational()?;
+        self.recycle_pending_receive()?;
 
         let queue = queue_ptr(RX_QUEUE_INDEX);
         let mut used_index = self.rx_used_index;
@@ -219,20 +210,22 @@ impl VirtioNetDevice {
                 + 4,
         ) as usize;
         if length > PACKET_BUFFER_BYTES {
+            self.mark_received_slot(used)?;
             return Err(VirtioNetError::InvalidFrame);
         }
         let bytes = packet_slot_bytes(used as usize, length);
-        let frame = parse_received_buffer(bytes)?;
-        self.rx_recycle = Some(used);
-        Ok(frame)
+        self.finish_received_slot(used, bytes)
     }
 
     fn initialize_inner(&mut self) -> Result<(), VirtioNetError> {
         zero_bytes(queue_ptr(RX_QUEUE_INDEX), VIRTQUEUE_BYTES);
         zero_bytes(queue_ptr(TX_QUEUE_INDEX), VIRTQUEUE_BYTES);
-        zero_bytes(packet_slot_ptr(0), PACKET_SLOT_COUNT * PACKET_BUFFER_BYTES);
+        zero_bytes(
+            packet_slot_ptr(0),
+            PACKET_SLOT_COUNT * PACKET_DMA_SLOT_BYTES,
+        );
 
-        self.write_status(0);
+        self.reset_device()?;
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
         self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
         let features = negotiate_features(self.read_u32(VIRTIO_DEVICE_FEATURES_OFFSET)? as u32)?;
@@ -264,7 +257,10 @@ impl VirtioNetDevice {
     fn post_receive_buffers(&mut self) -> Result<(), VirtioNetError> {
         let queue = queue_ptr(RX_QUEUE_INDEX);
         for descriptor in 0..RX_DESCRIPTOR_COUNT {
-            let address = dma_physical(packet_slot_ptr(descriptor as usize) as u64)?;
+            let address = dma_physical_span(
+                packet_slot_ptr(descriptor as usize) as u64,
+                PACKET_BUFFER_BYTES,
+            )?;
             write_descriptor(
                 queue,
                 descriptor as usize,
@@ -276,6 +272,53 @@ impl VirtioNetDevice {
             self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
             self.rx_available_index = self.rx_available_index.wrapping_add(1);
         }
+        Ok(())
+    }
+
+    fn ensure_operational(&self) -> Result<(), VirtioNetError> {
+        if self.initialized {
+            Ok(())
+        } else {
+            Err(VirtioNetError::DeviceFailed)
+        }
+    }
+
+    fn finish_transmit<T>(
+        &mut self,
+        result: Result<T, VirtioNetError>,
+    ) -> Result<T, VirtioNetError> {
+        match result {
+            Err(VirtioNetError::Timeout) => {
+                self.fail_device();
+                Err(VirtioNetError::Timeout)
+            }
+            other => other,
+        }
+    }
+
+    fn recycle_pending_receive(&mut self) -> Result<(), VirtioNetError> {
+        if let Some(descriptor) = self.rx_recycle {
+            self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
+            self.rx_available_index = self.rx_available_index.wrapping_add(1);
+            self.rx_recycle = None;
+        }
+        Ok(())
+    }
+
+    fn finish_received_slot<'a>(
+        &mut self,
+        descriptor: u16,
+        bytes: &'a [u8],
+    ) -> Result<EthernetFrame<'a>, VirtioNetError> {
+        self.mark_received_slot(descriptor)?;
+        parse_received_buffer(bytes)
+    }
+
+    fn mark_received_slot(&mut self, descriptor: u16) -> Result<(), VirtioNetError> {
+        if descriptor >= RX_DESCRIPTOR_COUNT {
+            return Err(VirtioNetError::DeviceFailed);
+        }
+        self.rx_recycle = Some(descriptor);
         Ok(())
     }
 
@@ -335,6 +378,18 @@ impl VirtioNetDevice {
             }
         }
         Err(VirtioNetError::Timeout)
+    }
+
+    fn reset_device(&self) -> Result<(), VirtioNetError> {
+        let port = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET)?;
+        outb(port, 0);
+        wait_for_reset_status(|| inb(port))
+    }
+
+    fn fail_device(&mut self) {
+        self.initialized = false;
+        self.rx_recycle = None;
+        self.write_status(VIRTIO_STATUS_FAILED);
     }
 
     fn read_mac_once(&self) -> Result<[u8; 6], VirtioNetError> {
@@ -516,10 +571,65 @@ pub(crate) fn negotiate_features(offered: u32) -> Result<u32, VirtioNetError> {
 }
 
 pub(crate) fn legacy_queue_pfn(physical: u64) -> Result<u32, VirtioNetError> {
-    if !physical.is_multiple_of(4096) || physical > u64::from(u32::MAX) {
+    if !physical.is_multiple_of(4096) || physical >= LEGACY_DMA_EXCLUSIVE_END {
         return Err(VirtioNetError::DmaAddress);
     }
     u32::try_from(physical >> 12).map_err(|_| VirtioNetError::DmaAddress)
+}
+
+fn dma_physical_span(virtual_start: u64, len: usize) -> Result<u64, VirtioNetError> {
+    validate_dma_span_with(virtual_start, len, dma_physical)
+}
+
+fn validate_dma_span_with<F>(
+    virtual_start: u64,
+    len: usize,
+    mut translate: F,
+) -> Result<u64, VirtioNetError>
+where
+    F: FnMut(u64) -> Result<u64, VirtioNetError>,
+{
+    if len == 0 {
+        return Err(VirtioNetError::DmaAddress);
+    }
+    let physical_start = translate(virtual_start)?;
+    let physical_end = physical_start
+        .checked_add(len as u64)
+        .ok_or(VirtioNetError::DmaAddress)?;
+    if physical_end > LEGACY_DMA_EXCLUSIVE_END {
+        return Err(VirtioNetError::DmaAddress);
+    }
+
+    let virtual_end = virtual_start
+        .checked_add(len as u64 - 1)
+        .ok_or(VirtioNetError::DmaAddress)?;
+    let mut page = (virtual_start & !0xFFF).checked_add(4096);
+    while let Some(next_page) = page {
+        if next_page > virtual_end {
+            break;
+        }
+        let expected = physical_start
+            .checked_add(next_page - virtual_start)
+            .ok_or(VirtioNetError::DmaAddress)?;
+        if translate(next_page)? != expected {
+            return Err(VirtioNetError::DmaAddress);
+        }
+        page = next_page.checked_add(4096);
+    }
+    Ok(physical_start)
+}
+
+fn wait_for_reset_status<F>(mut read_status: F) -> Result<(), VirtioNetError>
+where
+    F: FnMut() -> u8,
+{
+    for _ in 0..NIC_POLL_LIMIT {
+        compiler_fence(Ordering::SeqCst);
+        if read_status() == 0 {
+            return Ok(());
+        }
+    }
+    Err(VirtioNetError::Timeout)
 }
 
 pub(crate) fn parse_received_buffer(bytes: &[u8]) -> Result<EthernetFrame<'_>, VirtioNetError> {
@@ -582,7 +692,7 @@ fn packet_slot_ptr(slot: usize) -> *mut u8 {
     unsafe {
         (*PACKET_BUFFERS.0.get())
             .as_mut_ptr()
-            .add(slot * PACKET_BUFFER_BYTES)
+            .add(slot * PACKET_DMA_SLOT_BYTES)
     }
 }
 
@@ -862,5 +972,78 @@ mod tests {
     fn receive_result_rejects_short_header_and_bad_frame_length() {
         assert!(parse_received_buffer(&[0; VIRTIO_NET_HEADER_BYTES - 1]).is_err());
         assert!(parse_received_buffer(&[0; VIRTIO_NET_HEADER_BYTES + 59]).is_err());
+    }
+
+    #[test]
+    fn packet_dma_span_rejects_legacy_boundary_and_discontiguous_pages() {
+        assert_eq!(
+            validate_dma_span_with(0x1FF0, 32, |virt| match virt {
+                0x1FF0 => Ok(0x3FF0),
+                0x2000 => Ok(0x4000),
+                _ => Err(VirtioNetError::DmaAddress),
+            }),
+            Ok(0x3FF0)
+        );
+        assert_eq!(
+            validate_dma_span_with(0x1000, 1, |_| Ok(0x1_0000_0000)),
+            Err(VirtioNetError::DmaAddress)
+        );
+        assert_eq!(
+            validate_dma_span_with(0x1FF0, 32, |virt| match virt {
+                0x1FF0 => Ok(0x3FF0),
+                0x2000 => Ok(0x5000),
+                _ => Err(VirtioNetError::DmaAddress),
+            }),
+            Err(VirtioNetError::DmaAddress)
+        );
+    }
+
+    #[test]
+    fn reset_poll_times_out_until_status_returns_zero() {
+        assert_eq!(
+            wait_for_reset_status(|| VIRTIO_STATUS_DRIVER),
+            Err(VirtioNetError::Timeout)
+        );
+        assert_eq!(wait_for_reset_status(|| 0), Ok(()));
+    }
+
+    #[test]
+    fn transmit_timeout_marks_device_failed_and_prevents_reuse() {
+        let mut device = initialized_device_for_test();
+        assert_eq!(
+            device.finish_transmit(Err::<u16, _>(VirtioNetError::Timeout)),
+            Err(VirtioNetError::Timeout)
+        );
+        assert_eq!(
+            device.ensure_operational(),
+            Err(VirtioNetError::DeviceFailed)
+        );
+    }
+
+    #[test]
+    fn malformed_rx_completions_are_recycled_before_returning_errors() {
+        let mut device = initialized_device_for_test();
+        for _ in 0..(RX_DESCRIPTOR_COUNT * 2) {
+            assert_eq!(
+                device.finish_received_slot(0, &[0; VIRTIO_NET_HEADER_BYTES - 1]),
+                Err(VirtioNetError::InvalidFrame)
+            );
+            assert_eq!(device.rx_recycle, Some(0));
+            device.recycle_pending_receive().unwrap();
+        }
+        assert_eq!(device.rx_available_index, RX_DESCRIPTOR_COUNT * 2);
+    }
+
+    fn initialized_device_for_test() -> VirtioNetDevice {
+        let function = classify_pci_function(0x0000_1000_1AF4, 0, 0xC001)
+            .unwrap()
+            .unwrap();
+        let mut device = VirtioNetDevice::new(
+            function,
+            VirtioNetMac::from_bytes([2, 0, 0, 0, 0, 1]).unwrap(),
+        );
+        device.queue_size = MAX_QUEUE_SIZE;
+        device.initialized = true;
+        device
     }
 }
