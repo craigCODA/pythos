@@ -41,7 +41,8 @@ The peer-delivered RX frame reverses those endpoint MACs, retains EtherType
 `0x88B5`, carries `PYTHOS:NIC:RX`, and is zero-padded to 60 bytes. Its SHA-256
 is `4452C838FD0179E42C053D875A6E3CA54F5D2B3E4985C5AE1496DF170E6D9F93`.
 
-The exact accepted marker transcript is:
+The required accepted guest marker subsequence, followed immediately by the
+runner outcome, is:
 
 ```text
 PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER
@@ -58,6 +59,19 @@ PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY
 PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES
 PYTHOS:CORE:VIRTIO_NET_PROBE:READY
 QEMU_OUTCOME success
+```
+
+After that outcome, `scripts/test-virtio-net.py` emits the full host evidence
+sequence below. The artifact values are run-specific absolute paths; the
+labels and ordering shown here are exact:
+
+```text
+VIRTIO_NET_QEMU_VERSION QEMU emulator version 11.0.50 (v11.0.0-12631-g54e84cdc7a)
+VIRTIO_NET_ARTIFACT loader=<absolute loader path>
+VIRTIO_NET_ARTIFACT kernel=<absolute kernel path>
+VIRTIO_NET_ARTIFACT shell=<absolute shell path>
+VIRTIO_NET_ARTIFACT esp=<absolute ESP directory path>
+VIRTIO_NET_ARTIFACT serial-log-cleaned=<absolute cleaned serial-log path>
 VIRTIO_NET_PEER_CONNECTED
 VIRTIO_NET_PEER_TX_MATCHED
 VIRTIO_NET_PEER_RX_DELIVERED

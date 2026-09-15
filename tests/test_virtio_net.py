@@ -120,12 +120,28 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
 
 
 def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
-    current_status_sections = {
-        ROOT / "docs/ROADMAP.md": 55,
-        ROOT / "docs/HANDOVER.md": 40,
-        ROOT / "README.md": 35,
-        ROOT / "docs/TECHNICAL-OVERVIEW.md": 35,
-    }
+    current_status_sections = (
+        (
+            ROOT / "docs/ROADMAP.md",
+            "## Current Phase 14 Boundary",
+            "## Accepted PythTIG Program Boundary",
+        ),
+        (
+            ROOT / "docs/HANDOVER.md",
+            "## Current Phase 14 Boundary",
+            "## Prior Phase 13.5 Slice 5 Normal Session Checkpoint",
+        ),
+        (
+            ROOT / "README.md",
+            "Phase 14 `nic-driver` is accepted",
+            "\nPhase 12\n",
+        ),
+        (
+            ROOT / "docs/TECHNICAL-OVERVIEW.md",
+            "Phase 14 `nic-driver` is accepted",
+            "\nThe SDHCI/eMMC backend has\n",
+        ),
+    )
     stale_statements = (
         "## Current Phase 13.5 Boundary",
         "Current authorized scope: Phase 13.5 Slices 3 and 4",
@@ -133,11 +149,28 @@ def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
         "The merged baseline contains Phase 13.5 Slices 1 and 2",
         "Phase 13.5 Slice 5 is implemented and locally QEMU-accepted",
     )
-    for document, line_limit in current_status_sections.items():
-        current_status = "\n".join(
-            document.read_text(encoding="utf-8").splitlines()[:line_limit]
-        )
+    for document, start_marker, end_marker in current_status_sections:
+        contents = document.read_text(encoding="utf-8")
+        start = contents.index(start_marker)
+        end = contents.index(end_marker, start + len(start_marker))
+        current_status = contents[start:end]
         for statement in stale_statements:
             assert statement not in current_status, (
                 f"{document} current status retains: {statement}"
             )
+
+
+def test_handover_preserves_phase_13_5_slice_3_through_5_history():
+    contents = (ROOT / "docs/HANDOVER.md").read_text(encoding="utf-8")
+    historical_statements = (
+        "## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)",
+        "Phase 13.5 Slice 5 is implemented and locally QEMU-accepted",
+        "Fresh closeout passed 1,070 Rust tests, 195 Python",
+        "## Prior Phase 13.5 Slices 3-4 Viewing Checkpoint (2026-09-09)",
+        "Current authorized scope: Phase 13.5 Slices 3 and 4",
+        "[single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md)",
+        "Stop before Slice 5; no default boot cutover or new physical acceptance.",
+    )
+
+    for statement in historical_statements:
+        assert statement in contents, f"docs/HANDOVER.md omits: {statement}"
