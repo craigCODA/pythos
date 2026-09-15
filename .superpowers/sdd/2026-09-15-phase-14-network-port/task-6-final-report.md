@@ -4,11 +4,14 @@ Date: 2026-09-15
 
 ## Status
 
-Phase 14 `NetworkPort` is accepted at implementation tip
-`d08dd23e7fc997af7053a75094e78bf741d58af6`
-(`fix(net): gate NetworkPort probe host tests`). The correction gates the
-native probe's `no_std`, `no_main`, and panic handler to non-test builds, so
-the required host workspace suite runs without changing target behavior.
+Phase 14 `NetworkPort` is accepted at corrected implementation tip
+`e1efea0` (`fix(net): align receive status contract`), with final status-only
+documentation at `f5e5d81`. The correction maps zero receive capacity to the
+ADR 0095-required `BAD_REQUEST`, retains `BUFFER_TOO_SMALL` only for capacities
+1 through 1513, and adds syscall/resource boundary tests. The earlier host-test
+correction gates the native probe's `no_std`, `no_main`, and panic handler to
+non-test builds, so the required host workspace suite runs without changing
+target behavior.
 
 The accepted boundary is one opt-in, boot-local, capability-scoped
 `NetworkPort` above the privileged `VirtioTransport` adapter. The raw
@@ -33,6 +36,13 @@ ADR 0095 was reviewed and not changed.
 | `py -3 scripts/test-network-port.py` | Passed: QEMU 11.0.50 and `NETWORK_PORT_QEMU_ACCEPTANCE_OK`. |
 | Default and opt-in targets | Default core, `network-port-probe`, and `virtio-net-probe` target builds passed. |
 | Normal-session/default boot | `py -3 scripts/test-normal-fast-boot.py` passed with `NORMAL_FAST_BOOT_TEST_OK`. |
+
+The final review correction was rerun through the focused NetworkPort/syscall
+tests, the aggregate workspace and managed Python suites, all target builds,
+normal fast boot, and both live QEMU profiles. The live marker profile remains
+limited to forged-generation, wrong-holder, and bad-pointer denials; the host
+syscall matrix covers missing rights, stale generations, overflow, buffer
+permissions, receive capacities, and oversized frames.
 
 The builds emitted pre-existing unused/dead-code warnings only; no warning
 failed a required gate.
@@ -121,7 +131,7 @@ non-boot virtio data disk.
 
 ## Independent Diff and Scope Review
 
-Reviewed `d9c09b9..d08dd23`, covering the ABI, adapter refactor,
+Reviewed `d9c09b9..f5e5d81`, covering the ABI, adapter refactor,
 NetworkPort runtime/syscall, native consumer, feature/image wiring, host
 acceptance, and host-test correction. `git diff --check d9c09b9..d08dd23`
 passed.
