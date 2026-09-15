@@ -13,23 +13,27 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 `nic-driver` is accepted as a bounded, opt-in QEMU profile through
-[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The kernel-owned
-legacy/transitional `virtio-net-pci` probe discovers one device, publishes
-bounded RX/TX queues, and exchanges one deterministic raw Ethernet frame in
-each direction with a loopback-only host peer. The next Phase 14 boundary is `link-layer`;
-Phase 14 is not complete.
+Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability
+boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
+at implementation tip `d08dd23`. One boot-local capability-scoped port sits
+above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
+by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). Its native
+consumer proves describe plus one bounded raw Ethernet TX and RX exchange with
+the loopback-only host peer.
 
-Acceptance evidence is precisely:
-no non-boot virtio data disk attached; no storage-path markers observed.
-The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
-marker means no PythOS storage-path writes.
+Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
+Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance
+evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
+`NO_DISK_WRITES` marker means no PythOS storage-path writes.
 
-This acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
-It does not add modern virtio transport, physical NIC support, protocol layers,
-or changes to existing default and normal-session boot paths. Physical Lenovo
-Wi-Fi is deferred to Phase 15. See [HANDOVER.md](HANDOVER.md) for the exact
-local evidence and remaining boundary.
+Fresh NetworkPort acceptance requires the exact ordered NetworkPort markers,
+exact bounded peer bytes, and `QEMU_OUTCOME success`. Default and normal-
+session boot remain unchanged. The next Phase 14 boundary is `link-layer`.
+
+This does not authorize link-layer work, IP/protocols/sockets, a production
+service, physical NIC or Wi-Fi support, zero-copy, persistent networking, or a
+PythTIG change. Stop before the Phase 14 `link-layer` boundary and before Phase
+15. See [HANDOVER.md](HANDOVER.md) for the exact local evidence.
 
 ## Accepted PythTIG Program Boundary
 

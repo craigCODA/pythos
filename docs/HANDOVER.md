@@ -2,23 +2,43 @@
 
 ## Current Phase 14 Boundary
 
-Local continuation: Phase 14 `nic-driver` is accepted on
-`agent/phase14-nic-driver` through implementation commit
-`4e3a52e70a177a394ffc3f5d2d0e792987b4eef8`. [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md)
-records the kernel-owned, legacy/transitional QEMU-only transport. Local QEMU
-`11.0.50` proved one exact 60-byte raw Ethernet TX frame and one exact RX frame
-through a loopback-only framed peer, exact ordered markers, and complete
-runner/child cleanup. Acceptance evidence is precisely:
-no non-boot virtio data disk attached; no storage-path markers observed.
-The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
-marker means no PythOS storage-path writes.
+Local continuation: Phase 14 `NetworkPort` is accepted on
+`agent/phase14-nic-driver` through implementation tip
+`d08dd23e7fc997af7053a75094e78bf741d58af6`. [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
+freezes one boot-local, capability-scoped port above the kernel-owned
+legacy/transitional `VirtioTransport` adapter recorded by
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in native
+consumer proves describe, one bounded raw Ethernet transmit, and one bounded
+receive through that ABI only.
 
-The next Phase 14 boundary is `link-layer`; Phase 14 is not complete. This
-acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
-Modern virtio transport, physical NICs, higher protocol layers, and boot-path
-changes remain outside this slice. Physical Lenovo Wi-Fi is deferred to Phase
-15. No merge, push, publication, physical-media deployment, or physical Wi-Fi
-probe is claimed.
+Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
+Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance
+evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
+`NO_DISK_WRITES` marker means no PythOS storage-path writes.
+
+Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
+--check`, and `cargo test --workspace --quiet`; the repository-managed pytest
+form passed 210 tests plus 239 subtests. The raw virtio-net and NetworkPort
+self-tests, direct NetworkPort host tests, default and opt-in target builds,
+and `NORMAL_FAST_BOOT_TEST_OK` also passed. Fresh raw and NetworkPort QEMU
+acceptance ran on QEMU `11.0.50`: the raw profile emitted its exact ordered
+transcript, `NO_DISK_WRITES`, and exact TX/RX peer lines; the NetworkPort live
+oracle required exactly once and in order `BOOTSTRAPPED`, `DESCRIBE_OK`,
+`TX_OK`, `RX_OK`, `FORGED_DENIED`, `WRONG_HOLDER_DENIED`, `BAD_BUFFER_DENIED`,
+`TEARDOWN_REVOKED`, and `NETWORK_PORT_READY`, plus the exact bounded peer
+exchange and `QEMU_OUTCOME success`. Both runners use `--no-virtio-blk`; the
+NetworkPort oracle rejects storage-path evidence. The snapshot-backed IDE UEFI
+ESP is boot media only.
+
+The next Phase 14 boundary is `link-layer`; the deliberate stop is before it
+and before Phase 15. This acceptance does not add physical NIC/Wi-Fi support,
+link-layer/IP/protocols/sockets, a production service, zero-copy, persistent
+network state, or PythTIG changes; it does not alter default or normal-session
+boot. The SDD ledger retains one deferred minor: a tautological bootstrap-
+writable unit assertion, independently covered by the live mapping evidence.
+See `.superpowers/sdd/2026-09-15-phase-14-network-port/task-6-final-report.md`
+for the full command evidence. No merge, push, publication, physical-media
+deployment, or physical Wi-Fi probe is claimed.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

@@ -7,20 +7,26 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-Phase 14 `nic-driver` is accepted as a bounded, opt-in QEMU raw-frame profile
-through [ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). Its
-kernel-owned legacy/transitional `virtio-net-pci` probe exchanges one exact
-60-byte Ethernet frame in each direction with a loopback-only host peer.
-Acceptance evidence is precisely:
-no non-boot virtio data disk attached; no storage-path markers observed.
-The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
-marker means no PythOS storage-path writes. The next Phase 14 boundary is `link-layer`;
-Phase 14 is not complete.
+Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability boundary
+through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md)
+at implementation tip `d08dd23`. It places one boot-local `NetworkPort` above
+the kernel-owned legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The native
+consumer proves describe, one bounded raw Ethernet TX, and one bounded RX
+through the capability ABI with a loopback-only host peer.
 
-This acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
-It does not add modern virtio transport, physical NIC support, or a protocol
-stack, and it does not change default or normal-session boot. Physical Lenovo
-Wi-Fi is deferred to Phase 15. See the
+Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
+Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
+`NO_DISK_WRITES` marker means no PythOS storage-path writes.
+
+Fresh NetworkPort acceptance requires the exact ordered markers, exact bounded
+peer exchange, and `QEMU_OUTCOME success`. Default and normal-session boot
+remain unchanged. The next Phase 14 boundary is `link-layer`.
+
+This is not IP networking, sockets or protocol semantics, a production network
+service, physical NIC/Wi-Fi support, zero-copy, persistent network state, or a
+PythTIG change. The deliberate stop is before the Phase 14 `link-layer`
+boundary and before Phase 15. See the
 [current roadmap boundary](docs/ROADMAP.md#current-phase-14-boundary) and
 [handover](docs/HANDOVER.md) for the exact local evidence and non-claims.
 

@@ -12,22 +12,24 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-Phase 14 `nic-driver` is accepted as the first bounded networking slice through
-[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in kernel
-probe owns one legacy/transitional QEMU `virtio-net-pci` device, negotiates only
-its MAC feature, publishes static bounded RX/TX virtqueues, and exchanges one
-deterministic 60-byte raw Ethernet frame in each direction with a loopback-only
-host peer. The next Phase 14 boundary is `link-layer`; Phase 14 is not complete.
+Phase 14 `NetworkPort` is accepted as the bounded, opt-in QEMU capability
+boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
+at implementation tip `d08dd23`. The kernel owns the legacy/transitional
+`VirtioTransport` adapter established by
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md); an opt-in native
+consumer receives one boot-local capability and uses the port ABI to describe,
+transmit, and receive bounded raw Ethernet frames. Fresh QEMU acceptance proves
+the exact ordered markers and a one-frame-each-way loopback peer exchange,
+without a non-boot virtio data disk or storage-path evidence.
 
-Acceptance evidence is precisely:
-no non-boot virtio data disk attached; no storage-path markers observed.
-The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
-marker means no PythOS storage-path writes.
+Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
+Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
+`NO_DISK_WRITES` marker means no PythOS storage-path writes.
 
-This raw-frame acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
-Modern virtio transport, interrupts, offloads, physical NIC support, protocol
-layers, and changes to default or normal-session boot remain outside the
-accepted boundary. Physical Lenovo Wi-Fi is deferred to Phase 15. See
+Default and normal-session boot are unchanged. This boundary is not link-layer
+work, IP networking, sockets/protocol semantics, a production service, physical
+NIC/Wi-Fi support, zero-copy, persistent network state, or a PythTIG change.
+The next Phase 14 boundary is `link-layer`; stop before it and before Phase 15. See
 [HANDOVER.md](HANDOVER.md) for the exact local QEMU evidence and non-claims.
 
 The SDHCI/eMMC backend has
