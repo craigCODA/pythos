@@ -296,6 +296,7 @@ mod value_validation;
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;
+mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
