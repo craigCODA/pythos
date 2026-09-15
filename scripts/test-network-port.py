@@ -80,16 +80,17 @@ def assert_exact_ordered_markers(serial: str) -> None:
         previous = matches[0]
 
 
-def assert_no_forbidden_evidence(serial: str) -> None:
+def assert_no_forbidden_evidence(serial: str, qemu_output: str) -> None:
+    evidence = serial + "\n" + qemu_output
     for marker in FORBIDDEN_EVIDENCE:
-        if marker in serial:
+        if marker in evidence:
             raise AssertionError(f"forbidden NetworkPort acceptance evidence: {marker}")
-    VIRTIO_NET.assert_no_storage_path_markers(serial)
+    VIRTIO_NET.assert_no_storage_path_markers(evidence)
 
 
 def assert_network_port_acceptance(serial: str, qemu_output: str) -> None:
     assert_exact_ordered_markers(serial)
-    assert_no_forbidden_evidence(serial)
+    assert_no_forbidden_evidence(serial, qemu_output)
     outcome_lines = [line for line in qemu_output.splitlines() if "QEMU_OUTCOME" in line]
     if outcome_lines != ["QEMU_OUTCOME success"]:
         raise AssertionError(f"expected one exact success outcome line, got {outcome_lines!r}")
@@ -371,6 +372,13 @@ class NetworkPortAcceptanceSelfTest(unittest.TestCase):
         ):
             with self.subTest(returncode=returncode, output=output), self.assertRaises(AssertionError):
                 assert_runner_success(returncode, output)
+
+    def test_marker_oracle_rejects_timeout_in_runner_output(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_network_port_acceptance(
+                self.valid_consumer_serial() + "\n" + self.valid_kernel_serial(),
+                "TIMEOUT\nQEMU_OUTCOME success\n",
+            )
 
     def test_reused_peer_rejects_frames_outside_the_bounded_ethernet_range(self) -> None:
         with self.assertRaises(ValueError):

@@ -87,6 +87,13 @@ class NetworkPortHostTest(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     NETWORK_PORT.assert_runner_success(returncode, output)
 
+    def test_marker_oracle_rejects_timeout_in_runner_output(self) -> None:
+        with self.assertRaises(AssertionError):
+            NETWORK_PORT.assert_network_port_acceptance(
+                "\n".join(EXPECTED_MARKERS),
+                "TIMEOUT\nQEMU_OUTCOME success\n",
+            )
+
     def test_loopback_peer_validates_the_bounded_network_port_frames(self) -> None:
         device_mac = bytes.fromhex("525400123456")
         expected_tx = (
