@@ -149,6 +149,8 @@ mod ipc_channels;
 mod kernel_stacks;
 mod launcher_screen;
 mod memory;
+#[cfg(any(test, feature = "virtio-net-probe"))]
+mod network_port;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
 #[cfg(any(
