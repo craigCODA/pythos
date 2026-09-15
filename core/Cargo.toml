@@ -18,6 +18,9 @@ pyth-tig-session-manager-fault-test = []
 verify = []
 # Opt-in only: the probe remains unavailable in default and phase13 builds.
 session-input-bridge-probe = ["verify"]
+# Opt-in only: launch the bounded native NetworkPort consumer through the
+# capability bootstrap ABI. Default and normal-session boots receive no port.
+network-port-probe = ["verify"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]

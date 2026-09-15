@@ -1133,6 +1133,17 @@ pub(crate) fn run_probe(
     Ok(())
 }
 
+/// Bring the private legacy transport to the operational state required by
+/// the capability-scoped `NetworkPort` adapter. The caller receives no queue,
+/// DMA, or virtio-header detail beyond this kernel-only value.
+pub(crate) fn initialize_transport(
+    physical_memory: &mut memory::physical::PhysicalMemory,
+) -> Result<VirtioTransport, VirtioNetError> {
+    let mut transport = scan_primary_bus()?;
+    transport.initialize(physical_memory)?;
+    Ok(transport)
+}
+
 fn serial_marker(marker: &str) {
     serial::write_str(PROBE_MARKER_PREFIX);
     serial::write_line(marker);

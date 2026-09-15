@@ -70,6 +70,7 @@ use core::mem::{align_of, size_of};
 #[cfg(any(
     test,
     feature = "virtio-net-probe",
+    feature = "network-port-probe",
     all(
         not(test),
         any(not(feature = "verify"), feature = "phase13-package-test")
@@ -77,7 +78,7 @@ use core::mem::{align_of, size_of};
 ))]
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 use pythos_shared::network_port_abi::{
     NETWORK_PORT_ABI_MAJOR, NETWORK_PORT_ABI_MINOR, NETWORK_PORT_MAX_FRAME_BYTES,
     NETWORK_PORT_MIN_FRAME_BYTES, NETWORK_PORT_OP_DESCRIBE, NETWORK_PORT_OP_RESET,
@@ -790,6 +791,7 @@ fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R 
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "network-port-probe",
     all(not(test), not(feature = "verify"))
 ))]
 pub fn grant_console_capability(
@@ -949,7 +951,7 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     }
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port_with_port<T: crate::network_port::NetworkTransport>(
     args: SyscallArgs,
     caller: ActiveUserProcess,
@@ -1008,7 +1010,7 @@ fn dispatch_network_port_with_port<T: crate::network_port::NetworkTransport>(
     Ok(SYSCALL_OK)
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port(args: SyscallArgs) -> Result<u64, SyscallError> {
     let caller = process_context::current_caller()?;
     with_syscall_capabilities(|capabilities| {
@@ -1019,7 +1021,7 @@ fn dispatch_network_port(args: SyscallArgs) -> Result<u64, SyscallError> {
     })
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 pub(crate) fn bind_network_port_capabilities(
     consumer_holder: ActiveUserProcess,
     consumer: PackedCapability,
@@ -1041,7 +1043,74 @@ pub(crate) fn bind_network_port_capabilities(
     })
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+/// Issue the two boot-only grants for the NetworkPort probe. The consumer
+/// receives one combined READ|SEND handle; the kernel-only owner receives the
+/// sole WRITE handle used for terminal teardown.
+#[cfg(feature = "network-port-probe")]
+pub(crate) fn grant_network_port_probe_capabilities(
+    consumer: ActiveUserProcess,
+    owner: ServiceId,
+) -> Result<(PackedCapability, PackedCapability), SyscallError> {
+    with_syscall_capabilities(|capabilities| {
+        crate::network_port::with_active_port(|port| {
+            let consumer = capabilities.grant(
+                consumer.service_id(),
+                port.resource(),
+                RightsMask::new(RightsMask::READ | RightsMask::SEND),
+            )?;
+            let owner =
+                capabilities.grant(owner, port.resource(), RightsMask::new(RightsMask::WRITE))?;
+            Ok((
+                pack_syscall_capability(consumer),
+                pack_syscall_capability(owner),
+            ))
+        })
+        .unwrap_or(Err(SyscallError::BadResult))
+    })
+}
+
+/// Exercise the owner-only terminal transition after both ring-3 launches.
+#[cfg(feature = "network-port-probe")]
+pub(crate) fn teardown_network_port_capabilities(
+    owner_holder: ServiceId,
+    owner: PackedCapability,
+) -> Result<NetworkPortResponseV1, SyscallError> {
+    with_syscall_capabilities(|capabilities| {
+        crate::network_port::with_active_port(|port| {
+            capabilities.validate(
+                owner_holder,
+                unpack_syscall_capability(owner),
+                port.resource(),
+                RightsMask::new(RightsMask::WRITE),
+            )?;
+            Ok(port.reset(capabilities))
+        })
+        .unwrap_or(Err(SyscallError::BadResult))
+    })
+}
+
+/// Confirms that a terminal port transition revoked the consumer authority.
+#[cfg(feature = "network-port-probe")]
+pub(crate) fn network_port_consumer_revoked(
+    consumer: ActiveUserProcess,
+    capability: PackedCapability,
+) -> Result<bool, SyscallError> {
+    with_syscall_capabilities(|capabilities| {
+        crate::network_port::with_active_port(|port| {
+            Ok(capabilities
+                .validate(
+                    consumer.service_id(),
+                    unpack_syscall_capability(capability),
+                    port.resource(),
+                    RightsMask::new(RightsMask::READ | RightsMask::SEND),
+                )
+                .is_err())
+        })
+        .unwrap_or(Err(SyscallError::BadResult))
+    })
+}
+
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn bind_network_port_capabilities_with_table<T: crate::network_port::NetworkTransport>(
     capabilities: &CapabilityTable,
     port: &mut crate::network_port::NetworkPort<T>,
@@ -1070,7 +1139,7 @@ fn bind_network_port_capabilities_with_table<T: crate::network_port::NetworkTran
     .map_err(|_| SyscallError::BadResult)
 }
 
-#[cfg(not(any(test, feature = "virtio-net-probe")))]
+#[cfg(not(any(test, feature = "virtio-net-probe", feature = "network-port-probe")))]
 fn dispatch_network_port(_args: SyscallArgs) -> Result<u64, SyscallError> {
     // The capability is never granted and no transport is installed outside
     // the opt-in profile; Task 4 supplies that profile without changing the
@@ -1078,7 +1147,7 @@ fn dispatch_network_port(_args: SyscallArgs) -> Result<u64, SyscallError> {
     Err(SyscallError::BadResult)
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
     capabilities: &mut CapabilityTable,
     caller: ActiveUserProcess,
@@ -1131,7 +1200,7 @@ fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
     }
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn valid_network_port_request_header(request: &NetworkPortRequestV1) -> bool {
     request.abi_major == NETWORK_PORT_ABI_MAJOR
         && request.abi_minor == NETWORK_PORT_ABI_MINOR
@@ -1142,7 +1211,7 @@ fn valid_network_port_request_header(request: &NetworkPortRequestV1) -> bool {
         && request.reserved3 == 0
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port_describe<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
     port: &mut crate::network_port::NetworkPort<T>,
@@ -1179,7 +1248,7 @@ fn dispatch_network_port_describe<T: crate::network_port::NetworkTransport>(
     network_port_response(NETWORK_PORT_STATUS_OK, port.state())
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
     capabilities: &mut CapabilityTable,
@@ -1210,7 +1279,7 @@ fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     port.send(frame, capabilities)
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
     capabilities: &mut CapabilityTable,
@@ -1248,7 +1317,7 @@ fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     port.try_receive_into(output, capabilities)
 }
 
-#[cfg(any(test, feature = "virtio-net-probe"))]
+#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
 const fn network_port_response(status: u16, state: u16) -> NetworkPortResponseV1 {
     NetworkPortResponseV1::new(status, state)
 }
@@ -2334,6 +2403,7 @@ fn task_operation_mutates(operation: u16) -> bool {
 #[cfg(any(
     test,
     feature = "virtio-net-probe",
+    feature = "network-port-probe",
     all(not(test), not(feature = "verify")),
     all(not(test), feature = "phase13-package-test")
 ))]
