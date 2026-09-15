@@ -145,6 +145,10 @@ pub struct VirtioNetDevice {
     tx_available_index: u16,
     tx_used_index: u16,
     rx_recycle: Option<u16>,
+    status_shadow: u8,
+    rx_queue_initialized: bool,
+    tx_queue_initialized: bool,
+    rx_buffers_populated: bool,
     initialized: bool,
 }
 
@@ -159,6 +163,10 @@ impl VirtioNetDevice {
             tx_available_index: 0,
             tx_used_index: 0,
             rx_recycle: None,
+            status_shadow: 0,
+            rx_queue_initialized: false,
+            tx_queue_initialized: false,
+            rx_buffers_populated: false,
             initialized: false,
         }
     }
@@ -209,6 +217,7 @@ impl VirtioNetDevice {
         write_descriptor(queue, 1, frame_phys, frame.bytes().len() as u32, 0, 0);
         self.publish_available(TX_QUEUE_INDEX, 0, self.tx_available_index)?;
         self.tx_available_index = self.tx_available_index.wrapping_add(1);
+        self.notify_queue(TX_QUEUE_INDEX)?;
         let mut used_index = self.tx_used_index;
         let result = self.wait_for_used(TX_QUEUE_INDEX, &mut used_index, 0);
         self.tx_used_index = used_index;
@@ -250,31 +259,37 @@ impl VirtioNetDevice {
         );
 
         self.reset_device()?;
-        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE);
-        self.write_status(VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER);
+        self.set_status_bits(VIRTIO_STATUS_ACKNOWLEDGE)?;
+        self.set_status_bits(VIRTIO_STATUS_DRIVER)?;
         let features = negotiate_features(self.read_u32(VIRTIO_DEVICE_FEATURES_OFFSET)? as u32)?;
         self.write_u32(VIRTIO_GUEST_FEATURES_OFFSET, features)?;
         self.mac = self.read_stable_mac()?;
         self.initialize_queue(RX_QUEUE_INDEX)?;
         self.initialize_queue(TX_QUEUE_INDEX)?;
         self.post_receive_buffers()?;
-        self.write_status(
-            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK,
-        );
+        self.set_driver_ok()?;
+        self.notify_queue(RX_QUEUE_INDEX)?;
         self.initialized = true;
         Ok(())
     }
 
     fn initialize_queue(&mut self, queue_index: u16) -> Result<(), VirtioNetError> {
+        if queue_index != RX_QUEUE_INDEX && queue_index != TX_QUEUE_INDEX {
+            return Err(VirtioNetError::QueueRejected);
+        }
         self.write_u16(VIRTIO_QUEUE_SELECT_OFFSET, queue_index)?;
         let queue_size = self.read_u16(VIRTIO_QUEUE_SIZE_OFFSET)?;
         if queue_size != MAX_QUEUE_SIZE {
             return Err(VirtioNetError::QueueRejected);
         }
-        let queue_phys = dma_physical(queue_ptr(queue_index) as u64)?;
-        let pfn = legacy_queue_pfn(queue_phys)?;
+        let pfn = legacy_queue_pfn_for_span_with(queue_ptr(queue_index) as u64, dma_physical)?;
         self.write_u32(VIRTIO_QUEUE_PFN_OFFSET, pfn)?;
         self.queue_size = queue_size;
+        if queue_index == RX_QUEUE_INDEX {
+            self.rx_queue_initialized = true;
+        } else {
+            self.tx_queue_initialized = true;
+        }
         Ok(())
     }
 
@@ -296,6 +311,7 @@ impl VirtioNetDevice {
             self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
             self.rx_available_index = self.rx_available_index.wrapping_add(1);
         }
+        self.rx_buffers_populated = true;
         Ok(())
     }
 
@@ -324,6 +340,7 @@ impl VirtioNetDevice {
         if let Some(descriptor) = self.rx_recycle {
             self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
             self.rx_available_index = self.rx_available_index.wrapping_add(1);
+            self.notify_queue(RX_QUEUE_INDEX)?;
             self.rx_recycle = None;
         }
         Ok(())
@@ -359,11 +376,26 @@ impl VirtioNetDevice {
             layout.available_offset() + 4 + ((available_index % self.queue_size) as usize * 2),
             descriptor,
         );
+        compiler_fence(Ordering::SeqCst);
         write_u16(
             queue,
             layout.available_offset() + 2,
             available_index.wrapping_add(1),
         );
+        Ok(())
+    }
+
+    fn set_driver_ok(&mut self) -> Result<(), VirtioNetError> {
+        if !self.rx_queue_initialized || !self.tx_queue_initialized || !self.rx_buffers_populated {
+            return Err(VirtioNetError::DeviceFailed);
+        }
+        self.set_status_bits(VIRTIO_STATUS_DRIVER_OK)
+    }
+
+    fn notify_queue(&self, queue_index: u16) -> Result<(), VirtioNetError> {
+        if self.status_shadow & VIRTIO_STATUS_DRIVER_OK == 0 {
+            return Err(VirtioNetError::DeviceFailed);
+        }
         compiler_fence(Ordering::SeqCst);
         self.write_u16(VIRTIO_QUEUE_NOTIFY_OFFSET, queue_index)
     }
@@ -377,12 +409,15 @@ impl VirtioNetDevice {
         let layout = VirtioNetQueueLayout::new(self.queue_size)?;
         let queue = queue_ptr(queue_index);
         for _ in 0..NIC_POLL_LIMIT {
-            compiler_fence(Ordering::SeqCst);
             if read_u16(queue, layout.used_offset() + 2) != *used_index {
-                let descriptor = read_u32(
-                    queue,
-                    layout.used_offset() + 4 + ((*used_index % self.queue_size) as usize * 8),
-                ) as u16;
+                compiler_fence(Ordering::SeqCst);
+                let descriptor = validate_used_descriptor_id(
+                    read_u32(
+                        queue,
+                        layout.used_offset() + 4 + ((*used_index % self.queue_size) as usize * 8),
+                    ),
+                    self.queue_size,
+                )?;
                 *used_index = used_index.wrapping_add(1);
                 if expected_descriptor != u16::MAX && descriptor != expected_descriptor {
                     return Err(VirtioNetError::DeviceFailed);
@@ -404,16 +439,30 @@ impl VirtioNetDevice {
         Err(VirtioNetError::Timeout)
     }
 
-    fn reset_device(&self) -> Result<(), VirtioNetError> {
+    fn reset_device(&mut self) -> Result<(), VirtioNetError> {
         let port = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET)?;
         outb(port, 0);
-        wait_for_reset_status(|| inb(port))
+        wait_for_reset_status(|| inb(port))?;
+        self.status_shadow = 0;
+        self.rx_queue_initialized = false;
+        self.tx_queue_initialized = false;
+        self.rx_buffers_populated = false;
+        self.rx_available_index = 0;
+        self.rx_used_index = 0;
+        self.tx_available_index = 0;
+        self.tx_used_index = 0;
+        self.rx_recycle = None;
+        self.initialized = false;
+        Ok(())
     }
 
     fn fail_device(&mut self) {
         self.initialized = false;
         self.rx_recycle = None;
-        self.write_status(VIRTIO_STATUS_FAILED);
+        self.status_shadow |= VIRTIO_STATUS_FAILED;
+        if let Ok(port) = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET) {
+            outb(port, self.status_shadow);
+        }
     }
 
     fn read_mac_once(&self) -> Result<[u8; 6], VirtioNetError> {
@@ -446,10 +495,11 @@ impl VirtioNetDevice {
         Ok(())
     }
 
-    fn write_status(&self, value: u8) {
-        if let Ok(port) = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET) {
-            outb(port, value);
-        }
+    fn set_status_bits(&mut self, bits: u8) -> Result<(), VirtioNetError> {
+        let port = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET)?;
+        self.status_shadow |= bits;
+        outb(port, self.status_shadow);
+        Ok(())
     }
 }
 
@@ -599,6 +649,24 @@ pub(crate) fn legacy_queue_pfn(physical: u64) -> Result<u32, VirtioNetError> {
         return Err(VirtioNetError::DmaAddress);
     }
     u32::try_from(physical >> 12).map_err(|_| VirtioNetError::DmaAddress)
+}
+
+fn validate_used_descriptor_id(id: u32, queue_size: u16) -> Result<u16, VirtioNetError> {
+    if id >= u32::from(queue_size) {
+        return Err(VirtioNetError::DeviceFailed);
+    }
+    u16::try_from(id).map_err(|_| VirtioNetError::DeviceFailed)
+}
+
+fn legacy_queue_pfn_for_span_with<F>(
+    virtual_start: u64,
+    translate: F,
+) -> Result<u32, VirtioNetError>
+where
+    F: FnMut(u64) -> Result<u64, VirtioNetError>,
+{
+    let physical_start = validate_dma_span_with(virtual_start, VIRTQUEUE_BYTES, translate)?;
+    legacy_queue_pfn(physical_start)
 }
 
 fn dma_physical_span(virtual_start: u64, len: usize) -> Result<u64, VirtioNetError> {
@@ -1113,12 +1181,107 @@ mod tests {
     }
 
     #[test]
+    fn queue_dma_span_enforces_exclusive_legacy_upper_bound() {
+        assert_eq!(
+            legacy_queue_pfn_for_span_with(0x4000, |virt| { Ok(0xFFFF_D000 + (virt - 0x4000)) }),
+            Ok(0x000F_FFFD)
+        );
+        assert_eq!(
+            legacy_queue_pfn_for_span_with(0x4000, |virt| { Ok(0xFFFF_E000 + (virt - 0x4000)) }),
+            Err(VirtioNetError::DmaAddress)
+        );
+    }
+
+    #[test]
+    fn queue_dma_span_rejects_discontinuous_pages() {
+        assert_eq!(
+            legacy_queue_pfn_for_span_with(0x8000, |virt| match virt {
+                0x8000 => Ok(0x0020_0000),
+                0x9000 => Ok(0x0020_1000),
+                0xA000 => Ok(0x0020_3000),
+                _ => Err(VirtioNetError::DmaAddress),
+            }),
+            Err(VirtioNetError::DmaAddress)
+        );
+    }
+
+    #[test]
+    fn queue_dma_span_rejects_unaligned_physical_start() {
+        assert_eq!(
+            legacy_queue_pfn_for_span_with(0x4000, |virt| { Ok(0x0020_0001 + (virt - 0x4000)) }),
+            Err(VirtioNetError::DmaAddress)
+        );
+    }
+
+    #[test]
     fn reset_poll_times_out_until_status_returns_zero() {
         assert_eq!(
             wait_for_reset_status(|| VIRTIO_STATUS_DRIVER),
             Err(VirtioNetError::Timeout)
         );
         assert_eq!(wait_for_reset_status(|| 0), Ok(()));
+    }
+
+    #[test]
+    fn driver_ok_requires_both_queues_and_receive_population() {
+        let mut device = device_for_test();
+        device.status_shadow = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
+
+        assert_eq!(device.set_driver_ok(), Err(VirtioNetError::DeviceFailed));
+        device.rx_queue_initialized = true;
+        assert_eq!(device.set_driver_ok(), Err(VirtioNetError::DeviceFailed));
+        device.tx_queue_initialized = true;
+        assert_eq!(device.set_driver_ok(), Err(VirtioNetError::DeviceFailed));
+        device.rx_buffers_populated = true;
+        assert_eq!(device.set_driver_ok(), Ok(()));
+        assert_eq!(
+            device.status_shadow,
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK
+        );
+    }
+
+    #[test]
+    fn queue_notification_requires_driver_ok() {
+        let mut device = device_for_test();
+        device.status_shadow = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
+        assert_eq!(
+            device.notify_queue(RX_QUEUE_INDEX),
+            Err(VirtioNetError::DeviceFailed)
+        );
+
+        device.status_shadow |= VIRTIO_STATUS_DRIVER_OK;
+        assert_eq!(device.notify_queue(RX_QUEUE_INDEX), Ok(()));
+    }
+
+    #[test]
+    fn used_ring_id_is_validated_at_full_width_before_narrowing() {
+        assert_eq!(validate_used_descriptor_id(255, MAX_QUEUE_SIZE), Ok(255));
+        assert_eq!(
+            validate_used_descriptor_id(256, MAX_QUEUE_SIZE),
+            Err(VirtioNetError::DeviceFailed)
+        );
+        assert_eq!(
+            validate_used_descriptor_id(0x0001_0000, MAX_QUEUE_SIZE),
+            Err(VirtioNetError::DeviceFailed)
+        );
+    }
+
+    #[test]
+    fn failed_status_preserves_acknowledge_driver_and_driver_ok() {
+        let mut device = initialized_device_for_test();
+        device.fail_device();
+
+        assert_eq!(
+            device.status_shadow,
+            VIRTIO_STATUS_ACKNOWLEDGE
+                | VIRTIO_STATUS_DRIVER
+                | VIRTIO_STATUS_DRIVER_OK
+                | VIRTIO_STATUS_FAILED
+        );
+        assert_eq!(
+            device.ensure_operational(),
+            Err(VirtioNetError::DeviceFailed)
+        );
     }
 
     #[test]
@@ -1254,15 +1417,24 @@ mod tests {
         assert!(assert_probe_markers(&markers).is_err());
     }
 
-    fn initialized_device_for_test() -> VirtioNetDevice {
+    fn device_for_test() -> VirtioNetDevice {
         let function = classify_pci_function(0x0000_1000_1AF4, 0, 0xC001)
             .unwrap()
             .unwrap();
-        let mut device = VirtioNetDevice::new(
+        VirtioNetDevice::new(
             function,
             VirtioNetMac::from_bytes([2, 0, 0, 0, 0, 1]).unwrap(),
-        );
+        )
+    }
+
+    fn initialized_device_for_test() -> VirtioNetDevice {
+        let mut device = device_for_test();
         device.queue_size = MAX_QUEUE_SIZE;
+        device.rx_queue_initialized = true;
+        device.tx_queue_initialized = true;
+        device.rx_buffers_populated = true;
+        device.status_shadow =
+            VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK;
         device.initialized = true;
         device
     }

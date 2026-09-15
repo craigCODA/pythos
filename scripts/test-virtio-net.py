@@ -52,7 +52,7 @@ FORBIDDEN_EVIDENCE = (
     "DRIVER_ERROR",
     "TIMEOUT",
 )
-STORAGE_EVIDENCE_PREFIXES = (
+STORAGE_PATH_EVIDENCE_PREFIXES = (
     "PYTHOS:CORE:BLOCK:DEVICE_SELECTED",
     "PYTHOS:CORE:BLOCK:SDHCI_EMMC_",
     "PYTHOS:CORE:BLOCK_DEVICE_READY",
@@ -105,7 +105,7 @@ class VirtioNetAcceptanceSelfTest(unittest.TestCase):
         with self.assertRaises(AssertionError):
             assert_virtio_net_acceptance(duplicate_ready, "QEMU_OUTCOME success\n")
 
-    def test_storage_isolation_rejects_storage_selection_and_write_evidence(self) -> None:
+    def test_storage_path_oracle_rejects_selection_and_write_evidence(self) -> None:
         for marker in (
             "PYTHOS:CORE:BLOCK_DEVICE_READY",
             "PYTHOS:CORE:STORAGE_SERVICE_READY",
@@ -295,12 +295,12 @@ def assert_exact_ordered_markers(serial: str) -> bytes:
     return bytes.fromhex(mac_line.removeprefix(MAC_MARKER_PREFIX).replace(":", ""))
 
 
-def assert_storage_isolation(serial: str) -> None:
+def assert_no_storage_path_markers(serial: str) -> None:
     for marker in FORBIDDEN_EVIDENCE:
         if marker in serial:
             raise AssertionError(f"forbidden virtio-net acceptance evidence: {marker}")
     for line in serial.splitlines():
-        for prefix in STORAGE_EVIDENCE_PREFIXES:
+        for prefix in STORAGE_PATH_EVIDENCE_PREFIXES:
             if line.startswith(prefix):
                 raise AssertionError(f"forbidden virtio-net storage evidence: {line}")
 
@@ -313,7 +313,7 @@ def assert_qemu_success(qemu_output: str) -> None:
 
 def assert_virtio_net_acceptance(serial: str, qemu_output: str) -> bytes:
     device_mac = assert_exact_ordered_markers(serial)
-    assert_storage_isolation(serial)
+    assert_no_storage_path_markers(serial)
     assert_qemu_success(qemu_output)
     return device_mac
 

@@ -42,6 +42,10 @@ Phase 14 nic-driver accepted in QEMU   legacy virtio-net raw-frame probe, ADR 00
 
 Phase 14 `nic-driver` is accepted. The next Phase 14 boundary is `link-layer`;
 Phase 14 is not complete. The accepted first slice is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+Acceptance evidence is precisely:
+no non-boot virtio data disk attached; no storage-path markers observed.
+The UEFI boot ESP is snapshot-backed IDE media, and `NO_DISK_WRITES` means
+no PythOS storage-path writes.
 See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary),
 [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md), and
 [handover](HANDOVER.md) for the exact local QEMU evidence and scope. Physical

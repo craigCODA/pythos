@@ -81,12 +81,18 @@ VIRTIO_NET_ACCEPTANCE_OK
 
 Local acceptance used
 `QEMU emulator version 11.0.50 (v11.0.0-12631-g54e84cdc7a)`. The command
-included `--no-virtio-blk`, supplied no storage-image argument, emitted
-`NO_DISK_WRITES`, rejected every known storage-selection/write marker family,
-and left both `target/virtio-net-probe-com1.log` and
-`target/virtio-net-probe-com1-esp.img` absent after cleanup. This is the
-accepted no-storage proof; it is not a general proof about future network
-profiles.
+included `--no-virtio-blk` and supplied no storage-image or data-disk argument.
+Acceptance evidence is precisely:
+no non-boot virtio data disk attached; no storage-path markers observed.
+The UEFI boot ESP is snapshot-backed IDE media through the established
+`qemu_esp_args` topology, so firmware and boot-media writes land in QEMU's
+temporary overlay rather than changing the raw ESP backing image. The required
+`NO_DISK_WRITES` marker means no PythOS storage-path writes; it does not claim
+that the boot medium is absent. The oracle rejected every known PythOS
+storage-selection/write marker family and left both
+`target/virtio-net-probe-com1.log` and
+`target/virtio-net-probe-com1-esp.img` absent after cleanup. This evidence is
+not a general proof about future network profiles.
 
 ## Consequences and non-claims
 

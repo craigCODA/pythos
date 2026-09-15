@@ -119,6 +119,59 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
             assert statement in contents, f"{document} omits: {statement}"
 
 
+def test_current_phase_14_storage_claim_matches_snapshot_backed_boot_topology():
+    documents = [
+        ROOT / "README.md",
+        ROOT / "docs/ROADMAP.md",
+        ROOT / "docs/HANDOVER.md",
+        ROOT / "docs/TECHNICAL-OVERVIEW.md",
+        ROOT / "docs/decisions/0094-phase-14-virtio-net-nic-driver.md",
+        ROOT / "docs/superpowers/specs/2026-09-14-phase-14-nic-driver-design.md",
+        ROOT / "docs/superpowers/plans/2026-09-14-phase-14-nic-driver.md",
+    ]
+    required_statements = (
+        "no non-boot virtio data disk attached",
+        "no storage-path markers observed",
+        "boot esp is snapshot-backed",
+        "no pythos storage-path writes",
+    )
+    stale_literal_claims = (
+        "attaching no storage device",
+        "attaches no storage device",
+        "uses no storage device",
+        "accepted no-storage proof",
+        "absent storage isolation",
+        "no storage marker appears",
+        "disposable storage image is absent",
+    )
+
+    for document in documents:
+        contents = document.read_text(encoding="utf-8").lower()
+        for statement in required_statements:
+            assert statement in contents, f"{document} omits: {statement}"
+        for statement in stale_literal_claims:
+            assert statement not in contents, f"{document} retains: {statement}"
+
+
+def test_ci_runs_focused_and_self_test_suites_before_live_nic_acceptance():
+    workflow = (ROOT / ".github/workflows/qemu-acceptance.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'QEMU_VERSION: "11.1.1"' in workflow
+    assert 'OVMF_VERSION: "2024.02-2ubuntu0.9"' in workflow
+    commands = (
+        "python -m pytest tests/test_virtio_net.py -q",
+        "python scripts/test-virtio-net.py --self-test",
+        "python scripts/test-virtio-net.py",
+    )
+    workflow_lines = [line.strip() for line in workflow.splitlines()]
+    positions = []
+    for command in commands:
+        assert workflow_lines.count(command) == 1, f"CI must run exactly one: {command}"
+        positions.append(workflow_lines.index(command))
+    assert positions == sorted(positions)
+
+
 def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
     current_status_sections = (
         (

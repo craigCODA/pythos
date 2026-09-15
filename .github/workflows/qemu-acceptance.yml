@@ -30,6 +30,7 @@ jobs:
             build-essential \
             ninja-build \
             pkg-config \
+            python3-pytest \
             python3-venv \
             libglib2.0-dev \
             libpixman-1-dev \
@@ -148,11 +149,13 @@ jobs:
           python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py
           python -m py_compile scripts/test-session-viewing-probe.py
           python -m py_compile scripts/test-normal-session.py
+          python -m py_compile scripts/test-virtio-net.py
 
       - name: Python harness tests
         run: |
           python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
           python -m unittest tests.test_normal_session
+          python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
         run: |
@@ -180,6 +183,7 @@ jobs:
           python scripts/test-normal-session.py --self-test
           python scripts/test-normal-session.py
           python scripts/test-normal-session.py --fault
+          python scripts/test-virtio-net.py --self-test
           python scripts/test-virtio-net.py
 
       - name: PythTIG physical evidence tooling

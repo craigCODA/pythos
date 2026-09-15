@@ -7,8 +7,11 @@ Local continuation: Phase 14 `nic-driver` is accepted on
 `4e3a52e70a177a394ffc3f5d2d0e792987b4eef8`. [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md)
 records the kernel-owned, legacy/transitional QEMU-only transport. Local QEMU
 `11.0.50` proved one exact 60-byte raw Ethernet TX frame and one exact RX frame
-through a loopback-only framed peer, exact ordered markers, no attached virtio
-storage, and complete runner/child cleanup.
+through a loopback-only framed peer, exact ordered markers, and complete
+runner/child cleanup. Acceptance evidence is precisely:
+no non-boot virtio data disk attached; no storage-path markers observed.
+The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
+marker means no PythOS storage-path writes.
 
 The next Phase 14 boundary is `link-layer`; Phase 14 is not complete. This
 acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.

@@ -20,6 +20,11 @@ bounded RX/TX queues, and exchanges one deterministic raw Ethernet frame in
 each direction with a loopback-only host peer. The next Phase 14 boundary is `link-layer`;
 Phase 14 is not complete.
 
+Acceptance evidence is precisely:
+no non-boot virtio data disk attached; no storage-path markers observed.
+The UEFI boot ESP is snapshot-backed IDE media. The required `NO_DISK_WRITES`
+marker means no PythOS storage-path writes.
+
 This acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
 It does not add modern virtio transport, physical NIC support, protocol layers,
 or changes to existing default and normal-session boot paths. Physical Lenovo
