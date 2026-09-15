@@ -21,7 +21,9 @@ Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 form passed 210 tests plus 239 subtests. The raw virtio-net and NetworkPort
 self-tests, direct NetworkPort host tests, default and opt-in target builds,
 and `NORMAL_FAST_BOOT_TEST_OK` also passed. Fresh raw and NetworkPort QEMU
-acceptance ran on QEMU `11.0.50`: the raw profile emitted its exact ordered
+acceptance ran on QEMU `11.0.50`: both `py -3 scripts/test-virtio-net.py` and
+`py -3 scripts/test-network-port.py` proved a bounded 60-byte TX frame and
+bounded 60-byte RX peer exchange. The raw profile emitted its exact ordered
 transcript, `NO_DISK_WRITES`, and exact TX/RX peer lines; the NetworkPort live
 oracle required exactly once and in order `BOOTSTRAPPED`, `DESCRIBE_OK`,
 `TX_OK`, `RX_OK`, `FORGED_DENIED`, `WRONG_HOLDER_DENIED`, `BAD_BUFFER_DENIED`,
@@ -36,6 +38,13 @@ link-layer/IP/protocols/sockets, a production service, zero-copy, persistent
 network state, or PythTIG changes; it does not alter default or normal-session
 boot. The SDD ledger retains one deferred minor: a tautological bootstrap-
 writable unit assertion, independently covered by the live mapping evidence.
+Deferred follow-up remains unresolved: resource-id evolution, capability-right
+evolution, syscall/ABI variants, receive-buffer and copy policy, runtime
+capability import and consumer selection, teardown beyond terminal ABI v1,
+modern/physical transport including interrupts, MSI-X, multiqueue, and
+offloads, protocols/sockets, multi-consumer distribution, zero-copy,
+persistent network state, and Phase 15/physical Wi-Fi. Any PythTIG v1 change
+also remains separately deferred.
 See `.superpowers/sdd/2026-09-15-phase-14-network-port/task-6-final-report.md`
 for the full command evidence. No merge, push, publication, physical-media
 deployment, or physical Wi-Fi probe is claimed.
