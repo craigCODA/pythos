@@ -1,11 +1,12 @@
-#![no_std]
-#![no_main]
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
 
+#[cfg(not(test))]
+use core::panic::PanicInfo;
 use core::{
     arch::asm,
     cell::UnsafeCell,
     mem::size_of,
-    panic::PanicInfo,
     sync::atomic::{AtomicU8, Ordering},
 };
 use pythos_shared::{
@@ -234,7 +235,11 @@ fn error(console: PackedCapability) -> ! {
     unsafe { asm!("ud2", options(noreturn, nomem, nostack)) }
 }
 
+#[cfg(not(test))]
 #[panic_handler]
 fn panic(_info: &PanicInfo<'_>) -> ! {
     unsafe { asm!("ud2", options(noreturn, nomem, nostack)) }
 }
+
+#[cfg(test)]
+fn main() {}
