@@ -14,7 +14,7 @@ package-defined schema extensibility proofs.
 
 Phase 14 `NetworkPort` is accepted as the bounded, opt-in QEMU capability
 boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `36920f5`. The kernel owns the legacy/transitional
+at implementation tip `e1efea0`. The kernel owns the legacy/transitional
 `VirtioTransport` adapter established by
 [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md); an opt-in native
 consumer receives one boot-local capability and uses the port ABI to describe,

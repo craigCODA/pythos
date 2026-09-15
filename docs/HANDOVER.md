@@ -4,7 +4,7 @@
 
 Local continuation: Phase 14 `NetworkPort` is accepted on
 `agent/phase14-nic-driver` through implementation tip
-`36920f5`. [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
+`e1efea0`. [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
 freezes one boot-local, capability-scoped port above the kernel-owned
 legacy/transitional `VirtioTransport` adapter recorded by
 [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in native

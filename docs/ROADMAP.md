@@ -15,7 +15,7 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability
 boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `36920f5`. One boot-local capability-scoped port sits
+at implementation tip `e1efea0`. One boot-local capability-scoped port sits
 above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
 by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). Its native
 consumer proves describe plus one bounded raw Ethernet TX and RX exchange with

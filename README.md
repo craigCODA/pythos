@@ -9,7 +9,7 @@ evidence.
 
 Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability boundary
 through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `36920f5`. It places one boot-local `NetworkPort` above
+at implementation tip `e1efea0`. It places one boot-local `NetworkPort` above
 the kernel-owned legacy/transitional `VirtioTransport` adapter from
 [ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The native
 consumer proves describe, one bounded raw Ethernet TX, and one bounded RX
