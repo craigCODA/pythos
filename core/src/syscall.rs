@@ -1124,7 +1124,7 @@ fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
             {
                 network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state())
             } else {
-                port.reset_with_capabilities(capabilities)
+                port.reset(capabilities)
             }
         }
         _ => network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state()),
@@ -1207,7 +1207,7 @@ fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     let frame = unsafe {
         slice::from_raw_parts(request.input_ptr as *const u8, request.input_len as usize)
     };
-    port.send_with_capabilities(frame, capabilities)
+    port.send(frame, capabilities)
 }
 
 #[cfg(any(test, feature = "virtio-net-probe"))]
@@ -1245,7 +1245,7 @@ fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     let output = unsafe {
         slice::from_raw_parts_mut(request.output_ptr as *mut u8, request.output_len as usize)
     };
-    port.try_receive_with_capabilities(output, capabilities)
+    port.try_receive_into(output, capabilities)
 }
 
 #[cfg(any(test, feature = "virtio-net-probe"))]
