@@ -150,11 +150,13 @@ jobs:
           python -m py_compile scripts/test-session-viewing-probe.py
           python -m py_compile scripts/test-normal-session.py
           python -m py_compile scripts/test-virtio-net.py
+          python -m py_compile scripts/test-network-port.py
 
       - name: Python harness tests
         run: |
           python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
           python -m unittest tests.test_normal_session
+          python -m unittest tests.test_network_port
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -185,6 +187,8 @@ jobs:
           python scripts/test-normal-session.py --fault
           python scripts/test-virtio-net.py --self-test
           python scripts/test-virtio-net.py
+          python scripts/test-network-port.py --self-test
+          python scripts/test-network-port.py
 
       - name: PythTIG physical evidence tooling
         run: |
