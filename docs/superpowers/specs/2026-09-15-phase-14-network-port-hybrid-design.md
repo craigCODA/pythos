@@ -94,7 +94,12 @@ It provides a private transport contract to the port resource:
 - discover one allowed transitional `virtio-net-pci` function;
 - reset, negotiate `VIRTIO_NET_F_MAC`, and read the stable MAC;
 - prepare bounded descriptor and packet storage;
-- publish and reclaim RX/TX entries only through valid lifecycle states;
+- populate the virtqueues during device-specific setup, including available
+  ring entries and `avail.idx` advancement, with the required device-visible
+  memory ordering;
+- set `DRIVER_OK` before sending any available-buffer notification;
+- process live-device completions and reclaim RX/TX entries only through valid
+  lifecycle states;
 - poll bounded completions and validate full-width descriptor ids;
 - convert device failures and timeouts into typed transport errors.
 
@@ -196,38 +201,73 @@ Absent
   → Reset
 ```
 
-Only `Operational` permits `publish_available`, queue notification, transmit,
-or receive completion consumption. `Failed` is monotonic until reset has
-observed device status zero and cleared all queue ownership state.
+`QueuesPrepared` means that device-specific setup has completed and the
+descriptor tables and available rings have been populated. `VirtioTransport`
+may advance `avail.idx` during this pre-live setup, after the required
+device-visible memory barrier, which exposes those buffers according to the
+Virtio queue rules. It must not notify the device at this stage.
+
+`DriverReady` means `DRIVER_OK` has been set. The configured queues are live;
+the device may now consume buffers that were exposed during setup, and the
+transport may send the initial available-buffer notification. `Operational`
+means that this initial notification has completed and the port may admit
+capability-authorized service operations. Completion consumption is legal only
+after `DRIVER_OK` and follows the used-ring ordering contract below.
+
+`Failed` is monotonic until reset has observed device status zero and cleared
+all queue ownership state.
 
 ### Buffer lifecycle
 
 ```text
 Allocated
   → Prepared
-  → Published
+  → RingPopulated
+  → Exposed
   → DeviceOwned
   → Completed
   → Reclaimed
   → Prepared
 ```
 
-Descriptor fields and packet bytes may be prepared before `DriverReady`, but
-the available-ring index may not advance until the device is `Operational`.
-The ordering contract is:
+`Prepared` writes the descriptor fields and packet bytes. `RingPopulated` also
+writes the available-ring entry but has not changed `avail.idx`. `Exposed`
+advances `avail.idx`; this may occur during `QueuesPrepared`, before
+`DRIVER_OK`, because the specification places virtqueue population before
+`DRIVER_OK` and separately forbids the device from consuming those buffers
+before `DRIVER_OK`. `DeviceOwned` begins only once the device is live and may
+consume the exposed entry. Exposed entries must not be altered until they have
+been used or the device has been reset.
+
+The initialization ordering contract is:
 
 1. write descriptor and packet bytes;
-2. sequential compiler fence;
-3. advance `avail.idx`;
-4. sequential compiler fence before notification where required;
-5. notify only in `Operational` state;
-6. observe `used.idx`, fence, then read the used element;
-7. validate the full-width id before narrowing or indexing;
-8. copy out or consume the completion, then recycle the slot.
+2. write the available-ring entry;
+3. perform a suitable device-visible memory barrier before updating `avail.idx`;
+4. advance `avail.idx`, exposing the prepared descriptor chain;
+5. complete device-specific setup without sending an available-buffer
+   notification;
+6. set `DRIVER_OK`; the device is now live and may consume exposed buffers;
+7. send the available-buffer notification, subject to the queue's notification
+   suppression rules;
+8. observe `used.idx`, perform the required ordering operation, then read the
+   used element;
+9. validate the full-width id before narrowing or indexing;
+10. copy out or consume the completion, then recycle the slot.
+
+For steady-state operations after `DRIVER_OK`, the transport writes the
+descriptor and available-ring entry, performs the required barrier before the
+`avail.idx` update, advances `avail.idx`, performs the required ordering before
+checking notification suppression, and notifies when required. The contract
+does not mandate a particular Rust atomic ordering or a compiler-only fence;
+the implementation must provide the memory ordering required for the device
+to observe descriptor, buffer, ring, and completion writes correctly.
 
 The API should make the illegal sequence difficult to express by separating
-`prepare_receive_buffers` from `publish_receive_buffers`, rather than hiding
-both behind one initialization helper.
+`prepare_receive_buffers`, `populate_receive_ring`, `set_driver_ok`, and
+`notify_receive_queue`, rather than hiding setup, exposure, and notification
+behind one initialization helper. A separate guard must prevent notification
+and completion consumption before `DRIVER_OK`.
 
 ## Data flow
 
@@ -238,9 +278,10 @@ authorized service
   → capability + validated user buffer
   → kernel copy-in and Ethernet-frame bounds check
   → private virtio-net header + static DMA TX slot
-  → descriptor preparation
-  → DRIVER_OK / Operational gate
-  → available-ring publication and notify
+  → descriptor and available-ring population
+  → device-visible barrier and `avail.idx` update
+  → if this is initialization: `DRIVER_OK`, then notification
+  → if this is steady state: notification according to suppression rules
   → bounded used-ring completion
   → typed success or terminal transport error
 ```
@@ -249,11 +290,14 @@ authorized service
 
 ```text
 device-owned private RX slot
+  → initial RX descriptor/ring population during device setup
+  → `DRIVER_OK` with no prior notification
+  → post-`DRIVER_OK` available-buffer notification
   → bounded used-ring completion
   → full-width id and length validation
   → virtio-net header removal and Ethernet-frame bounds check
   → kernel copy-out to authorized service buffer
-  → RX slot recycle and post-completion publication
+  → RX slot recycle and post-completion publication/notification
 ```
 
 No service receives a raw physical address, a PCI I/O base, or a reference to
@@ -284,10 +328,15 @@ Retain the current QEMU socket-peer evidence for the legacy virtio adapter,
 including exact TX/RX bytes, marker order, no non-boot virtio data disk, and no
 PythOS storage-path markers. Add focused tests for the split lifecycle:
 
-- descriptors may be prepared before `DRIVER_OK`;
-- available-ring publication and notification are rejected before
-  `Operational`;
-- both queues are ready before `DRIVER_OK`;
+- descriptors and available-ring entries may be populated, and `avail.idx` may
+  be advanced with the required memory ordering, before `DRIVER_OK`;
+- no available-buffer notification is sent before `DRIVER_OK`;
+- the device is not treated as able to consume buffers, and used completions
+  are not consumed, before `DRIVER_OK`;
+- both queues are ready before `DRIVER_OK`, while the port remains unavailable
+  to service operations until `Operational`;
+- steady-state publication and notification follow the Virtio ordering and
+  suppression rules;
 - status bits survive failure;
 - full queue spans, ids, lengths, and physical-page mappings remain bounded.
 
@@ -315,9 +364,12 @@ The implementation plan after this spec is approved should proceed in this
 order:
 
 1. Refactor the current virtio code into a transport adapter and close the
-   outstanding available-ring-before-`DRIVER_OK` finding.
-2. Split descriptor preparation from publication and encode the transport
-   lifecycle in pure testable state transitions.
+   outstanding initialization-order finding by allowing spec-compliant
+   pre-`DRIVER_OK` population while prohibiting pre-`DRIVER_OK` notification
+   and completion consumption.
+2. Split descriptor preparation, available-ring population, `avail.idx`
+   exposure, `DRIVER_OK`, notification, and completion consumption into pure
+   testable transport state transitions.
 3. Add the runtime-only port resource and capability mapping using a new ADR
    and shared ABI, without changing the frozen PythTIG ABI.
 4. Add bounded copy-in/copy-out send/receive operations and adversarial
@@ -330,6 +382,38 @@ The Lenovo Wi-Fi card remains outside this work and is still deferred to
 Phase 15. The same `NetworkPort` contract is intended to be the future
 adapter boundary for physical hardware, but this QEMU slice does not claim
 that the contract works on a real NIC.
+
+## Virtio 1.3 standards basis
+
+This correction follows the official [OASIS Virtio 1.3
+specification](https://docs.oasis-open.org/virtio/virtio/v1.3/virtio-v1.3.html):
+
+- §3.1.1, *Driver Requirements: Device Initialization*, requires
+  device-specific setup and virtqueue population before `DRIVER_OK`, while
+  separately forbidding available-buffer notifications before `DRIVER_OK`.
+- §2.1.2, *Device Requirements: Device Status Field*, requires the device not
+  to consume buffers or send used-buffer notifications before `DRIVER_OK`.
+- §2.7.13, *Supplying Buffers to The Device*, defines descriptor and available
+  ring population, requires a suitable memory barrier before `avail.idx` is
+  updated, and states that updating `avail.idx` exposes the descriptor; its
+  notification step is separate.
+- §2.7.14, *Receiving Used Buffers From The Device*, supplies the used-ring
+  observation and ordering pattern used by the transport contract.
+- §3.1.2, *Legacy Interface: Device Initialization*, requires a transitional
+  implementation to follow §3.1 while omitting `FEATURES_OK` steps and records
+  the legacy device's pre-step-8 compatibility requirements.
+- §3.3 and §3.3.1, *Device Cleanup*, define configured queues as live after
+  `DRIVER_OK` and prohibit altering exposed entries until the queue is reset.
+- §4.1.5.1.1.1, *Legacy Interface: A Note on Device Layout Detection*, keeps
+  the current transitional-device scope: legacy interface in PCI BAR0 I/O
+  space, with modern capability discovery outside this slice.
+- §5.1.5, *Network Device: Device Initialization*, specifically places filling
+  receive queues in network-device setup before the device is live.
+
+The specification requires suitable device-visible/DMA memory ordering; it does
+not prescribe a Rust `compiler_fence` or a particular atomic ordering. The
+implementation plan and follow-up transport ADR must select and test the
+appropriate primitive without changing this architectural boundary.
 
 ## Alternatives considered
 
