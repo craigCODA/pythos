@@ -180,6 +180,7 @@ jobs:
           python scripts/test-normal-session.py --self-test
           python scripts/test-normal-session.py
           python scripts/test-normal-session.py --fault
+          python scripts/test-virtio-net.py
 
       - name: PythTIG physical evidence tooling
         run: |

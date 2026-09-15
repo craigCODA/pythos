@@ -3,8 +3,17 @@
 
 from __future__ import annotations
 
+import importlib.util
+import re
 import socket
+import subprocess
+import sys
 import threading
+import time
+import unittest
+from pathlib import Path
+
+from qemu_probe_support import AcceptanceTimeline, RunnerCapture, cleanup_runner_process, spawn_runner_process
 
 
 MIN_ETHERNET_FRAME_BYTES = 60
@@ -13,6 +22,106 @@ PEER_MAC = bytes.fromhex("020000000002")
 PROBE_ETHER_TYPE = bytes.fromhex("88b5")
 TX_PAYLOAD = b"PYTHOS:NIC:TX"
 RX_PAYLOAD = b"PYTHOS:NIC:RX"
+
+
+SUCCESS_MARKER = "PYTHOS:CORE:VIRTIO_NET_PROBE:READY"
+MAC_MARKER_PREFIX = "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC="
+ROOT = Path(__file__).resolve().parents[1]
+TARGET = ROOT / "target"
+SERIAL_LOG = TARGET / "virtio-net-probe-com1.log"
+ESP_IMAGE = TARGET / "virtio-net-probe-com1-esp.img"
+QEMU_TIMEOUT_SECONDS = 30.0
+REQUIRED_MARKERS = (
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+    MAC_MARKER_PREFIX,
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+    SUCCESS_MARKER,
+)
+FORBIDDEN_EVIDENCE = (
+    "PYTHOS:CORE:BLOCK:DEVICE_SELECTED",
+    "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
+    "PYTHOS:CORE:STORAGE:ACCESS_GRANTED",
+    "PYTHOS:CORE:STORAGE:JOURNAL_APPEND",
+    "PYTHOS:CORE:STORAGE:COMMIT_MARKER",
+    "PYTHOS:CORE:OBJECT_STORE:PERSISTED",
+    "PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:",
+    "PYTHOS:PANIC",
+    "DRIVER_ERROR",
+    "TIMEOUT",
+)
+
+
+class VirtioNetAcceptanceSelfTest(unittest.TestCase):
+    """No-QEMU checks for the strict raw-frame acceptance boundary."""
+
+    def valid_serial(self) -> str:
+        return "\n".join(
+            (
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=52:54:00:12:34:56",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+                "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+            )
+        )
+
+    def test_exact_marker_oracle_accepts_one_complete_success(self) -> None:
+        assert_virtio_net_acceptance(self.valid_serial(), "QEMU_OUTCOME success\n")
+
+    def test_exact_marker_oracle_rejects_duplicate_ready(self) -> None:
+        duplicate_ready = self.valid_serial() + "\nPYTHOS:CORE:VIRTIO_NET_PROBE:READY"
+        with self.assertRaises(AssertionError):
+            assert_virtio_net_acceptance(duplicate_ready, "QEMU_OUTCOME success\n")
+
+    def test_storage_isolation_rejects_storage_selection_and_write_evidence(self) -> None:
+        with self.assertRaises(AssertionError):
+            assert_virtio_net_acceptance(
+                self.valid_serial() + "\nPYTHOS:CORE:STORAGE:JOURNAL_APPEND",
+                "QEMU_OUTCOME success\n",
+            )
+
+    def test_live_evidence_preserves_the_exact_runner_outcome(self) -> None:
+        evidence = format_live_evidence("QEMU_OUTCOME success\n", "QEMU emulator version 11")
+        self.assertIn("QEMU_OUTCOME success", evidence)
+        self.assertIn("VIRTIO_NET_QEMU_VERSION QEMU emulator version 11", evidence)
+
+    def test_malformed_frame_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            decode_socket_frame(b"\x00\x00\x00\x3b" + bytes(59))
+
+    def test_frame_peer_reports_exact_tx_and_rx_exchange(self) -> None:
+        device_mac = bytes.fromhex("525400123456")
+        expected_tx = probe_frame(PEER_MAC, device_mac, TX_PAYLOAD)
+        expected_rx = probe_frame(device_mac, PEER_MAC, RX_PAYLOAD)
+        peer = FramePeer()
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1) as connection:
+                connection.sendall(encode_socket_frame(expected_tx))
+                self.assertEqual(read_socket_frame(connection), expected_rx)
+            peer.join(timeout=1)
+            self.assertIsNone(peer.error)
+            self.assertEqual(peer.tx_frame, expected_tx)
+            self.assertEqual(peer.rx_frame, expected_rx)
+        finally:
+            peer.close()
 
 
 def validate_ethernet_frame(frame: bytes) -> None:
@@ -87,6 +196,9 @@ class FramePeer:
         self.error: BaseException | None = None
         self.tx_frame: bytes | None = None
         self.rx_frame: bytes | None = None
+        self.connected = False
+        self.tx_matched = False
+        self.rx_delivered = False
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -108,12 +220,236 @@ class FramePeer:
     def _serve_once(self) -> None:
         try:
             with self.listener.accept()[0] as connection:
+                self.connected = True
                 connection.settimeout(self.timeout)
                 self.tx_frame = read_socket_frame(connection)
                 device_mac = validate_transmitted_probe_frame(self.tx_frame)
+                self.tx_matched = True
                 self.rx_frame = probe_frame(device_mac, PEER_MAC, RX_PAYLOAD)
                 connection.sendall(encode_socket_frame(self.rx_frame))
+                self.rx_delivered = True
         except BaseException as error:
             self.error = error
         finally:
             self.listener.close()
+
+
+def assert_exact_ordered_markers(serial: str) -> None:
+    lines = serial.splitlines()
+    previous = -1
+    for marker in REQUIRED_MARKERS:
+        matches = (
+            [index for index, line in enumerate(lines) if line.startswith(marker)]
+            if marker == MAC_MARKER_PREFIX
+            else [index for index, line in enumerate(lines) if line == marker]
+        )
+        if len(matches) != 1:
+            raise AssertionError(f"expected exactly one {marker!r}, found {len(matches)}")
+        if matches[0] <= previous:
+            raise AssertionError(f"marker order violation at {marker!r}")
+        previous = matches[0]
+
+    mac_line = lines[[index for index, line in enumerate(lines) if line.startswith(MAC_MARKER_PREFIX)][0]]
+    if re.fullmatch(r"PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac_line) is None:
+        raise AssertionError(f"malformed virtio-net MAC evidence: {mac_line!r}")
+
+
+def assert_storage_isolation(serial: str) -> None:
+    for marker in FORBIDDEN_EVIDENCE:
+        if marker in serial:
+            raise AssertionError(f"forbidden virtio-net acceptance evidence: {marker}")
+
+
+def assert_qemu_success(qemu_output: str) -> None:
+    outcome_lines = [line for line in qemu_output.splitlines() if "QEMU_OUTCOME" in line]
+    if outcome_lines != ["QEMU_OUTCOME success"]:
+        raise AssertionError(f"expected one exact success outcome line, got {outcome_lines!r}")
+
+
+def assert_virtio_net_acceptance(serial: str, qemu_output: str) -> None:
+    assert_exact_ordered_markers(serial)
+    assert_storage_isolation(serial)
+    assert_qemu_success(qemu_output)
+
+
+def assert_peer_exchange(peer: FramePeer) -> None:
+    if peer.error is not None:
+        raise AssertionError(f"virtio-net frame peer failed: {peer.error}") from peer.error
+    if not peer.connected:
+        raise AssertionError("QEMU did not connect to the virtio-net frame peer")
+    if not peer.tx_matched or peer.tx_frame is None:
+        raise AssertionError("QEMU did not deliver the validated virtio-net TX frame")
+    if not peer.rx_delivered or peer.rx_frame is None:
+        raise AssertionError("virtio-net frame peer did not deliver the RX frame")
+
+
+def run(command: list[str]) -> str:
+    print("+ " + " ".join(command), flush=True)
+    result = subprocess.run(
+        command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        check=False,
+    )
+    print(result.stdout, end="")
+    if result.returncode != 0:
+        raise AssertionError(f"command failed ({result.returncode}): {' '.join(command)}")
+    return result.stdout
+
+
+def build_probe_image() -> tuple[Path, Path, Path]:
+    loader = ROOT / "target" / "x86_64-unknown-uefi" / "debug" / "bootx64.efi"
+    kernel = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythcore"
+    shell = ROOT / "target" / "x86_64-unknown-none" / "debug" / "pythos-user-shell"
+    run(["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi"])
+    run([
+        "cargo", "build", "-p", "pythos-core", "--target", "x86_64-unknown-none",
+        "--no-default-features", "--features", "virtio-net-probe",
+    ])
+    # build-image.py requires the verified default shell in INIT.PAK, even though
+    # this probe never enters the default boot profile.
+    run([sys.executable, "scripts/build-user-shell.py"])
+    run([sys.executable, "scripts/verify-user-elf.py"])
+    run([sys.executable, "scripts/build-image.py", "--kernel", str(kernel.resolve())])
+    for artifact in (loader, kernel, shell):
+        if not artifact.is_file():
+            raise AssertionError(f"expected build artifact is missing: {artifact}")
+    return loader, kernel, shell
+
+
+def load_qemu_runner():
+    path = ROOT / "scripts" / "run-qemu.py"
+    spec = importlib.util.spec_from_file_location("virtio_net_qemu_runner", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def qemu_version() -> str:
+    runner = load_qemu_runner()
+    output = run([runner.find_qemu(None), "--version"])
+    return output.splitlines()[0]
+
+
+def format_live_evidence(qemu_output: str, version: str) -> str:
+    return qemu_output.rstrip("\n") + "\n" + f"VIRTIO_NET_QEMU_VERSION {version}\n"
+
+
+def probe_runner_command(peer_port: int) -> list[str]:
+    return [
+        sys.executable,
+        "scripts/run-qemu.py",
+        "--serial-log",
+        str(SERIAL_LOG),
+        "--success-marker",
+        SUCCESS_MARKER,
+        "--timeout",
+        str(int(QEMU_TIMEOUT_SECONDS)),
+        "--no-audio-device",
+        "--no-virtio-blk",
+        "--virtio-net",
+        "--virtio-net-peer-port",
+        str(peer_port),
+        "--expect-outcome",
+        "success",
+    ]
+
+
+def run_probe_boot() -> tuple[str, str, FramePeer]:
+    TARGET.mkdir(parents=True, exist_ok=True)
+    for path in (SERIAL_LOG, ESP_IMAGE):
+        if path.exists():
+            path.unlink()
+    peer = FramePeer(timeout=QEMU_TIMEOUT_SECONDS)
+    runner = None
+    capture = None
+    serial = ""
+    qemu_output = ""
+    cleanup_error: BaseException | None = None
+    try:
+        peer.start()
+        popen_kwargs: dict[str, object] = {"cwd": ROOT}
+        if sys.platform != "win32":
+            popen_kwargs["start_new_session"] = True
+        command = probe_runner_command(peer.port)
+        print("+ " + " ".join(command), flush=True)
+        runner = spawn_runner_process(command, **popen_kwargs)
+        capture = RunnerCapture(runner.process, AcceptanceTimeline())
+        capture.start()
+        deadline = time.monotonic() + QEMU_TIMEOUT_SECONDS + 10.0
+        while runner.process.poll() is None and time.monotonic() < deadline:
+            time.sleep(0.05)
+        if runner.process.poll() is None:
+            raise AssertionError("QEMU runner exceeded the bounded acceptance deadline")
+        qemu_output = capture.finish()
+        if runner.process.returncode != 0:
+            raise AssertionError(f"QEMU runner failed with {runner.process.returncode}")
+        peer.join(timeout=5.0)
+        serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
+        assert_virtio_net_acceptance(serial, qemu_output)
+        assert_peer_exchange(peer)
+        return serial, qemu_output, peer
+    except BaseException as error:
+        if capture is not None:
+            qemu_output = capture.text()
+        if SERIAL_LOG.exists():
+            serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
+        raise AssertionError(
+            f"{error}\nCOM1:\n{serial}\nrunner output:\n{qemu_output}"
+        ) from error
+    finally:
+        if runner is not None:
+            try:
+                cleanup_runner_process(runner)
+            except BaseException as error:
+                cleanup_error = error
+        peer.close()
+        try:
+            peer.join(timeout=1.0)
+        except (RuntimeError, TimeoutError) as error:
+            if cleanup_error is None:
+                cleanup_error = error
+        for path in (SERIAL_LOG, ESP_IMAGE):
+            if path.exists():
+                path.unlink()
+        if cleanup_error is not None:
+            raise AssertionError(f"virtio-net acceptance cleanup failed: {cleanup_error}") from cleanup_error
+
+
+def run_self_tests() -> int:
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(VirtioNetAcceptanceSelfTest)
+    result = unittest.TextTestRunner(verbosity=2).run(suite)
+    if result.wasSuccessful():
+        print("VIRTIO_NET_ACCEPTANCE_SELF_TEST_OK")
+        return 0
+    return 1
+
+
+def main() -> int:
+    loader, kernel, shell = build_probe_image()
+    version = qemu_version()
+    _serial, qemu_output, _peer = run_probe_boot()
+    print(format_live_evidence(qemu_output, version), end="")
+    print(f"VIRTIO_NET_ARTIFACT loader={loader.resolve()}")
+    print(f"VIRTIO_NET_ARTIFACT kernel={kernel.resolve()}")
+    print(f"VIRTIO_NET_ARTIFACT shell={shell.resolve()}")
+    print(f"VIRTIO_NET_ARTIFACT esp={ROOT / 'image' / 'esp'}")
+    print(f"VIRTIO_NET_ARTIFACT serial-log-cleaned={SERIAL_LOG.resolve()}")
+    print("VIRTIO_NET_PEER_CONNECTED")
+    print("VIRTIO_NET_PEER_TX_MATCHED")
+    print("VIRTIO_NET_PEER_RX_DELIVERED")
+    print("VIRTIO_NET_RUNNER_AND_CHILD_CLEANED")
+    print("VIRTIO_NET_ACCEPTANCE_OK")
+    return 0
+
+
+if __name__ == "__main__":
+    if sys.argv[1:] == ["--self-test"]:
+        raise SystemExit(run_self_tests())
+    if sys.argv[1:]:
+        raise SystemExit("usage: test-virtio-net.py [--self-test]")
+    raise SystemExit(main())
