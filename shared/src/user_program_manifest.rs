@@ -34,6 +34,8 @@ pub const SESSION_INPUT_PROBE_PRINCIPAL_ID: u64 = 0x5059_5349_4E50_0001;
 pub const SESSION_RUNTIME_PROGRAM_NAME: &[u8] = b"session-runtime.elf";
 pub const SESSION_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5352_544D_0001;
 pub const NORMAL_SESSION_PROGRAM_NAME: &[u8] = b"normal-session.elf";
+pub const NETWORK_PORT_PROBE_PROGRAM_NAME: &[u8] = b"network-port-probe.elf";
+pub const NETWORK_PORT_PROBE_PRINCIPAL_ID: u64 = 0x5059_4E50_5254_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {

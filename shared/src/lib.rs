@@ -6,6 +6,7 @@ pub mod evidence_log;
 pub mod init_bundle;
 pub mod init_pak;
 pub mod input_types;
+pub mod network_port_abi;
 pub mod normal_session_abi;
 pub mod object_shell_abi;
 pub mod package_abi;
