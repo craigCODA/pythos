@@ -2,12 +2,12 @@ use crate::{memory, serial};
 #[cfg(not(test))]
 use core::arch::asm;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{Ordering, compiler_fence};
+use core::sync::atomic::{Ordering, fence};
 
 pub const VIRTIO_VENDOR_ID: u16 = 0x1AF4;
 pub const VIRTIO_NET_TRANSITIONAL_DEVICE_ID: u16 = 0x1000;
 pub const MAX_QUEUE_SIZE: u16 = 256;
-pub const VIRTIO_NET_HEADER_BYTES: usize = 10;
+const VIRTIO_NET_HEADER_BYTES: usize = 10;
 pub const MIN_ETHERNET_FRAME_BYTES: usize = 60;
 pub const MAX_ETHERNET_FRAME_BYTES: usize = 1514;
 
@@ -33,6 +33,7 @@ const VIRTIO_STATUS_FAILED: u8 = 128;
 const VIRTIO_NET_F_MAC: u32 = 5;
 const VRING_DESC_F_NEXT: u16 = 1;
 const VRING_DESC_F_WRITE: u16 = 2;
+const VRING_USED_F_NO_NOTIFY: u16 = 1;
 const RX_QUEUE_INDEX: u16 = 0;
 const TX_QUEUE_INDEX: u16 = 1;
 const RX_DESCRIPTOR_COUNT: u16 = 4;
@@ -97,22 +98,22 @@ impl VirtioNetError {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VirtioNetPciFunction {
+struct VirtioNetPciFunction {
     io_base: u16,
     revision: u8,
 }
 
 impl VirtioNetPciFunction {
-    pub const fn io_base(self) -> u16 {
+    const fn io_base(self) -> u16 {
         self.io_base
     }
 
-    pub const fn revision(self) -> u8 {
+    const fn revision(self) -> u8 {
         self.revision
     }
 }
 
-pub fn classify_pci_function(
+fn classify_pci_function(
     vendor_device: u32,
     revision: u8,
     bar0: u32,
@@ -136,7 +137,7 @@ pub fn classify_pci_function(
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VirtioNetDevice {
+pub(crate) struct VirtioTransport {
     function: VirtioNetPciFunction,
     mac: VirtioNetMac,
     queue_size: u16,
@@ -149,11 +150,22 @@ pub struct VirtioNetDevice {
     rx_queue_initialized: bool,
     tx_queue_initialized: bool,
     rx_buffers_populated: bool,
-    initialized: bool,
+    lifecycle: TransportLifecycle,
 }
 
-impl VirtioNetDevice {
-    pub const fn new(function: VirtioNetPciFunction, mac: VirtioNetMac) -> Self {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum TransportLifecycle {
+    Discovered,
+    Configured,
+    QueuesPrepared,
+    DriverReady,
+    Operational,
+    Failed,
+    Reset,
+}
+
+impl VirtioTransport {
+    const fn new(function: VirtioNetPciFunction, mac: VirtioNetMac) -> Self {
         Self {
             function,
             mac,
@@ -167,19 +179,15 @@ impl VirtioNetDevice {
             rx_queue_initialized: false,
             tx_queue_initialized: false,
             rx_buffers_populated: false,
-            initialized: false,
+            lifecycle: TransportLifecycle::Discovered,
         }
     }
 
-    pub const fn function(self) -> VirtioNetPciFunction {
-        self.function
-    }
-
-    pub const fn mac(self) -> VirtioNetMac {
+    pub(crate) const fn mac(self) -> VirtioNetMac {
         self.mac
     }
 
-    pub fn initialize(
+    pub(crate) fn initialize(
         &mut self,
         _physical_memory: &mut memory::physical::PhysicalMemory,
     ) -> Result<(), VirtioNetError> {
@@ -192,9 +200,17 @@ impl VirtioNetDevice {
         }
     }
 
-    pub fn send_raw(&mut self, frame: &EthernetFrame) -> Result<(), VirtioNetError> {
+    pub(crate) fn transmit(&mut self, frame_bytes: &[u8]) -> Result<(), VirtioNetError> {
         self.ensure_operational()?;
+        let frame = EthernetFrame::new(frame_bytes)?;
+        self.transmit_frame(&frame)
+    }
 
+    fn send_raw(&mut self, frame: &EthernetFrame) -> Result<(), VirtioNetError> {
+        self.transmit(frame.bytes())
+    }
+
+    fn transmit_frame(&mut self, frame: &EthernetFrame) -> Result<(), VirtioNetError> {
         let queue = queue_ptr(TX_QUEUE_INDEX);
         let packet = packet_slot_ptr(TX_PACKET_SLOT);
         let header = VirtioNetHeader::for_plain_ethernet();
@@ -224,30 +240,51 @@ impl VirtioNetDevice {
         self.finish_transmit(result).map(|_| ())
     }
 
-    pub fn receive_raw(&mut self) -> Result<EthernetFrame<'_>, VirtioNetError> {
+    fn receive_raw(&mut self) -> Result<EthernetFrame<'_>, VirtioNetError> {
         self.ensure_operational()?;
         self.recycle_pending_receive()?;
 
-        let queue = queue_ptr(RX_QUEUE_INDEX);
         let mut used_index = self.rx_used_index;
         let used = self.wait_for_used(RX_QUEUE_INDEX, &mut used_index, u16::MAX)?;
         self.rx_used_index = used_index;
         if used >= RX_DESCRIPTOR_COUNT {
             return Err(VirtioNetError::DeviceFailed);
         }
-        let length = read_u32(
-            queue,
-            VirtioNetQueueLayout::new(self.queue_size)?.used_offset()
-                + 4
-                + ((self.rx_used_index.wrapping_sub(1) % self.queue_size) as usize * 8)
-                + 4,
-        ) as usize;
+        let length = self.receive_length()?;
         if length > PACKET_BUFFER_BYTES {
             self.mark_received_slot(used)?;
             return Err(VirtioNetError::InvalidFrame);
         }
         let bytes = packet_slot_bytes(used as usize, length);
         self.finish_received_slot(used, bytes)
+    }
+
+    pub(crate) fn try_receive_into(
+        &mut self,
+        output: &mut [u8],
+    ) -> Result<Option<usize>, VirtioNetError> {
+        self.ensure_operational()?;
+        self.recycle_pending_receive()?;
+
+        let mut used_index = self.rx_used_index;
+        let Some(used) = self.try_take_used(RX_QUEUE_INDEX, &mut used_index)? else {
+            return Ok(None);
+        };
+        self.rx_used_index = used_index;
+        if used >= RX_DESCRIPTOR_COUNT {
+            return Err(VirtioNetError::DeviceFailed);
+        }
+        let length = self.receive_length()?;
+        if length > PACKET_BUFFER_BYTES {
+            self.mark_received_slot(used)?;
+            return Err(VirtioNetError::InvalidFrame);
+        }
+        let frame = self.finish_received_slot(used, packet_slot_bytes(used as usize, length))?;
+        if output.len() < frame.bytes().len() {
+            return Err(VirtioNetError::InvalidFrame);
+        }
+        output[..frame.bytes().len()].copy_from_slice(frame.bytes());
+        Ok(Some(frame.bytes().len()))
     }
 
     fn initialize_inner(&mut self) -> Result<(), VirtioNetError> {
@@ -264,12 +301,13 @@ impl VirtioNetDevice {
         let features = negotiate_features(self.read_u32(VIRTIO_DEVICE_FEATURES_OFFSET)? as u32)?;
         self.write_u32(VIRTIO_GUEST_FEATURES_OFFSET, features)?;
         self.mac = self.read_stable_mac()?;
+        self.lifecycle = TransportLifecycle::Configured;
         self.initialize_queue(RX_QUEUE_INDEX)?;
         self.initialize_queue(TX_QUEUE_INDEX)?;
-        self.post_receive_buffers()?;
+        self.prepare_receive_buffers()?;
+        self.populate_receive_ring()?;
         self.set_driver_ok()?;
-        self.notify_queue(RX_QUEUE_INDEX)?;
-        self.initialized = true;
+        self.activate_receive_queue()?;
         Ok(())
     }
 
@@ -293,7 +331,7 @@ impl VirtioNetDevice {
         Ok(())
     }
 
-    fn post_receive_buffers(&mut self) -> Result<(), VirtioNetError> {
+    fn prepare_receive_buffers(&mut self) -> Result<(), VirtioNetError> {
         let queue = queue_ptr(RX_QUEUE_INDEX);
         for descriptor in 0..RX_DESCRIPTOR_COUNT {
             let address = dma_physical_span(
@@ -308,15 +346,22 @@ impl VirtioNetDevice {
                 VRING_DESC_F_WRITE,
                 0,
             );
+        }
+        Ok(())
+    }
+
+    fn populate_receive_ring(&mut self) -> Result<(), VirtioNetError> {
+        for descriptor in 0..RX_DESCRIPTOR_COUNT {
             self.publish_available(RX_QUEUE_INDEX, descriptor, self.rx_available_index)?;
             self.rx_available_index = self.rx_available_index.wrapping_add(1);
         }
         self.rx_buffers_populated = true;
+        self.lifecycle = TransportLifecycle::QueuesPrepared;
         Ok(())
     }
 
     fn ensure_operational(&self) -> Result<(), VirtioNetError> {
-        if self.initialized {
+        if self.lifecycle == TransportLifecycle::Operational {
             Ok(())
         } else {
             Err(VirtioNetError::DeviceFailed)
@@ -376,7 +421,7 @@ impl VirtioNetDevice {
             layout.available_offset() + 4 + ((available_index % self.queue_size) as usize * 2),
             descriptor,
         );
-        compiler_fence(Ordering::SeqCst);
+        dma_fence();
         write_u16(
             queue,
             layout.available_offset() + 2,
@@ -386,18 +431,41 @@ impl VirtioNetDevice {
     }
 
     fn set_driver_ok(&mut self) -> Result<(), VirtioNetError> {
-        if !self.rx_queue_initialized || !self.tx_queue_initialized || !self.rx_buffers_populated {
+        if self.lifecycle != TransportLifecycle::QueuesPrepared
+            || !self.rx_queue_initialized
+            || !self.tx_queue_initialized
+            || !self.rx_buffers_populated
+        {
             return Err(VirtioNetError::DeviceFailed);
         }
-        self.set_status_bits(VIRTIO_STATUS_DRIVER_OK)
+        self.set_status_bits(VIRTIO_STATUS_DRIVER_OK)?;
+        self.lifecycle = TransportLifecycle::DriverReady;
+        Ok(())
+    }
+
+    fn activate_receive_queue(&mut self) -> Result<(), VirtioNetError> {
+        self.ensure_driver_ready()?;
+        self.notify_queue(RX_QUEUE_INDEX)?;
+        self.lifecycle = TransportLifecycle::Operational;
+        Ok(())
     }
 
     fn notify_queue(&self, queue_index: u16) -> Result<(), VirtioNetError> {
+        self.ensure_driver_ready()?;
         if self.status_shadow & VIRTIO_STATUS_DRIVER_OK == 0 {
             return Err(VirtioNetError::DeviceFailed);
         }
-        compiler_fence(Ordering::SeqCst);
+        dma_fence();
+        if self.queue_notification_suppressed(queue_index)? {
+            return Ok(());
+        }
+        dma_fence();
         self.write_u16(VIRTIO_QUEUE_NOTIFY_OFFSET, queue_index)
+    }
+
+    fn queue_notification_suppressed(&self, queue_index: u16) -> Result<bool, VirtioNetError> {
+        let layout = VirtioNetQueueLayout::new(self.queue_size)?;
+        Ok(read_u16(queue_ptr(queue_index), layout.used_offset()) & VRING_USED_F_NO_NOTIFY != 0)
     }
 
     fn wait_for_used(
@@ -406,11 +474,12 @@ impl VirtioNetDevice {
         used_index: &mut u16,
         expected_descriptor: u16,
     ) -> Result<u16, VirtioNetError> {
+        self.ensure_driver_ready()?;
         let layout = VirtioNetQueueLayout::new(self.queue_size)?;
         let queue = queue_ptr(queue_index);
         for _ in 0..NIC_POLL_LIMIT {
             if read_u16(queue, layout.used_offset() + 2) != *used_index {
-                compiler_fence(Ordering::SeqCst);
+                dma_fence();
                 let descriptor = validate_used_descriptor_id(
                     read_u32(
                         queue,
@@ -426,6 +495,40 @@ impl VirtioNetDevice {
             }
         }
         Err(VirtioNetError::Timeout)
+    }
+
+    fn try_take_used(
+        &self,
+        queue_index: u16,
+        used_index: &mut u16,
+    ) -> Result<Option<u16>, VirtioNetError> {
+        self.ensure_driver_ready()?;
+        let layout = VirtioNetQueueLayout::new(self.queue_size)?;
+        let queue = queue_ptr(queue_index);
+        if read_u16(queue, layout.used_offset() + 2) == *used_index {
+            return Ok(None);
+        }
+        dma_fence();
+        let descriptor = validate_used_descriptor_id(
+            read_u32(
+                queue,
+                layout.used_offset() + 4 + ((*used_index % self.queue_size) as usize * 8),
+            ),
+            self.queue_size,
+        )?;
+        *used_index = used_index.wrapping_add(1);
+        Ok(Some(descriptor))
+    }
+
+    fn receive_length(&self) -> Result<usize, VirtioNetError> {
+        let layout = VirtioNetQueueLayout::new(self.queue_size)?;
+        Ok(read_u32(
+            queue_ptr(RX_QUEUE_INDEX),
+            layout.used_offset()
+                + 4
+                + ((self.rx_used_index.wrapping_sub(1) % self.queue_size) as usize * 8)
+                + 4,
+        ) as usize)
     }
 
     fn read_stable_mac(&self) -> Result<VirtioNetMac, VirtioNetError> {
@@ -444,6 +547,21 @@ impl VirtioNetDevice {
         outb(port, 0);
         wait_for_reset_status(|| inb(port))?;
         self.status_shadow = 0;
+        self.clear_queue_ownership();
+        self.lifecycle = TransportLifecycle::Reset;
+        Ok(())
+    }
+
+    fn fail_device(&mut self) {
+        self.clear_queue_ownership();
+        self.lifecycle = TransportLifecycle::Failed;
+        self.status_shadow |= VIRTIO_STATUS_FAILED;
+        if let Ok(port) = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET) {
+            outb(port, self.status_shadow);
+        }
+    }
+
+    fn clear_queue_ownership(&mut self) {
         self.rx_queue_initialized = false;
         self.tx_queue_initialized = false;
         self.rx_buffers_populated = false;
@@ -452,16 +570,16 @@ impl VirtioNetDevice {
         self.tx_available_index = 0;
         self.tx_used_index = 0;
         self.rx_recycle = None;
-        self.initialized = false;
-        Ok(())
     }
 
-    fn fail_device(&mut self) {
-        self.initialized = false;
-        self.rx_recycle = None;
-        self.status_shadow |= VIRTIO_STATUS_FAILED;
-        if let Ok(port) = checked_port(self.function.io_base, VIRTIO_STATUS_OFFSET) {
-            outb(port, self.status_shadow);
+    fn ensure_driver_ready(&self) -> Result<(), VirtioNetError> {
+        if matches!(
+            self.lifecycle,
+            TransportLifecycle::DriverReady | TransportLifecycle::Operational
+        ) {
+            Ok(())
+        } else {
+            Err(VirtioNetError::DeviceFailed)
         }
     }
 
@@ -503,8 +621,16 @@ impl VirtioNetDevice {
     }
 }
 
+#[inline(always)]
+fn dma_fence() {
+    // The legacy PCI device observes descriptor, ring, and packet DMA memory;
+    // this hardware fence orders those accesses rather than only constraining
+    // compiler reordering.
+    fence(Ordering::SeqCst);
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VirtioNetMac([u8; 6]);
+pub(crate) struct VirtioNetMac([u8; 6]);
 
 impl VirtioNetMac {
     pub fn from_bytes(bytes: [u8; 6]) -> Result<Self, VirtioNetError> {
@@ -539,7 +665,7 @@ impl VirtioNetMac {
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct VirtioNetHeader {
+struct VirtioNetHeader {
     pub flags: u8,
     pub gso_type: u8,
     pub hdr_len: u16,
@@ -549,7 +675,7 @@ pub struct VirtioNetHeader {
 }
 
 impl VirtioNetHeader {
-    pub const fn for_plain_ethernet() -> Self {
+    const fn for_plain_ethernet() -> Self {
         Self {
             flags: 0,
             gso_type: 0,
@@ -560,7 +686,7 @@ impl VirtioNetHeader {
         }
     }
 
-    pub const fn as_bytes(self) -> [u8; VIRTIO_NET_HEADER_BYTES] {
+    const fn as_bytes(self) -> [u8; VIRTIO_NET_HEADER_BYTES] {
         [
             self.flags,
             self.gso_type,
@@ -577,61 +703,61 @@ impl VirtioNetHeader {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct EthernetFrame<'a> {
+struct EthernetFrame<'a> {
     bytes: &'a [u8],
 }
 
 impl<'a> EthernetFrame<'a> {
-    pub fn new(bytes: &'a [u8]) -> Result<Self, VirtioNetError> {
+    fn new(bytes: &'a [u8]) -> Result<Self, VirtioNetError> {
         if !(MIN_ETHERNET_FRAME_BYTES..=MAX_ETHERNET_FRAME_BYTES).contains(&bytes.len()) {
             return Err(VirtioNetError::InvalidFrame);
         }
         Ok(Self { bytes })
     }
 
-    pub fn destination(&self) -> [u8; 6] {
+    fn destination(&self) -> [u8; 6] {
         self.bytes[0..6].try_into().unwrap()
     }
 
-    pub fn source(&self) -> [u8; 6] {
+    fn source(&self) -> [u8; 6] {
         self.bytes[6..12].try_into().unwrap()
     }
 
-    pub fn ether_type(&self) -> u16 {
+    fn ether_type(&self) -> u16 {
         u16::from_be_bytes(self.bytes[12..14].try_into().unwrap())
     }
 
-    pub const fn bytes(&self) -> &'a [u8] {
+    const fn bytes(&self) -> &'a [u8] {
         self.bytes
     }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct VirtioNetQueueLayout {
+struct VirtioNetQueueLayout {
     queue_size: u16,
 }
 
 impl VirtioNetQueueLayout {
-    pub fn new(queue_size: u16) -> Result<Self, VirtioNetError> {
+    fn new(queue_size: u16) -> Result<Self, VirtioNetError> {
         if queue_size == 0 || queue_size > MAX_QUEUE_SIZE {
             return Err(VirtioNetError::InvalidQueueSize);
         }
         Ok(Self { queue_size })
     }
 
-    pub const fn queue_size(self) -> u16 {
+    const fn queue_size(self) -> u16 {
         self.queue_size
     }
 
-    pub const fn descriptor_offset(self) -> usize {
+    const fn descriptor_offset(self) -> usize {
         0
     }
 
-    pub const fn available_offset(self) -> usize {
+    const fn available_offset(self) -> usize {
         4096
     }
 
-    pub const fn used_offset(self) -> usize {
+    const fn used_offset(self) -> usize {
         8192
     }
 }
@@ -716,7 +842,6 @@ where
     F: FnMut() -> u8,
 {
     for _ in 0..NIC_POLL_LIMIT {
-        compiler_fence(Ordering::SeqCst);
         if read_status() == 0 {
             return Ok(());
         }
@@ -724,14 +849,14 @@ where
     Err(VirtioNetError::Timeout)
 }
 
-pub(crate) fn parse_received_buffer(bytes: &[u8]) -> Result<EthernetFrame<'_>, VirtioNetError> {
+fn parse_received_buffer(bytes: &[u8]) -> Result<EthernetFrame<'_>, VirtioNetError> {
     let frame = bytes
         .get(VIRTIO_NET_HEADER_BYTES..)
         .ok_or(VirtioNetError::InvalidFrame)?;
     EthernetFrame::new(frame)
 }
 
-pub(crate) fn scan_primary_bus() -> Result<VirtioNetDevice, VirtioNetError> {
+pub(crate) fn scan_primary_bus() -> Result<VirtioTransport, VirtioNetError> {
     for device in 0..32 {
         for function_number in 0..8 {
             let vendor_device = read_config_u32(device, function_number, 0);
@@ -744,7 +869,7 @@ pub(crate) fn scan_primary_bus() -> Result<VirtioNetDevice, VirtioNetError> {
                 continue;
             };
             enable_io_bus_master(device, function_number)?;
-            return Ok(VirtioNetDevice::new(function, VirtioNetMac([0; 6])));
+            return Ok(VirtioTransport::new(function, VirtioNetMac([0; 6])));
         }
     }
     Err(VirtioNetError::DeviceAbsent)
@@ -894,7 +1019,7 @@ fn dma_physical(virt: u64) -> Result<u64, VirtioNetError> {
 
 #[cfg(test)]
 fn dma_physical(virt: u64) -> Result<u64, VirtioNetError> {
-    Ok(virt)
+    Ok(virt & 0xFFFF_FFFF)
 }
 
 #[cfg(not(test))]
@@ -1077,6 +1202,9 @@ pub(crate) fn assert_probe_markers(markers: &[&str]) -> Result<(), ()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    static DMA_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn classify_accepts_transitional_virtio_network_io_bar() {
@@ -1233,6 +1361,7 @@ mod tests {
         device.tx_queue_initialized = true;
         assert_eq!(device.set_driver_ok(), Err(VirtioNetError::DeviceFailed));
         device.rx_buffers_populated = true;
+        device.lifecycle = TransportLifecycle::QueuesPrepared;
         assert_eq!(device.set_driver_ok(), Ok(()));
         assert_eq!(
             device.status_shadow,
@@ -1241,8 +1370,35 @@ mod tests {
     }
 
     #[test]
+    fn device_visible_ordering_exposes_avail_before_driver_ok() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let mut transport = device_for_test();
+        transport.queue_size = MAX_QUEUE_SIZE;
+        transport.rx_queue_initialized = true;
+        transport.tx_queue_initialized = true;
+        transport.status_shadow = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
+        transport.lifecycle = TransportLifecycle::Configured;
+
+        transport.prepare_receive_buffers().unwrap();
+        transport.populate_receive_ring().unwrap();
+
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        assert_eq!(transport.rx_available_index, RX_DESCRIPTOR_COUNT);
+        assert_eq!(
+            read_u16(queue_ptr(RX_QUEUE_INDEX), layout.available_offset() + 2),
+            RX_DESCRIPTOR_COUNT
+        );
+        assert_eq!(
+            transport.notify_queue(RX_QUEUE_INDEX),
+            Err(VirtioNetError::DeviceFailed)
+        );
+    }
+
+    #[test]
     fn queue_notification_requires_driver_ok() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
         let mut device = device_for_test();
+        device.queue_size = MAX_QUEUE_SIZE;
         device.status_shadow = VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER;
         assert_eq!(
             device.notify_queue(RX_QUEUE_INDEX),
@@ -1250,7 +1406,119 @@ mod tests {
         );
 
         device.status_shadow |= VIRTIO_STATUS_DRIVER_OK;
+        device.lifecycle = TransportLifecycle::DriverReady;
         assert_eq!(device.notify_queue(RX_QUEUE_INDEX), Ok(()));
+    }
+
+    #[test]
+    fn completion_consumption_requires_driver_ok() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let mut transport = device_for_test();
+        transport.queue_size = MAX_QUEUE_SIZE;
+        transport.lifecycle = TransportLifecycle::QueuesPrepared;
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        let queue = queue_ptr(RX_QUEUE_INDEX);
+        write_u32(queue, layout.used_offset() + 4, 0);
+        write_u16(queue, layout.used_offset() + 2, 1);
+        let mut used_index = 0;
+
+        assert_eq!(
+            transport.wait_for_used(RX_QUEUE_INDEX, &mut used_index, u16::MAX),
+            Err(VirtioNetError::DeviceFailed)
+        );
+    }
+
+    #[test]
+    fn post_driver_ok_notification_honors_device_suppression() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let transport = initialized_device_for_test();
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        write_u16(
+            queue_ptr(RX_QUEUE_INDEX),
+            layout.used_offset(),
+            VRING_USED_F_NO_NOTIFY,
+        );
+
+        assert_eq!(
+            transport.queue_notification_suppressed(RX_QUEUE_INDEX),
+            Ok(true)
+        );
+        assert_eq!(transport.notify_queue(RX_QUEUE_INDEX), Ok(()));
+    }
+
+    #[test]
+    fn service_transmit_requires_operational_lifecycle() {
+        let mut transport = device_for_test();
+        let frame = [0xA5; MIN_ETHERNET_FRAME_BYTES];
+
+        assert_eq!(
+            transport.transmit(&frame),
+            Err(VirtioNetError::DeviceFailed)
+        );
+    }
+
+    #[test]
+    fn service_transmit_copies_frame_and_consumes_completion_after_driver_ok() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let mut transport = initialized_device_for_test();
+        let frame = [0xA5; MIN_ETHERNET_FRAME_BYTES];
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        let queue = queue_ptr(TX_QUEUE_INDEX);
+        write_u32(queue, layout.used_offset() + 4, 0);
+        write_u16(queue, layout.used_offset() + 2, 1);
+
+        assert_eq!(transport.transmit(&frame), Ok(()));
+        assert_eq!(transport.tx_available_index, 1);
+        assert_eq!(transport.tx_used_index, 1);
+        assert_eq!(
+            packet_slot_bytes(TX_PACKET_SLOT, VIRTIO_NET_HEADER_BYTES),
+            &[0; VIRTIO_NET_HEADER_BYTES]
+        );
+        assert_eq!(
+            packet_slot_bytes(
+                TX_PACKET_SLOT,
+                VIRTIO_NET_HEADER_BYTES + MIN_ETHERNET_FRAME_BYTES
+            )[VIRTIO_NET_HEADER_BYTES..],
+            frame
+        );
+    }
+
+    #[test]
+    fn nonblocking_receive_returns_none_when_no_completion_is_available() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let mut transport = initialized_device_for_test();
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        write_u16(queue_ptr(RX_QUEUE_INDEX), layout.used_offset() + 2, 0);
+        let mut output = [0u8; MAX_ETHERNET_FRAME_BYTES];
+
+        assert_eq!(transport.try_receive_into(&mut output), Ok(None));
+    }
+
+    #[test]
+    fn nonblocking_receive_copies_completed_frame_without_exposing_virtio_header() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
+        let mut transport = initialized_device_for_test();
+        let frame = [0x3C; MIN_ETHERNET_FRAME_BYTES];
+        let packet = packet_slot_ptr(0);
+        write_bytes(packet, &[0; VIRTIO_NET_HEADER_BYTES]);
+        write_bytes_at(packet, VIRTIO_NET_HEADER_BYTES, &frame);
+        let layout = VirtioNetQueueLayout::new(MAX_QUEUE_SIZE).unwrap();
+        let queue = queue_ptr(RX_QUEUE_INDEX);
+        write_u32(queue, layout.used_offset() + 4, 0);
+        write_u32(
+            queue,
+            layout.used_offset() + 8,
+            (VIRTIO_NET_HEADER_BYTES + MIN_ETHERNET_FRAME_BYTES) as u32,
+        );
+        write_u16(queue, layout.used_offset() + 2, 1);
+        let mut output = [0u8; MAX_ETHERNET_FRAME_BYTES];
+
+        assert_eq!(
+            transport.try_receive_into(&mut output),
+            Ok(Some(MIN_ETHERNET_FRAME_BYTES))
+        );
+        assert_eq!(&output[..MIN_ETHERNET_FRAME_BYTES], &frame);
+        assert_eq!(transport.rx_recycle, Some(0));
     }
 
     #[test]
@@ -1299,6 +1567,7 @@ mod tests {
 
     #[test]
     fn malformed_rx_completions_are_recycled_before_returning_errors() {
+        let _dma_lock = DMA_TEST_LOCK.lock().unwrap();
         let mut device = initialized_device_for_test();
         for _ in 0..(RX_DESCRIPTOR_COUNT * 2) {
             assert_eq!(
@@ -1417,17 +1686,17 @@ mod tests {
         assert!(assert_probe_markers(&markers).is_err());
     }
 
-    fn device_for_test() -> VirtioNetDevice {
+    fn device_for_test() -> VirtioTransport {
         let function = classify_pci_function(0x0000_1000_1AF4, 0, 0xC001)
             .unwrap()
             .unwrap();
-        VirtioNetDevice::new(
+        VirtioTransport::new(
             function,
             VirtioNetMac::from_bytes([2, 0, 0, 0, 0, 1]).unwrap(),
         )
     }
 
-    fn initialized_device_for_test() -> VirtioNetDevice {
+    fn initialized_device_for_test() -> VirtioTransport {
         let mut device = device_for_test();
         device.queue_size = MAX_QUEUE_SIZE;
         device.rx_queue_initialized = true;
@@ -1435,7 +1704,7 @@ mod tests {
         device.rx_buffers_populated = true;
         device.status_shadow =
             VIRTIO_STATUS_ACKNOWLEDGE | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK;
-        device.initialized = true;
+        device.lifecycle = TransportLifecycle::Operational;
         device
     }
 }
