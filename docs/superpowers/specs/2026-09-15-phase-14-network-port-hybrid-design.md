@@ -56,8 +56,10 @@ This design follows the approved system architecture:
 1. Preserve the current virtio QEMU backend and its deterministic raw-frame
    acceptance as transport evidence.
 2. Separate device mechanics from network protocol meaning.
-3. Encode queue and buffer ownership transitions so descriptors cannot become
-   device-visible before the transport is operational.
+3. Encode queue and buffer ownership transitions so descriptors may become
+   device-visible during spec-compliant setup, while notification and device
+   consumption remain gated by `DRIVER_OK`, and service operations remain
+   gated by `Operational`.
 4. Expose one bounded `NetworkPort` resource through capability-checked,
    copy-in/copy-out operations.
 5. Leave a service boundary that can later host `link-layer`, ARP, IP, and
@@ -209,10 +211,12 @@ Virtio queue rules. It must not notify the device at this stage.
 
 `DriverReady` means `DRIVER_OK` has been set. The configured queues are live;
 the device may now consume buffers that were exposed during setup, and the
-transport may send the initial available-buffer notification. `Operational`
-means that this initial notification has completed and the port may admit
-capability-authorized service operations. Completion consumption is legal only
-after `DRIVER_OK` and follows the used-ring ordering contract below.
+transport may make the initial available-buffer notification decision.
+`Operational` means that post-`DRIVER_OK` activation has completed: the
+transport has made that decision and has notified when required by the queue's
+suppression rules. The port may then admit capability-authorized service
+operations. Completion consumption is legal only after `DRIVER_OK` and follows
+the used-ring ordering contract below.
 
 `Failed` is monotonic until reset has observed device status zero and cleared
 all queue ownership state.
@@ -279,9 +283,9 @@ authorized service
   → kernel copy-in and Ethernet-frame bounds check
   → private virtio-net header + static DMA TX slot
   → descriptor and available-ring population
-  → device-visible barrier and `avail.idx` update
-  → if this is initialization: `DRIVER_OK`, then notification
-  → if this is steady state: notification according to suppression rules
+  → required device-visible ordering
+  → `avail.idx` exposure
+  → notification decision according to suppression rules
   → bounded used-ring completion
   → typed success or terminal transport error
 ```
