@@ -29,6 +29,8 @@ use pythos_shared::object_shell_abi::BootstrapCapabilityBlock;
 pub const SHELL_BOOTSTRAP_USER_PTR: u64 = 0x0000_0000_7000_0000;
 
 pub struct NormalBootSubstrate {
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    pub normal_session: Result<crate::normal_session::PreparedNormalSession, &'static str>,
     /// The active kernel-owned address space normal boot is running under.
     /// Retained (not just its `root_table_phys`) so later normal-boot code can
     /// query or validate it, e.g. via `KernelAddressSpace::validate_active`.
@@ -292,11 +294,13 @@ pub fn initialize_normal_substrate(
     kernel_address_space_options.ahci_mmio = ahci_mmio;
     kernel_address_space_options.sdhci_emmc_mmio = sdhci_emmc_mmio;
     kernel_address_space_options.shell_bootstrap_frame = Some(bootstrap_frame);
+    #[cfg(not(feature = "normal-session"))]
     let kernel_address_space =
         KernelAddressSpace::build(physical_memory, boot_info, kernel_address_space_options)
             .map_err(|_| NormalInitError::Memory)?;
     let supervisor_mappings = [ahci_mmio, sdhci_emmc_mmio];
     diag(boot_info, NormalBootDiagnosticStage::ShellMap);
+    #[cfg(not(feature = "normal-session"))]
     let (shell_address_space, loaded_shell) =
         UserAddressSpace::build_with_user_elf_bootstrap_and_supervisor_mappings(
             physical_memory,
@@ -308,14 +312,35 @@ pub fn initialize_normal_substrate(
             &supervisor_mappings,
         )
         .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    #[cfg(feature = "normal-session")]
+    let (shell_address_space, loaded_shell) =
+        UserAddressSpace::build_with_user_elf_payloads_and_selected_stack(
+            physical_memory,
+            boot_info,
+            &shell_image,
+            shell_manifest.elf(),
+            &[crate::memory::r#virtual::UserPayloadMapping::read_only(
+                SHELL_BOOTSTRAP_USER_PTR,
+                bootstrap_frame,
+                4096,
+            )],
+            &supervisor_mappings,
+            1,
+        )
+        .map_err(|_| NormalInitError::ShellAddressSpace)?;
     if loaded_shell.entry() != shell_image.entry()
         || loaded_shell.segment_count() != shell_image.segment_count()
         || !loaded_shell.bss_zeroed()
     {
         return Err(NormalInitError::ShellAddressSpace);
     }
+    #[cfg(not(feature = "normal-session"))]
     shell_address_space
         .validate_user_elf_entry(shell_image.entry())
+        .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    #[cfg(feature = "normal-session")]
+    shell_address_space
+        .validate_user_elf_entry_with_selected_stack(shell_image.entry(), 1)
         .map_err(|_| NormalInitError::ShellAddressSpace)?;
     shell_address_space
         .validate_user_bootstrap_mapping(SHELL_BOOTSTRAP_USER_PTR)
@@ -329,6 +354,21 @@ pub fn initialize_normal_substrate(
         }
         mapping_index += 1;
     }
+    #[cfg(feature = "normal-session")]
+    let normal_session = crate::normal_session::prepare(boot_info, physical_memory);
+    #[cfg(feature = "normal-session")]
+    if let Ok(normal) = &normal_session {
+        shell_address_space
+            .validate_recovery_isolation(&normal.address_space)
+            .map_err(|_| NormalInitError::ShellAddressSpace)?;
+    }
+    // No allocation is permitted after this final root construction. Both
+    // private user roots, continuation pages and the scratch alias now exist;
+    // normal setup uses that alias rather than a stale allocator/root view.
+    #[cfg(feature = "normal-session")]
+    let kernel_address_space =
+        KernelAddressSpace::build(physical_memory, boot_info, kernel_address_space_options)
+            .map_err(|_| NormalInitError::Memory)?;
     let shell_launch = PreparedShellLaunch {
         address_space: shell_address_space.retain_for_boot(),
         image: shell_image,
@@ -337,7 +377,7 @@ pub fn initialize_normal_substrate(
         program_digest: shell_manifest.elf_digest(),
         bootstrap_user_ptr: SHELL_BOOTSTRAP_USER_PTR,
         bootstrap_kernel_ptr: bootstrap_frame,
-        stack_region: user_stacks::regions()[0],
+        stack_region: user_stacks::regions()[usize::from(cfg!(feature = "normal-session"))],
     };
     #[cfg(feature = "pyth-tig-default")]
     diag(boot_info, NormalBootDiagnosticStage::SessionPkg);
@@ -589,6 +629,8 @@ pub fn initialize_normal_substrate(
     diag(boot_info, NormalBootDiagnosticStage::BlockReady);
 
     Ok(NormalBootSubstrate {
+        #[cfg(feature = "normal-session")]
+        normal_session,
         kernel_address_space,
         block_device,
         shell_launch,

@@ -192,8 +192,7 @@ def build_boot_image(config: BackendConfig) -> None:
         "--target",
         "x86_64-unknown-none",
     ]
-    if config.core_features:
-        core_command += ["--features", ",".join(config.core_features)]
+    core_command += ["--no-default-features", "--features", ",".join(("legacy-shell", *config.core_features))]
     run(core_command)
     build_verified_user_shell()
     build_pyth_graph_artifacts()

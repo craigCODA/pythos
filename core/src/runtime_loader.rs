@@ -194,6 +194,7 @@ impl<'a> NamedProgramPolicy<'a> {
             return Err(RuntimeLoadError::DuplicateProgramPrincipal);
         }
         if manifest.name() != SESSION_RUNTIME_PROGRAM_NAME
+            && manifest.name() != user_program_manifest::NORMAL_SESSION_PROGRAM_NAME
             && manifest.principal_id() == SESSION_RUNTIME_PRINCIPAL_ID
         {
             return Err(RuntimeLoadError::DuplicateProgramPrincipal);
@@ -228,7 +229,8 @@ fn enforce_kernel_identity_policy(
     {
         return Err(RuntimeLoadError::BadUserElfPayload);
     }
-    if manifest.name() == SESSION_RUNTIME_PROGRAM_NAME
+    if (manifest.name() == SESSION_RUNTIME_PROGRAM_NAME
+        || manifest.name() == user_program_manifest::NORMAL_SESSION_PROGRAM_NAME)
         && manifest.principal_id() != SESSION_RUNTIME_PRINCIPAL_ID
     {
         return Err(RuntimeLoadError::BadUserElfPayload);
@@ -534,6 +536,40 @@ mod tests {
 
         assert_eq!(loaded.name(), SESSION_RUNTIME_PROGRAM_NAME);
         assert_eq!(loaded.principal_id(), SESSION_RUNTIME_PRINCIPAL_ID);
+    }
+
+    #[test]
+    fn normal_session_named_program_admits_trusted_identity_and_rejects_shared_principal_collision()
+    {
+        let name = b"normal-session.elf";
+        let normal = build_named_user_program(name, SESSION_RUNTIME_PRINCIPAL_ID, b"\x7FELFnormal");
+        let record_type = pythos_shared::init_bundle::TYPE_NAMED_USER_ELF;
+        let bundle = build_init_pak(&build_inner_bundle(&[(record_type, normal.as_slice())]));
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, name)
+                .unwrap()
+                .principal_id(),
+            SESSION_RUNTIME_PRINCIPAL_ID
+        );
+        let probe = build_named_user_program(
+            SESSION_RUNTIME_PROGRAM_NAME,
+            SESSION_RUNTIME_PRINCIPAL_ID,
+            b"\x7FELFprobe",
+        );
+        let bundle = build_init_pak(&build_inner_bundle(&[
+            (record_type, normal.as_slice()),
+            (record_type, probe.as_slice()),
+        ]));
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, name),
+            Err(RuntimeLoadError::DuplicateProgramPrincipal)
+        );
+        let wrong = build_named_user_program(name, INTRUDER_PRINCIPAL_ID, b"\x7FELFwrong");
+        let bundle = build_init_pak(&build_inner_bundle(&[(record_type, wrong.as_slice())]));
+        assert_eq!(
+            validate_named_user_program_payload_bytes(&bundle, name),
+            Err(RuntimeLoadError::BadUserElfPayload)
+        );
     }
 
     #[test]

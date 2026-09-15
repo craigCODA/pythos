@@ -452,7 +452,7 @@ impl UserAddressSpace {
         image: &user_elf::UserElfImage,
         elf_bytes: &[u8],
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
-        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, &[], &[])
+        Self::build_with_user_elf_inner(allocator, boot_info, image, elf_bytes, &[], &[], None)
     }
 
     pub fn build_with_user_elf_and_bootstrap(
@@ -475,6 +475,7 @@ impl UserAddressSpace {
             elf_bytes,
             &payload_mappings,
             &[],
+            None,
         )
     }
 
@@ -499,6 +500,7 @@ impl UserAddressSpace {
             elf_bytes,
             &payload_mappings,
             supervisor_mappings,
+            None,
         )
     }
 
@@ -517,7 +519,31 @@ impl UserAddressSpace {
             elf_bytes,
             user_payload_mappings,
             supervisor_mappings,
+            None,
         )
+    }
+
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    pub fn build_with_user_elf_payloads_and_selected_stack(
+        allocator: &mut PhysicalMemory,
+        boot_info: &PythBootInfo,
+        image: &user_elf::UserElfImage,
+        elf_bytes: &[u8],
+        user_payload_mappings: &[UserPayloadMapping],
+        supervisor_mappings: &[Option<(u64, u64, u64)>],
+        selected_stack: usize,
+    ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
+        let result = Self::build_with_user_elf_inner(
+            allocator,
+            boot_info,
+            image,
+            elf_bytes,
+            user_payload_mappings,
+            supervisor_mappings,
+            Some(selected_stack),
+        )?;
+        result.0.validate_selected_stack(selected_stack)?;
+        Ok(result)
     }
 
     fn build_with_user_elf_inner(
@@ -527,12 +553,20 @@ impl UserAddressSpace {
         elf_bytes: &[u8],
         user_payload_mappings: &[UserPayloadMapping],
         supervisor_mappings: &[Option<(u64, u64, u64)>],
+        selected_stack: Option<usize>,
     ) -> Result<(Self, user_elf::LoadedUserElf), VmError> {
         let mut tables = PageTableBuilder::new(allocator)?;
         let mut retained_user_frames = [0u64; MAX_RETAINED_USER_FRAMES];
         let mut retained_user_frame_count = 0usize;
         map_kernel_segments(&mut tables)?;
-        map_user_stack_pages(&mut tables)?;
+        crate::memory::user_root_policy::for_selected_user_stack(selected_stack, |region| {
+            tables.map_user_translated_range(
+                region.stack_start,
+                region.stack_len,
+                PTE_WRITE | PTE_NO_EXECUTE,
+            )
+        })
+        .map_err(|_| VmError::UserStackGuardViolation)?;
         map_bootstrap_stack(&mut tables, boot_info)?;
         map_evidence_log_supervisor_mapping(&mut tables, boot_info)?;
         map_supervisor_mappings(&mut tables, supervisor_mappings)?;
@@ -627,10 +661,24 @@ impl UserAddressSpace {
     }
 
     pub fn validate_user_elf_entry(&self, entry: u64) -> Result<(), VmError> {
+        self.validate_user_stack_protections()?;
+        self.validate_user_elf_code(entry)
+    }
+
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    pub fn validate_user_elf_entry_with_selected_stack(
+        &self,
+        entry: u64,
+        selected: usize,
+    ) -> Result<(), VmError> {
+        self.validate_selected_stack(selected)?;
+        self.validate_user_elf_code(entry)
+    }
+
+    fn validate_user_elf_code(&self, entry: u64) -> Result<(), VmError> {
         if !user_can_access_from_root(self.root_table_phys, entry)? {
             return Err(VmError::UserAccessViolation);
         }
-        self.validate_user_stack_protections()?;
         if user_can_access_from_root(
             self.root_table_phys,
             symbol_addr(&raw const __pythcore_text_start),
@@ -648,6 +696,48 @@ impl UserAddressSpace {
 
     pub fn validate_user_bootstrap_mapping(&self, bootstrap_user_ptr: u64) -> Result<(), VmError> {
         self.validate_user_payload_mapping(bootstrap_user_ptr, false)
+    }
+
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    fn validate_selected_stack(&self, selected: usize) -> Result<(), VmError> {
+        for (index, region) in user_stacks::regions().into_iter().enumerate() {
+            if user_can_access_from_root(self.root_table_phys, region.guard_start)? {
+                return Err(VmError::UserStackGuardViolation);
+            }
+            for offset in (0..region.stack_len).step_by(PAGE_SIZE as usize) {
+                let address = region.stack_start + offset;
+                if index == selected {
+                    self.validate_user_payload_mapping(address, true)?;
+                } else if user_can_access_from_root(self.root_table_phys, address)? {
+                    return Err(VmError::UserAccessViolation);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The selected builder is the only source of user mappings: selected
+    /// static stack, privately allocated ELF frames and these payload frames.
+    /// Compare backing identities, allowing two private ELFs to reuse VAs.
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    pub fn validate_recovery_isolation(&self, failed: &Self) -> Result<(), VmError> {
+        self.validate_selected_stack(1)?;
+        failed.validate_selected_stack(0)?;
+        let own = &self.retained_user_frames[..self.retained_user_frame_count];
+        let excluded = &failed.retained_user_frames[..failed.retained_user_frame_count];
+        crate::memory::user_root_policy::validate_disjoint_user_frames(own, excluded)
+            .map_err(|_| VmError::UserAccessViolation)?;
+        validate_no_user_frame_aliases(self.root_table_phys, 4, excluded)?;
+        let failed_stack = user_stacks::regions()[0];
+        for offset in (0..failed_stack.stack_len).step_by(PAGE_SIZE as usize) {
+            let physical =
+                translate_from_root(failed.root_table_phys, failed_stack.stack_start + offset)?;
+            if own.contains(&physical) {
+                return Err(VmError::UserAccessViolation);
+            }
+            validate_no_user_frame_aliases(self.root_table_phys, 4, &[physical])?;
+        }
+        Ok(())
     }
 
     pub fn validate_user_payload_mapping(
@@ -677,6 +767,28 @@ impl UserAddressSpace {
             return Err(VmError::UnmappedSource);
         }
         if user_can_access_from_root(self.root_table_phys, virt)? {
+            return Err(VmError::UserAccessViolation);
+        }
+        Ok(())
+    }
+
+    #[cfg(all(feature = "normal-session", not(feature = "verify")))]
+    pub(crate) fn validate_supervisor_writable_nx_mapping(
+        &self,
+        virt: u64,
+        phys: u64,
+    ) -> Result<(), VmError> {
+        self.validate_supervisor_mapping(virt, phys)?;
+        let mut table = self.root_table_phys;
+        for shift in [39, 30, 21] {
+            let entry = read_entry(table, table_index(virt, shift))?;
+            if entry & PTE_PRESENT == 0 || entry & PTE_HUGE != 0 {
+                return Err(VmError::UnmappedSource);
+            }
+            table = entry & ADDR_MASK;
+        }
+        let leaf = read_entry(table, table_index(virt, 12))?;
+        if leaf & (PTE_WRITE | PTE_NO_EXECUTE | PTE_USER) != PTE_WRITE | PTE_NO_EXECUTE {
             return Err(VmError::UserAccessViolation);
         }
         Ok(())
@@ -1362,6 +1474,33 @@ fn user_leaf_entry_from_root(root_table_phys: u64, virt: u64) -> Result<u64, VmE
 
 fn present_user(entry: u64) -> bool {
     entry & PTE_PRESENT != 0 && entry & PTE_USER != 0
+}
+
+#[cfg(all(feature = "normal-session", not(feature = "verify")))]
+fn validate_no_user_frame_aliases(table: u64, level: u32, excluded: &[u64]) -> Result<(), VmError> {
+    // Walk the actual hierarchy before the loader's broad mapping is removed.
+    // Effective USER must hold at every level. There are at most four levels
+    // and MAX_TABLE_FRAMES tables per constructed root; no allocations occur.
+    for index in 0..ENTRY_COUNT {
+        let entry = read_entry(table, index)?;
+        if !present_user(entry) {
+            continue;
+        }
+        if level == 1 || entry & PTE_HUGE != 0 {
+            let start = entry & ADDR_MASK;
+            let span = 1u64 << (12 + 9 * (level - 1));
+            let end = start.checked_add(span).ok_or(VmError::RangeOverflow)?;
+            if excluded
+                .iter()
+                .any(|physical| *physical >= start && *physical < end)
+            {
+                return Err(VmError::UserAccessViolation);
+            }
+        } else {
+            validate_no_user_frame_aliases(entry & ADDR_MASK, level - 1, excluded)?;
+        }
+    }
+    Ok(())
 }
 
 fn allocate_zeroed_frame(allocator: &mut PhysicalMemory) -> Result<u64, VmError> {

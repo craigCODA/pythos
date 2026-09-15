@@ -21,17 +21,31 @@ pub const RECOVERY_SHELL_ENTER_MARKER: &str = "PYTHOS:PYTHTIG:RECOVERY_SHELL_ENT
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NormalProgram {
+    NormalSession,
     PythServices,
     LegacyShell,
 }
 
-pub const NORMAL_PROGRAM: NormalProgram = normal_program_for_features(
+pub const NORMAL_PROGRAM: NormalProgram = normal_program_for_profile(
+    cfg!(all(feature = "normal-session", not(feature = "verify"))),
     cfg!(feature = "legacy-shell"),
     cfg!(feature = "pyth-tig-default"),
 );
 
 pub const fn normal_program() -> NormalProgram {
     NORMAL_PROGRAM
+}
+
+pub const fn normal_program_for_profile(
+    normal_session: bool,
+    legacy_shell: bool,
+    pyth_tig_default: bool,
+) -> NormalProgram {
+    if normal_session {
+        NormalProgram::NormalSession
+    } else {
+        normal_program_for_features(legacy_shell, pyth_tig_default)
+    }
 }
 
 pub const fn normal_program_for_features(
@@ -178,6 +192,22 @@ impl PythServiceSupervisor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn normal_profile_selects_retained_session_without_changing_explicit_compatibility() {
+        assert_eq!(
+            normal_program_for_profile(true, false, false),
+            NormalProgram::NormalSession
+        );
+        assert_eq!(
+            normal_program_for_profile(false, true, false),
+            NormalProgram::LegacyShell
+        );
+        assert_eq!(
+            normal_program_for_profile(false, false, true),
+            NormalProgram::PythServices
+        );
+    }
     use pythos_shared::{
         pyth_runtime_abi::{GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GRAPH_EXIT_RUNTIME_ERROR},
         session_runtime_lifecycle::SessionGraphLifecycleAction,

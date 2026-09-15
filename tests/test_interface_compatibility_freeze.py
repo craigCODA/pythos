@@ -174,7 +174,8 @@ class InterfaceCompatibilityFreezeTest(unittest.TestCase):
     def test_general_syscall_numbers_proof_path_and_consumers_are_frozen(self) -> None:
         syscall = source("core/src/syscall.rs")
         self.assert_const_decl(syscall, "SYSCALL_ABI_MAJOR", "u16", "1", "syscall ABI")
-        self.assert_const_decl(syscall, "SYSCALL_ABI_MINOR", "u16", "1", "syscall ABI")
+        # ADR 0093 introduces the additive, non-consuming wait in exact ABI 1.2.
+        self.assert_const_decl(syscall, "SYSCALL_ABI_MINOR", "u16", "2", "syscall ABI")
         self.assert_const_decl(
             syscall, "SYSCALL_ABI_INFO", "u64", "0x5059_0000", "syscall ABI"
         )

@@ -13,6 +13,17 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 13.5 Boundary
 
+The owner has separately invoked Slice 5 locally and approved normal-session
+waiting, lifetime and recovery-shell direction. The written
+[ADR 0093 contract](decisions/0093-normal-session-wait-recovery.md) is implemented
+and locally QEMU-accepted on its unmerged branch, tracked in the
+[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
+Final controller whole-branch review remains. The Slice 3-4 PR branch remains
+unchanged; no remote writes, publication, physical acceptance, or later-phase
+implementation are claimed.
+
+The accepted predecessor boundary is recorded below:
+
 Phase 13.5 Slice 1 and Slice 2 are accepted in bounded, opt-in QEMU profiles.
 ADR 0090 records exclusive capability-gated normalized-input delivery to one
 ring-3 consumer. ADR 0091 records one separately named retained session

@@ -23,14 +23,16 @@ use crate::architecture::x86_64::interrupts;
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 use crate::input_drivers::PhysicalKeyboardDecoder;
 #[cfg(any(
     test,
     not(any(
         feature = "session-input-bridge-probe",
-        feature = "session-runtime-probe"
+        feature = "session-runtime-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))
 ))]
 use crate::input_drivers::scancode_to_keycode;
@@ -213,7 +215,8 @@ pub fn handle_keyboard_interrupt() {
     let scancode = inb(PS2_DATA_PORT);
     #[cfg(any(
         feature = "session-input-bridge-probe",
-        feature = "session-runtime-probe"
+        feature = "session-runtime-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))]
     {
         // SAFETY:
@@ -230,7 +233,8 @@ pub fn handle_keyboard_interrupt() {
     }
     #[cfg(not(any(
         feature = "session-input-bridge-probe",
-        feature = "session-runtime-probe"
+        feature = "session-runtime-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     )))]
     if let Some(key) = scancode_to_keycode(scancode) {
         let _ = session_input::publish(RawInputEvent::KeyPressed { scancode, key });
@@ -240,7 +244,8 @@ pub fn handle_keyboard_interrupt() {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
     if let Some(event) = decoder.feed_raw_byte(byte) {
@@ -251,7 +256,8 @@ fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
 #[cfg(any(
     test,
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 const fn session_probe_keyboard_decoder() -> PhysicalKeyboardDecoder {
     // `initialize` clears controller translation before unmasking IRQ1, so
@@ -261,7 +267,8 @@ const fn session_probe_keyboard_decoder() -> PhysicalKeyboardDecoder {
 
 #[cfg(any(
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
 
@@ -276,13 +283,15 @@ struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
 // 8. Violation: concurrent mutation could corrupt scan-prefix state.
 #[cfg(any(
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 unsafe impl Sync for KeyboardDecoder {}
 
 #[cfg(any(
     feature = "session-input-bridge-probe",
-    feature = "session-runtime-probe"
+    feature = "session-runtime-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 static KEYBOARD_DECODER: KeyboardDecoder =
     KeyboardDecoder(UnsafeCell::new(session_probe_keyboard_decoder()));
@@ -297,14 +306,16 @@ pub fn handle_mouse_interrupt() {
     // of the first-real-IRQ evidence used by their ordered transcripts.
     #[cfg(any(
         feature = "session-input-bridge-probe",
-        feature = "session-runtime-probe"
+        feature = "session-runtime-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     ))]
     if byte != MOUSE_ACK && !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
         crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");
     }
     #[cfg(not(any(
         feature = "session-input-bridge-probe",
-        feature = "session-runtime-probe"
+        feature = "session-runtime-probe",
+        all(feature = "normal-session", not(feature = "verify"))
     )))]
     if !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
         crate::serial::write_line("PYTHOS:CORE:PS2:MOUSE_IRQ_FIRED");

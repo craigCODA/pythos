@@ -40,7 +40,11 @@ use crate::retained_services::{self, RetainedServiceError};
 use crate::serial;
 use crate::service_identity::{ServiceId, ServiceIdentityTable};
 use crate::session_input::{self, SessionInputError};
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 use crate::session_presentation::{self, PresentationError};
 #[cfg(any(
     test,
@@ -72,6 +76,9 @@ use core::mem::{align_of, size_of};
 ))]
 use core::slice;
 use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use pythos_shared::normal_session_abi::{
+    SESSION_WAIT_CONSOLE_READY, SESSION_WAIT_INPUT_READY, SYSCALL_SESSION_WAIT,
+};
 #[cfg(any(
     test,
     all(
@@ -133,7 +140,11 @@ use pythos_shared::session_input_abi::{
 };
 #[cfg(any(test, feature = "session-runtime-probe"))]
 use pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID;
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 use pythos_shared::session_viewing_abi::{
     SESSION_VIEWING_RESOURCE_ID, SYSCALL_SESSION_VIEWING_PRESENT,
 };
@@ -147,7 +158,7 @@ use pythos_shared::task_abi::{
 };
 
 pub const SYSCALL_ABI_MAJOR: u16 = 1;
-pub const SYSCALL_ABI_MINOR: u16 = 1;
+pub const SYSCALL_ABI_MINOR: u16 = 2;
 pub const SYSCALL_ABI_INFO: u64 = 0x5059_0000;
 pub const SYSCALL_SYSTEM_LOG_PROOF: u64 = 0x5059_0001;
 
@@ -246,7 +257,11 @@ pub enum SyscallError {
     Permission(PermissionError),
     ProcessContext(ProcessContextError),
     SessionInput(SessionInputError),
-    #[cfg(any(test, feature = "session-viewing-probe"))]
+    #[cfg(any(
+        test,
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
+    ))]
     SessionPresentation(PresentationError),
     UserCopy(UserCopyError),
     #[cfg(any(
@@ -300,7 +315,12 @@ enum SyscallDispatchKind {
     PythGraphExit,
     PackageContext,
     SessionInputTryRead,
-    #[cfg(any(test, feature = "session-viewing-probe"))]
+    SessionWait,
+    #[cfg(any(
+        test,
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
+    ))]
     SessionViewingPresent,
 }
 
@@ -387,7 +407,11 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::SessionInputTryRead,
     },
-    #[cfg(any(test, feature = "session-viewing-probe"))]
+    #[cfg(any(
+        test,
+        feature = "session-viewing-probe",
+        all(feature = "normal-session", not(feature = "verify"))
+    ))]
     SyscallEntry {
         number: SYSCALL_SESSION_VIEWING_PRESENT,
         name: "SYSCALL_SESSION_VIEWING_PRESENT",
@@ -395,6 +419,14 @@ const SYSCALL_TABLE: &[SyscallEntry] = &[
         introduced_minor: 1,
         proof_only: false,
         dispatch_kind: SyscallDispatchKind::SessionViewingPresent,
+    },
+    SyscallEntry {
+        number: SYSCALL_SESSION_WAIT,
+        name: "SYSCALL_SESSION_WAIT",
+        introduced_major: pythos_shared::normal_session_abi::SYSCALL_ABI_MAJOR,
+        introduced_minor: pythos_shared::normal_session_abi::SYSCALL_ABI_MINOR,
+        proof_only: false,
+        dispatch_kind: SyscallDispatchKind::SessionWait,
     },
     SyscallEntry {
         number: SYSCALL_PYTH_GRAPH_LOG,
@@ -673,7 +705,12 @@ fn dispatch(args: SyscallArgs) -> Result<u64, SyscallError> {
         SyscallDispatchKind::PythGraphExit => dispatch_pyth_graph_exit(args),
         SyscallDispatchKind::PackageContext => dispatch_package_context(args),
         SyscallDispatchKind::SessionInputTryRead => dispatch_session_input_try_read(args),
-        #[cfg(any(test, feature = "session-viewing-probe"))]
+        SyscallDispatchKind::SessionWait => dispatch_session_wait(args),
+        #[cfg(any(
+            test,
+            feature = "session-viewing-probe",
+            all(feature = "normal-session", not(feature = "verify"))
+        ))]
         SyscallDispatchKind::SessionViewingPresent => with_syscall_capabilities(|table| {
             dispatch_session_viewing_present_with_table(args, table, session_presentation::present)
         }),
@@ -893,7 +930,11 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     }
 }
 
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 fn dispatch_session_viewing_present_with_table(
     args: SyscallArgs,
     capabilities: &CapabilityTable,
@@ -957,6 +998,273 @@ fn dispatch_session_input_try_read(args: SyscallArgs) -> Result<u64, SyscallErro
     with_syscall_capabilities(|table| {
         dispatch_session_input_try_read_with_table(args, table, session_input::try_read_session)
     })
+}
+
+fn session_wait_with(
+    args: SyscallArgs,
+    mut caller: impl FnMut() -> Result<ActiveUserProcess, SyscallError>,
+    mut validate: impl FnMut(ActiveUserProcess) -> Result<(), SyscallError>,
+    mut input_ready: impl FnMut(ServiceId) -> Result<bool, SessionInputError>,
+    mut console_ready: impl FnMut() -> bool,
+    sleep: impl FnOnce(),
+) -> Result<u64, SyscallError> {
+    if args.arg2 != 0 || args.arg3 != 0 || args.arg4 != 0 {
+        return Err(SyscallError::BadResult);
+    }
+    let identity = caller()?;
+    validate(identity)?;
+    let mut ready = || -> Result<u64, SyscallError> {
+        // Owner validation must run even when console input is pending.
+        let input = input_ready(identity.service_id())?;
+        let console = console_ready();
+        Ok(if input { SESSION_WAIT_INPUT_READY } else { 0 }
+            | if console {
+                SESSION_WAIT_CONSOLE_READY
+            } else {
+                0
+            })
+    };
+    let pending = ready()?;
+    if pending != 0 {
+        return Ok(pending);
+    }
+    // Only copied identity/scalars and callbacks survive. In production IF is
+    // still clear from FMASK; validation's table borrow has already ended.
+    sleep();
+    if caller()? != identity {
+        return Err(SyscallError::BadResult);
+    }
+    validate(identity)?;
+    ready()
+}
+
+fn dispatch_session_wait(args: SyscallArgs) -> Result<u64, SyscallError> {
+    session_wait_with(
+        args,
+        || process_context::current_caller().map_err(SyscallError::from),
+        |caller| {
+            with_syscall_capabilities(|table| validate_session_wait_with_table(table, caller, args))
+        },
+        session_input::session_ready,
+        || {
+            #[cfg(not(test))]
+            {
+                serial::com2_receive_ready()
+            }
+            #[cfg(test)]
+            {
+                false
+            }
+        },
+        || {
+            #[cfg(not(test))]
+            // SAFETY: FMASK cleared IF; both capability borrows ended, readiness
+            // used no queue slot, and the single-core retained root maps the
+            // syscall stack/IRQ/TSS/continuation. Normal boot does not arm proof
+            // scheduling. No borrowed state or user pointer crosses this call.
+            unsafe {
+                crate::architecture::x86_64::interrupts::enable_halt_disable();
+            }
+        },
+    )
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+#[derive(Debug)]
+pub struct NormalSessionGrants {
+    holder: ServiceId,
+    handles: [PackedCapability; 4],
+    owned: [bool; 4],
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+fn grant_normal_session_capabilities_with_table(
+    table: &mut CapabilityTable,
+    process: ActiveUserProcess,
+    bind: impl FnOnce(ServiceId) -> Result<(), SessionInputError>,
+) -> Result<NormalSessionGrants, SyscallError> {
+    if process.principal_id() != pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID
+    {
+        return Err(SyscallError::Capability(CapabilityError::WrongHolder));
+    }
+    let requests = [
+        (
+            CONSOLE_COM2_RESOURCE,
+            RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+        ),
+        (
+            ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+            RightsMask::new(RightsMask::INPUT),
+        ),
+        (
+            ResourceId::new(pythos_shared::session_runtime_abi::SESSION_COMMAND_RESOURCE_ID),
+            RightsMask::new(RightsMask::READ | RightsMask::APPEND),
+        ),
+        (
+            ResourceId::new(pythos_shared::session_viewing_abi::SESSION_VIEWING_RESOURCE_ID),
+            RightsMask::new(RightsMask::SEND),
+        ),
+    ];
+    let mut grants = NormalSessionGrants {
+        holder: process.service_id(),
+        handles: [PackedCapability::from_raw(0); 4],
+        owned: [false; 4],
+    };
+    let acquired = (|| {
+        for (index, (resource, rights)) in requests.into_iter().enumerate() {
+            let grant = table.grant_with_provenance(process.service_id(), resource, rights)?;
+            if !grant.is_created() {
+                return Err(SyscallError::Capability(CapabilityError::InvalidHandle));
+            }
+            grants.handles[index] = pack_syscall_capability(grant.handle());
+            grants.owned[index] = true;
+        }
+        bind(process.service_id()).map_err(SyscallError::from)
+    })();
+    if let Err(error) = acquired {
+        // No borrowed table/IRQ publication can replace these fresh grants.
+        // Still attempt all owned handles if a future table change breaks that.
+        revoke_normal_session_capabilities_with_table(table, &mut grants)?;
+        return Err(error);
+    }
+    Ok(grants)
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+impl NormalSessionGrants {
+    pub const fn console(&self) -> PackedCapability {
+        self.handles[0]
+    }
+    pub const fn input(&self) -> PackedCapability {
+        self.handles[1]
+    }
+    pub const fn command(&self) -> PackedCapability {
+        self.handles[2]
+    }
+    pub const fn presentation(&self) -> PackedCapability {
+        self.handles[3]
+    }
+    pub fn is_revoked(&self) -> bool {
+        self.owned.iter().all(|owned| !owned)
+    }
+}
+
+/// Acquire four fresh grants and bind input last, before PS/2 publication.
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+pub fn grant_normal_session_capabilities(
+    process: ActiveUserProcess,
+) -> Result<NormalSessionGrants, SyscallError> {
+    with_syscall_capabilities(|table| {
+        grant_normal_session_capabilities_with_table(
+            table,
+            process,
+            session_input::bind_session_consumer_quiescent,
+        )
+    })
+}
+
+/// Revoke precisely the supplied slot/generation; never revoke a replacement.
+#[cfg(test)]
+pub fn revoke_syscall_capability(capability: PackedCapability) -> Result<(), SyscallError> {
+    with_syscall_capabilities(|table| revoke_syscall_capability_with_table(table, capability))
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+fn revoke_syscall_capability_with_table(
+    table: &mut CapabilityTable,
+    capability: PackedCapability,
+) -> Result<(), SyscallError> {
+    table
+        .revoke(unpack_syscall_capability(capability))
+        .map_err(SyscallError::from)
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+pub fn revoke_normal_session_capabilities(
+    grants: &mut NormalSessionGrants,
+) -> Result<(), SyscallError> {
+    with_syscall_capabilities(|table| revoke_normal_session_capabilities_with_table(table, grants))
+}
+
+#[cfg(any(test, all(feature = "normal-session", not(feature = "verify"))))]
+fn revoke_normal_session_capabilities_with_table(
+    table: &mut CapabilityTable,
+    grants: &mut NormalSessionGrants,
+) -> Result<(), SyscallError> {
+    let mut failure = None;
+    for (capability, owned) in grants.handles.iter().zip(grants.owned.iter_mut()) {
+        if *owned {
+            match revoke_syscall_capability_with_table(table, *capability) {
+                Ok(()) => *owned = false,
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+            }
+        }
+    }
+    if let Some(error) = failure {
+        return Err(error);
+    }
+    // Check the actual table, not only the ownership ledger: each old exact
+    // generation must now be rejected before holder/resource/rights checks.
+    for capability in grants.handles {
+        if !matches!(
+            table.validate(
+                grants.holder,
+                unpack_syscall_capability(capability),
+                CONSOLE_COM2_RESOURCE,
+                RightsMask::new(RightsMask::READ)
+            ),
+            Err(CapabilityError::InvalidHandle | CapabilityError::Revoked)
+        ) {
+            return Err(SyscallError::BadResult);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) mod normal_grant_test_support {
+    use super::*;
+    pub(crate) fn grant(
+        table: &mut CapabilityTable,
+        process: ActiveUserProcess,
+        queue: &session_input::SessionInputQueue,
+    ) -> Result<NormalSessionGrants, SyscallError> {
+        grant_normal_session_capabilities_with_table(table, process, |holder| {
+            queue.bind_session_consumer_quiescent(holder)
+        })
+    }
+    pub(crate) fn revoke(
+        table: &mut CapabilityTable,
+        grants: &mut NormalSessionGrants,
+    ) -> Result<(), SyscallError> {
+        revoke_normal_session_capabilities_with_table(table, grants)
+    }
+}
+
+fn validate_session_wait_with_table(
+    table: &CapabilityTable,
+    caller: ActiveUserProcess,
+    args: SyscallArgs,
+) -> Result<(), SyscallError> {
+    if caller.principal_id() != pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID {
+        return Err(SyscallError::Capability(CapabilityError::WrongHolder));
+    }
+    validate_syscall_capability_with_table(
+        table,
+        caller,
+        PackedCapability::from_raw(args.arg0),
+        ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+        RightsMask::new(RightsMask::INPUT),
+    )?;
+    validate_syscall_capability_with_table(
+        table,
+        caller,
+        PackedCapability::from_raw(args.arg1),
+        CONSOLE_COM2_RESOURCE,
+        RightsMask::new(RightsMask::READ),
+    )
 }
 
 fn dispatch_session_input_try_read_with_table(
@@ -2773,7 +3081,7 @@ pub fn run_boundary_capability_self_test() -> Result<BoundaryCapabilityProof, Sy
 }
 
 pub fn run_general_abi_self_test() -> Result<GeneralSyscallAbiProof, SyscallError> {
-    if SYSCALL_ABI_MAJOR != 1 || SYSCALL_ABI_MINOR != 1 {
+    if SYSCALL_ABI_MAJOR != 1 || SYSCALL_ABI_MINOR != 2 {
         return Err(SyscallError::BadResult);
     }
     if validate_syscall_table(SYSCALL_TABLE).is_err() {
@@ -2936,6 +3244,512 @@ mod tests {
     static EXPECTED_SYSCALL_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
+    fn session_wait_validates_before_and_after_one_non_consuming_sleep() {
+        use crate::input_drivers::RawInputEvent;
+        use crate::session_input::SessionInputQueue;
+        use core::cell::{Cell, RefCell};
+        for scenario in 0..14 {
+            let process = ActiveUserProcess::new(
+                ServiceId::from_raw(7),
+                pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+                1,
+            );
+            let caller = Cell::new(Some(process));
+            let table = RefCell::new(CapabilityTable::new());
+            let input = table
+                .borrow_mut()
+                .grant(
+                    process.service_id(),
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                    RightsMask::new(RightsMask::INPUT),
+                )
+                .unwrap();
+            let console = table
+                .borrow_mut()
+                .grant(
+                    process.service_id(),
+                    CONSOLE_COM2_RESOURCE,
+                    RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+                )
+                .unwrap();
+            let args = SyscallArgs {
+                number: SYSCALL_SESSION_WAIT,
+                arg0: pack_syscall_capability(input).raw(),
+                arg1: pack_syscall_capability(console).raw(),
+                arg2: 0,
+                arg3: 0,
+                arg4: 0,
+            };
+            let queue = SessionInputQueue::new();
+            if scenario != 9 {
+                queue
+                    .bind_session_consumer_quiescent(if scenario == 10 {
+                        ServiceId::from_raw(8)
+                    } else {
+                        process.service_id()
+                    })
+                    .unwrap();
+            }
+            let event = RawInputEvent::MouseMoved { dx: 3, dy: -2 };
+            if matches!(scenario, 1 | 3) {
+                queue.publish(event);
+            }
+            let console_ready = Cell::new(matches!(scenario, 2 | 3 | 9 | 10));
+            let sleeps = Cell::new(0);
+            let result = session_wait_with(
+                args,
+                || caller.get().ok_or(SyscallError::BadResult),
+                |current| validate_session_wait_with_table(&table.borrow(), current, args),
+                |holder| queue.session_ready(holder),
+                || console_ready.get(),
+                || {
+                    sleeps.set(sleeps.get() + 1);
+                    // This mutable borrow must succeed: validation cannot retain a borrow.
+                    let mut capabilities = table.borrow_mut();
+                    match scenario {
+                        4 => {
+                            queue.publish(event);
+                        }
+                        5 => {
+                            capabilities.revoke(input).unwrap();
+                            queue.publish(event);
+                        }
+                        6 => {
+                            capabilities.revoke(console).unwrap();
+                            queue.publish(event);
+                        }
+                        7 => {
+                            caller.set(None);
+                            queue.publish(event);
+                        }
+                        8 => {
+                            caller.set(Some(ActiveUserProcess::new(
+                                process.service_id(),
+                                process.principal_id(),
+                                2,
+                            )));
+                            queue.publish(event);
+                        }
+                        11 => console_ready.set(true),
+                        12 => {
+                            console_ready.set(true);
+                            queue.publish(event);
+                        }
+                        13 => {
+                            let mut map = UserCopyMap::new();
+                            map.add_mapping(0x7200_2000, 4096, true, true).unwrap();
+                            caller.set(Some(process.with_copy_map(map)));
+                            queue.publish(event);
+                        }
+                        _ => {}
+                    }
+                },
+            );
+            if matches!(scenario, 5..=10 | 13) {
+                assert!(result.is_err(), "scenario {scenario}");
+            } else {
+                assert_eq!(
+                    result,
+                    Ok(match scenario {
+                        1 | 4 => 1,
+                        2 | 11 => 2,
+                        3 | 12 => 3,
+                        _ => 0,
+                    }),
+                    "scenario {scenario}"
+                );
+            }
+            assert_eq!(
+                sleeps.get(),
+                if matches!(scenario, 1..=3 | 9 | 10) {
+                    0
+                } else {
+                    1
+                }
+            );
+            if matches!(scenario, 1 | 3..=8 | 12 | 13) {
+                let delivered = queue
+                    .try_read_session(process.service_id())
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    (delivered.sequence, delivered.value0, delivered.value1),
+                    (0, 3, -2)
+                );
+                assert_eq!(queue.try_read_session(process.service_id()), Ok(None));
+            }
+        }
+    }
+
+    #[test]
+    fn session_wait_denials_do_not_sleep_or_consume_pending_data() {
+        use core::cell::Cell;
+        for invalid in 0..15 {
+            let mut table = CapabilityTable::new();
+            let process = ActiveUserProcess::new(
+                ServiceId::from_raw(7),
+                pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+                1,
+            );
+            let input = table
+                .grant(
+                    if invalid == 4 {
+                        ServiceId::from_raw(8)
+                    } else {
+                        process.service_id()
+                    },
+                    if invalid == 5 {
+                        CONSOLE_COM2_RESOURCE
+                    } else {
+                        ResourceId::new(SESSION_INPUT_RESOURCE_ID)
+                    },
+                    RightsMask::new(if invalid == 6 {
+                        RightsMask::READ
+                    } else {
+                        RightsMask::INPUT
+                    }),
+                )
+                .unwrap();
+            let console = table
+                .grant(
+                    if invalid == 10 {
+                        ServiceId::from_raw(8)
+                    } else {
+                        process.service_id()
+                    },
+                    if invalid == 11 {
+                        ResourceId::new(99)
+                    } else {
+                        CONSOLE_COM2_RESOURCE
+                    },
+                    RightsMask::new(if invalid == 12 {
+                        RightsMask::WRITE
+                    } else {
+                        RightsMask::READ
+                    }),
+                )
+                .unwrap();
+            let mut args = SyscallArgs {
+                number: SYSCALL_SESSION_WAIT,
+                arg0: pack_syscall_capability(input).raw(),
+                arg1: pack_syscall_capability(console).raw(),
+                arg2: 0,
+                arg3: 0,
+                arg4: 0,
+            };
+            match invalid {
+                0 => args.arg2 = 1,
+                1 => args.arg3 = 1,
+                2 => args.arg4 = 1,
+                3 => args.arg0 = PackedCapability::from_parts(input.slot(), 99).raw(),
+                7 => args.arg0 = PackedCapability::from_parts(999, 1).raw(),
+                8 => args.arg1 = PackedCapability::from_parts(console.slot(), 99).raw(),
+                9 => args.arg1 = PackedCapability::from_parts(999, 1).raw(),
+                14 => {
+                    table.revoke(input).unwrap();
+                }
+                _ => {}
+            }
+            let caller = if invalid == 13 {
+                ActiveUserProcess::new(process.service_id(), 1, 1)
+            } else {
+                process
+            };
+            let reads = Cell::new(0);
+            let result = session_wait_with(
+                args,
+                || Ok(caller),
+                |current| validate_session_wait_with_table(&table, current, args),
+                |_| {
+                    reads.set(reads.get() + 1);
+                    Ok(true)
+                },
+                || true,
+                || panic!("denied wait slept"),
+            );
+            assert!(result.is_err(), "invalid {invalid}");
+            assert_eq!(reads.get(), 0, "invalid {invalid}");
+        }
+    }
+
+    #[test]
+    fn session_wait_registry_dispatch_is_additive_and_denies_missing_caller() {
+        let _guard = process_context_test_lock();
+        process_context::clear_current_process();
+        let entry = lookup_syscall(SYSCALL_SESSION_WAIT).expect("registered wait");
+        assert_eq!((entry.introduced_major, entry.introduced_minor), (1, 2));
+        assert!(!entry.proof_only);
+        assert_eq!(
+            dispatch(SyscallArgs::for_number(SYSCALL_SESSION_WAIT)),
+            Err(SyscallError::ProcessContext(
+                ProcessContextError::NoActiveProcess
+            ))
+        );
+    }
+
+    #[test]
+    fn normal_grants_rollback_every_partial_stage_and_preserve_preexisting_authority() {
+        let process = ActiveUserProcess::new(
+            ServiceId::from_raw(7),
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        for available in 0..4 {
+            let mut table = CapabilityTable::new();
+            let mut existing = std::vec::Vec::new();
+            for resource in 0..(32 - available) {
+                existing.push(
+                    table
+                        .grant(
+                            process.service_id(),
+                            ResourceId::new(resource),
+                            RightsMask::new(RightsMask::READ),
+                        )
+                        .unwrap(),
+                );
+            }
+            assert!(matches!(
+                grant_normal_session_capabilities_with_table(&mut table, process, |_| panic!(
+                    "partial grant bound queue"
+                )),
+                Err(SyscallError::Capability(CapabilityError::TableFull))
+            ));
+            for (resource, handle) in existing.into_iter().enumerate() {
+                assert_eq!(
+                    table.validate(
+                        process.service_id(),
+                        handle,
+                        ResourceId::new(resource as u64),
+                        RightsMask::new(RightsMask::READ)
+                    ),
+                    Ok(())
+                );
+            }
+            for slot in (32 - available)..32 {
+                assert_eq!(
+                    table.revoke(CapabilityHandle::from_parts(slot as u32, 1)),
+                    Err(CapabilityError::InvalidHandle)
+                );
+            }
+        }
+        let requests = [
+            (
+                CONSOLE_COM2_RESOURCE,
+                RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+            ),
+            (
+                ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                RightsMask::new(RightsMask::INPUT),
+            ),
+            (
+                ResourceId::new(SESSION_COMMAND_RESOURCE_ID),
+                RightsMask::new(RightsMask::READ | RightsMask::APPEND),
+            ),
+            (
+                ResourceId::new(SESSION_VIEWING_RESOURCE_ID),
+                RightsMask::new(RightsMask::SEND),
+            ),
+        ];
+        for (stage, (resource, rights)) in requests.into_iter().enumerate() {
+            let mut table = CapabilityTable::new();
+            let old = table.grant(process.service_id(), resource, rights).unwrap();
+            assert!(
+                grant_normal_session_capabilities_with_table(&mut table, process, |_| panic!(
+                    "reused grant bound queue"
+                ))
+                .is_err()
+            );
+            assert_eq!(
+                table.validate(process.service_id(), old, resource, rights),
+                Ok(())
+            );
+            for slot in 1..=stage {
+                assert_eq!(
+                    table.revoke(CapabilityHandle::from_parts(slot as u32, 1)),
+                    Err(CapabilityError::InvalidHandle)
+                );
+            }
+        }
+        let mut table = CapabilityTable::new();
+        assert!(matches!(
+            grant_normal_session_capabilities_with_table(&mut table, process, |_| Err(
+                SessionInputError::AlreadyBound
+            )),
+            Err(SyscallError::SessionInput(SessionInputError::AlreadyBound))
+        ));
+        for slot in 0..4 {
+            assert_eq!(
+                table.revoke(CapabilityHandle::from_parts(slot, 1)),
+                Err(CapabilityError::InvalidHandle)
+            );
+        }
+        let mut table = CapabilityTable::new();
+        assert!(
+            grant_normal_session_capabilities_with_table(
+                &mut table,
+                ActiveUserProcess::new(process.service_id(), 0, 1),
+                |_| panic!("wrong principal bound")
+            )
+            .is_err()
+        );
+        assert_eq!(table, CapabilityTable::new());
+    }
+
+    #[test]
+    fn normal_grants_cleanup_checks_table_not_only_retired_ownership_flags() {
+        let process = ActiveUserProcess::new(
+            ServiceId::from_raw(7),
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        for live in 0..4 {
+            let mut table = CapabilityTable::new();
+            let mut grants =
+                grant_normal_session_capabilities_with_table(&mut table, process, |_| Ok(()))
+                    .unwrap();
+            for (index, handle) in grants.handles.iter().enumerate() {
+                if index != live {
+                    table.revoke(unpack_syscall_capability(*handle)).unwrap();
+                }
+            }
+            // Simulate incorrect bookkeeping: even without a current caller,
+            // no live exact handle may pass the production post-cleanup gate.
+            grants.owned = [false; 4];
+            assert!(grants.is_revoked());
+            assert_eq!(
+                revoke_normal_session_capabilities_with_table(&mut table, &mut grants),
+                Err(SyscallError::BadResult)
+            );
+        }
+    }
+
+    #[test]
+    fn normal_grants_cleanup_is_exact_idempotent_and_attempts_later_handles_on_error() {
+        let process = ActiveUserProcess::new(
+            ServiceId::from_raw(7),
+            pythos_shared::user_program_manifest::SESSION_RUNTIME_PRINCIPAL_ID,
+            1,
+        );
+        for scenario in 0..3 {
+            let stale = scenario != 0;
+            let mut table = CapabilityTable::new();
+            let queue = crate::session_input::SessionInputQueue::new();
+            let mut grants =
+                grant_normal_session_capabilities_with_table(&mut table, process, |holder| {
+                    queue.bind_session_consumer_quiescent(holder)
+                })
+                .unwrap();
+            assert!(!grants.is_revoked());
+            let requests = [
+                (
+                    grants.console(),
+                    CONSOLE_COM2_RESOURCE,
+                    RightsMask::new(RightsMask::READ | RightsMask::WRITE),
+                ),
+                (
+                    grants.input(),
+                    ResourceId::new(SESSION_INPUT_RESOURCE_ID),
+                    RightsMask::new(RightsMask::INPUT),
+                ),
+                (
+                    grants.command(),
+                    ResourceId::new(SESSION_COMMAND_RESOURCE_ID),
+                    RightsMask::new(RightsMask::READ | RightsMask::APPEND),
+                ),
+                (
+                    grants.presentation(),
+                    ResourceId::new(SESSION_VIEWING_RESOURCE_ID),
+                    RightsMask::new(RightsMask::SEND),
+                ),
+            ];
+            for (index, (handle, resource, rights)) in requests.into_iter().enumerate() {
+                assert_ne!(handle.raw(), 0);
+                assert!(!grants.handles[..index].contains(&handle));
+                assert_eq!(
+                    table.validate(
+                        process.service_id(),
+                        unpack_syscall_capability(handle),
+                        resource,
+                        rights
+                    ),
+                    Ok(())
+                );
+            }
+            let peer = table
+                .grant(
+                    ServiceId::from_raw(8),
+                    ResourceId::new(99),
+                    RightsMask::new(RightsMask::READ),
+                )
+                .unwrap();
+            if scenario == 1 {
+                table
+                    .revoke(unpack_syscall_capability(grants.handles[0]))
+                    .unwrap();
+            }
+            let console = grants.console();
+            if scenario == 2 {
+                // Inject the previous generation while the replacement remains live.
+                grants.handles[0] =
+                    PackedCapability::from_parts(unpack_syscall_capability(console).slot(), 0);
+            }
+            let result = revoke_normal_session_capabilities_with_table(&mut table, &mut grants);
+            assert_eq!(result.is_err(), stale);
+            assert_eq!(grants.is_revoked(), !stale);
+            assert_eq!(
+                queue.bind_session_consumer_quiescent(process.service_id()),
+                Err(SessionInputError::AlreadyBound)
+            );
+            assert_eq!(
+                queue.session_ready(ServiceId::from_raw(8)),
+                Err(SessionInputError::WrongHolder)
+            );
+            if scenario == 2 {
+                assert_eq!(
+                    table.validate(
+                        process.service_id(),
+                        unpack_syscall_capability(console),
+                        CONSOLE_COM2_RESOURCE,
+                        RightsMask::new(RightsMask::READ)
+                    ),
+                    Ok(())
+                );
+            }
+            for handle in grants.handles {
+                assert_eq!(
+                    table.revoke(unpack_syscall_capability(handle)),
+                    Err(CapabilityError::InvalidHandle)
+                );
+            }
+            assert_eq!(
+                table.validate(
+                    ServiceId::from_raw(8),
+                    peer,
+                    ResourceId::new(99),
+                    RightsMask::new(RightsMask::READ)
+                ),
+                Ok(())
+            );
+            if !stale {
+                assert!(!grants.owned.into_iter().any(|owned| owned));
+                let before = table;
+                assert_eq!(
+                    revoke_normal_session_capabilities_with_table(&mut table, &mut grants),
+                    Ok(())
+                );
+                assert_eq!(table, before);
+            } else {
+                // A newer slot generation must not be revoked by stale cleanup.
+                let before = table;
+                assert!(
+                    revoke_normal_session_capabilities_with_table(&mut table, &mut grants).is_err()
+                );
+                assert_eq!(table, before);
+            }
+        }
+    }
+
+    #[test]
     fn session_presentation_grant_is_separate_and_only_for_runtime_principal() {
         let mut table = CapabilityTable::new();
         let service = ServiceId::from_raw(7);
@@ -3091,15 +3905,15 @@ mod tests {
     #[test]
     fn abi_version_and_info_result_are_stable() {
         assert_eq!(SYSCALL_ABI_MAJOR, 1);
-        assert_eq!(SYSCALL_ABI_MINOR, 1);
+        assert_eq!(SYSCALL_ABI_MINOR, 2);
         assert_eq!(SYSCALL_ABI_INFO, 0x5059_0000);
-        assert_eq!(abi_info_result(), 0x5059_0001_0001);
+        assert_eq!(abi_info_result(), 0x5059_0001_0002);
     }
 
     #[test]
     fn session_input_syscall_is_registry_version_1_1() {
         assert_eq!(SYSCALL_ABI_MAJOR, 1);
-        assert_eq!(SYSCALL_ABI_MINOR, 1);
+        assert_eq!(SYSCALL_ABI_MINOR, 2);
         let entry = lookup_syscall(SYSCALL_SESSION_INPUT_TRY_READ).unwrap();
         assert_eq!((entry.introduced_major, entry.introduced_minor), (1, 1));
         assert!(!entry.proof_only);

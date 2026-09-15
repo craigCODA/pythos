@@ -315,7 +315,7 @@ class BuildOrchestrationTest(unittest.TestCase):
         command, kwargs = calls[0]
         normalized = normalize(command)
         self.assertEqual(
-            normalized[:7],
+            normalized[:9],
             [
                 "cargo",
                 "build",
@@ -323,10 +323,12 @@ class BuildOrchestrationTest(unittest.TestCase):
                 "pythos-user-session-runtime",
                 "--target",
                 "x86_64-unknown-none",
+                "--bin",
+                "pythos-user-session-runtime",
                 "--target-dir",
             ],
         )
-        self.assertEqual(normalized[7], str(target_dir).replace("\\", "/"))
+        self.assertEqual(normalized[9], str(target_dir).replace("\\", "/"))
         rustflags = str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/")
         self.assertIn("user/session-runtime/linker.ld", rustflags)
         self.assertNotIn("user/pyth-runtime/linker.ld", rustflags)
@@ -374,6 +376,56 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn(b"session-input-probe.elf", opted_in)
         self.assertIn(module.SESSION_INPUT_PROBE_PRINCIPAL_ID.to_bytes(8, "little"), opted_in)
         self.assertIn(module.digest64(b"probe").to_bytes(8, "little"), opted_in)
+
+    def test_normal_bundle_uses_only_explicit_runtime_and_graph_pair(self) -> None:
+        for script in ("build-image.py", "build-iso.py"):
+            module = load_script(script)
+            with self.subTest(script=script), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                shell, runtime, graph = (root / name for name in ("shell", "normal", "graph"))
+                shell.write_bytes(b"shell")
+                runtime.write_bytes(b"ordinary-normal-runtime")
+                graph.write_bytes(b"status-capable-normal-graph")
+                with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                    module, "build_runtime_payload", return_value=b"runtime"
+                ):
+                    pak = module.build_default_init_pak(normal_session_elf=runtime, normal_session_graph=graph)
+                records = parse_init_pak_bundle(pak)
+                self.assertEqual([kind for kind, _ in records], [1, 3, 3, 4])
+                self.assertEqual(
+                    [(kind, *parse_named_record(kind, payload)) for kind, payload in records if kind in (3, 4)],
+                    [
+                        (3, b"shell.elf", module.SHELL_PRINCIPAL_ID, module.digest64(b"shell"), b"shell"),
+                        (3, b"normal-session.elf", 0x5059_5352_544D_0001, module.digest64(runtime.read_bytes()), runtime.read_bytes()),
+                        (4, b"session-manager.tig", 0x5059_5448_534D_0001, module.digest64(graph.read_bytes()), graph.read_bytes()),
+                    ],
+                )
+
+    def test_normal_bundle_requires_pair_and_rejects_other_program_selectors(self) -> None:
+        for script in ("build-image.py", "build-iso.py"):
+            module = load_script(script)
+            for arguments in (
+                {"normal_session_elf": Path("normal")},
+                {"normal_session_graph": Path("graph")},
+                *({"normal_session_elf": Path("normal"), "normal_session_graph": Path("graph"), **other} for other in (
+                    {"include_pythtig": True}, {"include_pythtig_object_flow": True},
+                    {"pyth_native_elf": Path("other")}, {"include_pythtig_task_steward": True},
+                    {"include_pythtig_default_services": True},
+                )),
+            ):
+                with self.subTest(script=script, arguments=arguments), self.assertRaises(SystemExit):
+                    module.build_default_init_pak(**arguments)
+
+    def test_normal_iso_missing_pair_does_not_create_output_directory(self) -> None:
+        module = load_script("build-iso.py")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            artifact = root / "artifact"
+            artifact.write_bytes(b"artifact")
+            output = root / "new" / "normal.iso"
+            with self.assertRaises(SystemExit):
+                module.build_iso(output, artifact, artifact, normal_session_elf=artifact)
+            self.assertFalse(output.parent.exists())
 
     def test_session_runtime_records_are_exact_and_default_bundle_is_byte_identical(self) -> None:
         # Catches a wrong principal/digest/name or any extra named runtime/graph record.
@@ -565,6 +617,9 @@ class BuildOrchestrationTest(unittest.TestCase):
         module.build_boot_image()
 
         self.assert_shell_build_verify_before_packaging(calls, "scripts/build-image.py")
+        core_command = next(command for command in calls if "pythos-core" in command)
+        self.assertIn("--no-default-features", core_command)
+        self.assertEqual(core_command[core_command.index("--features") + 1], "legacy-shell")
 
     def test_persistent_storage_prepares_verified_shell_before_packaging(self) -> None:
         module = load_script("test-persistent-storage.py")

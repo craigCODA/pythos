@@ -1,5 +1,23 @@
 # PythOS Handover
 
+Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
+on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
+unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
+normal-session waiting and one-way recovery without automatic restart; the
+[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
+records the exact evidence. Fresh closeout passed 1,070 Rust tests, 195 Python
+tests plus 229 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
+normal acceptance, and the separate native-fault acceptance. The actual normal
+core strict Clippy profile still fails on 871 dead-code diagnostics versus 874
+for the compatibility baseline; strict complete proof profiles and both normal
+user binaries pass. Final controller whole-branch review of
+`cb86242..69d304f` found no Critical or Important findings. Minor deferred
+items are the isolated unknown-exit fixture, stale PS/2 commentary, and the
+disclosed strict-normal lint debt. No remote, merge, publication, USB, or
+physical write is claimed.
+
+The following is the completed Slice 3-4 checkpoint:
+
 Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
 on 2026-09-09. Implementation and current verification live in the
 [single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md), with new boundary
@@ -1282,7 +1300,8 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap scope is Phase 13.5 Slices 3 and 4, stopping before Slice 5. The
+The current numbered-roadmap boundary is the locally accepted Phase 13.5 Slice
+5 branch, stopping before Phase 14. The
 current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.

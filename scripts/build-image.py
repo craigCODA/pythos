@@ -547,7 +547,11 @@ def build_default_init_pak(
     phase13_package_sources: list[tuple[Path, bytes]] | None = None,
     session_input_probe_elf: Path | None = None,
     session_runtime_elf: Path | None = None,
+    normal_session_elf: Path | None = None,
+    normal_session_graph: Path | None = None,
 ) -> bytes:
+    if (normal_session_elf is None) != (normal_session_graph is None):
+        raise SystemExit("normal-session ELF and graph must be supplied together")
     selected_pythtig_sets = sum(
         [
             bool(include_pythtig),
@@ -555,6 +559,7 @@ def build_default_init_pak(
             pyth_native_elf is not None,
             bool(include_pythtig_task_steward),
             bool(include_pythtig_default_services),
+            normal_session_elf is not None,
             session_runtime_elf is not None,
         ]
     )
@@ -565,6 +570,10 @@ def build_default_init_pak(
         )
     if session_runtime_elf is not None and session_input_probe_elf is not None:
         raise SystemExit("session runtime profile cannot include the session input probe")
+    if normal_session_elf is not None and (
+        session_input_probe_elf is not None or include_phase13_package_format_fixture or phase13_package_sources
+    ):
+        raise SystemExit("normal session profile cannot include probe or package fixtures")
     shell_elf = require_file(SHELL_ELF, "shell ELF")
     records = [
         (INIT_BUNDLE_RUNTIME_TYPE, build_runtime_payload()),
@@ -586,6 +595,18 @@ def build_default_init_pak(
         )
     if session_runtime_elf is not None:
         records.extend(session_runtime_records(session_runtime_elf))
+    if normal_session_elf is not None:
+        records.extend([
+            (INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(
+                b"normal-session.elf", 0x5059_5352_544D_0001,
+                require_file(normal_session_elf, "normal session ELF"),
+            )),
+            (INIT_BUNDLE_PYTH_GRAPH_TYPE, build_named_pyth_graph(
+                b"session-manager.tig", SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+                require_file(normal_session_graph, "normal session graph"),
+            )),
+        ])
+        return build_init_pak(build_init_bundle(records))
     if include_pythtig:
         records.append(pyth_runtime_record())
         records.extend(phase2_pyth_graph_records())
@@ -707,6 +728,8 @@ def main() -> int:
     parser.add_argument("--phase13-package-source", action="append", default=[])
     parser.add_argument("--session-input-probe-elf", type=Path)
     parser.add_argument("--session-runtime-elf", type=Path)
+    parser.add_argument("--normal-session-elf", type=Path)
+    parser.add_argument("--normal-session-graph", type=Path)
     args = parser.parse_args()
 
     loader = args.loader
@@ -724,6 +747,19 @@ def main() -> int:
         session_runtime_elf = resolve_session_runtime_elf(args.session_runtime_elf)
         verify_session_runtime_elf(session_runtime_elf)
 
+    if (args.normal_session_elf is None) != (args.normal_session_graph is None):
+        raise SystemExit("normal-session ELF and graph must be supplied together")
+    if args.normal_session_elf is not None:
+        args.normal_session_elf = resolve_session_runtime_elf(args.normal_session_elf)
+        verify_session_runtime_elf(args.normal_session_elf)
+    init_pak = build_default_init_pak(
+        args.with_pythtig, args.with_pythtig_object_flow, args.pyth_native_elf,
+        args.with_pythtig_task_steward, args.with_pythtig_default_services,
+        args.with_phase13_package_format_fixture,
+        [parse_phase13_package_source_spec(source) for source in args.phase13_package_source],
+        session_input_probe_elf, session_runtime_elf=session_runtime_elf,
+        normal_session_elf=args.normal_session_elf, normal_session_graph=args.normal_session_graph,
+    )
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
     boot_dir.mkdir(parents=True, exist_ok=True)
@@ -734,20 +770,7 @@ def main() -> int:
     write_binary_if_changed(pythos_dir / "BOOT.CFG", BOOT_CFG)
     write_binary_if_changed(
         pythos_dir / "INIT.PAK",
-        build_default_init_pak(
-            args.with_pythtig,
-            args.with_pythtig_object_flow,
-            args.pyth_native_elf,
-            args.with_pythtig_task_steward,
-            args.with_pythtig_default_services,
-            args.with_phase13_package_format_fixture,
-            [
-                parse_phase13_package_source_spec(source)
-                for source in args.phase13_package_source
-            ],
-            session_input_probe_elf,
-            session_runtime_elf=session_runtime_elf,
-        ),
+        init_pak,
     )
     write_binary_if_changed(pythos_dir / "FONT.PSF", FONT_PSF)
 

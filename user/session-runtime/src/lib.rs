@@ -1,5 +1,9 @@
 #![no_std]
 
+pub mod normal_graph;
+pub mod normal_session;
+#[cfg(any(test, feature = "normal-session"))]
+pub mod normal_syscalls;
 pub mod session_command_host;
 pub mod session_viewing;
 #[cfg(any(test, feature = "session-viewing"))]
@@ -397,6 +401,7 @@ impl Default for InputSequenceValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pythc::{encode::encode_verified_graph, lower::lower_program, typecheck::typecheck_source};
     use pythos_shared::session_input_abi::{
         KEY_A, SESSION_INPUT_FLAG_GAP_BEFORE, SESSION_INPUT_KIND_KEY_DOWN,
         SESSION_INPUT_KIND_RELATIVE_MOTION, SESSION_INPUT_SOURCE_KEYBOARD,
@@ -404,11 +409,13 @@ mod tests {
     };
     use pythos_shared::{
         object_shell_abi::PackedCapability,
-        pyth_command_abi::{COMMAND_KIND_CREATE_NOTE, PythCommand},
+        pyth_command_abi::{
+            COMMAND_KIND_CREATE_NOTE, COMMAND_KIND_SYSTEM_STATUS, PythCommand, PythCommandResult,
+        },
         pyth_runtime_abi::{
-            GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, HostCallResult, MAX_PYTH_GRAPH_IMPORTS,
-            PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR, PYTH_GRAPH_RUNTIME_ABI_MINOR,
-            PythGraphCapabilityBinding,
+            GRAPH_EXIT_BUDGET_EXHAUSTED, GRAPH_EXIT_OK, GraphExitRecord, HostCallResult,
+            MAX_PYTH_GRAPH_IMPORTS, PYTH_GRAPH_BOOTSTRAP_MAGIC, PYTH_GRAPH_RUNTIME_ABI_MAJOR,
+            PYTH_GRAPH_RUNTIME_ABI_MINOR, PythGraphCapabilityBinding,
         },
         pyth_tig::{
             format::{MAX_RUNTIME_VALUES, PythGraphPackage},
@@ -430,6 +437,65 @@ mod tests {
     const SESSION_SERVICE_ID: u64 = 0x5059_5345_5353_0001;
     const RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5352_544D_0001;
     const GRAPH_PRINCIPAL_ID: u64 = 0x5059_5448_534D_0001;
+
+    #[test]
+    fn normal_session_manager_emits_the_live_system_status_result() {
+        // Catches admitting a status graph that exits successfully without returning live state.
+        let (package_len, exit, result) = run_source(
+            include_str!("../../../programs/normal-session-manager/main.pyth"),
+            COMMAND_KIND_SYSTEM_STATUS,
+        );
+
+        assert_eq!(package_len, 696);
+        assert_eq!(exit.status, GRAPH_EXIT_OK);
+        assert_eq!(result.unwrap().bytes_written, 61);
+    }
+
+    #[test]
+    fn old_and_normal_session_graphs_keep_their_distinct_command_authority() {
+        // Catches altering the frozen probe graph or broadening the normal status-only graph.
+        let (_old_len, old_status_exit, old_status_result) = run_source(
+            include_str!("../../../programs/session-manager/main.pyth"),
+            COMMAND_KIND_SYSTEM_STATUS,
+        );
+        let (_normal_len, normal_create_exit, normal_create_result) = run_source(
+            include_str!("../../../programs/normal-session-manager/main.pyth"),
+            COMMAND_KIND_CREATE_NOTE,
+        );
+        let (_old_len, old_create_exit, old_create_result) = run_source(
+            include_str!("../../../programs/session-manager/main.pyth"),
+            COMMAND_KIND_CREATE_NOTE,
+        );
+
+        assert_eq!(old_status_exit.status, GRAPH_EXIT_OK);
+        assert_eq!(old_status_result, None);
+        assert_eq!(normal_create_exit.status, GRAPH_EXIT_OK);
+        assert_eq!(normal_create_result, None);
+        assert_eq!(old_create_exit.status, GRAPH_EXIT_OK);
+        assert_eq!(old_create_result.unwrap().kind, COMMAND_KIND_CREATE_NOTE);
+    }
+
+    fn run_source(source: &str, kind: u16) -> (usize, GraphExitRecord, Option<PythCommandResult>) {
+        let typed = typecheck_source(source).unwrap();
+        let graph = lower_program(&typed).unwrap();
+        let bytes = encode_verified_graph(&graph).unwrap();
+        let package = PythGraphPackage::decode(&bytes).unwrap();
+        let verified = verify_package(&package).unwrap();
+        let command_handle = PackedCapability::from_parts(9, 2);
+        let mut imports = [PackedCapability::from_raw(0); MAX_PYTH_GRAPH_IMPORTS];
+        imports[0] = command_handle;
+        let payload = b"e0000000000000000c0000000000000001r0000000000000000a0x000y000";
+        let mut command = PythCommand::empty(kind);
+        command.payload_len = payload.len() as u64;
+        let mut host = SessionCommandHost::new(command_handle, &command, payload).unwrap();
+        let mut values = [None; MAX_RUNTIME_VALUES];
+        let mut host_results = [None; MAX_RUNTIME_VALUES];
+
+        let exit = Interpreter::new(verified, &imports, 128, &mut values, &mut host_results)
+            .execute(&mut host);
+
+        (bytes.len(), exit, host.result())
+    }
 
     fn key_a(sequence: u64) -> SessionInputEventV1 {
         SessionInputEventV1 {

@@ -88,6 +88,16 @@ pub fn try_read_byte_com2() -> Option<u8> {
     Some(inb(COM2_BASE))
 }
 
+/// Read LSR bit 0 only; never read the receive buffer or consume a byte.
+#[cfg(not(test))]
+pub fn com2_receive_ready() -> bool {
+    com2_receive_ready_with(inb)
+}
+
+fn com2_receive_ready_with(read_port: impl FnOnce(u16) -> u8) -> bool {
+    (read_port(line_status_port(COM2_BASE)) & RECEIVE_READY) != 0
+}
+
 pub fn write_line(line: &str) {
     write_str(line);
     write_str("\r\n");
@@ -222,6 +232,29 @@ mod tests {
     fn com1_and_com2_line_status_ports_are_distinct() {
         assert_eq!(line_status_port(COM1_BASE), COM1_BASE + 5);
         assert_ne!(line_status_port(COM1_BASE), line_status_port(COM2_BASE));
+    }
+
+    #[test]
+    fn com2_readiness_samples_only_lsr_bit_zero_without_reading_receive_buffer() {
+        for (status, ready) in [
+            (0, false),
+            (0x20, false),
+            (0xfe, false),
+            (1, true),
+            (0x21, true),
+            (0xff, true),
+        ] {
+            let mut reads = 0;
+            assert_eq!(
+                com2_receive_ready_with(|port| {
+                    assert_eq!(port, 0x2fd);
+                    reads += 1;
+                    status
+                }),
+                ready
+            );
+            assert_eq!(reads, 1);
+        }
     }
 
     #[cfg(feature = "evidence-terminal")]

@@ -28,6 +28,20 @@ compile_error!("features `verify` and `usb-xhci-probe` are mutually exclusive");
 compile_error!("features `hardware-probe` and `usb-xhci-probe` are mutually exclusive");
 #[cfg(all(feature = "pyth-tig-default", feature = "legacy-shell"))]
 compile_error!("features `pyth-tig-default` and `legacy-shell` are mutually exclusive");
+#[cfg(all(
+    feature = "normal-session",
+    not(feature = "verify"),
+    any(
+        feature = "legacy-shell",
+        feature = "pyth-tig-default",
+        feature = "physical-keyboard-console",
+        feature = "pythtig-phase2-test",
+        feature = "pyth-tig-session-manager-fault-test"
+    )
+))]
+compile_error!(
+    "production `normal-session` conflicts with compatibility, polling-input and Phase 2 program selectors"
+);
 #[cfg(all(feature = "phase13-package-test", not(feature = "verify")))]
 compile_error!("feature `phase13-package-test` requires `verify`");
 #[cfg(all(
@@ -129,6 +143,15 @@ mod normal_boot;
 mod normal_boot_diagnostic;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_init;
+#[cfg(any(
+    test,
+    all(
+        feature = "normal-session",
+        not(feature = "verify"),
+        not(feature = "hardware-probe")
+    )
+))]
+mod normal_session;
 mod object_browser;
 mod object_locator;
 mod object_relationships;
@@ -222,7 +245,11 @@ mod session_controls;
 mod session_input;
 #[cfg(all(not(test), feature = "session-input-bridge-probe"))]
 mod session_input_probe;
-#[cfg(any(test, feature = "session-viewing-probe"))]
+#[cfg(any(
+    test,
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
+))]
 mod session_presentation;
 #[cfg(any(test, feature = "session-runtime-probe"))]
 mod session_runtime_probe;
@@ -263,7 +290,8 @@ mod value_validation;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
-    feature = "session-viewing-probe"
+    feature = "session-viewing-probe",
+    all(feature = "normal-session", not(feature = "verify"))
 ))]
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]

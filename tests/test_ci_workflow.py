@@ -7,6 +7,21 @@ WORKFLOW = ROOT / ".github" / "workflows" / "qemu-acceptance.yml"
 
 
 class CiWorkflowTest(unittest.TestCase):
+    NORMAL_SESSION_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-session-runtime --features normal-session",
+        "cargo test -p pythos-user-session-runtime --features normal-session-fault-test",
+        "cargo test -p pythos-core normal_session",
+        "cargo run -p pythc -- build programs/normal-session-manager/main.pyth -o target/normal-session/pyth-tig/session-manager.tig",
+        "cargo run -p pyth-tig-tool -- verify target/normal-session/pyth-tig/session-manager.tig",
+        "python scripts/build-session-runtime.py --features normal-session",
+        "python scripts/build-session-runtime.py --features normal-session-fault-test",
+        "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --bin pythos-normal-session --features normal-session -- -D warnings",
+        "cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --bin pythos-normal-session --features normal-session-fault-test -- -D warnings",
+        "python -m py_compile scripts/test-normal-session.py",
+        "python scripts/test-normal-session.py --self-test",
+        "python scripts/test-normal-session.py",
+        "python scripts/test-normal-session.py --fault",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -244,6 +259,28 @@ class CiWorkflowTest(unittest.TestCase):
                 self.assertEqual(mutated_handoff.count(command), 1)
                 with self.assertRaises(AssertionError):
                     self._assert_handoff_excludes_session_runtime_gates(mutated)
+
+    def test_normal_session_has_real_host_strict_build_and_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+        for command in self.NORMAL_SESSION_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate normal gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+        self.assertLess(
+            commands.index("python scripts/test-normal-session.py --self-test"),
+            commands.index("python scripts/test-normal-session.py"),
+        )
+        self.assertLess(
+            commands.index("python scripts/test-normal-session.py"),
+            commands.index("python scripts/test-normal-session.py --fault"),
+        )
+        self.assertNotIn(
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,normal-session -- -D warnings",
+            workflow,
+            "verify excludes the real normal kernel and cannot be presented as its strict gate",
+        )
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

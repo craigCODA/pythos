@@ -153,6 +153,31 @@ pub fn initialize() -> Result<(), ()> {
     Ok(())
 }
 
+/// Sleep until one interrupt, returning with maskable interrupts disabled.
+///
+/// # Safety
+/// Caller must enter at CPL0 with IF=0, no live capability/queue/lock borrow,
+/// and IRQ/trap handlers, TSS, kernel stack and continuation supervisor-mapped
+/// in the active root. Proof scheduler flags must remain inactive on this
+/// single-CPU path. The existing PIT supplies unrelated wakes; COM2 has no
+/// newly enabled UART IRQ here.
+#[cfg(not(test))]
+pub unsafe fn enable_halt_disable() {
+    // SAFETY: syscall FMASK establishes IF=0 and the caller ends validation
+    // borrows before entry. Intel SDM Vol. 2, STI specifies inhibition through
+    // the following instruction only when IF was initially zero. Keeping HLT
+    // contiguous closes the pending-IRQ check-to-sleep race; CLI restores the
+    // syscall exclusion after the handler returns. Interrupts may write memory,
+    // so this assembly intentionally has neither nomem nor readonly. No raw
+    // pointer is passed; the mapped aligned kernel stack and handler state
+    // remain owned by the single CPU for this interval. Violating mapping,
+    // exclusion or scheduler preconditions could fault or alias kernel state.
+    // https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-2b-manual.pdf
+    unsafe {
+        asm!("sti", "hlt", "cli");
+    }
+}
+
 #[cfg_attr(not(test), allow(dead_code))]
 pub const fn vector_for_irq(irq: u8) -> Option<u8> {
     if irq < 8 {

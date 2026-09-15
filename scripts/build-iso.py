@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import math
+import subprocess
+import sys
 from pathlib import Path
 
 
@@ -448,7 +450,11 @@ def build_default_init_pak(
     pyth_native_elf: Path | None = None,
     include_pythtig_task_steward: bool = False,
     include_pythtig_default_services: bool = False,
+    normal_session_elf: Path | None = None,
+    normal_session_graph: Path | None = None,
 ) -> bytes:
+    if (normal_session_elf is None) != (normal_session_graph is None):
+        raise SystemExit("normal-session ELF and graph must be supplied together")
     selected_pythtig_sets = sum(
         [
             bool(include_pythtig),
@@ -456,6 +462,7 @@ def build_default_init_pak(
             pyth_native_elf is not None,
             bool(include_pythtig_task_steward),
             bool(include_pythtig_default_services),
+            normal_session_elf is not None,
         ]
     )
     if selected_pythtig_sets > 1:
@@ -471,6 +478,18 @@ def build_default_init_pak(
             build_named_user_program(b"shell.elf", SHELL_PRINCIPAL_ID, shell_elf),
         ),
     ]
+    if normal_session_elf is not None:
+        records.extend([
+            (INIT_BUNDLE_NAMED_USER_ELF_TYPE, build_named_user_program(
+                b"normal-session.elf", 0x5059_5352_544D_0001,
+                require_file(normal_session_elf, "normal session ELF"),
+            )),
+            (INIT_BUNDLE_PYTH_GRAPH_TYPE, build_named_pyth_graph(
+                b"session-manager.tig", SESSION_MANAGER_GRAPH_PRINCIPAL_ID,
+                require_file(normal_session_graph, "normal session graph"),
+            )),
+        ])
+        return build_init_pak(build_init_bundle(records))
     if include_pythtig:
         records.append(pyth_runtime_record())
         records.extend(phase2_pyth_graph_records())
@@ -561,6 +580,8 @@ def pythos_boot_files(
     pyth_native_elf: Path | None = None,
     include_pythtig_task_steward: bool = False,
     include_pythtig_default_services: bool = False,
+    normal_session_elf: Path | None = None,
+    normal_session_graph: Path | None = None,
 ) -> dict[str, bytes]:
     return {
         "EFI/BOOT/BOOTX64.EFI": loader.read_bytes(),
@@ -572,6 +593,8 @@ def pythos_boot_files(
             pyth_native_elf,
             include_pythtig_task_steward,
             include_pythtig_default_services,
+            normal_session_elf,
+            normal_session_graph,
         ),
         "PYTHOS/FONT.PSF": build_font_psf(),
     }
@@ -898,12 +921,23 @@ def build_iso(
     pyth_native_elf: Path | None = None,
     include_pythtig_task_steward: bool = False,
     include_pythtig_default_services: bool = False,
+    normal_session_elf: Path | None = None,
+    normal_session_graph: Path | None = None,
 ) -> None:
+    if (normal_session_elf is None) != (normal_session_graph is None):
+        raise SystemExit("normal-session ELF and graph must be supplied together")
     if not loader.exists():
         raise SystemExit(f"missing loader: {loader}")
     if not kernel.exists():
         raise SystemExit(f"missing kernel: {kernel}")
-    output.parent.mkdir(parents=True, exist_ok=True)
+    if normal_session_elf is not None:
+        normal_session_elf = normal_session_elf.resolve(strict=True)
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(normal_session_elf)],
+            cwd=ROOT,
+        )
+        if result.returncode != 0:
+            raise SystemExit("normal session ELF verification failed")
     files = pythos_boot_files(
         loader,
         kernel,
@@ -912,8 +946,11 @@ def build_iso(
         pyth_native_elf,
         include_pythtig_task_steward,
         include_pythtig_default_services,
+        normal_session_elf,
+        normal_session_graph,
     )
     esp_image = build_esp_image(files)
+    output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(build_iso_bytes(esp_image, files))
     print(f"ISO_READY {output}")
 
@@ -928,6 +965,8 @@ def main() -> int:
     parser.add_argument("--pyth-native-elf", type=Path)
     parser.add_argument("--with-pythtig-task-steward", action="store_true")
     parser.add_argument("--with-pythtig-default-services", action="store_true")
+    parser.add_argument("--normal-session-elf", type=Path)
+    parser.add_argument("--normal-session-graph", type=Path)
     args = parser.parse_args()
     build_iso(
         args.output,
@@ -938,6 +977,8 @@ def main() -> int:
         args.pyth_native_elf,
         args.with_pythtig_task_steward,
         args.with_pythtig_default_services,
+        args.normal_session_elf,
+        args.normal_session_graph,
     )
     return 0
 

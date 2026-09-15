@@ -20,6 +20,7 @@ PINNED_SHA256 = {
     "shared/src/pyth_tig/opcode.rs": "0BFB6E965F565B1ADCE87379651F7D4BD1037FCB1593BA4BF401F68C2C477EE7",
     "shared/src/pyth_tig/format.rs": "A898F035E9149897C0194D1A544EC6D76075C3BB2D1BE82AC140E6BB90472F92",
     "programs/session-manager/main.pyth": "2E231E6F2CBC1E6528907EE4876AFD2AEA047A5CAE6C82096AA0AFA6B3D65313",
+    "user/session-runtime/src/main.rs": "C0BD64F4EA98D391AE65E980F5883B9FD8D2F8D7FF9630057A1967E5C8CE0757",
     "user/pyth-runtime/src/main.rs": "531254EAD8904843A2F75A8E7FD02D86953544341DB9CD804912C1B52117BD71",
 }
 FORBIDDEN_MODULES = {
@@ -55,6 +56,9 @@ VIEWING_OWNERS = {
     "user/session-runtime/src/session_viewing.rs",
     "user/session-runtime/src/viewing_orchestration.rs",
     "user/session-runtime/src/main.rs",
+    "user/session-runtime/src/normal_main.rs",
+    "user/session-runtime/src/normal_session.rs",
+    "user/session-runtime/src/normal_syscalls.rs",
 }
 VIEWING_DEPENDENCIES = {"viewing", "session_controls"}
 
@@ -96,6 +100,7 @@ def assert_cargo_dependency_boundary(cargo: dict) -> None:
             "pythos-user-pyth-runtime": {"path": "../pyth-runtime"},
         },
         ("dev-dependencies",): {
+            "pythc": {"path": "../../tools/pythc"},
             "pythos-shared": {
                 "path": "../../shared",
                 "features": ["pyth-tig-test-support"],
@@ -122,8 +127,13 @@ def assert_cargo_dependency_boundary(cargo: dict) -> None:
         raise AssertionError(
             f"session-runtime dependency boundary mismatch: {discovered!r}"
         )
-    if cargo.get("features", {}) != {"default": [], "session-viewing": []}:
-        raise AssertionError("session-runtime permits only the opt-in ADR 0092 viewing feature")
+    if cargo.get("features", {}) != {
+        "default": [],
+        "session-viewing": [],
+        "normal-session": [],
+        "normal-session-fault-test": ["normal-session"],
+    }:
+        raise AssertionError("session-runtime feature boundary does not match ADR 0093")
 
 
 def probe_rust_source_paths(root: Path) -> list[Path]:
@@ -287,10 +297,63 @@ def sha256(path: Path) -> str:
 
 
 class SessionRuntimeBoundaryTest(unittest.TestCase):
-    def test_viewing_build_is_opt_in_and_default_command_is_preserved(self) -> None:
+    def test_normal_binary_validates_before_copy_and_uses_contained_returns(self) -> None:
+        source = (ROOT / "user/session-runtime/src/normal_main.rs").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertLess(
+            source.index(
+                "if validate_normal_session_bootstrap_address(bootstrap_address).is_err()"
+            ),
+            source.index("copy_bootstrap("),
+        )
+        self.assertEqual(source.count("static NORMAL_STORAGE"), 1)
+        self.assertIn('cfg(feature = "normal-session-fault-test")', source)
+        self.assertIn('asm!("ud2"', source)
+        self.assertIn('asm!("int3", options(nostack))', source)
+        self.assertNotIn("qemu_exit", source)
+
+    def test_runtime_builder_selects_explicit_isolated_binary_variants(self) -> None:
         from tests.test_build_orchestration import load_script
         builder = load_script("build-session-runtime.py")
-        for arguments, expected in [([], []), (["--features", "session-viewing"], ["--features", "session-viewing", "--target-dir", ROOT / "target/session-viewing-probe"] )]:
+        cases = [
+            ([], ["--bin", "pythos-user-session-runtime"]),
+            (
+                ["--features", "session-viewing"],
+                [
+                    "--bin",
+                    "pythos-user-session-runtime",
+                    "--features",
+                    "session-viewing",
+                    "--target-dir",
+                    ROOT / "target/session-viewing-probe",
+                ],
+            ),
+            (
+                ["--features", "normal-session"],
+                [
+                    "--bin",
+                    "pythos-normal-session",
+                    "--features",
+                    "normal-session",
+                    "--target-dir",
+                    ROOT / "target/normal-session",
+                ],
+            ),
+            (
+                ["--features", "normal-session-fault-test"],
+                [
+                    "--bin",
+                    "pythos-normal-session",
+                    "--features",
+                    "normal-session-fault-test",
+                    "--target-dir",
+                    ROOT / "target/normal-session-fault-test",
+                ],
+            ),
+        ]
+        for arguments, expected in cases:
             with self.subTest(arguments=arguments), patch.object(sys, "argv", ["builder", *arguments]), patch.object(builder.subprocess, "call", return_value=0) as call:
                 self.assertEqual(builder.main(), 0)
                 self.assertEqual(call.call_args.args[0], ["cargo", "build", "-p", "pythos-user-session-runtime", "--target", "x86_64-unknown-none", *expected])

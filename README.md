@@ -11,14 +11,17 @@ The merged baseline contains Phase 13.5 Slices 1 and 2, accepted in bounded,
 opt-in QEMU profiles:
 ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
 ADR 0091 retains one session runtime across two fresh Session Manager graph
-invocations with fault containment. The owner invoked Slices 3 and 4 together:
+invocations with fault containment. The owner then invoked Slices 3 and 4 for
 retained session-owned Viewing and capability-checked snapshot presentation.
-The combined opt-in profile is locally QEMU-verified; it is not a normal-boot cutover.
-See the [implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
-for current verification. Slice 5 normal-boot cutover, production wait/wakeup, durable
-session state, USB/xHCI integration, and physical Lenovo acceptance remain
-pending. See the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary)
-and [handover](docs/HANDOVER.md) for scope and merged acceptance evidence.
+Slice 5 is now implemented and locally QEMU-accepted on its unmerged branch:
+normal boot enters the retained ring-3 session, waits interruptibly for PS/2
+input or COM2 commands, and falls back one way to the existing recovery shell
+after explicit recovery or a contained native fault. See the
+[Slice 5 implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
+for current verification. Durable session state, USB/xHCI session integration,
+physical Lenovo acceptance, publication, and later phases remain pending. See
+the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary) and
+[handover](docs/HANDOVER.md) for the exact local/merged boundary.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

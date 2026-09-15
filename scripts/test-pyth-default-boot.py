@@ -157,8 +157,7 @@ def build_boot_image(core_features: list[str] | None = None) -> None:
         "--target",
         "x86_64-unknown-none",
     ]
-    if core_features:
-        core_command += ["--features", ",".join(core_features)]
+    core_command += ["--no-default-features", "--features", ",".join(["pyth-tig-default", *(core_features or [])])]
     run(core_command)
     run([sys.executable, "scripts/build-user-shell.py"])
     run([sys.executable, "scripts/verify-user-elf.py"])

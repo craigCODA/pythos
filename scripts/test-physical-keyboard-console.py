@@ -121,7 +121,8 @@ def build_boot_image() -> None:
             "--target",
             "x86_64-unknown-none",
             "--features",
-            "physical-keyboard-console",
+            "legacy-shell,physical-keyboard-console",
+            "--no-default-features",
         ]
     )
     build_verified_user_shell()
