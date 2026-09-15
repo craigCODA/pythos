@@ -35,22 +35,22 @@ Phase 13         complete   local package lifecycle and schema extensibility
                               marker: PYTHOS:CORE:PHASE_13_COMPLETE
 Phase 13.5 slice 1 accepted in QEMU   session-input bridge, ADR 0090
 Phase 13.5 slice 2 accepted in QEMU   bounded retained runtime, ADR 0091
-Phase 13.5 slices 3 and 4 invoked   retained Viewing and bounded presentation, ADR 0092
+Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
+                              ADRs 0092-0093
+Phase 14 nic-driver accepted in QEMU   legacy virtio-net raw-frame probe, ADR 0094
 ```
 
-The current authorized scope is Phase 13.5 Slices 3 and 4; stop before Slice 5. See the
-[current roadmap boundary](ROADMAP.md#current-phase-135-boundary) and
-[handover](HANDOVER.md) for the accepted scope and merged QEMU evidence.
-Slice 3 binds ADR 0089's session controls and Viewing state to the retained
-owner; Slice 4 projects snapshots through ADR 0092. Both are owner-invoked;
-the implementation map linked from the roadmap records current verification.
-Default-boot cutover, production
-wait/wakeup, durable session state, USB/xHCI integration, and new physical
-acceptance are not established by Slices 1 and 2.
+Phase 14 `nic-driver` is accepted. The next Phase 14 boundary is `link-layer`;
+Phase 14 is not complete. The accepted first slice is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary),
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md), and
+[handover](HANDOVER.md) for the exact local QEMU evidence and scope. Physical
+Lenovo Wi-Fi remains deferred to Phase 15.
 
-ADRs are allocated through 0092 in this checkout. Check `docs/decisions/` and
+ADRs are allocated through 0094 in this checkout. Check `docs/decisions/` and
 in-progress branches before allocating another number; this recap does not
-reserve one. Phases 14-17 below remain later, separately invoked work.
+reserve one. Later Phase 14 slices and Phases 15-17 remain separately invoked
+work.
 
 ---
 

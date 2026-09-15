@@ -1,43 +1,19 @@
 # PythOS Handover
 
-Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
-on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
-unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
-normal-session waiting and one-way recovery without automatic restart; the
-[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
-records the exact evidence. Fresh closeout passed 1,070 Rust tests, 195 Python
-tests plus 229 subtests, all 16 predecessor QEMU gates, the ordinary two-boot
-normal acceptance, and the separate native-fault acceptance. The actual normal
-core strict Clippy profile still fails on 871 dead-code diagnostics versus 874
-for the compatibility baseline; strict complete proof profiles and both normal
-user binaries pass. Final controller whole-branch review of
-`cb86242..69d304f` found no Critical or Important findings. Minor deferred
-items are the isolated unknown-exit fixture, stale PS/2 commentary, and the
-disclosed strict-normal lint debt. No remote, merge, publication, USB, or
-physical write is claimed.
+Local continuation: Phase 14 `nic-driver` is accepted on
+`agent/phase14-nic-driver` through implementation commit
+`4e3a52e70a177a394ffc3f5d2d0e792987b4eef8`. [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md)
+records the kernel-owned, legacy/transitional QEMU-only transport. Local QEMU
+`11.0.50` proved one exact 60-byte raw Ethernet TX frame and one exact RX frame
+through a loopback-only framed peer, exact ordered markers, no attached virtio
+storage, and complete runner/child cleanup.
 
-The following is the completed Slice 3-4 checkpoint:
-
-Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
-on 2026-09-09. Implementation and current verification live in the
-[single map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md), with new boundary
-decisions in [ADR 0092](decisions/0092-retained-viewing-presentation.md).
-Stop before Slice 5; no default boot cutover or new physical acceptance.
-Slices 3 and 4 are accepted locally in the bounded QEMU profile, with all seven
-predecessor regressions passing. They are not merged or published.
-The merged baseline remains the accepted opt-in Slice 2 profile. ADR 0090
-records Slice 1's capability-gated ring-3 input delivery. ADR 0091 records
-Slice 2's bounded retained session-runtime lifecycle. ADR 0089 remains the
-semantic authority for Viewing, and neither Slice 1 nor Slice 2 cuts Viewing
-or the retained runtime into normal boot. Phase 12 `path-vs-graph-decision` is
-recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12
-`path-resolution` is recorded through ADR 0070 and
-`PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite
-loader read-bound increase required by the Slice 2 debug acceptance image; and
-Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and
-`PYTHOS:CORE:PHASE_12_COMPLETE`. ADR 0073 records the Phase 13 package
-lifecycle and schema-extensibility ABI, and the final independent package QEMU
-proof reaches `PYTHOS:CORE:PHASE_13_COMPLETE`.
+The next Phase 14 boundary is `link-layer`; Phase 14 is not complete. This
+acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+Modern virtio transport, physical NICs, higher protocol layers, and boot-path
+changes remain outside this slice. Physical Lenovo Wi-Fi is deferred to Phase
+15. No merge, push, publication, physical-media deployment, or physical Wi-Fi
+probe is claimed.
 
 ## Phase 13.5 Slice 2 Bounded Session Runtime (2026-09-07)
 

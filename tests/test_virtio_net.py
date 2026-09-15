@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import socket
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +17,15 @@ def load_module(name: str, relative_path: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not load {relative_path}")
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    scripts_dir = str(ROOT / "scripts")
+    inserted_scripts_dir = scripts_dir not in sys.path
+    if inserted_scripts_dir:
+        sys.path.insert(0, scripts_dir)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if inserted_scripts_dir:
+            sys.path.remove(scripts_dir)
     return module
 
 
@@ -89,10 +98,6 @@ def test_frame_peer_rejects_a_same_length_frame_with_wrong_bytes():
     assert "TX frame mismatch" in str(peer.error)
 
 
-@pytest.mark.xfail(
-    reason="Task 6 owns canonical documentation closeout; Task 4 must not modify docs.",
-    strict=True,
-)
 def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
     documents = [
         ROOT / "docs/ROADMAP.md",
@@ -112,3 +117,27 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
         contents = document.read_text(encoding="utf-8")
         for statement in required_statements:
             assert statement in contents, f"{document} omits: {statement}"
+
+
+def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
+    current_status_sections = {
+        ROOT / "docs/ROADMAP.md": 55,
+        ROOT / "docs/HANDOVER.md": 40,
+        ROOT / "README.md": 35,
+        ROOT / "docs/TECHNICAL-OVERVIEW.md": 35,
+    }
+    stale_statements = (
+        "## Current Phase 13.5 Boundary",
+        "Current authorized scope: Phase 13.5 Slices 3 and 4",
+        "Stop before Slice 5",
+        "The merged baseline contains Phase 13.5 Slices 1 and 2",
+        "Phase 13.5 Slice 5 is implemented and locally QEMU-accepted",
+    )
+    for document, line_limit in current_status_sections.items():
+        current_status = "\n".join(
+            document.read_text(encoding="utf-8").splitlines()[:line_limit]
+        )
+        for statement in stale_statements:
+            assert statement not in current_status, (
+                f"{document} current status retains: {statement}"
+            )

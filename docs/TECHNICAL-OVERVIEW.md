@@ -12,19 +12,18 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-Phase 13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged
-branch. ADR 0069,
-`docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072,
-ADR 0073, `PYTHOS:CORE:PHASE_12_COMPLETE`, and
-`PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. ADRs 0090 and 0091 add the
-merged, opt-in QEMU proofs of capability-gated session input and a retained
-ring-3 runtime across two fresh Session Manager graph invocations, including
-fault containment. ADR 0092 adds retained Viewing and snapshot presentation;
-ADR 0093 now adds the locally accepted default normal-session boot,
-interrupt-backed waiting and one-way recovery-shell fallback. Durable session
-state, USB/xHCI session integration, new physical acceptance, publication, and
-later phases remain pending. See [HANDOVER.md](HANDOVER.md)
-for the exact PR #24 merge and successful hosted QEMU runs.
+Phase 14 `nic-driver` is accepted as the first bounded networking slice through
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in kernel
+probe owns one legacy/transitional QEMU `virtio-net-pci` device, negotiates only
+its MAC feature, publishes static bounded RX/TX virtqueues, and exchanges one
+deterministic 60-byte raw Ethernet frame in each direction with a loopback-only
+host peer. The next Phase 14 boundary is `link-layer`; Phase 14 is not complete.
+
+This raw-frame acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+Modern virtio transport, interrupts, offloads, physical NIC support, protocol
+layers, and changes to default or normal-session boot remain outside the
+accepted boundary. Physical Lenovo Wi-Fi is deferred to Phase 15. See
+[HANDOVER.md](HANDOVER.md) for the exact local QEMU evidence and non-claims.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro

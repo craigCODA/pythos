@@ -7,21 +7,19 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-The merged baseline contains Phase 13.5 Slices 1 and 2, accepted in bounded,
-opt-in QEMU profiles:
-ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
-ADR 0091 retains one session runtime across two fresh Session Manager graph
-invocations with fault containment. The owner then invoked Slices 3 and 4 for
-retained session-owned Viewing and capability-checked snapshot presentation.
-Slice 5 is now implemented and locally QEMU-accepted on its unmerged branch:
-normal boot enters the retained ring-3 session, waits interruptibly for PS/2
-input or COM2 commands, and falls back one way to the existing recovery shell
-after explicit recovery or a contained native fault. See the
-[Slice 5 implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
-for current verification. Durable session state, USB/xHCI session integration,
-physical Lenovo acceptance, publication, and later phases remain pending. See
-the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary) and
-[handover](docs/HANDOVER.md) for the exact local/merged boundary.
+Phase 14 `nic-driver` is accepted as a bounded, opt-in QEMU raw-frame profile
+through [ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). Its
+kernel-owned legacy/transitional `virtio-net-pci` probe exchanges one exact
+60-byte Ethernet frame in each direction with a loopback-only host peer while
+attaching no storage device. The next Phase 14 boundary is `link-layer`; Phase
+14 is not complete.
+
+This acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+It does not add modern virtio transport, physical NIC support, or a protocol
+stack, and it does not change default or normal-session boot. Physical Lenovo
+Wi-Fi is deferred to Phase 15. See the
+[current roadmap boundary](docs/ROADMAP.md#current-phase-14-boundary) and
+[handover](docs/HANDOVER.md) for the exact local evidence and non-claims.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

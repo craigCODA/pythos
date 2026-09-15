@@ -11,45 +11,20 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
-## Current Phase 13.5 Boundary
+## Current Phase 14 Boundary
 
-The owner has separately invoked Slice 5 locally and approved normal-session
-waiting, lifetime and recovery-shell direction. The written
-[ADR 0093 contract](decisions/0093-normal-session-wait-recovery.md) is implemented
-and locally QEMU-accepted on its unmerged branch, tracked in the
-[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
-Final controller whole-branch review remains. The Slice 3-4 PR branch remains
-unchanged; no remote writes, publication, physical acceptance, or later-phase
-implementation are claimed.
+Phase 14 `nic-driver` is accepted as a bounded, opt-in QEMU profile through
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The kernel-owned
+legacy/transitional `virtio-net-pci` probe discovers one device, publishes
+bounded RX/TX queues, and exchanges one deterministic raw Ethernet frame in
+each direction with a loopback-only host peer. The next Phase 14 boundary is `link-layer`;
+Phase 14 is not complete.
 
-The accepted predecessor boundary is recorded below:
-
-Phase 13.5 Slice 1 and Slice 2 are accepted in bounded, opt-in QEMU profiles.
-ADR 0090 records exclusive capability-gated normalized-input delivery to one
-ring-3 consumer. ADR 0091 records one separately named retained session
-runtime with one stable per-boot session identity, two contiguous input events,
-two fresh in-process invocations of unchanged `session-manager.tig`, an exact
-`0x5059_5345_5343_4D44` `READ | APPEND` command capability,
-invocation-local reset, neutral state advancing exactly `0 -> 1 -> 2`, shared
-reinvoke-or-recover policy, and no storage mutation.
-
-The accepted Slice 2 implementation evidence source is
-`6109425047de86cf60e4367313811fc284c43bad`. Local QEMU 11.0.50 and independent
-JacesPC QEMU 11.1.0 each passed two fresh boots with state zero at each boot,
-both process trees reaped, and the disposable 16 MiB image unchanged at
-SHA-256
-`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
-Hosted QEMU 11.1.1 acceptance also passed on the final feature tip and the
-normal merge commit. See [HANDOVER.md](HANDOVER.md#phase-135-slice-2-bounded-session-runtime-2026-09-07)
-for PR #24, exact commit identities, and the PR and post-merge run links.
-
-The owner invoked Slices 3 and 4 together on 2026-09-09: retain ADR 0089
-session controls and Viewing state, then deliver read-only snapshots through
-ADR 0092's capability-checked presentation bridge. The
-[single implementation map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
-records current acceptance and regressions. Stop before Slice 5: normal-boot
-cutover, production wait/wakeup, durable state, USB/xHCI integration and new
-physical acceptance remain outside this invocation.
+This acceptance is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
+It does not add modern virtio transport, physical NIC support, protocol layers,
+or changes to existing default and normal-session boot paths. Physical Lenovo
+Wi-Fi is deferred to Phase 15. See [HANDOVER.md](HANDOVER.md) for the exact
+local evidence and remaining boundary.
 
 ## Accepted PythTIG Program Boundary
 
