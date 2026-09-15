@@ -47,16 +47,31 @@ REQUIRED_MARKERS = (
     SUCCESS_MARKER,
 )
 FORBIDDEN_EVIDENCE = (
-    "PYTHOS:CORE:BLOCK:DEVICE_SELECTED",
-    "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE_READY",
-    "PYTHOS:CORE:STORAGE:ACCESS_GRANTED",
-    "PYTHOS:CORE:STORAGE:JOURNAL_APPEND",
-    "PYTHOS:CORE:STORAGE:COMMIT_MARKER",
-    "PYTHOS:CORE:OBJECT_STORE:PERSISTED",
     "PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:",
     "PYTHOS:PANIC",
     "DRIVER_ERROR",
     "TIMEOUT",
+)
+STORAGE_EVIDENCE_PREFIXES = (
+    "PYTHOS:CORE:BLOCK:DEVICE_SELECTED",
+    "PYTHOS:CORE:BLOCK:SDHCI_EMMC_",
+    "PYTHOS:CORE:BLOCK_DEVICE_READY",
+    "PYTHOS:CORE:NORMAL_INIT:BLOCK_DEVICE",
+    "PYTHOS:CORE:NORMAL_BOOT_DIAG:BLOCK_",
+    "PYTHOS:CORE:NORMAL_BOOT_DIAG:INIT_ERROR:BLOCK_",
+    "PYTHOS:CORE:STORAGE",
+    "PYTHOS:CORE:APPEND_ONLY_JOURNAL_",
+    "PYTHOS:CORE:CHECKSUM_COMMIT_MARKERS_",
+    "PYTHOS:CORE:CRASH_RECOVERY_",
+    "PYTHOS:CORE:BLOCK_ALLOCATOR_",
+    "PYTHOS:CORE:ALLOCATOR:METADATA_JOURNALED",
+    "PYTHOS:CORE:FRAGMENTATION:FREED_BLOCK_REUSED",
+    "PYTHOS:CORE:OBJECT_STORE:",
+    "PYTHOS:CORE:GENERAL_STORAGE:",
+    "PYTHOS:CORE:HARDWARE_PROBE:STORAGE",
+    "PYTHOS:CORE:HARDWARE_PROBE:DISK_WRITE",
+    "PYTHOS:CORE:HARDWARE_PROBE:EMMC_",
+    "PYTHOS:CORE:DISK",
 )
 
 
@@ -91,11 +106,20 @@ class VirtioNetAcceptanceSelfTest(unittest.TestCase):
             assert_virtio_net_acceptance(duplicate_ready, "QEMU_OUTCOME success\n")
 
     def test_storage_isolation_rejects_storage_selection_and_write_evidence(self) -> None:
-        with self.assertRaises(AssertionError):
-            assert_virtio_net_acceptance(
-                self.valid_serial() + "\nPYTHOS:CORE:STORAGE:JOURNAL_APPEND",
-                "QEMU_OUTCOME success\n",
-            )
+        for marker in (
+            "PYTHOS:CORE:BLOCK_DEVICE_READY",
+            "PYTHOS:CORE:STORAGE_SERVICE_READY",
+            "PYTHOS:CORE:APPEND_ONLY_JOURNAL_READY",
+            "PYTHOS:CORE:OBJECT_STORE:CREATED",
+            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_READ_ONLY_BLOCK_READY",
+            "PYTHOS:CORE:HARDWARE_PROBE:EMMC_WRITE:LBA",
+            "PYTHOS:CORE:NORMAL_BOOT_DIAG:INIT_ERROR:BLOCK_DEVICE",
+        ):
+            with self.subTest(marker=marker), self.assertRaises(AssertionError):
+                assert_virtio_net_acceptance(
+                    self.valid_serial() + "\n" + marker,
+                    "QEMU_OUTCOME success\n",
+                )
 
     def test_live_evidence_preserves_the_exact_runner_outcome(self) -> None:
         evidence = format_live_evidence("QEMU_OUTCOME success\n", "QEMU emulator version 11")
@@ -120,6 +144,22 @@ class VirtioNetAcceptanceSelfTest(unittest.TestCase):
             self.assertIsNone(peer.error)
             self.assertEqual(peer.tx_frame, expected_tx)
             self.assertEqual(peer.rx_frame, expected_rx)
+        finally:
+            peer.close()
+
+    def test_peer_rejects_a_same_shape_tx_with_a_source_mac_that_differs_from_com1(self) -> None:
+        com1_mac = bytes.fromhex("525400123456")
+        wrong_mac = bytes.fromhex("525400654321")
+        peer = FramePeer()
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1) as connection:
+                connection.sendall(encode_socket_frame(probe_frame(PEER_MAC, wrong_mac, TX_PAYLOAD)))
+                read_socket_frame(connection)
+            peer.join(timeout=1)
+            peer.expected_device_mac = com1_mac
+            with self.assertRaises(AssertionError):
+                assert_peer_exchange(peer)
         finally:
             peer.close()
 
@@ -199,6 +239,7 @@ class FramePeer:
         self.connected = False
         self.tx_matched = False
         self.rx_delivered = False
+        self.expected_device_mac: bytes | None = None
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -224,7 +265,6 @@ class FramePeer:
                 connection.settimeout(self.timeout)
                 self.tx_frame = read_socket_frame(connection)
                 device_mac = validate_transmitted_probe_frame(self.tx_frame)
-                self.tx_matched = True
                 self.rx_frame = probe_frame(device_mac, PEER_MAC, RX_PAYLOAD)
                 connection.sendall(encode_socket_frame(self.rx_frame))
                 self.rx_delivered = True
@@ -234,7 +274,7 @@ class FramePeer:
             self.listener.close()
 
 
-def assert_exact_ordered_markers(serial: str) -> None:
+def assert_exact_ordered_markers(serial: str) -> bytes:
     lines = serial.splitlines()
     previous = -1
     for marker in REQUIRED_MARKERS:
@@ -252,12 +292,17 @@ def assert_exact_ordered_markers(serial: str) -> None:
     mac_line = lines[[index for index, line in enumerate(lines) if line.startswith(MAC_MARKER_PREFIX)][0]]
     if re.fullmatch(r"PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", mac_line) is None:
         raise AssertionError(f"malformed virtio-net MAC evidence: {mac_line!r}")
+    return bytes.fromhex(mac_line.removeprefix(MAC_MARKER_PREFIX).replace(":", ""))
 
 
 def assert_storage_isolation(serial: str) -> None:
     for marker in FORBIDDEN_EVIDENCE:
         if marker in serial:
             raise AssertionError(f"forbidden virtio-net acceptance evidence: {marker}")
+    for line in serial.splitlines():
+        for prefix in STORAGE_EVIDENCE_PREFIXES:
+            if line.startswith(prefix):
+                raise AssertionError(f"forbidden virtio-net storage evidence: {line}")
 
 
 def assert_qemu_success(qemu_output: str) -> None:
@@ -266,10 +311,11 @@ def assert_qemu_success(qemu_output: str) -> None:
         raise AssertionError(f"expected one exact success outcome line, got {outcome_lines!r}")
 
 
-def assert_virtio_net_acceptance(serial: str, qemu_output: str) -> None:
-    assert_exact_ordered_markers(serial)
+def assert_virtio_net_acceptance(serial: str, qemu_output: str) -> bytes:
+    device_mac = assert_exact_ordered_markers(serial)
     assert_storage_isolation(serial)
     assert_qemu_success(qemu_output)
+    return device_mac
 
 
 def assert_peer_exchange(peer: FramePeer) -> None:
@@ -277,8 +323,15 @@ def assert_peer_exchange(peer: FramePeer) -> None:
         raise AssertionError(f"virtio-net frame peer failed: {peer.error}") from peer.error
     if not peer.connected:
         raise AssertionError("QEMU did not connect to the virtio-net frame peer")
-    if not peer.tx_matched or peer.tx_frame is None:
-        raise AssertionError("QEMU did not deliver the validated virtio-net TX frame")
+    if peer.expected_device_mac is None:
+        raise AssertionError("serial MAC was not bound to the virtio-net frame peer")
+    expected_tx = probe_frame(PEER_MAC, peer.expected_device_mac, TX_PAYLOAD)
+    if peer.tx_frame != expected_tx:
+        raise AssertionError("QEMU TX frame does not exactly match the COM1 MAC evidence")
+    peer.tx_matched = True
+    expected_rx = probe_frame(peer.expected_device_mac, PEER_MAC, RX_PAYLOAD)
+    if peer.rx_frame != expected_rx:
+        raise AssertionError("virtio-net RX frame does not exactly match the COM1 MAC evidence")
     if not peer.rx_delivered or peer.rx_frame is None:
         raise AssertionError("virtio-net frame peer did not deliver the RX frame")
 
@@ -390,7 +443,7 @@ def run_probe_boot() -> tuple[str, str, FramePeer]:
             raise AssertionError(f"QEMU runner failed with {runner.process.returncode}")
         peer.join(timeout=5.0)
         serial = SERIAL_LOG.read_text(encoding="utf-8", errors="replace")
-        assert_virtio_net_acceptance(serial, qemu_output)
+        peer.expected_device_mac = assert_virtio_net_acceptance(serial, qemu_output)
         assert_peer_exchange(peer)
         return serial, qemu_output, peer
     except BaseException as error:
