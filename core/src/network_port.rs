@@ -1,6 +1,6 @@
 //! Runtime-only capability-scoped NetworkPort resource (ADR 0095).
 
-use crate::capabilities::ResourceId;
+use crate::capabilities::{CapabilityHandle, CapabilityTable, ResourceId};
 #[cfg(any(test, feature = "virtio-net-probe"))]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -43,18 +43,33 @@ pub(crate) enum TransportError {
     Fault,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NetworkPortBindingError {
+    AlreadyBound,
+    NotReady,
+}
+
 /// Boundary used by the resource. Implementations retain all device-visible
 /// queues, headers, and DMA memory; this boundary accepts Ethernet bytes only.
 pub(crate) trait NetworkTransport {
     fn mac(&self) -> [u8; 6];
     fn transmit(&mut self, frame: &[u8]) -> Result<(), TransportError>;
     fn try_receive_into(&mut self, output: &mut [u8]) -> Result<Option<usize>, TransportError>;
+    fn reset(&mut self) -> Result<(), TransportError>;
+}
+
+#[derive(Clone, Copy)]
+struct NetworkPortCapabilityBinding {
+    consumer: CapabilityHandle,
+    owner: CapabilityHandle,
 }
 
 pub(crate) struct NetworkPort<T: NetworkTransport> {
     resource_id: u64,
     transport: Option<T>,
     state: u16,
+    receive_scratch: [u8; NETWORK_PORT_MAX_FRAME_BYTES],
+    bound_capabilities: Option<NetworkPortCapabilityBinding>,
 }
 
 impl<T: NetworkTransport> NetworkPort<T> {
@@ -75,6 +90,8 @@ impl<T: NetworkTransport> NetworkPort<T> {
             resource_id: NETWORK_PORT_RESOURCE_ID_NAMESPACE | sequence,
             transport: Some(transport),
             state: NETWORK_PORT_STATE_READY,
+            receive_scratch: [0; NETWORK_PORT_MAX_FRAME_BYTES],
+            bound_capabilities: None,
         }
     }
 
@@ -84,6 +101,21 @@ impl<T: NetworkTransport> NetworkPort<T> {
 
     pub(crate) const fn state(&self) -> u16 {
         self.state
+    }
+
+    pub(crate) fn bind_capabilities(
+        &mut self,
+        consumer: CapabilityHandle,
+        owner: CapabilityHandle,
+    ) -> Result<(), NetworkPortBindingError> {
+        if self.state != NETWORK_PORT_STATE_READY {
+            return Err(NetworkPortBindingError::NotReady);
+        }
+        if self.bound_capabilities.is_some() {
+            return Err(NetworkPortBindingError::AlreadyBound);
+        }
+        self.bound_capabilities = Some(NetworkPortCapabilityBinding { consumer, owner });
+        Ok(())
     }
 
     pub(crate) fn service_response(&self) -> Option<NetworkPortResponseV1> {
@@ -105,6 +137,22 @@ impl<T: NetworkTransport> NetworkPort<T> {
     }
 
     pub(crate) fn send(&mut self, frame: &[u8]) -> NetworkPortResponseV1 {
+        self.send_impl(frame, None)
+    }
+
+    pub(crate) fn send_with_capabilities(
+        &mut self,
+        frame: &[u8],
+        capabilities: &mut CapabilityTable,
+    ) -> NetworkPortResponseV1 {
+        self.send_impl(frame, Some(capabilities))
+    }
+
+    fn send_impl(
+        &mut self,
+        frame: &[u8],
+        mut capabilities: Option<&mut CapabilityTable>,
+    ) -> NetworkPortResponseV1 {
         if let Some(response) = self.service_state_response() {
             return response;
         }
@@ -116,11 +164,27 @@ impl<T: NetworkTransport> NetworkPort<T> {
             .and_then(|transport| transport.transmit(frame))
         {
             Ok(()) => self.response(NETWORK_PORT_STATUS_OK),
-            Err(_) => self.fail_transport(),
+            Err(_) => self.fail_transport(capabilities.take()),
         }
     }
 
     pub(crate) fn try_receive_into(&mut self, output: &mut [u8]) -> NetworkPortResponseV1 {
+        self.try_receive_impl(output, None)
+    }
+
+    pub(crate) fn try_receive_with_capabilities(
+        &mut self,
+        output: &mut [u8],
+        capabilities: &mut CapabilityTable,
+    ) -> NetworkPortResponseV1 {
+        self.try_receive_impl(output, Some(capabilities))
+    }
+
+    fn try_receive_impl(
+        &mut self,
+        output: &mut [u8],
+        mut capabilities: Option<&mut CapabilityTable>,
+    ) -> NetworkPortResponseV1 {
         if let Some(response) = self.service_state_response() {
             return response;
         }
@@ -132,17 +196,23 @@ impl<T: NetworkTransport> NetworkPort<T> {
         if output.len() > NETWORK_PORT_MAX_FRAME_BYTES {
             return self.response(NETWORK_PORT_STATUS_BAD_REQUEST);
         }
-        match self
-            .transport_mut()
-            .and_then(|transport| transport.try_receive_into(output))
-        {
+        let receive_result = self
+            .transport
+            .as_mut()
+            .ok_or(TransportError::Fault)
+            .and_then(|transport| transport.try_receive_into(&mut self.receive_scratch));
+        match receive_result {
             Ok(None) => self.response(NETWORK_PORT_STATUS_EMPTY),
-            Ok(Some(frame_len)) if frame_len <= NETWORK_PORT_MAX_FRAME_BYTES => {
+            Ok(Some(frame_len))
+                if (NETWORK_PORT_MIN_FRAME_BYTES..=NETWORK_PORT_MAX_FRAME_BYTES)
+                    .contains(&frame_len) =>
+            {
+                output[..frame_len].copy_from_slice(&self.receive_scratch[..frame_len]);
                 let mut response = self.response(NETWORK_PORT_STATUS_OK);
                 response.frame_len = frame_len as u64;
                 response
             }
-            Ok(Some(_)) | Err(_) => self.fail_transport(),
+            Ok(Some(_)) | Err(_) => self.fail_transport(capabilities.take()),
         }
     }
 
@@ -150,9 +220,32 @@ impl<T: NetworkTransport> NetworkPort<T> {
     /// prevents further queue publication or completion admission; its
     /// boot-local identity is deliberately not released for reuse.
     pub(crate) fn reset(&mut self) -> NetworkPortResponseV1 {
+        self.reset_impl(None)
+    }
+
+    pub(crate) fn reset_with_capabilities(
+        &mut self,
+        capabilities: &mut CapabilityTable,
+    ) -> NetworkPortResponseV1 {
+        self.reset_impl(Some(capabilities))
+    }
+
+    fn reset_impl(
+        &mut self,
+        mut capabilities: Option<&mut CapabilityTable>,
+    ) -> NetworkPortResponseV1 {
+        let reset_result = self
+            .transport
+            .as_mut()
+            .map_or(Err(TransportError::Fault), NetworkTransport::reset);
         self.transport = None;
         self.state = NETWORK_PORT_STATE_RESET;
-        self.response(NETWORK_PORT_STATUS_OK)
+        self.revoke_bound_capabilities(capabilities.take());
+        self.response(if reset_result.is_ok() {
+            NETWORK_PORT_STATUS_OK
+        } else {
+            NETWORK_PORT_STATUS_TRANSPORT_ERROR
+        })
     }
 
     fn transport_mut(&mut self) -> Result<&mut T, TransportError> {
@@ -168,10 +261,27 @@ impl<T: NetworkTransport> NetworkPort<T> {
         }
     }
 
-    fn fail_transport(&mut self) -> NetworkPortResponseV1 {
+    fn fail_transport(
+        &mut self,
+        capabilities: Option<&mut CapabilityTable>,
+    ) -> NetworkPortResponseV1 {
         self.transport = None;
         self.state = NETWORK_PORT_STATE_FAILED;
+        self.revoke_bound_capabilities(capabilities);
         self.response(NETWORK_PORT_STATUS_TRANSPORT_ERROR)
+    }
+
+    fn revoke_bound_capabilities(&mut self, capabilities: Option<&mut CapabilityTable>) {
+        let Some(capabilities) = capabilities else {
+            return;
+        };
+        let Some(binding) = self.bound_capabilities.take() else {
+            return;
+        };
+        let _ = capabilities.revoke(binding.consumer);
+        if binding.owner != binding.consumer {
+            let _ = capabilities.revoke(binding.owner);
+        }
     }
 
     fn response(&self, status: u16) -> NetworkPortResponseV1 {
@@ -219,6 +329,10 @@ impl NetworkTransport for crate::virtio_net::VirtioTransport {
         self.try_receive_into(output)
             .map_err(|_| TransportError::Fault)
     }
+
+    fn reset(&mut self) -> Result<(), TransportError> {
+        self.reset_for_teardown().map_err(|_| TransportError::Fault)
+    }
 }
 
 #[cfg(test)]
@@ -235,8 +349,10 @@ mod tests {
     struct FakeTransport {
         mac: [u8; 6],
         received: Option<[u8; NETWORK_PORT_MIN_FRAME_BYTES]>,
+        invalid_receive_len: Option<usize>,
         transmit_error: bool,
         receive_error: bool,
+        reset_error: bool,
         sent_len: usize,
     }
 
@@ -245,8 +361,10 @@ mod tests {
             Self {
                 mac: [0x02, 0, 0, 0, 0, 1],
                 received: None,
+                invalid_receive_len: None,
                 transmit_error: false,
                 receive_error: false,
+                reset_error: false,
                 sent_len: 0,
             }
         }
@@ -269,11 +387,24 @@ mod tests {
             if self.receive_error {
                 return Err(TransportError::Fault);
             }
+            if let Some(frame_len) = self.invalid_receive_len.take() {
+                let written_len = frame_len.min(output.len());
+                output[..written_len].fill(0x5A);
+                return Ok(Some(frame_len));
+            }
             let Some(frame) = self.received.take() else {
                 return Ok(None);
             };
             output[..frame.len()].copy_from_slice(&frame);
             Ok(Some(frame.len()))
+        }
+
+        fn reset(&mut self) -> Result<(), TransportError> {
+            if self.reset_error {
+                Err(TransportError::Fault)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -375,10 +506,40 @@ mod tests {
     }
 
     #[test]
+    fn invalid_receive_length_is_terminal_without_partial_frame_delivery() {
+        let mut transport = FakeTransport::ready();
+        transport.invalid_receive_len = Some(NETWORK_PORT_MIN_FRAME_BYTES - 1);
+        let mut port = NetworkPort::new_for_test(transport);
+        let mut output = [0xCC; NETWORK_PORT_MAX_FRAME_BYTES];
+
+        let response = port.try_receive_into(&mut output);
+
+        assert_eq!(response.status, NETWORK_PORT_STATUS_TRANSPORT_ERROR);
+        assert_eq!(response.state, NETWORK_PORT_STATE_FAILED);
+        assert_eq!(output, [0xCC; NETWORK_PORT_MAX_FRAME_BYTES]);
+    }
+
+    #[test]
     fn reset_is_administrative_and_terminal() {
         let mut port = NetworkPort::new_for_test(FakeTransport::ready());
 
         assert_eq!(port.reset().state, NETWORK_PORT_STATE_RESET);
+        assert_eq!(
+            port.send(&[0; NETWORK_PORT_MIN_FRAME_BYTES]).state,
+            NETWORK_PORT_STATE_RESET
+        );
+    }
+
+    #[test]
+    fn reset_delegates_to_transport_and_remains_terminal_on_reset_error() {
+        let mut transport = FakeTransport::ready();
+        transport.reset_error = true;
+        let mut port = NetworkPort::new_for_test(transport);
+
+        let response = port.reset();
+
+        assert_eq!(response.status, NETWORK_PORT_STATUS_TRANSPORT_ERROR);
+        assert_eq!(response.state, NETWORK_PORT_STATE_RESET);
         assert_eq!(
             port.send(&[0; NETWORK_PORT_MIN_FRAME_BYTES]).state,
             NETWORK_PORT_STATE_RESET

@@ -1019,6 +1019,57 @@ fn dispatch_network_port(args: SyscallArgs) -> Result<u64, SyscallError> {
     })
 }
 
+#[cfg(any(test, feature = "virtio-net-probe"))]
+pub(crate) fn bind_network_port_capabilities(
+    consumer_holder: ActiveUserProcess,
+    consumer: PackedCapability,
+    owner_holder: ServiceId,
+    owner: PackedCapability,
+) -> Result<(), SyscallError> {
+    with_syscall_capabilities(|capabilities| {
+        crate::network_port::with_active_port(|port| {
+            bind_network_port_capabilities_with_table(
+                capabilities,
+                port,
+                consumer_holder,
+                consumer,
+                owner_holder,
+                owner,
+            )
+        })
+        .unwrap_or(Err(SyscallError::BadResult))
+    })
+}
+
+#[cfg(any(test, feature = "virtio-net-probe"))]
+fn bind_network_port_capabilities_with_table<T: crate::network_port::NetworkTransport>(
+    capabilities: &CapabilityTable,
+    port: &mut crate::network_port::NetworkPort<T>,
+    consumer_holder: ActiveUserProcess,
+    consumer: PackedCapability,
+    owner_holder: ServiceId,
+    owner: PackedCapability,
+) -> Result<(), SyscallError> {
+    validate_syscall_capability_with_table(
+        capabilities,
+        consumer_holder,
+        consumer,
+        port.resource(),
+        RightsMask::new(RightsMask::READ | RightsMask::SEND),
+    )?;
+    capabilities.validate(
+        owner_holder,
+        unpack_syscall_capability(owner),
+        port.resource(),
+        RightsMask::new(RightsMask::WRITE),
+    )?;
+    port.bind_capabilities(
+        unpack_syscall_capability(consumer),
+        unpack_syscall_capability(owner),
+    )
+    .map_err(|_| SyscallError::BadResult)
+}
+
 #[cfg(not(any(test, feature = "virtio-net-probe")))]
 fn dispatch_network_port(_args: SyscallArgs) -> Result<u64, SyscallError> {
     // The capability is never granted and no transport is installed outside
@@ -1061,8 +1112,10 @@ fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
 
     match request.operation {
         NETWORK_PORT_OP_DESCRIBE => dispatch_network_port_describe(copy_map, port, &request),
-        NETWORK_PORT_OP_SEND => dispatch_network_port_send(copy_map, port, &request),
-        NETWORK_PORT_OP_TRY_RECEIVE => dispatch_network_port_receive(copy_map, port, &request),
+        NETWORK_PORT_OP_SEND => dispatch_network_port_send(copy_map, capabilities, port, &request),
+        NETWORK_PORT_OP_TRY_RECEIVE => {
+            dispatch_network_port_receive(copy_map, capabilities, port, &request)
+        }
         NETWORK_PORT_OP_RESET => {
             if request.input_ptr != 0
                 || request.input_len != 0
@@ -1071,7 +1124,7 @@ fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
             {
                 network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state())
             } else {
-                port.reset()
+                port.reset_with_capabilities(capabilities)
             }
         }
         _ => network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state()),
@@ -1129,6 +1182,7 @@ fn dispatch_network_port_describe<T: crate::network_port::NetworkTransport>(
 #[cfg(any(test, feature = "virtio-net-probe"))]
 fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
+    capabilities: &mut CapabilityTable,
     port: &mut crate::network_port::NetworkPort<T>,
     request: &NetworkPortRequestV1,
 ) -> NetworkPortResponseV1 {
@@ -1153,12 +1207,13 @@ fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     let frame = unsafe {
         slice::from_raw_parts(request.input_ptr as *const u8, request.input_len as usize)
     };
-    port.send(frame)
+    port.send_with_capabilities(frame, capabilities)
 }
 
 #[cfg(any(test, feature = "virtio-net-probe"))]
 fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
+    capabilities: &mut CapabilityTable,
     port: &mut crate::network_port::NetworkPort<T>,
     request: &NetworkPortRequestV1,
 ) -> NetworkPortResponseV1 {
@@ -1190,7 +1245,7 @@ fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     let output = unsafe {
         slice::from_raw_parts_mut(request.output_ptr as *mut u8, request.output_len as usize)
     };
-    port.try_receive_into(output)
+    port.try_receive_with_capabilities(output, capabilities)
 }
 
 #[cfg(any(test, feature = "virtio-net-probe"))]
@@ -3531,6 +3586,7 @@ mod tests {
     struct FakeNetworkTransport {
         sent: usize,
         received: Option<[u8; pythos_shared::network_port_abi::NETWORK_PORT_MIN_FRAME_BYTES]>,
+        transmit_error: bool,
     }
 
     impl FakeNetworkTransport {
@@ -3538,6 +3594,7 @@ mod tests {
             Self {
                 sent: 0,
                 received: None,
+                transmit_error: false,
             }
         }
     }
@@ -3548,6 +3605,9 @@ mod tests {
         }
 
         fn transmit(&mut self, _frame: &[u8]) -> Result<(), crate::network_port::TransportError> {
+            if self.transmit_error {
+                return Err(crate::network_port::TransportError::Fault);
+            }
             self.sent += 1;
             Ok(())
         }
@@ -3561,6 +3621,10 @@ mod tests {
             };
             output[..frame.len()].copy_from_slice(&frame);
             Ok(Some(frame.len()))
+        }
+
+        fn reset(&mut self) -> Result<(), crate::network_port::TransportError> {
+            Ok(())
         }
     }
 
@@ -3786,6 +3850,177 @@ mod tests {
             Ok(SYSCALL_OK)
         );
         assert_eq!(response.status, NETWORK_PORT_STATUS_BAD_REQUEST);
+    }
+
+    #[test]
+    fn network_port_reset_revokes_bound_consumer_and_owner_handles() {
+        use pythos_shared::network_port_abi::{
+            NETWORK_PORT_MIN_FRAME_BYTES, NETWORK_PORT_OP_RESET, NETWORK_PORT_OP_SEND,
+            NETWORK_PORT_STATE_RESET, NETWORK_PORT_STATUS_DENIED, NETWORK_PORT_STATUS_OK,
+            NetworkPortResponseV1,
+        };
+
+        let consumer_holder = network_process(0x106);
+        let owner_holder = network_process(0x107);
+        let mut table = CapabilityTable::new();
+        let mut port = network_port_for_test();
+        let consumer = grant_network_port_right(
+            &mut table,
+            consumer_holder,
+            &port,
+            RightsMask::READ | RightsMask::SEND,
+        );
+        let owner = pack_syscall_capability(
+            table
+                .grant(
+                    owner_holder.service_id(),
+                    port.resource(),
+                    RightsMask::new(RightsMask::WRITE),
+                )
+                .unwrap(),
+        );
+        bind_network_port_capabilities_with_table(
+            &table,
+            &mut port,
+            consumer_holder,
+            consumer,
+            owner_holder.service_id(),
+            owner,
+        )
+        .unwrap();
+
+        let mut response = Box::new(NetworkPortResponseV1::new(0xFFFF, 0));
+        let reset = Box::new(network_request(NETWORK_PORT_OP_RESET, owner));
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                owner_holder,
+                &reset,
+                &mut response,
+                |_| {},
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_OK);
+        assert_eq!(response.state, NETWORK_PORT_STATE_RESET);
+
+        let frame = Box::new([0xA5; NETWORK_PORT_MIN_FRAME_BYTES]);
+        let mut send = Box::new(network_request(NETWORK_PORT_OP_SEND, consumer));
+        send.input_ptr = frame.as_ptr() as u64;
+        send.input_len = frame.len() as u64;
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                consumer_holder,
+                &send,
+                &mut response,
+                |map| { map_slice(map, &*frame, true, false) },
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_DENIED);
+
+        let reset_again = Box::new(network_request(NETWORK_PORT_OP_RESET, owner));
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                owner_holder,
+                &reset_again,
+                &mut response,
+                |_| {},
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_DENIED);
+    }
+
+    #[test]
+    fn network_port_transport_failure_revokes_bound_handles_before_returning() {
+        use pythos_shared::network_port_abi::{
+            NETWORK_PORT_MIN_FRAME_BYTES, NETWORK_PORT_OP_RESET, NETWORK_PORT_OP_SEND,
+            NETWORK_PORT_STATE_FAILED, NETWORK_PORT_STATUS_DENIED,
+            NETWORK_PORT_STATUS_TRANSPORT_ERROR, NetworkPortResponseV1,
+        };
+
+        let consumer_holder = network_process(0x108);
+        let owner_holder = network_process(0x109);
+        let mut table = CapabilityTable::new();
+        let mut transport = FakeNetworkTransport::new();
+        transport.transmit_error = true;
+        let mut port = crate::network_port::NetworkPort::new_for_test(transport);
+        let consumer = grant_network_port_right(
+            &mut table,
+            consumer_holder,
+            &port,
+            RightsMask::READ | RightsMask::SEND,
+        );
+        let owner = pack_syscall_capability(
+            table
+                .grant(
+                    owner_holder.service_id(),
+                    port.resource(),
+                    RightsMask::new(RightsMask::WRITE),
+                )
+                .unwrap(),
+        );
+        bind_network_port_capabilities_with_table(
+            &table,
+            &mut port,
+            consumer_holder,
+            consumer,
+            owner_holder.service_id(),
+            owner,
+        )
+        .unwrap();
+
+        let frame = Box::new([0xA5; NETWORK_PORT_MIN_FRAME_BYTES]);
+        let mut send = Box::new(network_request(NETWORK_PORT_OP_SEND, consumer));
+        send.input_ptr = frame.as_ptr() as u64;
+        send.input_len = frame.len() as u64;
+        let mut response = Box::new(NetworkPortResponseV1::new(0xFFFF, 0));
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                consumer_holder,
+                &send,
+                &mut response,
+                |map| { map_slice(map, &*frame, true, false) },
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_TRANSPORT_ERROR);
+        assert_eq!(response.state, NETWORK_PORT_STATE_FAILED);
+
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                consumer_holder,
+                &send,
+                &mut response,
+                |_| {},
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_DENIED);
+
+        let reset = Box::new(network_request(NETWORK_PORT_OP_RESET, owner));
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                owner_holder,
+                &reset,
+                &mut response,
+                |_| {},
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_DENIED);
     }
 
     #[test]

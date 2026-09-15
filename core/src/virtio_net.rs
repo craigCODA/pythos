@@ -552,6 +552,10 @@ impl VirtioTransport {
         Ok(())
     }
 
+    pub(crate) fn reset_for_teardown(&mut self) -> Result<(), VirtioNetError> {
+        self.reset_device()
+    }
+
     fn fail_device(&mut self) {
         self.clear_queue_ownership();
         self.lifecycle = TransportLifecycle::Failed;
