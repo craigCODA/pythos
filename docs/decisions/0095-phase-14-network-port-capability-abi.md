@@ -241,6 +241,13 @@ The first consumer is a dedicated opt-in native QEMU probe. This choice avoids
 extending the frozen PythTIG ABI or requiring a new Pyth graph host operation
 before the port contract has transport evidence.
 
+The additive named-program identity for that native probe is frozen as:
+
+```text
+NETWORK_PORT_PROBE_PROGRAM_NAME = b"network-port-probe.elf"
+NETWORK_PORT_PROBE_PRINCIPAL_ID = 0x5059_4E50_5254_0001
+```
+
 PythCore grants that probe one `READ | SEND` capability through the explicit
 creator-supplied launch policy and maps a separate read-only
 `NetworkPortBootstrapV1` block into the probe at launch:
