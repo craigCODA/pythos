@@ -15,7 +15,7 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability
 boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `d08dd23`. One boot-local capability-scoped port sits
+at implementation tip `36920f5`. One boot-local capability-scoped port sits
 above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
 by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). Its native
 consumer proves describe plus one bounded raw Ethernet TX and RX exchange with
@@ -27,8 +27,12 @@ evidence is precisely: no non-boot virtio data disk attached; no storage-path ma
 `NO_DISK_WRITES` marker means no PythOS storage-path writes.
 
 Fresh NetworkPort acceptance requires the exact ordered NetworkPort markers,
-exact bounded peer bytes, and `QEMU_OUTCOME success`. Default and normal-
-session boot remain unchanged. The next Phase 14 boundary is `link-layer`.
+exact bounded peer bytes, and `QEMU_OUTCOME success`. The live marker profile
+covers forged-generation, wrong-holder, and bad-pointer denials; the host
+syscall matrix covers the remaining frozen ABI denial cases, including missing
+rights, stale generations, range overflow, buffer permissions, receive
+capacities, and oversized frames. Default and normal-session boot remain
+unchanged. The next Phase 14 boundary is `link-layer`.
 
 This does not authorize link-layer work, IP/protocols/sockets, a production
 service, physical NIC or Wi-Fi support, zero-copy, persistent networking, or a

@@ -14,13 +14,15 @@ package-defined schema extensibility proofs.
 
 Phase 14 `NetworkPort` is accepted as the bounded, opt-in QEMU capability
 boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `d08dd23`. The kernel owns the legacy/transitional
+at implementation tip `36920f5`. The kernel owns the legacy/transitional
 `VirtioTransport` adapter established by
 [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md); an opt-in native
 consumer receives one boot-local capability and uses the port ABI to describe,
 transmit, and receive bounded raw Ethernet frames. Fresh QEMU acceptance proves
 the exact ordered markers and a one-frame-each-way loopback peer exchange,
-without a non-boot virtio data disk or storage-path evidence.
+without a non-boot virtio data disk or storage-path evidence. The live marker
+profile covers forged-generation, wrong-holder, and bad-pointer denials; the
+host syscall matrix covers the remaining frozen ABI denial cases.
 
 Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
 Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required

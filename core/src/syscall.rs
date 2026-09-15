@@ -1289,6 +1289,9 @@ fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     if request.input_ptr != 0 || request.input_len != 0 {
         return network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state());
     }
+    if request.output_len == 0 {
+        return network_port_response(NETWORK_PORT_STATUS_BAD_REQUEST, port.state());
+    }
     if request.output_len < NETWORK_PORT_MAX_FRAME_BYTES as u64 {
         let mut response =
             network_port_response(NETWORK_PORT_STATUS_BUFFER_TOO_SMALL, port.state());
@@ -3840,7 +3843,9 @@ mod tests {
     #[test]
     fn network_port_rejects_malformed_shapes_and_bad_user_buffers_without_transport_access() {
         use pythos_shared::network_port_abi::{
-            NETWORK_PORT_OP_SEND, NETWORK_PORT_STATUS_BAD_REQUEST, NetworkPortResponseV1,
+            NETWORK_PORT_MAX_FRAME_BYTES, NETWORK_PORT_OP_SEND, NETWORK_PORT_OP_TRY_RECEIVE,
+            NETWORK_PORT_STATUS_BAD_REQUEST, NETWORK_PORT_STATUS_BUFFER_TOO_SMALL,
+            NetworkPortResponseV1,
         };
 
         let caller = network_process(0x104);
@@ -3916,6 +3921,57 @@ mod tests {
                 &describe,
                 &mut response,
                 |map| { map_value(map, &*description, true, false) }
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_BAD_REQUEST);
+
+        let mut zero_receive = Box::new(network_request(NETWORK_PORT_OP_TRY_RECEIVE, read));
+        zero_receive.output_ptr = 1;
+        zero_receive.output_len = 0;
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                caller,
+                &zero_receive,
+                &mut response,
+                |_| {}
+            ),
+            Ok(SYSCALL_OK)
+        );
+        assert_eq!(response.status, NETWORK_PORT_STATUS_BAD_REQUEST);
+
+        for capacity in [1_u64, (NETWORK_PORT_MAX_FRAME_BYTES - 1) as u64] {
+            let mut short_receive = Box::new(network_request(NETWORK_PORT_OP_TRY_RECEIVE, read));
+            short_receive.output_ptr = 1;
+            short_receive.output_len = capacity;
+            assert_eq!(
+                call_network_port(
+                    &mut table,
+                    &mut port,
+                    caller,
+                    &short_receive,
+                    &mut response,
+                    |_| {}
+                ),
+                Ok(SYSCALL_OK)
+            );
+            assert_eq!(response.status, NETWORK_PORT_STATUS_BUFFER_TOO_SMALL);
+            assert_eq!(response.required_len, NETWORK_PORT_MAX_FRAME_BYTES as u64);
+        }
+
+        let mut oversized_receive = Box::new(network_request(NETWORK_PORT_OP_TRY_RECEIVE, read));
+        oversized_receive.output_ptr = 1;
+        oversized_receive.output_len = (NETWORK_PORT_MAX_FRAME_BYTES + 1) as u64;
+        assert_eq!(
+            call_network_port(
+                &mut table,
+                &mut port,
+                caller,
+                &oversized_receive,
+                &mut response,
+                |_| {}
             ),
             Ok(SYSCALL_OK)
         );

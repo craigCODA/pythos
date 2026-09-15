@@ -172,6 +172,9 @@ impl<T: NetworkTransport> NetworkPort<T> {
         if let Some(response) = self.service_state_response() {
             return response;
         }
+        if output.is_empty() {
+            return self.response(NETWORK_PORT_STATUS_BAD_REQUEST);
+        }
         if output.len() < NETWORK_PORT_MAX_FRAME_BYTES {
             let mut response = self.response(NETWORK_PORT_STATUS_BUFFER_TOO_SMALL);
             response.required_len = NETWORK_PORT_MAX_FRAME_BYTES as u64;
@@ -426,9 +429,14 @@ mod tests {
     fn try_receive_requires_exact_maximum_capacity_before_transport() {
         let mut port = NetworkPort::new_for_test(FakeTransport::ready());
         let mut capabilities = CapabilityTable::new();
+        let mut zero = [];
         let mut too_small = [0; NETWORK_PORT_MAX_FRAME_BYTES - 1];
         let mut too_large = [0; NETWORK_PORT_MAX_FRAME_BYTES + 1];
 
+        assert_eq!(
+            port.try_receive_into(&mut zero, &mut capabilities).status,
+            NETWORK_PORT_STATUS_BAD_REQUEST
+        );
         assert_eq!(
             port.try_receive_into(&mut too_small, &mut capabilities)
                 .status,
