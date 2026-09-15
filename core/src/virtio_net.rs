@@ -1,4 +1,4 @@
-use crate::memory;
+use crate::{memory, serial};
 #[cfg(not(test))]
 use core::arch::asm;
 use core::cell::UnsafeCell;
@@ -43,6 +43,12 @@ const PACKET_DMA_SLOT_BYTES: usize = 4096;
 const VIRTQUEUE_BYTES: usize = 12 * 1024;
 const NIC_POLL_LIMIT: usize = 1_000_000;
 const LEGACY_DMA_EXCLUSIVE_END: u64 = 1 << 32;
+const PROBE_MARKER_PREFIX: &str = "PYTHOS:CORE:VIRTIO_NET_PROBE:";
+const PROBE_MAC_PREFIX: &str = "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=";
+const PROBE_PEER_MAC: [u8; 6] = [2, 0, 0, 0, 0, 2];
+const PROBE_ETHER_TYPE: u16 = 0x88B5;
+const PROBE_TX_PAYLOAD: &[u8] = b"PYTHOS:NIC:TX";
+const PROBE_RX_PAYLOAD: &[u8] = b"PYTHOS:NIC:RX";
 
 #[repr(C, align(4096))]
 struct DmaBytes<const N: usize>(UnsafeCell<[u8; N]>);
@@ -70,6 +76,24 @@ pub enum VirtioNetError {
     InvalidQueueSize,
     DeviceFailed,
     Timeout,
+}
+
+impl VirtioNetError {
+    pub const fn kind(self) -> &'static str {
+        match self {
+            Self::DeviceAbsent => "DEVICE_ABSENT",
+            Self::InvalidIoBar => "INVALID_IO_BAR",
+            Self::CommandRejected => "COMMAND_REJECTED",
+            Self::MissingMacFeature => "MISSING_MAC_FEATURE",
+            Self::QueueRejected => "QUEUE_REJECTED",
+            Self::DmaAddress => "DMA_ADDRESS",
+            Self::InvalidMac => "INVALID_MAC",
+            Self::InvalidFrame => "INVALID_FRAME",
+            Self::InvalidQueueSize => "INVALID_QUEUE_SIZE",
+            Self::DeviceFailed => "DEVICE_FAILED",
+            Self::Timeout => "TIMEOUT",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -888,8 +912,98 @@ fn inb(_port: u16) -> u8 {
 pub(crate) fn run_probe(
     physical_memory: &mut memory::physical::PhysicalMemory,
 ) -> Result<(), VirtioNetError> {
+    serial_marker("ENTER");
     let mut device = scan_primary_bus()?;
-    device.initialize(physical_memory)
+    serial_marker("PCI_SCAN_READY");
+    serial_marker("DEVICE_FOUND");
+    serial_marker("LEGACY_TRANSPORT_READY");
+    device.initialize(physical_memory)?;
+    emit_mac_marker(device.mac());
+    serial_marker("FEATURES_NEGOTIATED");
+    serial_marker("RX_QUEUE_READY");
+    serial_marker("TX_QUEUE_READY");
+
+    let transmit = build_probe_frame(PROBE_PEER_MAC, device.mac().bytes(), PROBE_TX_PAYLOAD);
+    device.send_raw(&EthernetFrame::new(&transmit)?)?;
+    serial_marker("TX_FRAME_SENT");
+
+    let device_mac = device.mac();
+    let received = device.receive_raw()?;
+    validate_received_probe_frame(&received, device_mac)?;
+    serial_marker("RX_FRAME_RECEIVED");
+    serial_marker("RAW_ETHERNET_READY");
+    serial_marker("NO_DISK_WRITES");
+    Ok(())
+}
+
+fn serial_marker(marker: &str) {
+    serial::write_str(PROBE_MARKER_PREFIX);
+    serial::write_line(marker);
+}
+
+fn emit_mac_marker(mac: VirtioNetMac) {
+    serial::write_str(PROBE_MAC_PREFIX);
+    let formatted = mac.format();
+    let formatted = core::str::from_utf8(&formatted).unwrap();
+    serial::write_line(formatted);
+}
+
+fn build_probe_frame(destination: [u8; 6], source: [u8; 6], payload: &[u8]) -> [u8; 60] {
+    let mut bytes = [0u8; MIN_ETHERNET_FRAME_BYTES];
+    bytes[0..6].copy_from_slice(&destination);
+    bytes[6..12].copy_from_slice(&source);
+    bytes[12..14].copy_from_slice(&PROBE_ETHER_TYPE.to_be_bytes());
+    bytes[14..14 + payload.len()].copy_from_slice(payload);
+    bytes
+}
+
+fn validate_received_probe_frame(
+    frame: &EthernetFrame<'_>,
+    device_mac: VirtioNetMac,
+) -> Result<(), VirtioNetError> {
+    if frame.bytes().len() != MIN_ETHERNET_FRAME_BYTES
+        || frame.destination() != device_mac.bytes()
+        || frame.source() != PROBE_PEER_MAC
+        || frame.ether_type() != PROBE_ETHER_TYPE
+        || !frame.bytes()[14..].starts_with(PROBE_RX_PAYLOAD)
+    {
+        return Err(VirtioNetError::InvalidFrame);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub(crate) fn assert_probe_markers(markers: &[&str]) -> Result<(), ()> {
+    const EXPECTED: [&str; 13] = [
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+        "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+    ];
+
+    if markers.len() != EXPECTED.len() {
+        return Err(());
+    }
+    for (actual, expected) in markers.iter().zip(EXPECTED) {
+        if expected == PROBE_MAC_PREFIX {
+            if !actual.starts_with(PROBE_MAC_PREFIX) || actual.len() != PROBE_MAC_PREFIX.len() + 17
+            {
+                return Err(());
+            }
+        } else if *actual != expected {
+            return Err(());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1032,6 +1146,112 @@ mod tests {
             device.recycle_pending_receive().unwrap();
         }
         assert_eq!(device.rx_available_index, RX_DESCRIPTOR_COUNT * 2);
+    }
+
+    #[test]
+    fn probe_marker_oracle_requires_the_exact_success_sequence() {
+        let markers = [
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=02:00:00:00:00:01",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+        ];
+
+        assert_eq!(assert_probe_markers(&markers), Ok(()));
+    }
+
+    #[test]
+    fn probe_marker_oracle_rejects_missing_rx_frame_received() {
+        let markers = [
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=02:00:00:00:00:01",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+        ];
+
+        assert!(assert_probe_markers(&markers).is_err());
+    }
+
+    #[test]
+    fn probe_marker_oracle_rejects_duplicate_ready() {
+        let markers = [
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=02:00:00:00:00:01",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+        ];
+
+        assert!(assert_probe_markers(&markers).is_err());
+    }
+
+    #[test]
+    fn probe_marker_oracle_rejects_error_after_ready() {
+        let markers = [
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=02:00:00:00:00:01",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:TIMEOUT",
+        ];
+
+        assert!(assert_probe_markers(&markers).is_err());
+    }
+
+    #[test]
+    fn probe_marker_oracle_rejects_no_disk_writes_after_ready() {
+        let markers = [
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:ENTER",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:DEVICE_FOUND",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:LEGACY_TRANSPORT_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:MAC=02:00:00:00:00:01",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:FEATURES_NEGOTIATED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_QUEUE_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:TX_FRAME_SENT",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RX_FRAME_RECEIVED",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:RAW_ETHERNET_READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:READY",
+            "PYTHOS:CORE:VIRTIO_NET_PROBE:NO_DISK_WRITES",
+        ];
+
+        assert!(assert_probe_markers(&markers).is_err());
     }
 
     fn initialized_device_for_test() -> VirtioNetDevice {

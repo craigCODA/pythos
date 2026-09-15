@@ -23,6 +23,9 @@ session-input-bridge-probe = ["verify"]
 session-runtime-probe = ["verify"]
 session-viewing-probe = ["session-runtime-probe"]
 evidence-terminal = ["verify"]
+# Opt-in legacy virtio-net TX/RX diagnostic. It uses no storage device and
+# leaves the default normal-session boot path unchanged.
+virtio-net-probe = ["verify"]
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []

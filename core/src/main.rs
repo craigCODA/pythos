@@ -1,10 +1,16 @@
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(not(test), no_std)]
-// The hardware-probe feature intentionally exits after early PCI inventory.
-// Most of PythCore remains in the crate but is unreachable in that diagnostic
-// image, so suppress unused warnings only for that non-test build.
+// Early-exit probe features intentionally leave most of PythCore unreachable.
+// Suppress unused warnings only in their non-test diagnostic images.
 #![cfg_attr(
-    all(not(test), any(feature = "hardware-probe", feature = "usb-xhci-probe")),
+    all(
+        not(test),
+        any(
+            feature = "hardware-probe",
+            feature = "usb-xhci-probe",
+            feature = "virtio-net-probe"
+        )
+    ),
     allow(unused)
 )]
 // The session-input bridge deliberately terminates once its bounded ring-3
@@ -72,6 +78,16 @@ compile_error!("features `session-runtime-probe` and `evidence-terminal` are mut
 compile_error!("features `session-runtime-probe` and `hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "session-runtime-probe", feature = "usb-xhci-probe"))]
 compile_error!("features `session-runtime-probe` and USB xHCI diagnostics are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "phase13-package-test"))]
+compile_error!("features `virtio-net-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `virtio-net-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "virtio-net-probe", feature = "session-runtime-probe"))]
+compile_error!("features `virtio-net-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "evidence-terminal"))]
+compile_error!("features `virtio-net-probe` and `evidence-terminal` are mutually exclusive");
 #[cfg(all(
     feature = "session-runtime-probe",
     any(
@@ -296,6 +312,7 @@ mod value_validation;
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;
+#[cfg(any(test, feature = "virtio-net-probe"))]
 mod virtio_net;
 mod widgets;
 mod window_interaction;
@@ -784,6 +801,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
             serial::write_line("PYTHOS:CORE:VM_READY");
+            #[cfg(feature = "virtio-net-probe")]
+            match virtio_net::run_probe(&mut physical_memory) {
+                Ok(()) => {
+                    serial::write_line("PYTHOS:CORE:VIRTIO_NET_PROBE:READY");
+                    qemu_exit::success();
+                }
+                Err(error) => {
+                    serial::write_str("PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:");
+                    serial::write_line(error.kind());
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            }
             #[cfg(feature = "sdhci-emmc-backend")]
             let sdhci_emmc_device = match sdhci_emmc_controller {
                 Some(controller) => match sdhci_emmc::initialize_device(controller) {
