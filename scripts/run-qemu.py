@@ -170,6 +170,21 @@ def qemu_firmware_and_esp_args(
     return qemu_firmware_args(code) + qemu_esp_args(esp_image)
 
 
+def virtio_net_qemu_args(peer_port: int | None) -> list[str]:
+    if peer_port is None:
+        netdev = "user,id=pythos_net"
+    else:
+        if not 1 <= peer_port <= 65535:
+            raise ValueError("virtio-net peer port must be in 1..65535")
+        netdev = f"socket,id=pythos_net,connect=127.0.0.1:{peer_port}"
+    return [
+        "-netdev",
+        netdev,
+        "-device",
+        "virtio-net-pci,netdev=pythos_net,disable-modern=on,disable-legacy=off",
+    ]
+
+
 QMP_PORT = 4488
 USB_MOUSE_SEQUENCE_LENGTH = 16
 
@@ -385,6 +400,16 @@ def main() -> int:
         help="do not attach the default legacy virtio-blk storage device",
     )
     parser.add_argument(
+        "--virtio-net",
+        action="store_true",
+        help="attach a transitional legacy virtio-net PCI device",
+    )
+    parser.add_argument(
+        "--virtio-net-peer-port",
+        type=int,
+        help="connect --virtio-net to a loopback socket peer on this TCP port",
+    )
+    parser.add_argument(
         "--ahci",
         action="store_true",
         help="attach a polling-test SATA disk behind an explicit AHCI controller",
@@ -482,6 +507,13 @@ def main() -> int:
     ovmf = Path(find_ovmf(args.ovmf_code))
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
+    if args.virtio_net_peer_port is not None and not args.virtio_net:
+        raise SystemExit("--virtio-net-peer-port requires --virtio-net")
+    if (
+        args.virtio_net_peer_port is not None
+        and not 1 <= args.virtio_net_peer_port <= 65535
+    ):
+        raise SystemExit("--virtio-net-peer-port must be in 1..65535")
     if args.ahci_storage_image and not args.ahci:
         raise SystemExit("--ahci-storage-image requires --ahci")
     if args.emmc and not args.sdhci:
@@ -641,6 +673,8 @@ def main() -> int:
             "-device",
             "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
         ]
+    if args.virtio_net:
+        command += virtio_net_qemu_args(args.virtio_net_peer_port)
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
     command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
