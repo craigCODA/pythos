@@ -12,6 +12,23 @@ frame, accepts one valid RX frame, and reaches terminal capability revocation.
 The exact accepted evidence is no non-boot virtio disk, no storage-path
 markers, and `QEMU_OUTCOME success`.
 
+The Task 7 live QEMU boot was run after commit `8e1cfaa` with QEMU emulator
+version `11.0.50 (v11.0.0-12631-g54e84cdc7a)`, using the command/profile
+`py -3 scripts/test-link-layer.py --no-audio-device --no-virtio-blk
+--virtio-net` with peer and shell loopback ports and `--expect-outcome success`.
+The harness result was `LINK_LAYER_QEMU_ACCEPTANCE_OK`. The exact timeline,
+each exactly once and in this order, was `COM2: BOOTSTRAPPED, DESCRIBE_OK,
+TX_OK, WRONG_DESTINATION_DENIED, WRONG_ETHERTYPE_DENIED, RX_OK`, then
+`COM1: TEARDOWN_REVOKED, LINK_LAYER_READY`, then
+`RUNNER: QEMU_OUTCOME success`. The peer validated exactly one 60-byte TX and
+these exact 60-byte frames (each header+payload followed by 32 zero bytes):
+TX `02000000000252540012345688b5505954484f533a4c494e4b3a54580000000000000000000000000000000000000000000000000000000000000000`,
+wrong destination `02000000000302000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`,
+wrong EtherType `52540012345602000000000288b6505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`,
+and valid RX `52540012345602000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`.
+Cleanup removed the serial log and ESP overlay and joined the peer and runner
+cleanly; no storage-path markers and no non-boot virtio disk were present.
+
 Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 --check`, and `cargo test --workspace --quiet`; the repository-managed pytest
 form passed 210 tests plus 239 subtests. The raw virtio-net and NetworkPort
