@@ -117,7 +117,7 @@ def peer_frames(device_mac: bytes) -> tuple[bytes, bytes, bytes]:
 class LinkLayerPeer:
     """One bounded loopback socket peer for one TX and three ordered RX frames."""
 
-    def __init__(self, port: int = 0, timeout: float = 10.0) -> None:
+    def __init__(self, port: int = 0, timeout: float = 10.0, wait_for_client_rx: bool = False) -> None:
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", port))
@@ -125,6 +125,9 @@ class LinkLayerPeer:
         self.listener.settimeout(timeout)
         self.port = self.listener.getsockname()[1]
         self.timeout = timeout
+        self.wait_for_client_rx = wait_for_client_rx
+        self.client_received_frames = threading.Event()
+        self.initial_duplicate_check_complete = threading.Event()
         self.error: BaseException | None = None
         self.connected = False
         self.tx_frame: bytes | None = None
@@ -160,8 +163,22 @@ class LinkLayerPeer:
                 for frame in self.rx_frames:
                     connection.sendall(encode_socket_frame(frame))
                     self.delivered_frames += 1
-                if select.select([connection], [], [], 0.0)[0] and connection.recv(1, socket.MSG_PEEK):
-                    raise AssertionError("link-layer peer received additional TX bytes after the first frame")
+                if self.wait_for_client_rx and not self.client_received_frames.wait(self.timeout):
+                    raise TimeoutError("client did not receive all link-layer RX frames")
+                self.initial_duplicate_check_complete.set()
+                deadline = time.monotonic() + self.timeout
+                while True:
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        raise TimeoutError("link-layer peer did not reach EOF after the RX frames")
+                    if not select.select([connection], [], [], remaining)[0]:
+                        raise TimeoutError("link-layer peer did not reach EOF after the RX frames")
+                    try:
+                        if connection.recv(4096):
+                            raise AssertionError("link-layer peer received additional TX bytes after the first frame")
+                    except ConnectionResetError:
+                        pass
+                    break
         except BaseException as error:
             self.error = error
         finally:

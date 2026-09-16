@@ -34,7 +34,7 @@ were present.
 
 Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 --check`, and `cargo test --workspace --quiet`; the repository-managed pytest
-form passed 221 pytest tests plus 252 subtests, and the workspace run reported
+form passed 223 pytest tests plus 252 subtests, and the workspace run reported
 1,145 Rust tests. The raw virtio-net and NetworkPort
 self-tests, direct NetworkPort host tests, default and opt-in target builds,
 and `NORMAL_FAST_BOOT_TEST_OK` also passed. Fresh raw and NetworkPort QEMU

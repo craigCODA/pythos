@@ -170,6 +170,51 @@ class LinkLayerHostTest(unittest.TestCase):
         finally:
             peer.close()
 
+    def test_peer_rejects_delayed_second_tx_after_client_received_all_rx_frames(self) -> None:
+        tx_frame = (
+            bytes.fromhex("02000000000252540012345688b5")
+            + b"PYTHOS:LINK:TX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
+        )
+        peer = LINK_LAYER.LinkLayerPeer(timeout=1.0, wait_for_client_rx=True)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0) as connection:
+                connection.sendall(LINK_LAYER.encode_socket_frame(tx_frame))
+                self.assertEqual(
+                    tuple(LINK_LAYER.read_socket_frame(connection) for _ in range(3)),
+                    LINK_LAYER.peer_frames(bytes.fromhex("525400123456")),
+                )
+                self.assertEqual(peer.delivered_frames, 3)
+                peer.client_received_frames.set()
+                self.assertTrue(peer.initial_duplicate_check_complete.wait(1.0))
+                connection.sendall(LINK_LAYER.encode_socket_frame(tx_frame))
+            peer.join(timeout=1.0)
+            self.assertIsNotNone(peer.error)
+            self.assertIn("additional TX bytes", str(peer.error))
+        finally:
+            peer.close()
+
+    def test_peer_accepts_abortive_close_after_client_received_all_rx_frames(self) -> None:
+        tx_frame = (
+            bytes.fromhex("02000000000252540012345688b5")
+            + b"PYTHOS:LINK:TX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
+        )
+        peer = LINK_LAYER.LinkLayerPeer(timeout=1.0, wait_for_client_rx=True)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0) as connection:
+                connection.sendall(LINK_LAYER.encode_socket_frame(tx_frame))
+                tuple(LINK_LAYER.read_socket_frame(connection) for _ in range(3))
+                peer.client_received_frames.set()
+                self.assertTrue(peer.initial_duplicate_check_complete.wait(1.0))
+                connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+            peer.join(timeout=1.0)
+            self.assertIsNone(peer.error)
+        finally:
+            peer.close()
+
     def test_runner_command_uses_legacy_peer_without_data_disk(self) -> None:
         self.assertEqual(
             LINK_LAYER.probe_runner_command(peer_port=4595, shell_port=4596),
