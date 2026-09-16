@@ -334,7 +334,7 @@ pub fn run(
 - Consumes: Task 7’s imported harness module, Task 6 build selectors, and existing CI command assertions.
 - Produces: host coverage for marker/timeline/frame oracles and CI commands for formatting, compilation, linting, self-test, and live acceptance.
 
-- [ ] Add `tests/test_link_layer.py` using the repository’s dynamic script loader; assert the eight marker literals, the exact peer TX/RX byte arrays, the QEMU command’s `--no-virtio-blk` and `--virtio-net` flags, and rejection of duplicate/reordered markers and non-success outcomes.
+- [ ] Add `tests/test_link_layer.py` using the repository’s dynamic script loader; assert the eight marker literals, the exact TX byte array and all three ordered RX byte arrays (wrong destination, wrong EtherType, valid), the QEMU command’s `--no-virtio-blk` and `--virtio-net` flags, and rejection of duplicate/reordered markers and non-success outcomes.
 - [ ] Extend `tests/test_ci_workflow.py` to require link-layer script compilation, `cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings`, `cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings`, `python scripts/test-link-layer.py --self-test`, and the live link-layer command after the NetworkPort command.
 - [ ] Add a dedicated CI compile/test line for `cargo test -p pythos-user-link-layer-probe` and retain all existing raw Virtio and NetworkPort checks.
 - [ ] Keep the live profiles sequential in `.github/workflows/qemu-acceptance.yml`; do not create concurrent QEMU jobs that share `target/` or `image/esp`.
