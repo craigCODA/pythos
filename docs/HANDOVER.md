@@ -32,6 +32,37 @@ capacities, and oversized frames. Both runners use `--no-virtio-blk`; the
 NetworkPort oracle rejects storage-path evidence. The snapshot-backed IDE UEFI
 ESP is boot media only.
 
+The Task 10 rerun on 2026-09-15 did not close the complete verification gate.
+`py -3 -m pytest tests -q --tb=short` exited 1 because the selected Python
+3.14 installation reported `No module named pytest`. The live link-layer
+command also exited 1 after QEMU itself emitted `QEMU_OUTCOME success`:
+finalizing COM2 raised `[WinError 10054] An existing connection was forcibly
+closed by the remote host`, so the captured COM2 transcript was empty. COM1
+did contain, in order, `PYTHOS:CORE:LINK_LAYER:TEARDOWN_REVOKED` and
+`PYTHOS:CORE:LINK_LAYER_READY`, but that is not proof of the required complete
+exact-once timeline. The required timeline remains `BOOTSTRAPPED`,
+`DESCRIBE_OK`, `TX_OK`, `WRONG_DESTINATION_DENIED`,
+`WRONG_ETHERTYPE_DENIED`, `RX_OK`, `TEARDOWN_REVOKED`, and
+`LINK_LAYER_READY`; no fresh Task 10 claim is made for that complete timeline.
+
+The run used QEMU `11.0.50` (`v11.0.0-12631-g54e84cdc7a`). The self-tested
+60-byte frame contract, written here as exact hexadecimal frame bytes, was:
+
+```text
+TX 02000000000252540012345688b5505954484f533a4c494e4b3a54580000000000000000000000000000000000000000000000000000000000000000
+wrong-destination RX 02000000000302000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000
+wrong-EtherType RX 52540012345602000000000288b6505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000
+valid RX 52540012345602000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000
+```
+
+Each socket record prefixes those bytes with big-endian length `0000003c`.
+Because the live oracle failed before its peer assertion, these are exact
+self-tested contract bytes, not a fresh accepted live peer transcript. Failure
+cleanup left no QEMU process and removed `target/link-layer-probe-com1.log`
+and `target/link-layer-probe-com1-esp.img`. The remaining Task 10 commands,
+including both existing live network profiles and normal fast boot, passed,
+but the two failures above mean this branch is not claimed as fully verified.
+
 Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
 consumer. Default and normal-session boot remain unchanged. This acceptance is
 not a claim of IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
