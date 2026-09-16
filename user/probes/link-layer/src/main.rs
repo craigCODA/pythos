@@ -1,0 +1,21 @@
+#![cfg_attr(not(test), no_std)]
+#![cfg_attr(not(test), no_main)]
+
+#[cfg(not(test))]
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(not(test))]
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo<'_>) -> ! {
+    loop {
+        core::hint::spin_loop();
+    }
+}
+
+#[cfg(test)]
+fn main() {}
