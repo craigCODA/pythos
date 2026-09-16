@@ -163,11 +163,13 @@ PYTHOS:CORE:LINK_LAYER:RX_OK
 - [ ] Validate the read-only bootstrap using `NETWORK_PORT_BOOTSTRAP_MAGIC`, ABI major/minor, zero reserved fields, and nonzero `PackedCapability`; emit `LINK_LAYER_BOOTSTRAPPED_MARKER` immediately after that validation.
 - [ ] Issue `DESCRIBE`, require status `OK`, frame bounds 60/1514, flags `MAC_ONLY | NO_OFFLOAD`, and state `READY`; emit `LINK_LAYER_DESCRIBE_OK_MARKER`.
 - [ ] Serialize exactly one 60-byte TX frame with destination `02:00:00:00:00:02`, described local source, EtherType `0x88B5`, payload `b"PYTHOS:LINK:TX"`, and zero padding; send it through `NETWORK_PORT_OP_SEND` and emit `LINK_LAYER_TX_OK_MARKER` only on status `OK`.
-- [ ] Poll nonblocking `TRY_RECEIVE` until a frame arrives; parse the returned `frame_len` slice and reject any frame whose destination, source, EtherType, or payload does not match the fixed policy.
-- [ ] Require the first rejected peer frame to have the wrong destination while retaining the expected source, EtherType, and RX token; emit `LINK_LAYER_WRONG_DESTINATION_DENIED_MARKER`.
-- [ ] Require the second rejected peer frame to have the correct endpoints and RX token but a wrong EtherType; emit `LINK_LAYER_WRONG_ETHERTYPE_DENIED_MARKER`.
-- [ ] Require the next frame to have described local destination, fixed peer source, EtherType `0x88B5`, and payload `b"PYTHOS:LINK:RX"`; emit `LINK_LAYER_RX_OK_MARKER` and terminate through the established `int3` returnable-user-process path.
+- [ ] Poll nonblocking `TRY_RECEIVE` until a frame arrives; parse the returned `frame_len` slice and reject any frame whose destination, source, EtherType, or payload does not match the fixed policy. Because the parser's payload includes every byte after offset 14, a 60-byte frame's fixed token is a prefix and the remaining 32 bytes must be zero padding.
+- [ ] Require the first rejected peer frame to have the wrong destination while retaining the expected source, EtherType, RX token prefix, and zero padding; emit `LINK_LAYER_WRONG_DESTINATION_DENIED_MARKER`.
+- [ ] Require the second rejected peer frame to have the correct endpoints, RX token prefix, and zero padding but a wrong EtherType; emit `LINK_LAYER_WRONG_ETHERTYPE_DENIED_MARKER`.
+- [ ] Require the next frame to have described local destination, fixed peer source, EtherType `0x88B5`, RX token prefix `b"PYTHOS:LINK:RX"`, and zero padding through the reported frame length; emit `LINK_LAYER_RX_OK_MARKER` and terminate through the established `int3` returnable-user-process path.
 - [ ] Keep the parser’s borrowed payload synchronous and do not expose virtio headers, queue state, DMA pointers, PCI fields, or transport completions to the process.
+- [ ] Require `NetworkPortDescriptionV1.reserved0 == [0; 2]` and `reserved1 == 0` in the described metadata before emitting `LINK_LAYER_DESCRIBE_OK_MARKER`.
+- [ ] Require `status == NETWORK_PORT_STATUS_OK`, `state == NETWORK_PORT_STATE_READY`, and zero response reserved fields for successful `DESCRIBE` and `SEND`; require the same ready-state and reserved-field checks for `TRY_RECEIVE` before frame parsing.
 - [ ] Route all malformed bootstrap, syscall, status, length, source, destination, EtherType, and payload cases to the existing bounded probe error path; do not add a new service ABI.
 - [ ] Run `cargo test -p pythos-user-link-layer-probe` and `cargo build -p pythos-user-link-layer-probe --target x86_64-unknown-none`; expect PASS.
 - [ ] Commit with `git add user/probes/link-layer/src/main.rs && git commit -m "feat(net): add native link-layer consumer"`.
