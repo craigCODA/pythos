@@ -298,7 +298,7 @@ impl VirtioTransport {
         self.reset_device()?;
         self.set_status_bits(VIRTIO_STATUS_ACKNOWLEDGE)?;
         self.set_status_bits(VIRTIO_STATUS_DRIVER)?;
-        let features = negotiate_features(self.read_u32(VIRTIO_DEVICE_FEATURES_OFFSET)? as u32)?;
+        let features = negotiate_features(self.read_u32(VIRTIO_DEVICE_FEATURES_OFFSET)?)?;
         self.write_u32(VIRTIO_GUEST_FEATURES_OFFSET, features)?;
         self.mac = self.read_stable_mac()?;
         self.lifecycle = TransportLifecycle::Configured;

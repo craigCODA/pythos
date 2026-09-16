@@ -62,9 +62,8 @@ Phase 14 design boundary, without implementing it here; Phase 15 remains
 separate. The SDD ledger retains one deferred minor: a tautological
 bootstrap-writable unit assertion, independently covered by live mapping
 evidence.
-See `.superpowers/sdd/2026-09-15-phase-14-network-port/task-6-final-report.md`
-for the full command evidence. No merge, push, publication, physical-media
-deployment, or physical Wi-Fi probe is claimed.
+No merge, push, publication, physical-media deployment, or physical Wi-Fi probe
+is claimed.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
