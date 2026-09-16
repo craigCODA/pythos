@@ -7,6 +7,7 @@ import importlib.util
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -231,6 +232,37 @@ def find_free_loopback_port() -> int:
         return listener.getsockname()[1]
 
 
+def finalize_com2_transcript(collector: Com2Collector, timeout: float = 5.0) -> str:
+    """Drain COM2 to its post-runner EOF before using its canonical transcript."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            chunk = collector.sock.recv(512)
+        except socket.timeout:
+            continue
+        if not chunk:
+            if collector.remainder:
+                complete = collector.remainder.rstrip(b"\r").decode("utf-8", errors="replace")
+                collector.complete_lines.append(complete)
+                collector.timeline.record("COM2", complete)
+                collector.remainder = b""
+            return "\n".join(collector.complete_lines)
+        collector.captured.extend(chunk)
+        collector._record_complete_lines(chunk)
+    raise AssertionError("COM2 did not close after the QEMU runner exited")
+
+
+def assert_image_preflight(esp: Path = ROOT / "image" / "esp") -> None:
+    for relative_path in (
+        Path("EFI") / "BOOT" / "BOOTX64.EFI",
+        Path("PYTHOS") / "PYTHCORE.ELF",
+        Path("PYTHOS") / "INIT.PAK",
+    ):
+        artifact = esp / relative_path
+        if not artifact.is_file():
+            raise AssertionError(f"expected ESP artifact is missing: {artifact}")
+
+
 def run(command: list[str]) -> str:
     print("+ " + " ".join(command), flush=True)
     result = subprocess.run(
@@ -257,6 +289,7 @@ def build_probe_image() -> tuple[Path, Path, Path, Path]:
     for artifact in (loader, kernel, probe, shell):
         if not artifact.is_file():
             raise AssertionError(f"expected build artifact is missing: {artifact}")
+    assert_image_preflight()
     return loader, kernel, probe, shell
 
 
@@ -284,7 +317,7 @@ def run_probe_boot() -> tuple[str, str, str, LinkLayerPeer]:
             path.unlink()
     peer = LinkLayerPeer(timeout=QEMU_TIMEOUT_SECONDS)
     shell_port = find_free_loopback_port()
-    runner = capture = observer = None
+    runner = capture = observer = collector = com2 = None
     consumer_serial = kernel_serial = qemu_output = ""
     cleanup_errors: list[BaseException] = []
     try:
@@ -300,14 +333,18 @@ def run_probe_boot() -> tuple[str, str, str, LinkLayerPeer]:
         observer = Com1Observer(SerialTail(SERIAL_LOG, timeline))
         capture.start()
         observer.start()
-        with connect_com2(shell_port, QEMU_TIMEOUT_SECONDS) as com2:
-            collector = Com2Collector(com2, timeline)
-            collector.read_until(CONSUMER_MARKERS[-1].encode("utf-8"), QEMU_TIMEOUT_SECONDS)
-            consumer_serial = "\n".join(collector.complete_lines)
+        com2 = connect_com2(shell_port, QEMU_TIMEOUT_SECONDS)
+        collector = Com2Collector(com2, timeline)
+        collector.read_until(CONSUMER_MARKERS[-1].encode("utf-8"), QEMU_TIMEOUT_SECONDS)
         observer.wait_for(KERNEL_MARKERS, QEMU_TIMEOUT_SECONDS, runner.process, capture)
         wait_for_runner_exit(runner.process, QEMU_TIMEOUT_SECONDS + 5.0)
-        qemu_output = capture.finish()
+        observer.stop_join()
         kernel_serial = observer.serial.transcript()
+        observer = None
+        consumer_serial = finalize_com2_transcript(collector)
+        com2.close()
+        com2 = None
+        qemu_output = capture.finish()
         assert_link_layer_acceptance(consumer_serial + "\n" + kernel_serial, qemu_output)
         assert_runner_success(runner.process.returncode, qemu_output)
         peer.join(timeout=5.0)
@@ -325,6 +362,11 @@ def run_probe_boot() -> tuple[str, str, str, LinkLayerPeer]:
             try:
                 observer.stop_join()
             except BaseException as error:
+                cleanup_errors.append(error)
+        if com2 is not None:
+            try:
+                com2.close()
+            except OSError as error:
                 cleanup_errors.append(error)
         if runner is not None:
             try:
@@ -409,6 +451,61 @@ class LinkLayerAcceptanceSelfTest(unittest.TestCase):
             assert_peer_exchange(peer)
         finally:
             peer.close()
+
+    def test_finalized_com2_transcript_rejects_a_late_duplicate_marker(self) -> None:
+        reader, writer = socket.socketpair()
+        collector = Com2Collector(reader, AcceptanceTimeline())
+        try:
+            writer.sendall((self.valid_consumer_serial() + "\n").encode("utf-8"))
+            collector.read_until(CONSUMER_MARKERS[-1].encode("utf-8"), 1.0)
+            writer.sendall((CONSUMER_MARKERS[-1] + "\n").encode("utf-8"))
+            writer.close()
+            with self.assertRaises(AssertionError):
+                assert_link_layer_acceptance(
+                    finalize_com2_transcript(collector),
+                    "QEMU_OUTCOME success\n",
+                )
+        finally:
+            reader.close()
+            writer.close()
+
+    def test_finalized_com1_transcript_rejects_a_late_duplicate_marker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            serial_log = Path(temporary_directory) / "com1.log"
+            serial_log.write_text(self.valid_kernel_serial() + "\n", encoding="utf-8")
+            observer = Com1Observer(SerialTail(serial_log, AcceptanceTimeline()))
+            observer.start()
+            try:
+                observer.wait_for(KERNEL_MARKERS, 1.0)
+                with serial_log.open("a", encoding="utf-8") as serial:
+                    serial.write(SUCCESS_MARKER + "\n")
+                observer.stop_join()
+                with self.assertRaises(AssertionError):
+                    assert_link_layer_acceptance(
+                        self.valid_consumer_serial() + "\n" + observer.serial.transcript(),
+                        "QEMU_OUTCOME success\n",
+                    )
+            finally:
+                try:
+                    observer.stop_join()
+                except AssertionError:
+                    pass
+
+    def test_image_preflight_requires_all_boot_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            esp = Path(temporary_directory)
+            required = (
+                esp / "EFI" / "BOOT" / "BOOTX64.EFI",
+                esp / "PYTHOS" / "PYTHCORE.ELF",
+                esp / "PYTHOS" / "INIT.PAK",
+            )
+            for path in required:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"artifact")
+            assert_image_preflight(esp)
+            required[-1].unlink()
+            with self.assertRaises(AssertionError):
+                assert_image_preflight(esp)
 
     def test_runner_outcome_rejects_non_success_and_duplicate_success(self) -> None:
         for returncode, output in ((22, "QEMU_OUTCOME timeout\n"), (1, "QEMU_OUTCOME success\n"), (0, "QEMU_OUTCOME success\nQEMU_OUTCOME success\n")):
