@@ -73,6 +73,7 @@ MAX_PACKAGE_SOURCE_LABEL_BYTES = 48
 SHELL_PRINCIPAL_ID = 0x5059_5348_454C_4C01
 SESSION_INPUT_PROBE_PRINCIPAL_ID = 0x5059_5349_4E50_0001
 NETWORK_PORT_PROBE_PRINCIPAL_ID = 0x5059_4E50_5254_0001
+LINK_LAYER_PROBE_PRINCIPAL_ID = 0x5059_4C4C_5052_0001
 SESSION_RUNTIME_PRINCIPAL_ID = 0x5059_5352_544D_0001
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
@@ -551,6 +552,7 @@ def build_default_init_pak(
     normal_session_elf: Path | None = None,
     normal_session_graph: Path | None = None,
     network_port_probe_elf: Path | None = None,
+    link_layer_probe_elf: Path | None = None,
 ) -> bytes:
     if (normal_session_elf is None) != (normal_session_graph is None):
         raise SystemExit("normal-session ELF and graph must be supplied together")
@@ -570,10 +572,14 @@ def build_default_init_pak(
             "select only one PythTIG graph/native set; "
             "the current INIT.PAK bundle table admits one PythTIG acceptance set per image"
         )
-    if session_runtime_elf is not None and (session_input_probe_elf is not None or network_port_probe_elf is not None):
+    if network_port_probe_elf is not None and link_layer_probe_elf is not None:
+        raise SystemExit("select only one network probe ELF")
+    if session_runtime_elf is not None and (
+        session_input_probe_elf is not None or network_port_probe_elf is not None or link_layer_probe_elf is not None
+    ):
         raise SystemExit("session runtime profile cannot include a probe ELF")
     if normal_session_elf is not None and (
-        session_input_probe_elf is not None or network_port_probe_elf is not None
+        session_input_probe_elf is not None or network_port_probe_elf is not None or link_layer_probe_elf is not None
         or include_phase13_package_format_fixture or phase13_package_sources
     ):
         raise SystemExit("normal session profile cannot include probe or package fixtures")
@@ -604,6 +610,17 @@ def build_default_init_pak(
                     b"network-port-probe.elf",
                     NETWORK_PORT_PROBE_PRINCIPAL_ID,
                     require_file(network_port_probe_elf, "network port probe ELF"),
+                ),
+            )
+        )
+    if link_layer_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"link-layer-probe.elf",
+                    LINK_LAYER_PROBE_PRINCIPAL_ID,
+                    require_file(link_layer_probe_elf, "link layer probe ELF"),
                 ),
             )
         )
@@ -729,6 +746,25 @@ def resolve_network_port_probe_elf(path: Path) -> Path:
     return resolved
 
 
+def verify_link_layer_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("link layer probe ELF verification failed")
+
+
+def resolve_link_layer_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing link layer probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"link layer probe ELF is not a file: {resolved}")
+    return resolved
+
+
 def verify_session_runtime_elf(path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
@@ -761,6 +797,7 @@ def main() -> int:
     parser.add_argument("--phase13-package-source", action="append", default=[])
     parser.add_argument("--session-input-probe-elf", type=Path)
     parser.add_argument("--network-port-probe-elf", type=Path)
+    parser.add_argument("--link-layer-probe-elf", type=Path)
     parser.add_argument("--session-runtime-elf", type=Path)
     parser.add_argument("--normal-session-elf", type=Path)
     parser.add_argument("--normal-session-graph", type=Path)
@@ -780,6 +817,10 @@ def main() -> int:
     if args.network_port_probe_elf is not None:
         network_port_probe_elf = resolve_network_port_probe_elf(args.network_port_probe_elf)
         verify_network_port_probe_elf(network_port_probe_elf)
+    link_layer_probe_elf = None
+    if args.link_layer_probe_elf is not None:
+        link_layer_probe_elf = resolve_link_layer_probe_elf(args.link_layer_probe_elf)
+        verify_link_layer_probe_elf(link_layer_probe_elf)
     session_runtime_elf = None
     if args.session_runtime_elf is not None:
         session_runtime_elf = resolve_session_runtime_elf(args.session_runtime_elf)
@@ -798,6 +839,7 @@ def main() -> int:
         session_input_probe_elf, session_runtime_elf=session_runtime_elf,
         normal_session_elf=args.normal_session_elf, normal_session_graph=args.normal_session_graph,
         network_port_probe_elf=network_port_probe_elf,
+        link_layer_probe_elf=link_layer_probe_elf,
     )
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
