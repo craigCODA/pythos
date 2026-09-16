@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import select
 import socket
 import subprocess
 import sys
@@ -52,6 +53,7 @@ FORBIDDEN_EVIDENCE = (
     "LINK_LAYER:FAILED",
 )
 PEER_MAC = bytes.fromhex("020000000002")
+DESCRIBED_DEVICE_MAC = bytes.fromhex("525400123456")
 WRONG_DESTINATION_MAC = bytes.fromhex("020000000003")
 LINK_ETHER_TYPE = 0x88B5
 WRONG_ETHER_TYPE = 0x88B6
@@ -98,7 +100,7 @@ def validate_link_layer_tx(frame: bytes) -> bytes:
     if len(frame) != MIN_ETHERNET_FRAME_BYTES:
         raise AssertionError(f"TX frame must be exactly 60 bytes, got {len(frame)}")
     device_mac = frame[6:12]
-    if device_mac == PEER_MAC or device_mac == bytes(6) or device_mac[0] & 1:
+    if device_mac != DESCRIBED_DEVICE_MAC:
         raise AssertionError(f"TX source is not the described unicast device MAC: {device_mac.hex(':')}")
     assert_exact_link_frame(frame, PEER_MAC, device_mac, LINK_ETHER_TYPE, TX_PAYLOAD)
     return device_mac
@@ -158,6 +160,8 @@ class LinkLayerPeer:
                 for frame in self.rx_frames:
                     connection.sendall(encode_socket_frame(frame))
                     self.delivered_frames += 1
+                if select.select([connection], [], [], 0.0)[0] and connection.recv(1, socket.MSG_PEEK):
+                    raise AssertionError("link-layer peer received additional TX bytes after the first frame")
         except BaseException as error:
             self.error = error
         finally:

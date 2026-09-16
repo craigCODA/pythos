@@ -132,6 +132,44 @@ class LinkLayerHostTest(unittest.TestCase):
             ),
         )
 
+    def test_tx_rejects_a_source_mac_other_than_the_described_qemu_mac(self) -> None:
+        unexpected_source_tx = (
+            bytes.fromhex("02000000000252540012345788b5")
+            + b"PYTHOS:LINK:TX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
+        )
+        with self.assertRaises(AssertionError):
+            LINK_LAYER.validate_link_layer_tx(unexpected_source_tx)
+
+    def test_peer_rejects_two_framed_tx_records_from_the_peer(self) -> None:
+        first_tx = (
+            bytes.fromhex("02000000000252540012345688b5")
+            + b"PYTHOS:LINK:TX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
+        )
+        second_tx = (
+            bytes.fromhex("02000000000252540012345688b5")
+            + b"PYTHOS:LINK:TX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
+        )
+        peer = LINK_LAYER.LinkLayerPeer(timeout=1.0)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0) as connection:
+                connection.sendall(
+                    len(first_tx).to_bytes(4, "big")
+                    + first_tx
+                    + len(second_tx).to_bytes(4, "big")
+                    + second_tx
+                )
+                for _ in range(3):
+                    LINK_LAYER.read_socket_frame(connection)
+            peer.join(timeout=1.0)
+            with self.assertRaises(AssertionError):
+                LINK_LAYER.assert_peer_exchange(peer)
+        finally:
+            peer.close()
+
     def test_runner_command_uses_legacy_peer_without_data_disk(self) -> None:
         self.assertEqual(
             LINK_LAYER.probe_runner_command(peer_port=4595, shell_port=4596),

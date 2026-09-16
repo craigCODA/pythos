@@ -14,9 +14,10 @@ boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
 The Task 7 live QEMU boot was run after commit `8e1cfaa` with QEMU emulator
-version `11.0.50 (v11.0.0-12631-g54e84cdc7a)`, using the command/profile
-`py -3 scripts/test-link-layer.py --no-audio-device --no-virtio-blk
---virtio-net` with peer and shell loopback ports and `--expect-outcome success`.
+version `11.0.50 (v11.0.0-12631-g54e84cdc7a)`, using the actual invocation
+`py -3 scripts/test-link-layer.py`; its internal runner used
+`--no-audio-device --no-virtio-blk --virtio-net ... --expect-outcome success`
+with peer and shell loopback ports.
 The harness result was `LINK_LAYER_QEMU_ACCEPTANCE_OK`. The exact timeline,
 each exactly once and in this order, was `COM2: BOOTSTRAPPED, DESCRIBE_OK,
 TX_OK, WRONG_DESTINATION_DENIED, WRONG_ETHERTYPE_DENIED, RX_OK`, then
@@ -33,7 +34,8 @@ were present.
 
 Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 --check`, and `cargo test --workspace --quiet`; the repository-managed pytest
-form passed 210 tests plus 239 subtests. The raw virtio-net and NetworkPort
+form passed 221 pytest tests plus 252 subtests, and the workspace run reported
+1,145 Rust tests. The raw virtio-net and NetworkPort
 self-tests, direct NetworkPort host tests, default and opt-in target builds,
 and `NORMAL_FAST_BOOT_TEST_OK` also passed. Fresh raw and NetworkPort QEMU
 acceptance ran on QEMU `11.0.50`: both `py -3 scripts/test-virtio-net.py` and
