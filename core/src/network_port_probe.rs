@@ -16,17 +16,13 @@ pub struct NetworkPortProbeLaunchContract {
 
 #[cfg(not(test))]
 use crate::{
-    memory::{
-        physical::PhysicalMemory,
-        r#virtual::{KernelAddressSpace, UserAddressSpace},
-    },
-    process_context::{self, ActiveUserProcess},
+    memory::{physical::PhysicalMemory, r#virtual::KernelAddressSpace},
+    network_port_probe_support::{self, NamedNetworkPortLaunch, NetworkPortLaunchError},
+    process_context::ActiveUserProcess,
     runtime_loader,
     service_identity::ServiceId,
-    syscall, user_elf, user_mode, user_stacks,
+    syscall, user_elf,
 };
-#[cfg(not(test))]
-use core::cell::UnsafeCell;
 #[cfg(not(test))]
 use pythos_shared::{
     boot_protocol::PythBootInfo,
@@ -44,43 +40,17 @@ const NETWORK_PORT_OWNER_SERVICE_ID: u64 = 0x5059_4E50_4F57_0001;
 #[cfg(not(test))]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NetworkPortProbeError {
-    Load(runtime_loader::RuntimeLoadError),
-    PrincipalMismatch,
-    Elf(user_elf::UserElfError),
-    AddressSpace(crate::memory::r#virtual::VmError),
-    Process(crate::user_copy::UserCopyError),
-    Memory(crate::memory::physical::MemoryError),
+    Launch(NetworkPortLaunchError),
     Transport(crate::virtio_net::VirtioNetError),
     Registration(crate::network_port::NetworkPortRegistrationError),
     Capability(syscall::SyscallError),
-    UserMode(user_mode::UserModeError),
-    Prepared,
     Teardown,
 }
 
 #[cfg(not(test))]
-struct PreparedNetworkPortProbe {
-    address_space: crate::memory::r#virtual::RetainedUserAddressSpace,
-    consumer: ActiveUserProcess,
-    entry: u64,
-    segment_count: usize,
-    stack: crate::user_stacks::UserStackRegion,
-    bootstrap_physical: u64,
-}
-
-#[cfg(not(test))]
-struct PreparedProbeSlot(UnsafeCell<Option<PreparedNetworkPortProbe>>);
-
-#[cfg(not(test))]
-unsafe impl Sync for PreparedProbeSlot {}
-
-#[cfg(not(test))]
-static PREPARED_PROBE: PreparedProbeSlot = PreparedProbeSlot(UnsafeCell::new(None));
-
-#[cfg(not(test))]
 pub fn minimal_kernel_address_space_options()
 -> crate::memory::r#virtual::KernelAddressSpaceBuildOptions {
-    crate::memory::r#virtual::KernelAddressSpaceBuildOptions::new()
+    network_port_probe_support::minimal_kernel_address_space_options()
 }
 
 #[cfg(not(test))]
@@ -89,62 +59,16 @@ pub fn prepare(
     physical_memory: &mut PhysicalMemory,
     _kernel_address_space: &KernelAddressSpace,
 ) -> Result<(), NetworkPortProbeError> {
-    let manifest =
-        runtime_loader::load_named_user_program(boot_info, NETWORK_PORT_PROBE_PROGRAM_NAME)
-            .map_err(NetworkPortProbeError::Load)?;
-    if manifest.principal_id() != NETWORK_PORT_PROBE_PRINCIPAL_ID {
-        return Err(NetworkPortProbeError::PrincipalMismatch);
-    }
-    let image = user_elf::validate(manifest.elf()).map_err(NetworkPortProbeError::Elf)?;
-    let stack = user_stacks::regions()[0];
-    let consumer = ActiveUserProcess::from_validated_launch(
-        ServiceId::from_raw(NETWORK_PORT_CONSUMER_SERVICE_ID),
-        manifest.principal_id(),
-        manifest.elf_digest(),
-        &image,
-        stack,
-        NETWORK_PORT_BOOTSTRAP_USER_PTR,
-    )
-    .map_err(NetworkPortProbeError::Process)?;
-    let bootstrap_physical = physical_memory
-        .allocate_zeroed_page()
-        .map_err(NetworkPortProbeError::Memory)?;
-    let (address_space, loaded) = UserAddressSpace::build_with_user_elf_and_bootstrap(
-        physical_memory,
+    network_port_probe_support::prepare_named(
+        NamedNetworkPortLaunch {
+            program_name: NETWORK_PORT_PROBE_PROGRAM_NAME,
+            principal_id: NETWORK_PORT_PROBE_PRINCIPAL_ID,
+            consumer_service_id: NETWORK_PORT_CONSUMER_SERVICE_ID,
+        },
         boot_info,
-        &image,
-        manifest.elf(),
-        NETWORK_PORT_BOOTSTRAP_USER_PTR,
-        bootstrap_physical,
+        physical_memory,
     )
-    .map_err(NetworkPortProbeError::AddressSpace)?;
-    if loaded.entry() != image.entry()
-        || loaded.segment_count() != image.segment_count()
-        || !loaded.bss_zeroed()
-    {
-        return Err(NetworkPortProbeError::Prepared);
-    }
-    address_space
-        .validate_user_elf_entry(image.entry())
-        .map_err(NetworkPortProbeError::AddressSpace)?;
-    address_space
-        .validate_user_bootstrap_mapping(NETWORK_PORT_BOOTSTRAP_USER_PTR)
-        .map_err(NetworkPortProbeError::AddressSpace)?;
-    let prepared = PreparedNetworkPortProbe {
-        address_space: address_space.retain_for_boot(),
-        consumer,
-        entry: image.entry(),
-        segment_count: image.segment_count(),
-        stack,
-        bootstrap_physical,
-    };
-    // SAFETY: this opt-in single-core boot prepares exactly one retained user root.
-    let slot = unsafe { &mut *PREPARED_PROBE.0.get() };
-    if slot.is_some() {
-        return Err(NetworkPortProbeError::Prepared);
-    }
-    *slot = Some(prepared);
-    Ok(())
+    .map_err(NetworkPortProbeError::Launch)
 }
 
 #[cfg(not(test))]
@@ -155,16 +79,23 @@ pub fn run(
 ) -> Result<(), NetworkPortProbeError> {
     // SAFETY: `prepare` stores exactly one retained root before this finite run.
     let prepared =
-        unsafe { (&mut *PREPARED_PROBE.0.get()).take() }.ok_or(NetworkPortProbeError::Prepared)?;
+        network_port_probe_support::take_prepared().map_err(NetworkPortProbeError::Launch)?;
     let manifest =
         runtime_loader::load_named_user_program(boot_info, NETWORK_PORT_PROBE_PROGRAM_NAME)
-            .map_err(NetworkPortProbeError::Load)?;
+            .map_err(NetworkPortLaunchError::Load)
+            .map_err(NetworkPortProbeError::Launch)?;
     if manifest.principal_id() != NETWORK_PORT_PROBE_PRINCIPAL_ID {
-        return Err(NetworkPortProbeError::PrincipalMismatch);
+        return Err(NetworkPortProbeError::Launch(
+            NetworkPortLaunchError::PrincipalMismatch,
+        ));
     }
-    let image = user_elf::validate(manifest.elf()).map_err(NetworkPortProbeError::Elf)?;
+    let image = user_elf::validate(manifest.elf())
+        .map_err(NetworkPortLaunchError::Elf)
+        .map_err(NetworkPortProbeError::Launch)?;
     if image.entry() != prepared.entry || image.segment_count() != prepared.segment_count {
-        return Err(NetworkPortProbeError::Prepared);
+        return Err(NetworkPortProbeError::Launch(
+            NetworkPortLaunchError::Prepared,
+        ));
     }
 
     let transport = crate::virtio_net::initialize_transport(physical_memory)
@@ -173,7 +104,7 @@ pub fn run(
         .map_err(NetworkPortProbeError::Registration)?;
     let owner = ServiceId::from_raw(NETWORK_PORT_OWNER_SERVICE_ID);
     let (consumer_capability, owner_capability) =
-        syscall::grant_network_port_probe_capabilities(prepared.consumer, owner)
+        syscall::grant_network_port_consumer_capabilities(prepared.consumer, owner)
             .map_err(NetworkPortProbeError::Capability)?;
     syscall::bind_network_port_capabilities(
         prepared.consumer,
@@ -183,19 +114,21 @@ pub fn run(
     )
     .map_err(NetworkPortProbeError::Capability)?;
     let contract = NetworkPortProbeLaunchContract::new(consumer_capability);
-    write_bootstrap(prepared.bootstrap_physical, contract.bootstrap())?;
+    network_port_probe_support::write_bootstrap(prepared.bootstrap_physical, contract.bootstrap())
+        .map_err(NetworkPortProbeError::Launch)?;
 
     crate::serial::init_com2();
     let consumer_console = syscall::grant_console_capability(prepared.consumer)
         .map_err(NetworkPortProbeError::Capability)?;
-    run_user_then_restore(
+    network_port_probe_support::run_user_then_restore(
         kernel_address_space,
         &prepared.address_space,
         prepared.consumer,
         prepared.entry,
         prepared.stack,
         consumer_console,
-    )?;
+    )
+    .map_err(NetworkPortProbeError::Launch)?;
 
     let intruder = ActiveUserProcess::from_validated_launch(
         ServiceId::from_raw(NETWORK_PORT_INTRUDER_SERVICE_ID),
@@ -205,28 +138,31 @@ pub fn run(
         prepared.stack,
         NETWORK_PORT_BOOTSTRAP_USER_PTR,
     )
-    .map_err(NetworkPortProbeError::Process)?;
+    .map_err(NetworkPortLaunchError::Process)
+    .map_err(NetworkPortProbeError::Launch)?;
     let intruder_console =
         syscall::grant_console_capability(intruder).map_err(NetworkPortProbeError::Capability)?;
-    run_user_then_restore(
+    network_port_probe_support::run_user_then_restore(
         kernel_address_space,
         &prepared.address_space,
         intruder,
         prepared.entry,
         prepared.stack,
         intruder_console,
-    )?;
+    )
+    .map_err(NetworkPortProbeError::Launch)?;
 
     let final_consumer_console = syscall::grant_console_capability(prepared.consumer)
         .map_err(NetworkPortProbeError::Capability)?;
-    run_user_then_restore(
+    network_port_probe_support::run_user_then_restore(
         kernel_address_space,
         &prepared.address_space,
         prepared.consumer,
         prepared.entry,
         prepared.stack,
         final_consumer_console,
-    )?;
+    )
+    .map_err(NetworkPortProbeError::Launch)?;
 
     let response = syscall::teardown_network_port_capabilities(owner, owner_capability)
         .map_err(NetworkPortProbeError::Capability)?;
@@ -241,50 +177,6 @@ pub fn run(
     crate::serial::write_line("PYTHOS:CORE:NETWORK_PORT:TEARDOWN_REVOKED");
     crate::serial::write_line("PYTHOS:CORE:NETWORK_PORT_READY");
     Ok(())
-}
-
-#[cfg(not(test))]
-fn run_user_then_restore(
-    kernel_address_space: &KernelAddressSpace,
-    user_address_space: &crate::memory::r#virtual::RetainedUserAddressSpace,
-    process: ActiveUserProcess,
-    entry: u64,
-    stack: crate::user_stacks::UserStackRegion,
-    console: PackedCapability,
-) -> Result<(), NetworkPortProbeError> {
-    // SAFETY: the retained root maps this validated ELF, its guarded stack, and one read-only bootstrap page.
-    unsafe { user_address_space.activate() };
-    let result = user_mode::run_returnable_user_process(
-        process,
-        entry,
-        stack.stack_start + stack.stack_len - 16,
-        NETWORK_PORT_BOOTSTRAP_USER_PTR,
-        console.raw(),
-    );
-    // SAFETY: the caller supplied the still-retained validated kernel root.
-    unsafe { kernel_address_space.activate() };
-    result.map_err(NetworkPortProbeError::UserMode)?;
-    if process_context::current_caller().is_ok() {
-        return Err(NetworkPortProbeError::Prepared);
-    }
-    Ok(())
-}
-
-#[cfg(not(test))]
-fn write_bootstrap(
-    physical: u64,
-    bootstrap: NetworkPortBootstrapV1,
-) -> Result<(), NetworkPortProbeError> {
-    crate::memory::r#virtual::with_writable_physical_frame(physical, |page| {
-        page.fill(0);
-        // SAFETY: the zeroed physical page has room and alignment for one 64-byte bootstrap record.
-        unsafe {
-            page.as_mut_ptr()
-                .cast::<NetworkPortBootstrapV1>()
-                .write(bootstrap)
-        };
-    })
-    .map_err(NetworkPortProbeError::AddressSpace)
 }
 
 impl NetworkPortProbeLaunchContract {

@@ -162,10 +162,17 @@ mod ipc_channels;
 mod kernel_stacks;
 mod launcher_screen;
 mod memory;
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 mod network_port;
 #[cfg(any(test, feature = "network-port-probe"))]
 mod network_port_probe;
+#[cfg(any(feature = "network-port-probe", feature = "link-layer-probe"))]
+mod network_port_probe_support;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
 #[cfg(any(
@@ -329,7 +336,12 @@ mod value_validation;
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 mod virtio_net;
 mod widgets;
 mod window_interaction;

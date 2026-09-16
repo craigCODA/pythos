@@ -1,7 +1,12 @@
 //! Runtime-only capability-scoped NetworkPort resource (ADR 0095).
 
 use crate::capabilities::{CapabilityHandle, CapabilityTable, ResourceId};
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
 use pythos_shared::network_port_abi::{
@@ -15,7 +20,12 @@ use pythos_shared::network_port_abi::{
 
 static NETWORK_PORT_BOOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::VirtioTransport>>>);
 
 // SAFETY:
@@ -27,10 +37,20 @@ struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::Virti
 // 6. Mapped length: exactly one Option value is accessed.
 // 7. Concurrency: future SMP must replace this with scheduler-owned synchronization.
 // 8. Violation: concurrent access could mutate queue ownership simultaneously.
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 unsafe impl Sync for NetworkPortStorage {}
 
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 static ACTIVE_NETWORK_PORT: NetworkPortStorage = NetworkPortStorage(UnsafeCell::new(None));
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -261,7 +281,12 @@ impl<T: NetworkTransport> NetworkPort<T> {
     }
 }
 
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 pub(crate) fn install_operational_transport(
     transport: crate::virtio_net::VirtioTransport,
 ) -> Result<(), NetworkPortRegistrationError> {
@@ -273,7 +298,12 @@ pub(crate) fn install_operational_transport(
     Ok(())
 }
 
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 pub(crate) fn with_active_port<R>(
     f: impl FnOnce(&mut NetworkPort<crate::virtio_net::VirtioTransport>) -> R,
 ) -> Option<R> {
@@ -282,7 +312,12 @@ pub(crate) fn with_active_port<R>(
     unsafe { (&mut *ACTIVE_NETWORK_PORT.0.get()).as_mut().map(f) }
 }
 
-#[cfg(any(test, feature = "virtio-net-probe", feature = "network-port-probe"))]
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
 impl NetworkTransport for crate::virtio_net::VirtioTransport {
     fn mac(&self) -> [u8; 6] {
         crate::virtio_net::VirtioTransport::mac(*self).bytes()
