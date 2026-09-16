@@ -185,6 +185,10 @@ class LinkLayerHostTest(unittest.TestCase):
                     tuple(LINK_LAYER.read_socket_frame(connection) for _ in range(3)),
                     LINK_LAYER.peer_frames(bytes.fromhex("525400123456")),
                 )
+                self.assertTrue(
+                    peer.rx_delivery_complete.wait(1.0),
+                    "peer did not signal RX-delivery completion",
+                )
                 self.assertEqual(peer.delivered_frames, 3)
                 peer.client_received_frames.set()
                 self.assertTrue(peer.initial_duplicate_check_complete.wait(1.0))

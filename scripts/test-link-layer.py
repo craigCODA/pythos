@@ -127,6 +127,7 @@ class LinkLayerPeer:
         self.timeout = timeout
         self.wait_for_client_rx = wait_for_client_rx
         self.client_received_frames = threading.Event()
+        self.rx_delivery_complete = threading.Event()
         self.initial_duplicate_check_complete = threading.Event()
         self.error: BaseException | None = None
         self.connected = False
@@ -163,6 +164,7 @@ class LinkLayerPeer:
                 for frame in self.rx_frames:
                     connection.sendall(encode_socket_frame(frame))
                     self.delivered_frames += 1
+                self.rx_delivery_complete.set()
                 if self.wait_for_client_rx and not self.client_received_frames.wait(self.timeout):
                     raise TimeoutError("client did not receive all link-layer RX frames")
                 self.initial_duplicate_check_complete.set()
