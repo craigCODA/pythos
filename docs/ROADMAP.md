@@ -13,31 +13,24 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability
-boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `e1efea0`. One boot-local capability-scoped port sits
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
 above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
-by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). Its native
-consumer proves describe plus one bounded raw Ethernet TX and RX exchange with
-the loopback-only host peer.
+by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md). Its native
+consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
+TX frame, rejects wrong destination and wrong EtherType, accepts one valid RX,
+and reaches terminal capability revocation. Acceptance also requires no
+non-boot virtio disk, no storage-path markers, and `QEMU_OUTCOME success`.
 
-Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
-Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance
-evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
-`NO_DISK_WRITES` marker means no PythOS storage-path writes.
-
-Fresh NetworkPort acceptance requires the exact ordered NetworkPort markers,
-exact bounded peer bytes, and `QEMU_OUTCOME success`. The live marker profile
-covers forged-generation, wrong-holder, and bad-pointer denials; the host
-syscall matrix covers the remaining frozen ABI denial cases, including missing
-rights, stale generations, range overflow, buffer permissions, receive
-capacities, and oversized frames. Default and normal-session boot remain
-unchanged. The next Phase 14 boundary is `link-layer`.
-
-This does not authorize link-layer work, IP/protocols/sockets, a production
-service, physical NIC or Wi-Fi support, zero-copy, persistent networking, or a
-PythTIG change. Stop before the Phase 14 `link-layer` boundary and before Phase
-15. See [HANDOVER.md](HANDOVER.md) for the exact local evidence.
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This boundary does
+not claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
+modern or interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
+for the exact local evidence.
 
 ## Accepted PythTIG Program Boundary
 

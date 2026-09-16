@@ -7,32 +7,24 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-Phase 14 `NetworkPort` is accepted as a bounded, opt-in QEMU capability boundary
-through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `e1efea0`. It places one boot-local `NetworkPort` above
-the kernel-owned legacy/transitional `VirtioTransport` adapter from
-[ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The native
-consumer proves describe, one bounded raw Ethernet TX, and one bounded RX
-through the capability ABI with a loopback-only host peer.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md),
+above the kernel-owned legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](docs/decisions/0096-phase-14-link-layer-consumer.md): the native
+consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
+frame, rejects wrong destination and wrong EtherType frames, accepts one valid
+RX frame, and reaches terminal capability revocation. The accepted evidence
+also requires no non-boot virtio disk, no storage-path markers, and
+`QEMU_OUTCOME success`.
 
-Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
-Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
-`NO_DISK_WRITES` marker means no PythOS storage-path writes.
-
-Fresh NetworkPort acceptance requires the exact ordered markers, exact bounded
-peer exchange, and `QEMU_OUTCOME success`. The live marker profile covers the
-consumer's forged-generation, wrong-holder, and bad-pointer denials; the host
-syscall matrix covers the remaining frozen ABI denial cases, including missing
-rights, stale generations, range overflow, buffer permissions, receive
-capacities, and oversized frames. Default and normal-session boot remain
-unchanged. The next Phase 14 boundary is `link-layer`.
-
-This is not IP networking, sockets or protocol semantics, a production network
-service, physical NIC/Wi-Fi support, zero-copy, persistent network state, or a
-PythTIG change. The deliberate stop is before the Phase 14 `link-layer`
-boundary and before Phase 15. See the
-[current roadmap boundary](docs/ROADMAP.md#current-phase-14-boundary) and
-[handover](docs/HANDOVER.md) for the exact local evidence and non-claims.
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This proof does not
+claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
+interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

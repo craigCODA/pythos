@@ -37,21 +37,25 @@ Phase 13.5 slice 1 accepted in QEMU   session-input bridge, ADR 0090
 Phase 13.5 slice 2 accepted in QEMU   bounded retained runtime, ADR 0091
 Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
                               ADRs 0092-0093
-Phase 14 nic-driver accepted in QEMU   legacy virtio-net raw-frame probe, ADR 0094
+Phase 14 link-layer accepted in QEMU   opt-in Ethernet-II consumer, ADR 0096
 ```
 
-Phase 14 `nic-driver` is accepted. The next Phase 14 boundary is `link-layer`;
-Phase 14 is not complete. The accepted first slice is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking.
-Acceptance evidence is precisely:
-no non-boot virtio data disk attached; no storage-path markers observed.
-The UEFI boot ESP is snapshot-backed IDE media, and `NO_DISK_WRITES` means
-no PythOS storage-path writes.
-See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary),
-[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md), and
-[handover](HANDOVER.md) for the exact local QEMU evidence and scope. Physical
+Phase 14 `link-layer` is accepted under [ADR 0096](decisions/0096-phase-14-link-layer-consumer.md),
+and Phase 14 is not complete. The opt-in native proof uses a read-only
+bootstrap, describes the MAC, sends one fixed unicast TX, rejects wrong
+destination and wrong EtherType, accepts one valid RX, and reaches terminal
+revocation. Exact acceptance evidence is no non-boot virtio disk, no
+storage-path markers, and `QEMU_OUTCOME success`. Raw bytes remain below
+`NetworkPort`; Ethernet-II semantics live in the native consumer, and default
+and normal-session boot remain unchanged. This does not claim IP/protocols/
+sockets, a production service, physical NIC/Wi-Fi, modern or interrupt Virtio,
+multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
+persistent state, or PythTIG changes. ARP is the next Phase 14 design boundary.
+See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
+[handover](HANDOVER.md) for the exact local evidence and scope. Physical
 Lenovo Wi-Fi remains deferred to Phase 15.
 
-ADRs are allocated through 0094 in this checkout. Check `docs/decisions/` and
+ADRs are allocated through 0096 in this checkout. Check `docs/decisions/` and
 in-progress branches before allocating another number; this recap does not
 reserve one. Later Phase 14 slices and Phases 15-17 remain separately invoked
 work.

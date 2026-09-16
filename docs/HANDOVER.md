@@ -2,19 +2,15 @@
 
 ## Current Phase 14 Boundary
 
-Local continuation: Phase 14 `NetworkPort` is accepted on
-`agent/phase14-nic-driver` through implementation tip
-`e1efea0`. [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-freezes one boot-local, capability-scoped port above the kernel-owned
-legacy/transitional `VirtioTransport` adapter recorded by
-[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in native
-consumer proves describe, one bounded raw Ethernet transmit, and one bounded
-receive through that ABI only.
-
-Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
-Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance
-evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
-`NO_DISK_WRITES` marker means no PythOS storage-path writes.
+Local continuation: the opt-in Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md), building on the
+boot-local `NetworkPort` boundary in
+[ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The native
+consumer uses a read-only bootstrap, describes the local MAC, sends one fixed
+unicast TX frame, rejects one wrong-destination frame and one wrong-EtherType
+frame, accepts one valid RX frame, and reaches terminal capability revocation.
+The exact accepted evidence is no non-boot virtio disk, no storage-path
+markers, and `QEMU_OUTCOME success`.
 
 Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 --check`, and `cargo test --workspace --quiet`; the repository-managed pytest
@@ -36,19 +32,15 @@ capacities, and oversized frames. Both runners use `--no-virtio-blk`; the
 NetworkPort oracle rejects storage-path evidence. The snapshot-backed IDE UEFI
 ESP is boot media only.
 
-The next Phase 14 boundary is `link-layer`; the deliberate stop is before it
-and before Phase 15. This acceptance does not add physical NIC/Wi-Fi support,
-link-layer/IP/protocols/sockets, a production service, zero-copy, persistent
-network state, or PythTIG changes; it does not alter default or normal-session
-boot. The SDD ledger retains one deferred minor: a tautological bootstrap-
-writable unit assertion, independently covered by the live mapping evidence.
-Deferred follow-up remains unresolved: resource-id evolution, capability-right
-evolution, syscall/ABI variants, receive-buffer and copy policy, runtime
-capability import and consumer selection, teardown beyond terminal ABI v1,
-modern/physical transport including interrupts, MSI-X, multiqueue, and
-offloads, protocols/sockets, multi-consumer distribution, zero-copy,
-persistent network state, and Phase 15/physical Wi-Fi. Any PythTIG v1 change
-also remains separately deferred.
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This acceptance is
+not a claim of IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
+modern or interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary, without implementing it here; Phase 15 remains
+separate. The SDD ledger retains one deferred minor: a tautological
+bootstrap-writable unit assertion, independently covered by live mapping
+evidence.
 See `.superpowers/sdd/2026-09-15-phase-14-network-port/task-6-final-report.md`
 for the full command evidence. No merge, push, publication, physical-media
 deployment, or physical Wi-Fi probe is claimed.

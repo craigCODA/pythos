@@ -12,27 +12,24 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-Phase 14 `NetworkPort` is accepted as the bounded, opt-in QEMU capability
-boundary through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md)
-at implementation tip `e1efea0`. The kernel owns the legacy/transitional
-`VirtioTransport` adapter established by
-[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md); an opt-in native
-consumer receives one boot-local capability and uses the port ABI to describe,
-transmit, and receive bounded raw Ethernet frames. Fresh QEMU acceptance proves
-the exact ordered markers and a one-frame-each-way loopback peer exchange,
-without a non-boot virtio data disk or storage-path evidence. The live marker
-profile covers forged-generation, wrong-holder, and bad-pointer denials; the
-host syscall matrix covers the remaining frozen ABI denial cases.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
+with the kernel owning the legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md): its native consumer
+uses a read-only bootstrap, describes the MAC, sends one fixed unicast TX,
+rejects wrong destination and wrong EtherType, accepts one valid RX, and
+reaches terminal revocation. Exact evidence is no non-boot virtio disk, no
+storage-path markers, and `QEMU_OUTCOME success`.
 
-Phase 14 `nic-driver` is accepted as the retained raw-transport substrate.
-Its raw profile is not IP networking, not a socket or capability API, not a production network service, and not default-boot networking. Acceptance evidence is precisely: no non-boot virtio data disk attached; no storage-path markers observed. The boot ESP is snapshot-backed IDE media. The required
-`NO_DISK_WRITES` marker means no PythOS storage-path writes.
-
-Default and normal-session boot are unchanged. This boundary is not link-layer
-work, IP networking, sockets/protocol semantics, a production service, physical
-NIC/Wi-Fi support, zero-copy, persistent network state, or a PythTIG change.
-The next Phase 14 boundary is `link-layer`; stop before it and before Phase 15. See
-[HANDOVER.md](HANDOVER.md) for the exact local QEMU evidence and non-claims.
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This does not claim
+IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
+interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
+for the exact local evidence and non-claims.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro
