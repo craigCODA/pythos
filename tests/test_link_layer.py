@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib.util
+import socket
+import struct
 import sys
 import unittest
 from pathlib import Path
@@ -72,6 +74,23 @@ class LinkLayerHostTest(unittest.TestCase):
             with self.subTest(returncode=returncode, output=output):
                 with self.assertRaises(AssertionError):
                     LINK_LAYER.assert_runner_success(returncode, output)
+
+    def test_finalized_com2_transcript_accepts_abortive_peer_close_after_rx_ok(self) -> None:
+        reader, writer = socket.socketpair()
+        timeline = LINK_LAYER.AcceptanceTimeline()
+        collector = LINK_LAYER.Com2Collector(reader, timeline)
+        consumer = "\n".join(LINK_LAYER.CONSUMER_MARKERS) + "\n"
+        try:
+            writer.sendall(consumer.encode("utf-8"))
+            collector.read_until(LINK_LAYER.CONSUMER_MARKERS[-1].encode("utf-8"), 1.0)
+            writer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+            writer.close()
+
+            self.assertEqual(LINK_LAYER.finalize_com2_transcript(collector), consumer.rstrip())
+            self.assertEqual(timeline.count("COM2", LINK_LAYER.CONSUMER_MARKERS[-1]), 1)
+        finally:
+            reader.close()
+            writer.close()
 
     def test_exact_peer_tx_and_rx_frame_arrays(self) -> None:
         device_mac = bytes.fromhex("525400123456")

@@ -106,12 +106,12 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
         ROOT / "docs/TECHNICAL-OVERVIEW.md",
     ]
     required_statements = (
-        "Phase 14 `nic-driver` is accepted",
-        "next Phase 14 boundary is `link-layer`",
-        "not IP networking",
-        "not a socket or capability API",
-        "not a production network service",
-        "not default-boot networking",
+        "Ethernet-II link-layer proof is accepted",
+        "ADR 0096",
+        "ARP is the next",
+        "IP/protocols/sockets",
+        "a production service",
+        "Default and normal-session boot remain unchanged",
     )
     for document in documents:
         contents = document.read_text(encoding="utf-8")

@@ -240,6 +240,13 @@ def finalize_com2_transcript(collector: Com2Collector, timeout: float = 5.0) -> 
             chunk = collector.sock.recv(512)
         except socket.timeout:
             continue
+        except ConnectionResetError:
+            if collector.remainder:
+                complete = collector.remainder.rstrip(b"\r").decode("utf-8", errors="replace")
+                collector.complete_lines.append(complete)
+                collector.timeline.record("COM2", complete)
+                collector.remainder = b""
+            return "\n".join(collector.complete_lines)
         if not chunk:
             if collector.remainder:
                 complete = collector.remainder.rstrip(b"\r").decode("utf-8", errors="replace")
