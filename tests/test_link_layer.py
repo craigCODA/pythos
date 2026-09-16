@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import socket
-import struct
 import sys
 import unittest
 from pathlib import Path
@@ -45,6 +44,14 @@ EXPECTED_MARKERS = (
 
 
 class LinkLayerHostTest(unittest.TestCase):
+    def test_abortive_close_uses_the_host_socket_linger_layout(self) -> None:
+        reader, writer = socket.socketpair()
+        try:
+            LINK_LAYER.set_abortive_close(writer)
+        finally:
+            reader.close()
+            writer.close()
+
     def test_marker_contract_is_frozen(self) -> None:
         self.assertEqual(LINK_LAYER.REQUIRED_MARKERS, EXPECTED_MARKERS)
 
@@ -83,7 +90,7 @@ class LinkLayerHostTest(unittest.TestCase):
         try:
             writer.sendall(consumer.encode("utf-8"))
             collector.read_until(LINK_LAYER.CONSUMER_MARKERS[-1].encode("utf-8"), 1.0)
-            writer.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+            LINK_LAYER.set_abortive_close(writer)
             writer.close()
 
             self.assertEqual(LINK_LAYER.finalize_com2_transcript(collector), consumer.rstrip())
@@ -213,7 +220,7 @@ class LinkLayerHostTest(unittest.TestCase):
                 tuple(LINK_LAYER.read_socket_frame(connection) for _ in range(3))
                 peer.client_received_frames.set()
                 self.assertTrue(peer.initial_duplicate_check_complete.wait(1.0))
-                connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh", 1, 0))
+                LINK_LAYER.set_abortive_close(connection)
             peer.join(timeout=1.0)
             self.assertIsNone(peer.error)
         finally:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import select
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -75,6 +76,12 @@ def load_virtio_net_acceptance():
 VIRTIO_NET = load_virtio_net_acceptance()
 encode_socket_frame = VIRTIO_NET.encode_socket_frame
 read_socket_frame = VIRTIO_NET.read_socket_frame
+
+
+def set_abortive_close(connection: socket.socket) -> None:
+    """Request an immediate reset when the host-side test socket closes."""
+    linger = struct.pack("hh", 1, 0) if sys.platform == "win32" else struct.pack("ii", 1, 0)
+    connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
 
 
 def link_frame(destination: bytes, source: bytes, ether_type: int, payload: bytes) -> bytes:
