@@ -1,6 +1,6 @@
 # Phase 14 ARP Consumer Design Specification
 
-Status: Accepted by owner on 2026-09-16  
+Status: Accepted by owner on 2026-09-16
 Date: 2026-09-16
 
 ## Goal
