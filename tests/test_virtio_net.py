@@ -186,12 +186,12 @@ def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
         ),
         (
             ROOT / "README.md",
-            "Phase 14 `nic-driver` is accepted",
+            "Phase 14 `NetworkPort` remains",
             "\nPhase 12\n",
         ),
         (
             ROOT / "docs/TECHNICAL-OVERVIEW.md",
-            "Phase 14 `nic-driver` is accepted",
+            "Phase 14 `NetworkPort` remains",
             "\nThe SDHCI/eMMC backend has\n",
         ),
     )

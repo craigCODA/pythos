@@ -16,7 +16,8 @@ Ethernet-II link-layer proof is accepted under
 consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
 frame, rejects wrong destination and wrong EtherType frames, accepts one valid
 RX frame, and reaches terminal capability revocation. The accepted evidence
-also requires no non-boot virtio disk, no storage-path markers, and
+also requires no non-boot virtio data disk attached, no storage-path markers observed,
+boot ESP is snapshot-backed, no PythOS storage-path writes, and
 `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native

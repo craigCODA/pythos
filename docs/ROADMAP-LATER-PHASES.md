@@ -44,8 +44,9 @@ Phase 14 `link-layer` is accepted under [ADR 0096](decisions/0096-phase-14-link-
 and Phase 14 is not complete. The opt-in native proof uses a read-only
 bootstrap, describes the MAC, sends one fixed unicast TX, rejects wrong
 destination and wrong EtherType, accepts one valid RX, and reaches terminal
-revocation. Exact acceptance evidence is no non-boot virtio disk, no
-storage-path markers, and `QEMU_OUTCOME success`. Raw bytes remain below
+revocation. Exact acceptance evidence is no non-boot virtio data disk attached, no
+storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path
+writes, and `QEMU_OUTCOME success`. Raw bytes remain below
 `NetworkPort`; Ethernet-II semantics live in the native consumer, and default
 and normal-session boot remain unchanged. This does not claim IP/protocols/
 sockets, a production service, physical NIC/Wi-Fi, modern or interrupt Virtio,

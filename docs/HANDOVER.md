@@ -9,8 +9,9 @@ boot-local `NetworkPort` boundary in
 consumer uses a read-only bootstrap, describes the local MAC, sends one fixed
 unicast TX frame, rejects one wrong-destination frame and one wrong-EtherType
 frame, accepts one valid RX frame, and reaches terminal capability revocation.
-The exact accepted evidence is no non-boot virtio disk, no storage-path
-markers, and `QEMU_OUTCOME success`.
+The exact accepted evidence is no non-boot virtio data disk attached, no storage-path markers observed,
+boot ESP is snapshot-backed, no PythOS storage-path writes,
+and `QEMU_OUTCOME success`.
 
 The Task 7 live QEMU boot was run after commit `8e1cfaa` with QEMU emulator
 version `11.0.50 (v11.0.0-12631-g54e84cdc7a)`, using the command/profile
@@ -27,7 +28,8 @@ wrong destination `02000000000302000000000288b5505954484f533a4c494e4b3a525800000
 wrong EtherType `52540012345602000000000288b6505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`,
 and valid RX `52540012345602000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`.
 Cleanup removed the serial log and ESP overlay and joined the peer and runner
-cleanly; no storage-path markers and no non-boot virtio disk were present.
+cleanly; no storage-path markers observed and no non-boot virtio data disk attached
+were present.
 
 Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
 --check`, and `cargo test --workspace --quiet`; the repository-managed pytest
