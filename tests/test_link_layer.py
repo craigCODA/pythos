@@ -80,7 +80,17 @@ class LinkLayerHostTest(unittest.TestCase):
             + b"PYTHOS:LINK:TX"
             + bytes(60 - 14 - len(b"PYTHOS:LINK:TX"))
         )
-        expected_rx = (
+        expected_wrong_destination_rx = (
+            bytes.fromhex("02000000000302000000000288b5")
+            + b"PYTHOS:LINK:RX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:RX"))
+        )
+        expected_wrong_ethertype_rx = (
+            bytes.fromhex("52540012345602000000000288b6")
+            + b"PYTHOS:LINK:RX"
+            + bytes(60 - 14 - len(b"PYTHOS:LINK:RX"))
+        )
+        expected_valid_rx = (
             bytes.fromhex("52540012345602000000000288b5")
             + b"PYTHOS:LINK:RX"
             + bytes(60 - 14 - len(b"PYTHOS:LINK:RX"))
@@ -94,7 +104,14 @@ class LinkLayerHostTest(unittest.TestCase):
             ),
             expected_tx,
         )
-        self.assertEqual(LINK_LAYER.peer_frames(device_mac)[-1], expected_rx)
+        self.assertEqual(
+            LINK_LAYER.peer_frames(device_mac),
+            (
+                expected_wrong_destination_rx,
+                expected_wrong_ethertype_rx,
+                expected_valid_rx,
+            ),
+        )
 
     def test_runner_command_uses_legacy_peer_without_data_disk(self) -> None:
         self.assertEqual(
