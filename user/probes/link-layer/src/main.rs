@@ -14,9 +14,9 @@ use pythos_shared::{
         NETWORK_PORT_FLAG_MAC_ONLY, NETWORK_PORT_FLAG_NO_OFFLOAD, NETWORK_PORT_MAX_FRAME_BYTES,
         NETWORK_PORT_MIN_FRAME_BYTES, NETWORK_PORT_OP_DESCRIBE, NETWORK_PORT_OP_SEND,
         NETWORK_PORT_OP_TRY_RECEIVE, NETWORK_PORT_STATE_READY, NETWORK_PORT_STATUS_EMPTY,
-        NETWORK_PORT_STATUS_FAILED, NETWORK_PORT_STATUS_NOT_READY, NETWORK_PORT_STATUS_OK,
-        NETWORK_PORT_STATUS_TRANSPORT_ERROR, NetworkPortBootstrapV1, NetworkPortDescriptionV1,
-        NetworkPortRequestV1, NetworkPortResponseV1, SYSCALL_NETWORK_PORT_REQUEST,
+        NETWORK_PORT_STATUS_OK, NETWORK_PORT_STATUS_TRANSPORT_ERROR, NetworkPortBootstrapV1,
+        NetworkPortDescriptionV1, NetworkPortRequestV1, NetworkPortResponseV1,
+        SYSCALL_NETWORK_PORT_REQUEST,
     },
     object_shell_abi::{SYSCALL_CONSOLE_WRITE_BYTE, SYSCALL_OK},
 };
@@ -91,10 +91,22 @@ fn valid_bootstrap(bootstrap: NetworkPortBootstrapV1) -> bool {
 fn valid_description() -> bool {
     // SAFETY: this single-threaded probe has exclusive access between syscalls.
     let description = unsafe { &*STORAGE.0.get() }.description;
-    description.min_frame_bytes as usize == NETWORK_PORT_MIN_FRAME_BYTES
+    valid_description_fields(description)
+}
+
+fn valid_description_fields(description: NetworkPortDescriptionV1) -> bool {
+    description.reserved0 == [0; 2]
+        && description.reserved1 == 0
+        && description.min_frame_bytes as usize == NETWORK_PORT_MIN_FRAME_BYTES
         && description.max_frame_bytes as usize == NETWORK_PORT_MAX_FRAME_BYTES
         && description.transport_flags == NETWORK_PORT_FLAG_MAC_ONLY | NETWORK_PORT_FLAG_NO_OFFLOAD
         && description.state == u32::from(NETWORK_PORT_STATE_READY)
+}
+
+fn payload_matches(payload: &[u8], token: &[u8]) -> bool {
+    payload.len() >= token.len()
+        && payload[..token.len()] == *token
+        && payload[token.len()..].iter().all(|byte| *byte == 0)
 }
 
 fn describe(capability: PackedCapability) -> u16 {
@@ -153,7 +165,7 @@ fn receive_exchange(capability: PackedCapability, console: PackedCapability) -> 
         if !rejected_destination {
             if frame.source != PEER_MAC
                 || frame.ether_type != ETHERTYPE
-                || frame.payload != RX_PAYLOAD
+                || !payload_matches(frame.payload, RX_PAYLOAD)
             {
                 error(console);
             }
@@ -169,7 +181,7 @@ fn receive_exchange(capability: PackedCapability, console: PackedCapability) -> 
             if frame.destination != buffers.description.mac
                 || frame.source != PEER_MAC
                 || frame.ether_type != WRONG_ETHERTYPE
-                || frame.payload != RX_PAYLOAD
+                || !payload_matches(frame.payload, RX_PAYLOAD)
             {
                 error(console);
             }
@@ -181,7 +193,7 @@ fn receive_exchange(capability: PackedCapability, console: PackedCapability) -> 
         if frame.destination != buffers.description.mac
             || frame.source != PEER_MAC
             || frame.ether_type != ETHERTYPE
-            || frame.payload != RX_PAYLOAD
+            || !payload_matches(frame.payload, RX_PAYLOAD)
         {
             error(console);
         }
@@ -195,7 +207,7 @@ fn frame_matches_policy(frame: &ethernet::EthernetFrame<'_>, local: [u8; 6]) -> 
     frame.destination == local
         && frame.source == PEER_MAC
         && frame.ether_type == ETHERTYPE
-        && frame.payload == RX_PAYLOAD
+        && payload_matches(frame.payload, RX_PAYLOAD)
 }
 
 fn receive(capability: PackedCapability) -> u16 {
@@ -226,8 +238,7 @@ fn request(buffers: &mut ProbeBuffers) -> u16 {
 
 fn valid_response(response: NetworkPortResponseV1) -> bool {
     response.status <= NETWORK_PORT_STATUS_TRANSPORT_ERROR
-        && response.state != NETWORK_PORT_STATUS_FAILED
-        && response.state != NETWORK_PORT_STATUS_NOT_READY
+        && response.state == NETWORK_PORT_STATE_READY
         && response.reserved0 == 0
         && response.reserved1 == 0
         && response.reserved2 == 0
@@ -293,18 +304,54 @@ fn main() {}
 
 #[cfg(test)]
 mod tests {
-    use super::{ETHERTYPE, PEER_MAC, frame_matches_policy};
-    use crate::ethernet::EthernetFrame;
+    use super::{
+        ETHERTYPE, PEER_MAC, frame_matches_policy, valid_description_fields, valid_response,
+    };
+    use crate::ethernet::{encode_minimum_frame, parse};
+    use pythos_shared::network_port_abi::{
+        NETWORK_PORT_STATE_READY, NETWORK_PORT_STATUS_EMPTY, NETWORK_PORT_STATUS_OK,
+        NetworkPortDescriptionV1, NetworkPortResponseV1,
+    };
 
     #[test]
-    fn receive_policy_requires_the_fixed_peer_and_payload() {
-        let frame = EthernetFrame {
-            destination: [2, 0, 0, 0, 0, 1],
-            source: PEER_MAC,
-            ether_type: ETHERTYPE,
-            payload: b"PYTHOS:LINK:RX",
-        };
+    fn receive_policy_accepts_a_real_padded_minimum_frame() {
+        let bytes =
+            encode_minimum_frame([2, 0, 0, 0, 0, 1], PEER_MAC, ETHERTYPE, b"PYTHOS:LINK:RX")
+                .unwrap();
+        let frame = parse(&bytes).unwrap();
         assert!(frame_matches_policy(&frame, [2, 0, 0, 0, 0, 1]));
-        assert!(!frame_matches_policy(&frame, [2, 0, 0, 0, 0, 9]));
+    }
+
+    #[test]
+    fn response_validation_requires_ready_state_for_success_and_empty() {
+        assert!(valid_response(NetworkPortResponseV1::new(
+            NETWORK_PORT_STATUS_OK,
+            NETWORK_PORT_STATE_READY,
+        )));
+        assert!(valid_response(NetworkPortResponseV1::new(
+            NETWORK_PORT_STATUS_EMPTY,
+            NETWORK_PORT_STATE_READY,
+        )));
+        assert!(!valid_response(NetworkPortResponseV1::new(
+            NETWORK_PORT_STATUS_OK,
+            3,
+        )));
+    }
+
+    #[test]
+    fn description_validation_requires_zero_reserved_fields() {
+        let mut description = NetworkPortDescriptionV1 {
+            min_frame_bytes: 60,
+            max_frame_bytes: 1514,
+            transport_flags: 3,
+            state: 1,
+            ..NetworkPortDescriptionV1::empty()
+        };
+        assert!(valid_description_fields(description));
+        description.reserved0 = [1, 0];
+        assert!(!valid_description_fields(description));
+        description.reserved0 = [0; 2];
+        description.reserved1 = 1;
+        assert!(!valid_description_fields(description));
     }
 }
