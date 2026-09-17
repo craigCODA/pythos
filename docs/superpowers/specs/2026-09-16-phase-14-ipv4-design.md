@@ -2,7 +2,7 @@
 
 Date: 2026-09-16
 
-Status: Proposed for owner review; no implementation authorization yet
+Status: Accepted; implementation authorized by ADR 0098 and completed Task 6 local live evidence
 
 ## Decision in one sentence
 
@@ -282,18 +282,19 @@ ipv4_header_checksum(header_bytes)
 
 1. require at least 20 bytes;
 2. read version and IHL without indexing beyond the input;
-3. require version 4 and IHL at least 5;
-4. require the computed header length to fit in the input;
+3. require version 4 and canonical IHL 5 (no options);
+4. compute the header length with checked arithmetic and require it to fit in
+   the input;
 5. read total length and require it to be at least the header length and no
    greater than the supplied datagram length;
 6. verify the one's-complement header checksum over the complete header;
 7. return only bytes within the declared total length as the payload view.
 
-The fixed proof policy then additionally requires IHL 5, total length 28,
-zero flags and fragment offset, TTL 64, Protocol 253, the exact source and
-destination pair, the exact payload, and no nonzero Ethernet padding. A
-datagram with options or fragmentation is rejected by this policy before any
-higher-layer interpretation.
+The fixed proof policy then additionally requires the canonical IHL 5/no-options
+condition, total length 28, zero flags and fragment offset, TTL 64, Protocol
+253, the exact source and destination pair, the exact payload, and no nonzero
+Ethernet padding. A datagram with options or fragmentation is rejected by the
+codec/policy boundary before any higher-layer interpretation.
 
 No payload checksum is invented at the IPv4 layer. RFC 791 defines the
 checksum used here as a checksum of the IPv4 header only; payload integrity is
