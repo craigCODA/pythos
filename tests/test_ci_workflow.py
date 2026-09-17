@@ -26,6 +26,15 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-link-layer.py --self-test",
         "python scripts/test-link-layer.py",
     )
+    ARP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-arp-probe",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py",
+        "python -m unittest tests.test_arp",
+        "python scripts/test-arp.py --self-test",
+        "python scripts/test-arp.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -311,6 +320,62 @@ class CiWorkflowTest(unittest.TestCase):
             commands.index("python scripts/test-network-port.py"),
             commands.index("python scripts/test-link-layer.py"),
             "link-layer live proof must follow the NetworkPort proof",
+        )
+
+    def test_arp_has_host_strict_build_and_sequential_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.ARP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate ARP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        self.assertIn("cargo test -p pythos-user-session-runtime", commands)
+        self.assertIn(
+            "cargo test -p pythos-user-session-runtime --features normal-session",
+            commands,
+        )
+        self.assertLess(
+            commands.index("cargo test -p pythos-user-link-layer-probe"),
+            commands.index("cargo test -p pythos-user-arp-probe"),
+            "ARP probe unit coverage must follow the link-layer probe",
+        )
+        self.assertLess(
+            commands.index("cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings"),
+            commands.index("cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings"),
+            "ARP strict coverage must follow link-layer strict coverage",
+        )
+        self.assertLess(
+            commands.index("cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings"),
+            commands.index("cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings"),
+            "ARP consumer strict coverage must follow the ARP core profile",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py"),
+            commands.index("python scripts/test-arp.py --self-test"),
+            "ARP oracle self-test must follow the link-layer live proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-arp.py --self-test"),
+            commands.index("python scripts/test-arp.py"),
+            "ARP oracle self-test must precede its live QEMU proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-virtio-net.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the raw Virtio proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-network-port.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the NetworkPort proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py"),
+            commands.index("python scripts/test-arp.py"),
+            "ARP live proof must follow the link-layer proof",
         )
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
