@@ -5,7 +5,8 @@ use crate::capabilities::{CapabilityHandle, CapabilityTable, ResourceId};
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -24,7 +25,8 @@ static NETWORK_PORT_BOOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::VirtioTransport>>>);
 
@@ -41,7 +43,8 @@ struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::Virti
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 unsafe impl Sync for NetworkPortStorage {}
 
@@ -49,7 +52,8 @@ unsafe impl Sync for NetworkPortStorage {}
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 static ACTIVE_NETWORK_PORT: NetworkPortStorage = NetworkPortStorage(UnsafeCell::new(None));
 
@@ -285,7 +289,8 @@ impl<T: NetworkTransport> NetworkPort<T> {
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 pub(crate) fn install_operational_transport(
     transport: crate::virtio_net::VirtioTransport,
@@ -302,7 +307,8 @@ pub(crate) fn install_operational_transport(
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 pub(crate) fn with_active_port<R>(
     f: impl FnOnce(&mut NetworkPort<crate::virtio_net::VirtioTransport>) -> R,
@@ -316,7 +322,8 @@ pub(crate) fn with_active_port<R>(
     test,
     feature = "virtio-net-probe",
     feature = "network-port-probe",
-    feature = "link-layer-probe"
+    feature = "link-layer-probe",
+    feature = "arp-probe"
 ))]
 impl NetworkTransport for crate::virtio_net::VirtioTransport {
     fn mac(&self) -> [u8; 6] {

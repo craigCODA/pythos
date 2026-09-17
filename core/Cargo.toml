@@ -24,6 +24,9 @@ network-port-probe = ["verify"]
 # Opt-in only: launch the bounded native link-layer consumer through the
 # existing NetworkPort capability bootstrap ABI.
 link-layer-probe = ["verify"]
+# Opt-in only: launch the finite native ARP consumer through the existing
+# NetworkPort capability bootstrap ABI.
+arp-probe = ["verify"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]
