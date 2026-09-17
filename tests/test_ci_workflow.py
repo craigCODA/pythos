@@ -44,6 +44,16 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-ipv4.py --self-test",
         "python scripts/test-ipv4.py",
     )
+    ICMP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-icmp-probe",
+        "python scripts/build-icmp-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py",
+        "python -m unittest tests.test_icmp",
+        "python scripts/test-icmp.py --self-test",
+        "python scripts/test-icmp.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -420,6 +430,42 @@ class CiWorkflowTest(unittest.TestCase):
                 commands.index(predecessor),
                 commands.index(successor),
                 f"IPv4 gate must follow predecessor: {predecessor}",
+            )
+
+    def test_icmp_has_ordered_unit_build_strict_and_live_gates_after_ipv4(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.ICMP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate ICMP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-ipv4-probe", "cargo test -p pythos-user-icmp-probe"),
+            ("cargo test -p pythos-user-icmp-probe", "python scripts/build-icmp-probe.py"),
+            (
+                "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+                "cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+                "python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py",
+            ),
+            ("python -m unittest tests.test_ipv4", "python -m unittest tests.test_icmp"),
+            ("python scripts/test-ipv4.py", "python scripts/test-icmp.py --self-test"),
+            ("python scripts/test-icmp.py --self-test", "python scripts/test-icmp.py"),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"ICMP gate must follow predecessor: {predecessor}",
             )
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:

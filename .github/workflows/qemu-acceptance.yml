@@ -101,6 +101,7 @@ jobs:
           cargo test -p pythos-user-link-layer-probe
           cargo test -p pythos-user-arp-probe
           cargo test -p pythos-user-ipv4-probe
+          cargo test -p pythos-user-icmp-probe
           cargo test -p pythos-user-session-runtime
           cargo test -p pythos-user-session-runtime --features session-viewing
           cargo test -p pythos-user-session-runtime --features normal-session
@@ -132,6 +133,7 @@ jobs:
           python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime
           python scripts/build-session-runtime.py --features normal-session
           python scripts/build-session-runtime.py --features normal-session-fault-test
+          python scripts/build-icmp-probe.py
 
       - name: Clippy
         run: |
@@ -144,6 +146,8 @@ jobs:
           cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings
           cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings
+          cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings
@@ -163,6 +167,7 @@ jobs:
           python -m py_compile scripts/test-link-layer.py
           python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py
           python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py
+          python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py
 
       - name: Python harness tests
         run: |
@@ -172,6 +177,7 @@ jobs:
           python -m unittest tests.test_link_layer
           python -m unittest tests.test_arp
           python -m unittest tests.test_ipv4
+          python -m unittest tests.test_icmp
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -210,6 +216,8 @@ jobs:
           python scripts/test-arp.py
           python scripts/test-ipv4.py --self-test
           python scripts/test-ipv4.py
+          python scripts/test-icmp.py --self-test
+          python scripts/test-icmp.py
 
       - name: PythTIG physical evidence tooling
         run: |
