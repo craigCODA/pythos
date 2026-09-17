@@ -7,7 +7,8 @@ use crate::capabilities::{CapabilityHandle, CapabilityTable, ResourceId};
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -28,7 +29,8 @@ static NETWORK_PORT_BOOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::VirtioTransport>>>);
 
@@ -47,7 +49,8 @@ struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::Virti
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 unsafe impl Sync for NetworkPortStorage {}
 
@@ -57,7 +60,8 @@ unsafe impl Sync for NetworkPortStorage {}
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 static ACTIVE_NETWORK_PORT: NetworkPortStorage = NetworkPortStorage(UnsafeCell::new(None));
 
@@ -295,7 +299,8 @@ impl<T: NetworkTransport> NetworkPort<T> {
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 pub(crate) fn install_operational_transport(
     transport: crate::virtio_net::VirtioTransport,
@@ -314,7 +319,8 @@ pub(crate) fn install_operational_transport(
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 pub(crate) fn with_active_port<R>(
     f: impl FnOnce(&mut NetworkPort<crate::virtio_net::VirtioTransport>) -> R,
@@ -330,7 +336,8 @@ pub(crate) fn with_active_port<R>(
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 impl NetworkTransport for crate::virtio_net::VirtioTransport {
     fn mac(&self) -> [u8; 6] {

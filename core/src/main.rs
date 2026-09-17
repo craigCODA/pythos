@@ -12,7 +12,8 @@
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )
     ),
     allow(unused)
@@ -148,6 +149,24 @@ compile_error!("features `ipv4-probe` and `network-port-probe` are mutually excl
 compile_error!("features `ipv4-probe` and `link-layer-probe` are mutually exclusive");
 #[cfg(all(feature = "ipv4-probe", feature = "arp-probe"))]
 compile_error!("features `ipv4-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "phase13-package-test"))]
+compile_error!("features `icmp-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `icmp-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "session-runtime-probe"))]
+compile_error!("features `icmp-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "evidence-terminal"))]
+compile_error!("features `icmp-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "virtio-net-probe"))]
+compile_error!("features `icmp-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "network-port-probe"))]
+compile_error!("features `icmp-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "link-layer-probe"))]
+compile_error!("features `icmp-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "arp-probe"))]
+compile_error!("features `icmp-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "ipv4-probe"))]
+compile_error!("features `icmp-probe` and `ipv4-probe` are mutually exclusive");
 #[cfg(all(
     feature = "session-runtime-probe",
     any(
@@ -204,6 +223,8 @@ mod general_storage_persistence;
 mod hardware_probe_boot;
 #[cfg(any(test, feature = "hardware-probe"))]
 mod hardware_probe_screen;
+#[cfg(any(test, feature = "icmp-probe"))]
+mod icmp_probe;
 mod input_drivers;
 mod input_events;
 mod interpreter;
@@ -221,7 +242,8 @@ mod memory;
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 mod network_port;
 #[cfg(any(test, feature = "network-port-probe"))]
@@ -230,7 +252,8 @@ mod network_port_probe;
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 mod network_port_probe_support;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
@@ -402,7 +425,8 @@ mod viewing_input_probe;
     feature = "network-port-probe",
     feature = "link-layer-probe",
     feature = "arp-probe",
-    feature = "ipv4-probe"
+    feature = "ipv4-probe",
+    feature = "icmp-probe"
 ))]
 mod virtio_net;
 mod widgets;
@@ -528,7 +552,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         // ADR 0048: discover the HDA controller now (PCI config I/O works before
         // the VM switch) so its MMIO can be mapped into the kernel address space.
@@ -539,7 +564,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
@@ -549,7 +575,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         // ADR 0054: discover an AHCI controller before the VM switch for the
         // same reason; the polling driver uses a fixed kernel virtual window.
@@ -560,7 +587,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         let ahci_mmio = ahci_controller.map(|c| {
             (
@@ -576,7 +604,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 feature = "network-port-probe",
                 feature = "link-layer-probe",
                 feature = "arp-probe",
-                feature = "ipv4-probe"
+                feature = "ipv4-probe",
+                feature = "icmp-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -595,7 +624,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 feature = "network-port-probe",
                 feature = "link-layer-probe",
                 feature = "arp-probe",
-                feature = "ipv4-probe"
+                feature = "ipv4-probe",
+                feature = "icmp-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -613,7 +643,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 feature = "network-port-probe",
                 feature = "link-layer-probe",
                 feature = "arp-probe",
-                feature = "ipv4-probe"
+                feature = "ipv4-probe",
+                feature = "icmp-probe"
             )),
             not(feature = "sdhci-emmc-backend")
         ))]
@@ -625,7 +656,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         let kernel_address_space_options = {
             let mut options = memory::r#virtual::KernelAddressSpaceBuildOptions::new();
@@ -701,6 +733,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
         };
+        #[cfg(feature = "icmp-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            icmp_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
         #[cfg(feature = "session-runtime-probe")]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -719,7 +763,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             feature = "network-port-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -764,6 +809,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(feature = "ipv4-probe")]
         if ipv4_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
             serial::write_line("PYTHOS:CORE:IPV4:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "icmp-probe")]
+        if icmp_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:ICMP:ERROR:PREPARE");
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
@@ -950,12 +1001,38 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
             qemu_exit::success();
         }
+        #[cfg(feature = "icmp-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:ICMP:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if icmp_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:ICMP:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
             feature = "session-runtime-probe",
             feature = "link-layer-probe",
             feature = "arp-probe",
-            feature = "ipv4-probe"
+            feature = "ipv4-probe",
+            feature = "icmp-probe"
         )))]
         {
             let user_address_space =
@@ -1336,7 +1413,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 feature = "network-port-probe",
                 feature = "link-layer-probe",
                 feature = "arp-probe",
-                feature = "ipv4-probe"
+                feature = "ipv4-probe",
+                feature = "icmp-probe"
             )))]
             if let Some(hda) = hda_controller {
                 audio::hda_report_mapped(&hda);
