@@ -421,6 +421,174 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertIn("relocation-model=static", rustflags)
         self.assertIn("user/probes/arp/linker.ld", rustflags)
 
+    def test_ipv4_probe_build_is_isolated_verified_and_names_artifact(self) -> None:
+        # Catches using another probe's package/linker or publishing an unverified ELF.
+        self.assertTrue((ROOT / "scripts" / "build-ipv4-probe.py").is_file())
+        module = load_script("build-ipv4-probe.py")
+        calls: list[tuple[str, list[str]]] = []
+        build_env: dict[str, str] = {}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "ipv4-test"
+            cargo_elf = (
+                target_dir
+                / "x86_64-unknown-none"
+                / "debug"
+                / "pythos-user-ipv4-probe"
+            )
+
+            def build(command: list[object], **kwargs: object) -> int:
+                calls.append(("build", normalize(command)))
+                build_env.update(kwargs["env"])
+                cargo_elf.parent.mkdir(parents=True)
+                cargo_elf.write_bytes(b"ipv4-probe")
+                return 0
+
+            def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                calls.append(("verify", normalize(command)))
+                return subprocess.CompletedProcess(command, 0)
+
+            module.subprocess.call = build
+            module.subprocess.run = verify
+            with unittest.mock.patch.object(
+                sys,
+                "argv",
+                [str(module.__file__), "--target-dir", str(target_dir)],
+            ), unittest.mock.patch("builtins.print") as print_mock:
+                self.assertEqual(module.main(), 0)
+
+            artifact = target_dir / "ipv4-probe.elf"
+            self.assertEqual(artifact.read_bytes(), b"ipv4-probe")
+            print_mock.assert_called_once_with(artifact)
+
+        self.assertEqual(
+            calls[0][1],
+            [
+                "cargo", "build", "-p", "pythos-user-ipv4-probe", "--target",
+                "x86_64-unknown-none", "--bin", "pythos-user-ipv4-probe",
+                "--target-dir", str(target_dir).replace("\\", "/"),
+            ],
+        )
+        self.assertEqual(
+            calls[1][1][-3:],
+            [
+                str(ROOT / "scripts" / "verify-user-elf.py").replace("\\", "/"),
+                "--elf",
+                str(cargo_elf).replace("\\", "/"),
+            ],
+        )
+        rustflags = build_env["RUSTFLAGS"].replace("\\", "/")
+        self.assertIn("relocation-model=static", rustflags)
+        self.assertIn("user/probes/ipv4/linker.ld", rustflags)
+
+    def test_ipv4_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
+        # Catches enabling IPv4 by default or packaging it under the wrong identity.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "ipv4-probe.elf"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"ipv4-probe")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                opted_in = module.build_default_init_pak(ipv4_probe_elf=probe)
+
+        self.assertNotIn(b"ipv4-probe.elf", default)
+        records = parse_init_pak_bundle(opted_in)
+        named = [
+            parse_named_record(kind, payload)
+            for kind, payload in records
+            if kind == module.INIT_BUNDLE_NAMED_USER_ELF_TYPE
+        ]
+        self.assertEqual(
+            named[-1],
+            (
+                b"ipv4-probe.elf",
+                0x5059_4950_5052_0001,
+                module.digest64(b"ipv4-probe"),
+                b"ipv4-probe",
+            ),
+        )
+
+    def test_ipv4_probe_resolution_and_verification_precede_packaging(self) -> None:
+        # Catches relative-path ambiguity or packaging before the user-ELF verifier succeeds.
+        module = load_script("build-image.py")
+        events: list[tuple[str, object]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            caller = root / "caller"
+            caller.mkdir()
+            loader = root / "loader"
+            kernel = root / "kernel"
+            probe = caller / "ipv4-probe.elf"
+            for path in (loader, kernel, probe):
+                path.write_bytes(b"artifact")
+
+            def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                events.append(("verify", normalize(command)))
+                return subprocess.CompletedProcess(command, 0)
+
+            def package(*_args: object, **kwargs: object) -> bytes:
+                events.append(("package", kwargs["ipv4_probe_elf"]))
+                return b"pak"
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(caller)
+                with unittest.mock.patch.object(module, "build_default_init_pak", side_effect=package), unittest.mock.patch.object(
+                    module, "ESP", root / "esp"
+                ), unittest.mock.patch.object(module.shutil, "copy2"), unittest.mock.patch.object(
+                    module, "write_binary_if_changed"
+                ), unittest.mock.patch.object(subprocess, "run", side_effect=verify), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(module.__file__), "--loader", str(loader), "--kernel", str(kernel),
+                        "--ipv4-probe-elf", "ipv4-probe.elf",
+                    ],
+                ):
+                    self.assertEqual(module.main(), 0)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual([kind for kind, _value in events[:2]], ["verify", "package"])
+        verified = Path(events[0][1][-1])
+        packaged = events[1][1]
+        self.assertTrue(verified.is_absolute())
+        self.assertEqual(packaged, verified)
+
+    def test_ipv4_probe_conflicts_with_network_and_session_profiles(self) -> None:
+        # Catches admitting IPv4 beside another network probe or a retained session profile.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell"
+            ipv4 = root / "ipv4"
+            other = root / "other"
+            runtime = root / "runtime"
+            normal = root / "normal"
+            graph = root / "graph"
+            for path in (shell, ipv4, other, runtime, normal, graph):
+                path.write_bytes(b"artifact")
+            conflicts = (
+                {"ipv4_probe_elf": ipv4, "network_port_probe_elf": other},
+                {"ipv4_probe_elf": ipv4, "link_layer_probe_elf": other},
+                {"ipv4_probe_elf": ipv4, "arp_probe_elf": other},
+                {"ipv4_probe_elf": ipv4, "session_runtime_elf": runtime},
+                {
+                    "ipv4_probe_elf": ipv4,
+                    "normal_session_elf": normal,
+                    "normal_session_graph": graph,
+                },
+            )
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell):
+                for arguments in conflicts:
+                    with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                        module.build_default_init_pak(**arguments)
+
     def test_arp_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
         # Catches accidentally adding ARP to the default image or giving it another program identity.
         module = load_script("build-image.py")
@@ -486,15 +654,18 @@ class BuildOrchestrationTest(unittest.TestCase):
         module = load_script("build-image.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            loader, kernel, network, link_layer, arp = (
-                root / name for name in ("loader", "kernel", "network", "link-layer", "arp")
+            loader, kernel, network, link_layer, arp, ipv4 = (
+                root / name for name in ("loader", "kernel", "network", "link-layer", "arp", "ipv4")
             )
-            for path in (loader, kernel, network, link_layer, arp):
+            for path in (loader, kernel, network, link_layer, arp, ipv4):
                 path.write_bytes(b"artifact")
             conflicts = (
                 ("--network-port-probe-elf", network, "--link-layer-probe-elf", link_layer),
                 ("--network-port-probe-elf", network, "--arp-probe-elf", arp),
                 ("--link-layer-probe-elf", link_layer, "--arp-probe-elf", arp),
+                ("--network-port-probe-elf", network, "--ipv4-probe-elf", ipv4),
+                ("--link-layer-probe-elf", link_layer, "--ipv4-probe-elf", ipv4),
+                ("--arp-probe-elf", arp, "--ipv4-probe-elf", ipv4),
             )
             for left_flag, left, right_flag, right in conflicts:
                 with self.subTest(left_flag=left_flag, right_flag=right_flag), unittest.mock.patch.object(

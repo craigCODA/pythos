@@ -35,6 +35,15 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-arp.py --self-test",
         "python scripts/test-arp.py",
     )
+    IPV4_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-ipv4-probe",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+        "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+        "python -m unittest tests.test_ipv4",
+        "python scripts/test-ipv4.py --self-test",
+        "python scripts/test-ipv4.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -377,6 +386,41 @@ class CiWorkflowTest(unittest.TestCase):
             commands.index("python scripts/test-arp.py"),
             "ARP live proof must follow the link-layer proof",
         )
+
+    def test_ipv4_has_host_strict_build_and_sequential_future_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.IPV4_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate IPv4 gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-arp-probe", "cargo test -p pythos-user-ipv4-probe"),
+            (
+                "cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+                "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py",
+                "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+            ),
+            ("python -m unittest tests.test_arp", "python -m unittest tests.test_ipv4"),
+            ("python scripts/test-arp.py", "python scripts/test-ipv4.py --self-test"),
+            ("python scripts/test-ipv4.py --self-test", "python scripts/test-ipv4.py"),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"IPv4 gate must follow predecessor: {predecessor}",
+            )
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
