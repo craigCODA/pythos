@@ -22,6 +22,10 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-normal-session.py",
         "python scripts/test-normal-session.py --fault",
     )
+    LINK_LAYER_MILESTONE_ONLY_COMMANDS = (
+        "python scripts/test-link-layer.py --self-test",
+        "python scripts/test-link-layer.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -135,6 +139,7 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo test -p pythc",
             "cargo test -p pythos-user-pyth-runtime",
             "cargo test -p pythos-user-session-input-probe",
+            "cargo test -p pythos-user-link-layer-probe",
             "python scripts/test-pyth-tig-format.py",
             "cargo run -p pythc -- build programs/session-manager/main.pyth -o target/pyth-tig/session-manager.tig",
             "cargo run -p pyth-tig-tool -- verify target/pyth-tig/session-manager.tig",
@@ -144,9 +149,14 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings",
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings",
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings",
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings",
+            "cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings",
             "cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings",
             "scripts/build-session-input-probe.py",
             "scripts/test-session-input-bridge-probe.py",
+            "python -m py_compile scripts/test-link-layer.py",
+            "python scripts/test-link-layer.py --self-test",
+            "python scripts/test-link-layer.py",
             "python scripts/test-session-input-bridge-probe.py --self-test",
             "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze",
             "python scripts/test-pyth-graph-runtime.py",
@@ -280,6 +290,27 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,normal-session -- -D warnings",
             workflow,
             "verify excludes the real normal kernel and cannot be presented as its strict gate",
+        )
+
+    def test_link_layer_has_host_strict_build_and_sequential_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.LINK_LAYER_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate link-layer gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py --self-test"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer oracle self-test must precede its live QEMU proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-network-port.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the NetworkPort proof",
         )
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:

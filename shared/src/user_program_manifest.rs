@@ -34,6 +34,10 @@ pub const SESSION_INPUT_PROBE_PRINCIPAL_ID: u64 = 0x5059_5349_4E50_0001;
 pub const SESSION_RUNTIME_PROGRAM_NAME: &[u8] = b"session-runtime.elf";
 pub const SESSION_RUNTIME_PRINCIPAL_ID: u64 = 0x5059_5352_544D_0001;
 pub const NORMAL_SESSION_PROGRAM_NAME: &[u8] = b"normal-session.elf";
+pub const NETWORK_PORT_PROBE_PROGRAM_NAME: &[u8] = b"network-port-probe.elf";
+pub const NETWORK_PORT_PROBE_PRINCIPAL_ID: u64 = 0x5059_4E50_5254_0001;
+pub const LINK_LAYER_PROBE_PROGRAM_NAME: &[u8] = b"link-layer-probe.elf";
+pub const LINK_LAYER_PROBE_PRINCIPAL_ID: u64 = 0x5059_4C4C_5052_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {
@@ -263,6 +267,22 @@ mod tests {
         assert_eq!(
             validate_named_user_program(&bytes[..len - 1]),
             Err(UserProgramManifestError::TooShort)
+        );
+    }
+
+    #[test]
+    fn link_layer_probe_identity_is_additive_and_network_port_identity_is_unchanged() {
+        assert_eq!(LINK_LAYER_PROBE_PROGRAM_NAME, b"link-layer-probe.elf");
+        assert_eq!(LINK_LAYER_PROBE_PRINCIPAL_ID, 0x5059_4C4C_5052_0001);
+        assert_eq!(NETWORK_PORT_PROBE_PROGRAM_NAME, b"network-port-probe.elf");
+        assert_eq!(NETWORK_PORT_PROBE_PRINCIPAL_ID, 0x5059_4E50_5254_0001);
+        assert_ne!(
+            LINK_LAYER_PROBE_PROGRAM_NAME,
+            NETWORK_PORT_PROBE_PROGRAM_NAME
+        );
+        assert_ne!(
+            LINK_LAYER_PROBE_PRINCIPAL_ID,
+            NETWORK_PORT_PROBE_PRINCIPAL_ID
         );
     }
 }

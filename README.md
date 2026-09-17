@@ -7,21 +7,25 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-The merged baseline contains Phase 13.5 Slices 1 and 2, accepted in bounded,
-opt-in QEMU profiles:
-ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
-ADR 0091 retains one session runtime across two fresh Session Manager graph
-invocations with fault containment. The owner then invoked Slices 3 and 4 for
-retained session-owned Viewing and capability-checked snapshot presentation.
-Slice 5 is now implemented and locally QEMU-accepted on its unmerged branch:
-normal boot enters the retained ring-3 session, waits interruptibly for PS/2
-input or COM2 commands, and falls back one way to the existing recovery shell
-after explicit recovery or a contained native fault. See the
-[Slice 5 implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
-for current verification. Durable session state, USB/xHCI session integration,
-physical Lenovo acceptance, publication, and later phases remain pending. See
-the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary) and
-[handover](docs/HANDOVER.md) for the exact local/merged boundary.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md),
+above the kernel-owned legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](docs/decisions/0096-phase-14-link-layer-consumer.md): the native
+consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
+frame, rejects wrong destination and wrong EtherType frames, accepts one valid
+RX frame, and reaches terminal capability revocation. The accepted evidence
+also requires no non-boot virtio data disk attached, no storage-path markers observed,
+boot ESP is snapshot-backed, no PythOS storage-path writes, and
+`QEMU_OUTCOME success`.
+
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This proof does not
+claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
+interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

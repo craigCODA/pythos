@@ -1,10 +1,18 @@
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(not(test), no_std)]
-// The hardware-probe feature intentionally exits after early PCI inventory.
-// Most of PythCore remains in the crate but is unreachable in that diagnostic
-// image, so suppress unused warnings only for that non-test build.
+// Early-exit probe features intentionally leave most of PythCore unreachable.
+// Suppress unused warnings only in their non-test diagnostic images.
 #![cfg_attr(
-    all(not(test), any(feature = "hardware-probe", feature = "usb-xhci-probe")),
+    all(
+        not(test),
+        any(
+            feature = "hardware-probe",
+            feature = "usb-xhci-probe",
+            feature = "virtio-net-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
+        )
+    ),
     allow(unused)
 )]
 // The session-input bridge deliberately terminates once its bounded ring-3
@@ -72,6 +80,42 @@ compile_error!("features `session-runtime-probe` and `evidence-terminal` are mut
 compile_error!("features `session-runtime-probe` and `hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "session-runtime-probe", feature = "usb-xhci-probe"))]
 compile_error!("features `session-runtime-probe` and USB xHCI diagnostics are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "phase13-package-test"))]
+compile_error!("features `virtio-net-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `virtio-net-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "virtio-net-probe", feature = "session-runtime-probe"))]
+compile_error!("features `virtio-net-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "evidence-terminal"))]
+compile_error!("features `virtio-net-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "phase13-package-test"))]
+compile_error!("features `network-port-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `network-port-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "network-port-probe", feature = "session-runtime-probe"))]
+compile_error!("features `network-port-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "evidence-terminal"))]
+compile_error!("features `network-port-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "virtio-net-probe"))]
+compile_error!("features `network-port-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "network-port-probe"))]
+compile_error!("features `link-layer-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "virtio-net-probe"))]
+compile_error!("features `link-layer-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `link-layer-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "link-layer-probe", feature = "session-runtime-probe"))]
+compile_error!("features `link-layer-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "phase13-package-test"))]
+compile_error!("features `link-layer-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "evidence-terminal"))]
+compile_error!("features `link-layer-probe` and `evidence-terminal` are mutually exclusive");
 #[cfg(all(
     feature = "session-runtime-probe",
     any(
@@ -132,7 +176,20 @@ mod interpreter;
 mod ipc_channels;
 mod kernel_stacks;
 mod launcher_screen;
+#[cfg(any(test, feature = "link-layer-probe"))]
+mod link_layer_probe;
 mod memory;
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
+mod network_port;
+#[cfg(any(test, feature = "network-port-probe"))]
+mod network_port_probe;
+#[cfg(any(feature = "network-port-probe", feature = "link-layer-probe"))]
+mod network_port_probe_support;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
 #[cfg(any(
@@ -296,6 +353,13 @@ mod value_validation;
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe"
+))]
+mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
@@ -415,27 +479,35 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         // ADR 0048: discover the HDA controller now (PCI config I/O works before
         // the VM switch) so its MMIO can be mapped into the kernel address space.
         let hda_controller = audio::probe_hda();
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         // ADR 0054: discover an AHCI controller before the VM switch for the
         // same reason; the polling driver uses a fixed kernel virtual window.
         let ahci_controller = block_device::probe_ahci();
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         let ahci_mmio = ahci_controller.map(|c| {
             (
@@ -447,7 +519,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -462,7 +536,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -476,7 +552,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe"
             )),
             not(feature = "sdhci-emmc-backend")
         ))]
@@ -484,7 +562,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         let kernel_address_space_options = {
             let mut options = memory::r#virtual::KernelAddressSpaceBuildOptions::new();
@@ -512,6 +592,30 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
         };
+        #[cfg(feature = "network-port-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            network_port_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "link-layer-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            link_layer_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
         #[cfg(feature = "session-runtime-probe")]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -526,7 +630,9 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         };
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe"
         )))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -547,6 +653,18 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(feature = "session-runtime-probe")]
         if session_runtime_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err()
         {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "network-port-probe")]
+        if network_port_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "link-layer-probe")]
+        if link_layer_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:PREPARE");
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
@@ -633,9 +751,60 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
             qemu_exit::success();
         }
+        #[cfg(feature = "network-port-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if network_port_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "link-layer-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if link_layer_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "link-layer-probe"
         )))]
         {
             let user_address_space =
@@ -783,6 +952,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
             serial::write_line("PYTHOS:CORE:VM_READY");
+            #[cfg(feature = "virtio-net-probe")]
+            match virtio_net::run_probe(&mut physical_memory) {
+                Ok(()) => {
+                    serial::write_line("PYTHOS:CORE:VIRTIO_NET_PROBE:READY");
+                    qemu_exit::success();
+                }
+                Err(error) => {
+                    serial::write_str("PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:");
+                    serial::write_line(error.kind());
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            }
             #[cfg(feature = "sdhci-emmc-backend")]
             let sdhci_emmc_device = match sdhci_emmc_controller {
                 Some(controller) => match sdhci_emmc::initialize_device(controller) {
@@ -999,6 +1181,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             serial::write_line("PYTHOS:CORE:PHASE_5_COMPLETE");
             // ADR 0048 slice 2a: if an HDA controller was discovered and its MMIO
             // mapped into the kernel address space, prove its registers are reachable.
+            #[cfg(not(any(feature = "network-port-probe", feature = "link-layer-probe")))]
             if let Some(hda) = hda_controller {
                 audio::hda_report_mapped(&hda);
                 // Slices 2b/3: bring the controller up (reset + CORB/RIRB) then

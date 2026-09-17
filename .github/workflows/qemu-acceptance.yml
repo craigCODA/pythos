@@ -30,6 +30,7 @@ jobs:
             build-essential \
             ninja-build \
             pkg-config \
+            python3-pytest \
             python3-venv \
             libglib2.0-dev \
             libpixman-1-dev \
@@ -97,6 +98,7 @@ jobs:
           cargo test -p pythc
           cargo test -p pythos-user-pyth-runtime
           cargo test -p pythos-user-session-input-probe
+          cargo test -p pythos-user-link-layer-probe
           cargo test -p pythos-user-session-runtime
           cargo test -p pythos-user-session-runtime --features session-viewing
           cargo test -p pythos-user-session-runtime --features normal-session
@@ -134,6 +136,8 @@ jobs:
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings
+          cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings
@@ -148,11 +152,17 @@ jobs:
           python -m py_compile scripts/qemu_probe_support.py scripts/build-session-runtime.py scripts/test-session-runtime-probe.py
           python -m py_compile scripts/test-session-viewing-probe.py
           python -m py_compile scripts/test-normal-session.py
+          python -m py_compile scripts/test-virtio-net.py
+          python -m py_compile scripts/test-network-port.py
+          python -m py_compile scripts/test-link-layer.py
 
       - name: Python harness tests
         run: |
           python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze tests.test_session_input_bridge_boundary tests.test_session_runtime_boundary
           python -m unittest tests.test_normal_session
+          python -m unittest tests.test_network_port
+          python -m unittest tests.test_link_layer
+          python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
         run: |
@@ -180,6 +190,12 @@ jobs:
           python scripts/test-normal-session.py --self-test
           python scripts/test-normal-session.py
           python scripts/test-normal-session.py --fault
+          python scripts/test-virtio-net.py --self-test
+          python scripts/test-virtio-net.py
+          python scripts/test-network-port.py --self-test
+          python scripts/test-network-port.py
+          python scripts/test-link-layer.py --self-test
+          python scripts/test-link-layer.py
 
       - name: PythTIG physical evidence tooling
         run: |

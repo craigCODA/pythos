@@ -12,19 +12,25 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-Phase 13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged
-branch. ADR 0069,
-`docs/semantic-checkpoint-contract.md`, ADR 0070, ADR 0071, ADR 0072,
-ADR 0073, `PYTHOS:CORE:PHASE_12_COMPLETE`, and
-`PYTHOS:CORE:PHASE_13_COMPLETE` are recorded. ADRs 0090 and 0091 add the
-merged, opt-in QEMU proofs of capability-gated session input and a retained
-ring-3 runtime across two fresh Session Manager graph invocations, including
-fault containment. ADR 0092 adds retained Viewing and snapshot presentation;
-ADR 0093 now adds the locally accepted default normal-session boot,
-interrupt-backed waiting and one-way recovery-shell fallback. Durable session
-state, USB/xHCI session integration, new physical acceptance, publication, and
-later phases remain pending. See [HANDOVER.md](HANDOVER.md)
-for the exact PR #24 merge and successful hosted QEMU runs.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
+with the kernel owning the legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md): its native consumer
+uses a read-only bootstrap, describes the MAC, sends one fixed unicast TX,
+rejects wrong destination and wrong EtherType, accepts one valid RX, and
+reaches terminal revocation. Exact evidence is no non-boot virtio data disk attached,
+no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
+and `QEMU_OUTCOME success`.
+
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This does not claim
+IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
+interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
+for the exact local evidence and non-claims.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro

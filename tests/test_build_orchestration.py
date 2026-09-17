@@ -293,6 +293,107 @@ class BuildOrchestrationTest(unittest.TestCase):
         self.assertEqual(normalized[normalized.index("--target-dir") + 1], str(target_dir).replace("\\", "/"))
         self.assertIn("session-input/linker.ld", str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/"))
 
+    def test_link_layer_probe_build_is_isolated_with_exact_native_command(self) -> None:
+        module = load_script("build-link-layer-probe.py")
+        calls: list[tuple[list[object], dict[str, object]]] = []
+        module.subprocess.call = lambda command, **kwargs: calls.append((command, kwargs)) or 0
+
+        target_dir = ROOT / "target" / "link-layer-test"
+        with unittest.mock.patch.object(sys, "argv", [str(module.__file__), "--target-dir", str(target_dir)]):
+            self.assertEqual(module.main(), 0)
+
+        self.assertEqual(len(calls), 1)
+        command, kwargs = calls[0]
+        self.assertEqual(
+            normalize(command),
+            [
+                "cargo", "build", "-p", "pythos-user-link-layer-probe",
+                "--target", "x86_64-unknown-none", "--bin",
+                "pythos-user-link-layer-probe", "--target-dir",
+                str(target_dir).replace("\\", "/"),
+            ],
+        )
+        rustflags = str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/")
+        self.assertIn("relocation-model=static", rustflags)
+        self.assertIn("user/probes/link-layer/linker.ld", rustflags)
+
+    def test_link_layer_probe_record_has_exact_identity_and_default_stays_unchanged(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "link-layer-probe.elf"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"link-layer-probe")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                opted_in = module.build_default_init_pak(link_layer_probe_elf=probe)
+
+        self.assertEqual(default, module.build_default_init_pak.__globals__["build_init_pak"](
+            module.build_init_bundle([
+                (module.INIT_BUNDLE_RUNTIME_TYPE, b"runtime"),
+                (module.INIT_BUNDLE_NAMED_USER_ELF_TYPE, module.build_named_user_program(b"shell.elf", module.SHELL_PRINCIPAL_ID, b"shell")),
+                (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\xCC\xF4")),
+                (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\x0F\x0B\xF4")),
+                (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\x48\xB8" + (0).to_bytes(8, "little") + b"\x8A\x00\xF4")),
+                (module.INIT_BUNDLE_USER_ELF_TYPE, module.build_user_elf_payload(b"\xBA\xF8\x03\x00\x00\xEC\xF4")),
+            ])
+        ))
+        self.assertNotIn(b"link-layer-probe.elf", default)
+        records = parse_init_pak_bundle(opted_in)
+        named = [parse_named_record(kind, payload) for kind, payload in records if kind == module.INIT_BUNDLE_NAMED_USER_ELF_TYPE]
+        self.assertEqual(named[-1], (b"link-layer-probe.elf", 0x5059_4C4C_5052_0001, module.digest64(b"link-layer-probe"), b"link-layer-probe"))
+
+    def test_link_layer_probe_verification_precedes_packaging(self) -> None:
+        module = load_script("build-image.py")
+        events: list[str] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            loader, kernel, probe = (root / name for name in ("loader", "kernel", "probe"))
+            for path in (loader, kernel, probe):
+                path.write_bytes(b"artifact")
+
+            def verify(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                events.append("verify")
+                return subprocess.CompletedProcess([], 0)
+
+            def package(*_args: object, **_kwargs: object) -> bytes:
+                events.append("package")
+                return b"pak"
+
+            with unittest.mock.patch.object(module, "build_default_init_pak", side_effect=package), unittest.mock.patch.object(
+                module, "ESP", root / "esp"
+            ), unittest.mock.patch.object(module.shutil, "copy2"), unittest.mock.patch.object(
+                module, "write_binary_if_changed"
+            ), unittest.mock.patch.object(subprocess, "run", side_effect=verify), unittest.mock.patch.object(
+                sys, "argv", [str(module.__file__), "--loader", str(loader), "--kernel", str(kernel), "--link-layer-probe-elf", str(probe)]
+            ):
+                self.assertEqual(module.main(), 0)
+        self.assertEqual(events[:2], ["verify", "package"])
+
+    def test_link_layer_probe_conflicts_are_rejected(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            probe, other, runtime, normal, graph = (root / name for name in ("probe", "other", "runtime", "normal", "graph"))
+            for path in (probe, other, runtime, normal, graph):
+                path.write_bytes(b"artifact")
+            conflicts = (
+                {"network_port_probe_elf": other, "link_layer_probe_elf": probe},
+                {"session_runtime_elf": runtime, "link_layer_probe_elf": probe},
+                {"session_runtime_elf": runtime, "network_port_probe_elf": other},
+                {"normal_session_elf": normal, "normal_session_graph": graph, "link_layer_probe_elf": probe},
+                {"normal_session_elf": normal, "normal_session_graph": graph, "network_port_probe_elf": other},
+                {"normal_session_elf": normal, "normal_session_graph": graph, "include_phase13_package_format_fixture": True},
+            )
+            with unittest.mock.patch.object(module, "SHELL_ELF", root / "shell"):
+                (root / "shell").write_bytes(b"shell")
+                for arguments in conflicts:
+                    with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
+                        module.build_default_init_pak(**arguments)
+
     def test_session_runtime_build_is_isolated_and_uses_only_its_own_linker(self) -> None:
         # Catches building the retained runtime with the generic/probe linker or shared target state.
         self.assertTrue(

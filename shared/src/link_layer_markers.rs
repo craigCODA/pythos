@@ -1,0 +1,44 @@
+//! Stable acceptance markers for the Phase 14 link-layer consumer proof.
+
+pub const LINK_LAYER_BOOTSTRAPPED_MARKER: &str = "PYTHOS:CORE:LINK_LAYER:BOOTSTRAPPED";
+pub const LINK_LAYER_DESCRIBE_OK_MARKER: &str = "PYTHOS:CORE:LINK_LAYER:DESCRIBE_OK";
+pub const LINK_LAYER_TX_OK_MARKER: &str = "PYTHOS:CORE:LINK_LAYER:TX_OK";
+pub const LINK_LAYER_WRONG_DESTINATION_DENIED_MARKER: &str =
+    "PYTHOS:CORE:LINK_LAYER:WRONG_DESTINATION_DENIED";
+pub const LINK_LAYER_WRONG_ETHERTYPE_DENIED_MARKER: &str =
+    "PYTHOS:CORE:LINK_LAYER:WRONG_ETHERTYPE_DENIED";
+pub const LINK_LAYER_RX_OK_MARKER: &str = "PYTHOS:CORE:LINK_LAYER:RX_OK";
+pub const LINK_LAYER_TEARDOWN_REVOKED_MARKER: &str = "PYTHOS:CORE:LINK_LAYER:TEARDOWN_REVOKED";
+pub const LINK_LAYER_READY_MARKER: &str = "PYTHOS:CORE:LINK_LAYER_READY";
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_strings_are_frozen() {
+        assert_eq!(
+            LINK_LAYER_BOOTSTRAPPED_MARKER,
+            "PYTHOS:CORE:LINK_LAYER:BOOTSTRAPPED"
+        );
+        assert_eq!(
+            LINK_LAYER_DESCRIBE_OK_MARKER,
+            "PYTHOS:CORE:LINK_LAYER:DESCRIBE_OK"
+        );
+        assert_eq!(LINK_LAYER_TX_OK_MARKER, "PYTHOS:CORE:LINK_LAYER:TX_OK");
+        assert_eq!(
+            LINK_LAYER_WRONG_DESTINATION_DENIED_MARKER,
+            "PYTHOS:CORE:LINK_LAYER:WRONG_DESTINATION_DENIED"
+        );
+        assert_eq!(
+            LINK_LAYER_WRONG_ETHERTYPE_DENIED_MARKER,
+            "PYTHOS:CORE:LINK_LAYER:WRONG_ETHERTYPE_DENIED"
+        );
+        assert_eq!(LINK_LAYER_RX_OK_MARKER, "PYTHOS:CORE:LINK_LAYER:RX_OK");
+        assert_eq!(
+            LINK_LAYER_TEARDOWN_REVOKED_MARKER,
+            "PYTHOS:CORE:LINK_LAYER:TEARDOWN_REVOKED"
+        );
+        assert_eq!(LINK_LAYER_READY_MARKER, "PYTHOS:CORE:LINK_LAYER_READY");
+    }
+}

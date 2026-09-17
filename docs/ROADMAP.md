@@ -11,45 +11,27 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
-## Current Phase 13.5 Boundary
+## Current Phase 14 Boundary
 
-The owner has separately invoked Slice 5 locally and approved normal-session
-waiting, lifetime and recovery-shell direction. The written
-[ADR 0093 contract](decisions/0093-normal-session-wait-recovery.md) is implemented
-and locally QEMU-accepted on its unmerged branch, tracked in the
-[Slice 5 map](superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md).
-Final controller whole-branch review remains. The Slice 3-4 PR branch remains
-unchanged; no remote writes, publication, physical acceptance, or later-phase
-implementation are claimed.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
+above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
+by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md). Its native
+consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
+TX frame, rejects wrong destination and wrong EtherType, accepts one valid RX,
+and reaches terminal capability revocation. Acceptance also requires no non-boot virtio data disk attached,
+no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
+and `QEMU_OUTCOME success`.
 
-The accepted predecessor boundary is recorded below:
-
-Phase 13.5 Slice 1 and Slice 2 are accepted in bounded, opt-in QEMU profiles.
-ADR 0090 records exclusive capability-gated normalized-input delivery to one
-ring-3 consumer. ADR 0091 records one separately named retained session
-runtime with one stable per-boot session identity, two contiguous input events,
-two fresh in-process invocations of unchanged `session-manager.tig`, an exact
-`0x5059_5345_5343_4D44` `READ | APPEND` command capability,
-invocation-local reset, neutral state advancing exactly `0 -> 1 -> 2`, shared
-reinvoke-or-recover policy, and no storage mutation.
-
-The accepted Slice 2 implementation evidence source is
-`6109425047de86cf60e4367313811fc284c43bad`. Local QEMU 11.0.50 and independent
-JacesPC QEMU 11.1.0 each passed two fresh boots with state zero at each boot,
-both process trees reaped, and the disposable 16 MiB image unchanged at
-SHA-256
-`080ACF35A507AC9849CFCBA47DC2AD83E01B75663A516279C8B9D243B719643E`.
-Hosted QEMU 11.1.1 acceptance also passed on the final feature tip and the
-normal merge commit. See [HANDOVER.md](HANDOVER.md#phase-135-slice-2-bounded-session-runtime-2026-09-07)
-for PR #24, exact commit identities, and the PR and post-merge run links.
-
-The owner invoked Slices 3 and 4 together on 2026-09-09: retain ADR 0089
-session controls and Viewing state, then deliver read-only snapshots through
-ADR 0092's capability-checked presentation bridge. The
-[single implementation map](superpowers/plans/2026-09-09-phase13-5-slices3-4.md)
-records current acceptance and regressions. Stop before Slice 5: normal-boot
-cutover, production wait/wakeup, durable state, USB/xHCI integration and new
-physical acceptance remain outside this invocation.
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This boundary does
+not claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
+modern or interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
+for the exact local evidence.
 
 ## Accepted PythTIG Program Boundary
 

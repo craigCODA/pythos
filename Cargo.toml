@@ -11,6 +11,8 @@ members = [
     "user/session-runtime",
     "user/shell",
     "user/probes/session-input",
+    "user/probes/network-port",
+    "user/probes/link-layer",
 ]
 
 [workspace.package]

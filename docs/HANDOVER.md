@@ -1,5 +1,72 @@
 # PythOS Handover
 
+## Current Phase 14 Boundary
+
+Local continuation: the opt-in Ethernet-II link-layer proof is accepted under
+[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md), building on the
+boot-local `NetworkPort` boundary in
+[ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The native
+consumer uses a read-only bootstrap, describes the local MAC, sends one fixed
+unicast TX frame, rejects one wrong-destination frame and one wrong-EtherType
+frame, accepts one valid RX frame, and reaches terminal capability revocation.
+The exact accepted evidence is no non-boot virtio data disk attached, no storage-path markers observed,
+boot ESP is snapshot-backed, no PythOS storage-path writes,
+and `QEMU_OUTCOME success`.
+
+The Task 7 live QEMU boot was run after commit `8e1cfaa` with QEMU emulator
+version `11.0.50 (v11.0.0-12631-g54e84cdc7a)`, using the actual invocation
+`py -3 scripts/test-link-layer.py`; its internal runner used
+`--no-audio-device --no-virtio-blk --virtio-net ... --expect-outcome success`
+with peer and shell loopback ports.
+The harness result was `LINK_LAYER_QEMU_ACCEPTANCE_OK`. The exact timeline,
+each exactly once and in this order, was `COM2: BOOTSTRAPPED, DESCRIBE_OK,
+TX_OK, WRONG_DESTINATION_DENIED, WRONG_ETHERTYPE_DENIED, RX_OK`, then
+`COM1: TEARDOWN_REVOKED, LINK_LAYER_READY`, then
+`RUNNER: QEMU_OUTCOME success`. The peer validated exactly one 60-byte TX and
+these exact 60-byte frames (each header+payload followed by 32 zero bytes):
+TX `02000000000252540012345688b5505954484f533a4c494e4b3a54580000000000000000000000000000000000000000000000000000000000000000`,
+wrong destination `02000000000302000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`,
+wrong EtherType `52540012345602000000000288b6505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`,
+and valid RX `52540012345602000000000288b5505954484f533a4c494e4b3a52580000000000000000000000000000000000000000000000000000000000000000`.
+Cleanup removed the serial log and ESP overlay and joined the peer and runner
+cleanly; no storage-path markers observed and no non-boot virtio data disk attached
+were present.
+
+Fresh closeout on 2026-09-15 passed `cargo fmt --all -- --check`, `git diff
+--check`, and `cargo test --workspace --quiet`; the repository-managed pytest
+form passed 226 pytest tests plus 252 subtests, and the workspace run reported
+1,145 Rust tests. The raw virtio-net and NetworkPort
+self-tests, direct NetworkPort host tests, default and opt-in target builds,
+and `NORMAL_FAST_BOOT_TEST_OK` also passed. Fresh raw and NetworkPort QEMU
+acceptance ran on QEMU `11.0.50`: both `py -3 scripts/test-virtio-net.py` and
+`py -3 scripts/test-network-port.py` proved a bounded 60-byte TX frame and
+bounded 60-byte RX peer exchange. The raw profile emitted its exact ordered
+transcript, `NO_DISK_WRITES`, and exact TX/RX peer lines; the NetworkPort live
+oracle required exactly once and in order `BOOTSTRAPPED`, `DESCRIBE_OK`,
+`TX_OK`, `RX_OK`, `FORGED_DENIED`, `WRONG_HOLDER_DENIED`, `BAD_BUFFER_DENIED`,
+`TEARDOWN_REVOKED`, and `NETWORK_PORT_READY`, plus the exact bounded peer
+exchange and `QEMU_OUTCOME success`. The live marker profile covers the
+consumer's forged-generation, wrong-holder, and bad-pointer denials. The host
+syscall matrix covers the remaining frozen ABI denial cases, including missing
+rights, stale generations, range overflow, buffer permissions, receive
+capacities, and oversized frames. Both runners use `--no-virtio-blk`; the
+NetworkPort oracle rejects storage-path evidence. The snapshot-backed IDE UEFI
+ESP is boot media only.
+
+Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
+consumer. Default and normal-session boot remain unchanged. This acceptance is
+not a claim of IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
+modern or interrupt Virtio, multiqueue/offloads, multiple consumers or packet
+distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
+Phase 14 design boundary, without implementing it here; Phase 15 remains
+separate. The SDD ledger retains one deferred minor: a tautological
+bootstrap-writable unit assertion, independently covered by live mapping
+evidence.
+No merge, push, publication, physical-media deployment, or physical Wi-Fi probe
+is claimed.
+
+## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
+
 Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
 on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
 unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
@@ -16,7 +83,7 @@ items are the isolated unknown-exit fixture, stale PS/2 commentary, and the
 disclosed strict-normal lint debt. No remote, merge, publication, USB, or
 physical write is claimed.
 
-The following is the completed Slice 3-4 checkpoint:
+## Prior Phase 13.5 Slices 3-4 Viewing Checkpoint (2026-09-09)
 
 Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
 on 2026-09-09. Implementation and current verification live in the
