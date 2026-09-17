@@ -78,8 +78,8 @@ This document does not authorize:
 - physical NIC or Lenovo Wi-Fi support, modern Virtio PCI capabilities,
   interrupts, MSI/MSI-X, multiqueue, offloads, or a physical hardware memory
   model;
-- implementation code, a generalized Phase 15 hardware abstraction, or a
-  new privileged networking component.
+- implementation beyond the accepted bounded IPv4 proof, a generalized Phase
+  15 hardware abstraction, or a new privileged networking component.
 
 The canonical no-options/no-fragment subset is a deliberate proof boundary.
 It is not a claim that this slice implements every IPv4 option or the complete
@@ -365,8 +365,8 @@ PYTHOS:CORE:IPV4:TEARDOWN_REVOKED
 PYTHOS:CORE:IPV4_READY
 ```
 
-The exact marker/oracle contract is finalized by the implementation ADR and
-plan; this specification does not authorize implementation yet.
+The marker/oracle contract and bounded implementation are accepted by ADR 0098
+and completed Task 6 local live evidence. No hosted IPv4 run is claimed.
 
 The proof must show:
 
@@ -398,14 +398,16 @@ not reopened. In particular, the following remain unchanged:
    ABI, frame bounds, bootstrap, and teardown rules.
 3. The accepted Ethernet-II and ARP marker contracts and named identities.
 
-After this specification is accepted, a separate implementation plan may:
+With this specification accepted by ADR 0098 and the bounded IPv4 proof
+completed locally, the implementation record is:
 
-1. add pure IPv4 codec tests first;
-2. add the bounded native IPv4 policy and exact frame tests;
-3. add the opt-in QEMU peer/oracle and acceptance markers;
-4. run the existing raw Virtio, port, link-layer, ARP, default-boot, and
-   normal-session regressions;
-5. record local and hosted evidence before any later protocol slice.
+1. pure IPv4 codec tests and the bounded native IPv4 policy are implemented;
+2. exact frame tests and the opt-in QEMU peer/oracle are implemented;
+3. the acceptance markers and terminal revocation proof are implemented;
+4. the existing raw Virtio, port, link-layer, ARP, default-boot, and
+   normal-session regressions remain covered;
+5. local live evidence is recorded; no hosted IPv4 run is claimed before a
+   separate hosted gate.
 
 No Virtio transport refactor, `NetworkPort` ABI change, PythTIG change, boot
 cutover, or Phase 15 hardware work belongs in that plan.
@@ -453,5 +455,8 @@ The following are intentionally not decided here:
 - multi-consumer distribution, zero-copy leases, persistent state, and
   service teardown/revocation changes.
 
-This document authorizes specification review only. It authorizes no code,
-ABI, boot-path, QEMU-harness, or hardware change until separately accepted.
+This accepted decision authorizes only the bounded IPv4 proof recorded above
+and its completed local evidence. It does not authorize changes to the ABI,
+transport, boot path, Phase 15 hardware, or the follow-up ADR scope. The
+preserved scope and non-claims below remain in force, and no hosted IPv4 run is
+claimed.
