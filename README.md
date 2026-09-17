@@ -21,9 +21,9 @@ boot ESP is snapshot-backed, no PythOS storage-path writes, and
 `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
-native consumer, and the ARP proof is accepted. Default and normal-session boot
-remain unchanged. This proof does not claim IP/protocols/sockets, a production
-service, physical NIC/Wi-Fi, modern or interrupt Virtio, multiqueue/offloads,
+native consumer, and the ARP proof is accepted. Default and normal-session boot remain unchanged.
+This proof does not claim IP/protocols/sockets, a production service,
+physical NIC/Wi-Fi, modern or interrupt Virtio, multiqueue/offloads,
 multiple consumers or packet distribution, zero-copy, persistent state, or
 PythTIG changes. IP is the next Phase 14 design boundary; Phase 15 remains
 separate.

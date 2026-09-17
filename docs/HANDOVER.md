@@ -5,8 +5,8 @@
 Phase 14 ARP is locally accepted under
 [ADR 0097](decisions/0097-phase-14-arp-consumer.md), building on the frozen
 boot-local `NetworkPort` boundary in
-[ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md) and the
-Ethernet-II proof in [ADR 0096](decisions/0096-phase-14-link-layer-consumer.md).
+[ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The
+Ethernet-II link-layer proof is accepted under ADR 0096, and the ARP proof is accepted under ADR 0097.
 At feature tip `63231415efbddbd5a5b683e32179ff754c6867d1`, the Task 8 local
 QEMU proof used QEMU `11.0.50 (v11.0.0-12631-g54e84cdc7a)` and passed
 `ARP_QEMU_ACCEPTANCE_OK`. Its loopback peer observed exactly one 60-byte
@@ -16,7 +16,9 @@ ARP:DESCRIBE_OK, ARP:REQUEST_OK, ARP:REPLY_OK`; then `COM1:
 ARP:TEARDOWN_REVOKED, ARP_READY`; then `RUNNER: QEMU_OUTCOME success`. The
 oracle rejected error, panic, timeout, transport-error, duplicate/reordered
 marker, storage-path, and additional-transmit evidence; none occurred. It used
-`--no-virtio-blk`.
+`--no-virtio-blk`. Exact storage-topology evidence is no non-boot virtio data disk attached,
+no storage-path markers observed, boot ESP is snapshot-backed,
+no PythOS storage-path writes, and `QEMU_OUTCOME success`.
 
 The final local gate passed `cargo fmt --all -- --check`, `cargo test
 --workspace`, `py -m unittest discover -s tests` (237 tests), and fresh ARP
@@ -25,20 +27,19 @@ link-layer self-test/QEMU regressions also passed, as did default boot
 (`PYTH_DEFAULT_RECOVERY_TEST_OK`, `PYTH_DEFAULT_BOOT_TEST_OK`) and normal
 session (`NORMAL_SESSION_TWO_BOOT_ACCEPTANCE_OK`); default and normal-session
 profiles did not launch ARP. Full frame bytes and the exact evidence commands
-are recorded in ADR 0097.
+are recorded in ADR 0097. Default and normal-session boot remain unchanged.
 
-Hosted evidence identifier: none. On 2026-09-16, `gh run list --commit
-63231415efbddbd5a5b683e32179ff754c6867d1` returned `[]`; this feature tip is
-not published, so its Task 7 hosted workflow gate is configured but unexecuted.
-No hosted acceptance is claimed.
+Hosted evidence is pending for published PR #28. The red qemu-milestones run
+35176094046 is not accepted as green; no hosted acceptance is claimed.
 
 Raw bytes remain below `NetworkPort`; ARP semantics live in the native
 consumer. IP is the next Phase 14 design boundary and has not been started.
-This is not a claim of IP or higher protocols, sockets, a production ARP
-service, physical networking or NIC/Wi-Fi support, modern/interrupt Virtio,
+This proof does not claim IP/protocols/sockets, a production service, physical
+networking or NIC/Wi-Fi support, modern/interrupt Virtio,
 multiqueue/offloads, multiple consumers, zero-copy, persistent state, or
-PythTIG changes. Phase 15 hardware remains separate. No merge, push,
-publication, physical-media deployment, or physical Wi-Fi probe is claimed.
+PythTIG changes. Phase 15 hardware remains separate. PR #28 is published;
+no merge, physical-media deployment, or physical Wi-Fi probe is claimed, and
+hosted evidence remains pending.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

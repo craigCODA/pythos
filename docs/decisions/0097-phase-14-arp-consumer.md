@@ -203,11 +203,10 @@ The live oracle rejected storage-path evidence, ARP error/panic/timeout and
 transport-error evidence, duplicate or reordered markers, and any extra peer
 transmit. The accepted run reported none of them and used `--no-virtio-blk`.
 
-Hosted evidence identifier: none. `gh run list --commit
-63231415efbddbd5a5b683e32179ff754c6867d1` returned `[]` on 2026-09-16 because
-this local branch has not been pushed; the Task 7 workflow at that exact commit
-contains the strict ARP self-test and live-QEMU gate, but no hosted execution is
-claimed here.
+Hosted evidence is pending for published PR #28. The red qemu-milestones run
+35176094046 is not accepted as green; the Task 7 workflow contains the strict
+ARP self-test and live-QEMU gate, but no hosted acceptance or green hosted
+evidence is claimed here.
 
 ## Scope boundary and non-claims
 

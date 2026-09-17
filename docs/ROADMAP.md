@@ -17,21 +17,26 @@ Phase 14 ARP is accepted under
 [ADR 0097](decisions/0097-phase-14-arp-consumer.md), above the frozen,
 boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capability-abi.md)
 and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
-boundaries. The opt-in native consumer performed one exact 60-byte broadcast
+boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, and
+the ARP proof is accepted under ADR 0097. The opt-in native consumer performed
+one exact 60-byte broadcast
 ARP request, accepted one exact 60-byte reply, and reached terminal revocation
 with the six required markers exactly once in order and `QEMU_OUTCOME success`.
 The local proof also retained raw Virtio, `NetworkPort`, link-layer,
 default-boot, and normal-session regressions; the latter two do not launch the
-ARP consumer.
+ARP consumer. Exact storage-topology evidence is no non-boot virtio data disk attached,
+no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
+and `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; ARP semantics live in the native
-consumer. The next Phase 14 design boundary is IP; do not start it from this
-roadmap entry. This acceptance does not claim IP or other higher protocols,
-sockets, a production ARP service, physical networking or NIC/Wi-Fi support,
+consumer. Default and normal-session boot remain unchanged. IP is the next Phase 14 design boundary;
+do not start it from this roadmap entry. This acceptance
+does not claim IP/protocols/sockets, a production service, physical networking
+or NIC/Wi-Fi support,
 modern or interrupt Virtio, multiqueue/offloads, multiple consumers, zero-copy,
 persistent state, or PythTIG changes. Phase 15 hardware remains separate. See
-[HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence and the
-recorded absence of a hosted run for the unpublished feature tip.
+[HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence. Hosted
+evidence is pending for PR #28; no green hosted acceptance is claimed.
 
 ## Accepted PythTIG Program Boundary
 
