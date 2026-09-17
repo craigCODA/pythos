@@ -45,7 +45,7 @@ Modify:
 - `Cargo.toml` — add the IPv4 probe workspace member.
 - `core/Cargo.toml` — add the opt-in `ipv4-probe` feature.
 - `core/src/main.rs` — add IPv4 feature exclusions, module declarations, and launch branch.
-- `core/src/network_port.rs` and `core/src/virtio_net.rs` — include `ipv4-probe` in existing feature-gated transport availability lists only.
+- `core/src/network_port.rs`, `core/src/syscall.rs`, and `core/src/virtio_net.rs` — include `ipv4-probe` in existing feature-gated NetworkPort/transport availability lists only. The `syscall.rs` change is strictly cfg plumbing for the existing ABI paths; it must not add syscall numbers, layouts, behavior, or architecture.
 - `shared/src/lib.rs` and `shared/src/user_program_manifest.rs` — export markers and freeze the additive program name/principal.
 - `scripts/build-image.py` — accept exactly one IPv4 probe ELF and package it as `ipv4-probe.elf`.
 - `tests/test_build_orchestration.py` — cover IPv4 build arguments, manifest identity, and mutual exclusion.
@@ -187,6 +187,7 @@ git commit -m "feat(net): add native IPv4 exchange probe"
 - Modify: `core/Cargo.toml`
 - Modify: `core/src/main.rs`
 - Modify: `core/src/network_port.rs`
+- Modify: `core/src/syscall.rs` (existing-ABI cfg plumbing only)
 - Modify: `core/src/virtio_net.rs`
 
 **Interfaces:**
@@ -205,7 +206,7 @@ Expected: FAIL because the feature/module/contract do not exist.
 
 - [ ] **Step 3: Add the feature and module declarations**
 
-Add `ipv4-probe = ["verify"]` to `core/Cargo.toml`. Add `ipv4-probe` to the existing mutually exclusive probe lists and to the `cfg` lists that include `arp-probe` for `arp_probe`, `network_port`, `network_port_probe_support`, and `virtio_net`. Add the `mod ipv4_probe` declaration.
+Add `ipv4-probe = ["verify"]` to `core/Cargo.toml`. Add `ipv4-probe` to the existing mutually exclusive probe lists and to the `cfg` lists that include `arp-probe` for `arp_probe`, `network_port`, `network_port_probe_support`, `virtio_net`, and the existing NetworkPort syscall helpers in `core/src/syscall.rs`. The syscall change is cfg plumbing only so the unchanged NetworkPort ABI paths compile for the opt-in feature; do not add syscall numbers, layouts, behavior, or architecture. Add the `mod ipv4_probe` declaration.
 
 - [ ] **Step 4: Implement the launch wrapper**
 
@@ -224,7 +225,7 @@ Expected: PASS.
 - [ ] **Step 7: Commit**
 
 ```powershell
-git add core/Cargo.toml core/src/main.rs core/src/network_port.rs core/src/virtio_net.rs core/src/ipv4_probe.rs
+git add core/Cargo.toml core/src/main.rs core/src/network_port.rs core/src/syscall.rs core/src/virtio_net.rs core/src/ipv4_probe.rs
 git commit -m "feat(net): wire IPv4 probe launch path"
 ```
 
