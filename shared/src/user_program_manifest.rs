@@ -40,6 +40,8 @@ pub const LINK_LAYER_PROBE_PROGRAM_NAME: &[u8] = b"link-layer-probe.elf";
 pub const LINK_LAYER_PROBE_PRINCIPAL_ID: u64 = 0x5059_4C4C_5052_0001;
 pub const ARP_PROBE_PROGRAM_NAME: &[u8] = b"arp-probe.elf";
 pub const ARP_PROBE_PRINCIPAL_ID: u64 = 0x5059_4152_5052_0001;
+pub const IPV4_PROBE_PROGRAM_NAME: &[u8] = b"ipv4-probe.elf";
+pub const IPV4_PROBE_PRINCIPAL_ID: u64 = 0x5059_4950_5052_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {
@@ -300,5 +302,23 @@ mod tests {
         assert_ne!(ARP_PROBE_PROGRAM_NAME, LINK_LAYER_PROBE_PROGRAM_NAME);
         assert_ne!(ARP_PROBE_PRINCIPAL_ID, NETWORK_PORT_PROBE_PRINCIPAL_ID);
         assert_ne!(ARP_PROBE_PRINCIPAL_ID, LINK_LAYER_PROBE_PRINCIPAL_ID);
+    }
+
+    #[test]
+    fn ipv4_probe_identity_is_additive_and_existing_network_identities_are_unchanged() {
+        assert_eq!(IPV4_PROBE_PROGRAM_NAME, b"ipv4-probe.elf");
+        assert_eq!(IPV4_PROBE_PRINCIPAL_ID, 0x5059_4950_5052_0001);
+        assert_eq!(NETWORK_PORT_PROBE_PROGRAM_NAME, b"network-port-probe.elf");
+        assert_eq!(NETWORK_PORT_PROBE_PRINCIPAL_ID, 0x5059_4E50_5254_0001);
+        assert_eq!(LINK_LAYER_PROBE_PROGRAM_NAME, b"link-layer-probe.elf");
+        assert_eq!(LINK_LAYER_PROBE_PRINCIPAL_ID, 0x5059_4C4C_5052_0001);
+        assert_eq!(ARP_PROBE_PROGRAM_NAME, b"arp-probe.elf");
+        assert_eq!(ARP_PROBE_PRINCIPAL_ID, 0x5059_4152_5052_0001);
+        assert_ne!(IPV4_PROBE_PROGRAM_NAME, NETWORK_PORT_PROBE_PROGRAM_NAME);
+        assert_ne!(IPV4_PROBE_PROGRAM_NAME, LINK_LAYER_PROBE_PROGRAM_NAME);
+        assert_ne!(IPV4_PROBE_PROGRAM_NAME, ARP_PROBE_PROGRAM_NAME);
+        assert_ne!(IPV4_PROBE_PRINCIPAL_ID, NETWORK_PORT_PROBE_PRINCIPAL_ID);
+        assert_ne!(IPV4_PROBE_PRINCIPAL_ID, LINK_LAYER_PROBE_PRINCIPAL_ID);
+        assert_ne!(IPV4_PROBE_PRINCIPAL_ID, ARP_PROBE_PRINCIPAL_ID);
     }
 }
