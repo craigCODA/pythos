@@ -33,7 +33,7 @@
 - Create `shared/src/arp_markers.rs` and modify `shared/src/lib.rs` to export the six additive ARP markers. Modify `shared/src/user_program_manifest.rs` only to add the named-program identity constants.
 - Add `user/probes/arp/` as a native package. `src/arp.rs` owns only the bounded 28-byte ARP codec; `src/main.rs` owns bootstrap, capability requests, Ethernet framing, fixed ARP policy, markers, and terminal exit; `src/lib.rs`, `Cargo.toml`, and `linker.ld` provide the tested library/bin and static ELF layout.
 - Modify the workspace `Cargo.toml` to include `user/probes/arp`.
-- Create `core/src/arp_probe.rs` for the additive named-probe launch wrapper and marker contract. Modify `core/Cargo.toml`, `core/src/main.rs`, `core/src/network_port.rs`, `core/src/network_port_probe_support.rs`, and `core/src/syscall.rs` only to wire the opt-in feature into existing NetworkPort plumbing and exclusion sets.
+- Create `core/src/arp_probe.rs` for the additive named-probe launch wrapper and marker contract. Modify `core/Cargo.toml`, `core/src/main.rs`, `core/src/network_port.rs`, and `core/src/syscall.rs` only to wire the opt-in feature into existing NetworkPort plumbing and exclusion sets. `core/src/network_port_probe_support.rs` is consumed unchanged; its module inclusion is controlled by `core/src/main.rs`.
 - Create `scripts/build-arp-probe.py`; modify `scripts/build-image.py` to package the named ARP ELF only when explicitly selected and to reject multiple network-probe ELF selections.
 - Create `scripts/test-arp.py` and `tests/test_arp.py` for the loopback frame peer, serial/runner oracle, exact frame contract, and QEMU acceptance.
 - Modify `tests/test_build_orchestration.py`, `tests/test_ci_workflow.py`, and `.github/workflows/qemu-acceptance.yml` for additive build, test, lint, script, and live-gate coverage.
@@ -276,7 +276,6 @@ git commit -m "feat(net): add native ARP consumer"
 - Modify: `core/Cargo.toml`
 - Modify: `core/src/main.rs`
 - Modify: `core/src/network_port.rs`
-- Modify: `core/src/network_port_probe_support.rs`
 - Modify: `core/src/syscall.rs`
 - Test: `core/src/arp_probe.rs` and `cargo test -p pythos-core`
 
@@ -314,7 +313,7 @@ Expected: FAIL because `ArpProbeLaunchContract` and the `arp-probe` feature wiri
 
 `prepare` must call `prepare_named` with `ARP_PROBE_PROGRAM_NAME`, `ARP_PROBE_PRINCIPAL_ID`, and the consumer service id. `run` must re-load and revalidate the named manifest, principal, ELF entry, and segment count before initializing the existing legacy `VirtioTransport`, installing the existing operational `NetworkPort`, granting the existing consumer/owner capabilities, writing the read-only bootstrap, launching exactly one native consumer, restoring the kernel root, resetting through the owner capability, requiring `NETWORK_PORT_STATUS_OK` plus `NETWORK_PORT_STATE_RESET`, requiring consumer revocation, and emitting teardown/readiness markers.
 
-- [ ] **Step 4: Add only the required cfg wiring.** Add `arp-probe` to the existing feature sets that currently include `network-port-probe` or `link-layer-probe` in `core/src/main.rs`, `core/src/network_port.rs`, `core/src/network_port_probe_support.rs`, and `core/src/syscall.rs`. This includes the early-exit warning, mutual-exclusion checks, module declarations, shared NetworkPort support, minimal address-space selection, address-space feature exclusions, prepare/run branches, normal-boot exclusions, and syscall/capability/transport availability. Add explicit mutual exclusion between `arp-probe` and every other opt-in NetworkPort probe (`virtio-net-probe`, `network-port-probe`, and `link-layer-probe`) plus existing incompatible verify probes.
+- [ ] **Step 4: Add only the required cfg wiring.** Add `arp-probe` to the existing feature sets that currently include `network-port-probe` or `link-layer-probe` in `core/src/main.rs`, `core/src/network_port.rs`, and `core/src/syscall.rs`. This includes the early-exit warning, mutual-exclusion checks, module declarations, shared NetworkPort support inclusion, minimal address-space selection, address-space feature exclusions, prepare/run branches, normal-boot exclusions, and syscall/capability/transport availability. `core/src/network_port_probe_support.rs` remains unchanged because `core/src/main.rs` controls its module inclusion. Add explicit mutual exclusion between `arp-probe` and every other opt-in NetworkPort probe (`virtio-net-probe`, `network-port-probe`, and `link-layer-probe`) plus existing incompatible verify probes.
 
 Do not alter the NetworkPort request/response types, operation values, rights, transport initialization, or link-layer cfg behavior beyond adding the new opt-in feature to the same existing sets.
 
@@ -332,7 +331,7 @@ cargo build -p pythos-core --target x86_64-unknown-none --no-default-features --
 Expected: PASS, including the unchanged link-layer feature build. Commit:
 
 ```text
-git add core/Cargo.toml core/src/arp_probe.rs core/src/main.rs core/src/network_port.rs core/src/network_port_probe_support.rs core/src/syscall.rs
+git add core/Cargo.toml core/src/arp_probe.rs core/src/main.rs core/src/network_port.rs core/src/syscall.rs
 git commit -m "feat(net): wire opt-in ARP probe"
 ```
 
