@@ -117,6 +117,9 @@ pub fn decode_ipv4_packet(datagram: &[u8]) -> Result<Ipv4Packet<'_>, DecodeError
     if header_length > datagram.len() {
         return Err(DecodeError::HeaderLengthExceedsInput);
     }
+    if ihl != 5 {
+        return Err(DecodeError::InvalidIhl);
+    }
 
     let total_length = u16::from_be_bytes([datagram[2], datagram[3]]);
     let total_length_usize = usize::from(total_length);
@@ -193,13 +196,6 @@ mod tests {
 
     fn request_datagram() -> std::vec::Vec<u8> {
         encode(REQUEST_HEADER, b"PYTHIPRQ")
-    }
-
-    fn header_with_checksum(bytes: &mut [u8]) {
-        bytes[10] = 0;
-        bytes[11] = 0;
-        let checksum = ipv4_header_checksum(bytes);
-        bytes[10..12].copy_from_slice(&checksum.to_be_bytes());
     }
 
     #[test]
@@ -296,23 +292,11 @@ mod tests {
     }
 
     #[test]
-    fn validates_checksum_across_a_complete_options_header() {
+    fn rejects_a_complete_noncanonical_options_header() {
         let mut datagram = [0_u8; 24];
         datagram[0] = 0x46;
         datagram[2..4].copy_from_slice(&24_u16.to_be_bytes());
-        datagram[8] = 1;
-        datagram[9] = 253;
-        datagram[12..16].copy_from_slice(&[192, 168, 14, 2]);
-        datagram[16..20].copy_from_slice(&[192, 168, 14, 1]);
-        datagram[20..24].copy_from_slice(&[1, 2, 3, 4]);
-        header_with_checksum(&mut datagram);
-
-        let packet = decode_ipv4_packet(&datagram).unwrap();
-        assert_eq!(packet.header.ihl, 6);
-        assert!(packet.payload.is_empty());
-
-        datagram[23] ^= 1;
-        assert_eq!(decode_ipv4_packet(&datagram), Err(DecodeError::BadChecksum));
+        assert_eq!(decode_ipv4_packet(&datagram), Err(DecodeError::InvalidIhl));
     }
 
     #[test]
