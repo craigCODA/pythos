@@ -427,6 +427,7 @@ class BuildOrchestrationTest(unittest.TestCase):
         module = load_script("build-ipv4-probe.py")
         calls: list[tuple[str, list[str]]] = []
         build_env: dict[str, str] = {}
+        original_run = module.subprocess.run
 
         with tempfile.TemporaryDirectory() as temp_dir:
             target_dir = Path(temp_dir) / "ipv4-test"
@@ -449,8 +450,9 @@ class BuildOrchestrationTest(unittest.TestCase):
                 return subprocess.CompletedProcess(command, 0)
 
             module.subprocess.call = build
-            module.subprocess.run = verify
             with unittest.mock.patch.object(
+                module.subprocess, "run", side_effect=verify
+            ), unittest.mock.patch.object(
                 sys,
                 "argv",
                 [str(module.__file__), "--target-dir", str(target_dir)],
@@ -460,6 +462,8 @@ class BuildOrchestrationTest(unittest.TestCase):
             artifact = target_dir / "ipv4-probe.elf"
             self.assertEqual(artifact.read_bytes(), b"ipv4-probe")
             print_mock.assert_called_once_with(artifact)
+
+        self.assertIs(module.subprocess.run, original_run)
 
         self.assertEqual(
             calls[0][1],
