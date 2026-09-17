@@ -50,6 +50,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-ipv4-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+ "pythos-user-arp-probe",
+ "pythos-user-link-layer-probe",
+]
+
+[[package]]
 name = "pythos-user-link-layer-probe"
 version = "0.1.0"
 dependencies = [
