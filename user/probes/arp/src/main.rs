@@ -136,6 +136,11 @@ fn reply_matches(packet: ArpPacket, local_mac: [u8; 6]) -> bool {
 }
 
 fn reply_frame_matches(frame_bytes: &[u8], local_mac: [u8; 6]) -> bool {
+    if frame_bytes.len() != NETWORK_PORT_MIN_FRAME_BYTES
+        || !frame_bytes[42..].iter().all(|byte| *byte == 0)
+    {
+        return false;
+    }
     let frame = match ethernet::parse(frame_bytes) {
         Ok(frame) => frame,
         Err(_) => return false,
@@ -189,7 +194,7 @@ fn receive_reply(capability: PackedCapability, console: PackedCapability) -> ! {
         // SAFETY: `receive` writes only the fixed RX buffer and its response is bounded below.
         let buffers = unsafe { &*STORAGE.0.get() };
         let frame_len = buffers.response.frame_len as usize;
-        if !(NETWORK_PORT_MIN_FRAME_BYTES..=NETWORK_PORT_MAX_FRAME_BYTES).contains(&frame_len) {
+        if frame_len != NETWORK_PORT_MIN_FRAME_BYTES {
             error(console);
         }
         // The NetworkPort frame length has been checked against the RX buffer before slicing.
@@ -349,6 +354,25 @@ mod tests {
         let bytes =
             ethernet::encode_minimum_frame(LOCAL_MAC, PEER_MAC, 0x0806, &encode(reply())).unwrap();
         assert!(reply_frame_matches(&bytes, LOCAL_MAC));
+    }
+
+    #[test]
+    fn reply_policy_rejects_nonzero_ethernet_padding() {
+        let mut bytes =
+            ethernet::encode_minimum_frame(LOCAL_MAC, PEER_MAC, 0x0806, &encode(reply())).unwrap();
+        bytes[42] = 1;
+
+        assert!(!reply_frame_matches(&bytes, LOCAL_MAC));
+    }
+
+    #[test]
+    fn reply_policy_rejects_frames_longer_than_the_exact_minimum() {
+        let bytes =
+            ethernet::encode_minimum_frame(LOCAL_MAC, PEER_MAC, 0x0806, &encode(reply())).unwrap();
+        let mut longer = [0; 61];
+        longer[..bytes.len()].copy_from_slice(&bytes);
+
+        assert!(!reply_frame_matches(&longer, LOCAL_MAC));
     }
 
     #[test]
