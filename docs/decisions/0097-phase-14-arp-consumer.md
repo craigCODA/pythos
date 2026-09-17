@@ -2,7 +2,7 @@
 
 Date: 2026-09-16
 
-Status: Accepted by owner on 2026-09-16; implementation follows the separately accepted plan
+Status: Accepted by owner on 2026-09-16; locally proven on 2026-09-16
 
 ## Context
 
@@ -152,6 +152,62 @@ hardware/protocol types or lengths, wrong operation/sender/target/address
 pair, and preservation of Ethernet padding outside the ARP payload boundary.
 The existing raw Virtio, `NetworkPort`, link-layer, default-boot, and
 normal-session profiles remain required regressions.
+
+## Closeout evidence (2026-09-16)
+
+The accepted local evidence is the Task 8 run at feature tip
+`63231415efbddbd5a5b683e32179ff754c6867d1`
+(`ci(net): gate the ARP consumer proof`) in
+`D:/PythOS-Workspace/repo/pythos/.worktrees/phase14-arp-design`, using Python
+3.14.7 through `py` and QEMU `11.0.50 (v11.0.0-12631-g54e84cdc7a)`. The
+initial `python` invocation was unavailable because the Windows app-execution
+alias had no interpreter; all recorded Python evidence below uses the installed
+launcher and exited zero.
+
+- `py scripts/test-arp.py --self-test` passed 9 tests.
+- `py scripts/test-arp.py` passed with `ARP_QEMU_ACCEPTANCE_OK` after its peer
+  observed exactly one request, delivered exactly one reply, and completed the
+  process-tree cleanup contract.
+- The serialized predecessor profiles passed unchanged: raw Virtio self-test
+  (7 tests) and QEMU proof, `NetworkPort` self-test (7 tests) and QEMU proof,
+  link-layer self-test (11 tests) and QEMU proof, default boot
+  (`PYTH_DEFAULT_RECOVERY_TEST_OK`, `PYTH_DEFAULT_BOOT_TEST_OK`), and
+  normal-session self-test (12 tests) and two-boot proof
+  (`NORMAL_SESSION_TWO_BOOT_ACCEPTANCE_OK`). The default and normal-session
+  oracles did not launch the ARP consumer.
+- The fresh local quality gate passed: `cargo fmt --all -- --check`,
+  `cargo test --workspace`, `py -m unittest discover -s tests` (237 tests),
+  then the ARP self-test (9 tests) and live QEMU proof again.
+
+The final live timeline occurred exactly once in this source order:
+
+```text
+COM2    PYTHOS:CORE:ARP:BOOTSTRAPPED
+COM2    PYTHOS:CORE:ARP:DESCRIBE_OK
+COM2    PYTHOS:CORE:ARP:REQUEST_OK
+COM2    PYTHOS:CORE:ARP:REPLY_OK
+COM1    PYTHOS:CORE:ARP:TEARDOWN_REVOKED
+COM1    PYTHOS:CORE:ARP_READY
+RUNNER  QEMU_OUTCOME success
+```
+
+With described local MAC `52:54:00:12:34:56`, the peer accepted these exact
+60-byte, zero-padded frames:
+
+```text
+request ffffffffffff52540012345608060001080006040001525400123456c0000202000000000000c0000201000000000000000000000000000000000000
+reply   52540012345602000000000208060001080006040002020000000002c0000201525400123456c0000202000000000000000000000000000000000000
+```
+
+The live oracle rejected storage-path evidence, ARP error/panic/timeout and
+transport-error evidence, duplicate or reordered markers, and any extra peer
+transmit. The accepted run reported none of them and used `--no-virtio-blk`.
+
+Hosted evidence identifier: none. `gh run list --commit
+63231415efbddbd5a5b683e32179ff754c6867d1` returned `[]` on 2026-09-16 because
+this local branch has not been pushed; the Task 7 workflow at that exact commit
+contains the strict ARP self-test and live-QEMU gate, but no hosted execution is
+claimed here.
 
 ## Scope boundary and non-claims
 

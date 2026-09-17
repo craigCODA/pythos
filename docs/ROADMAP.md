@@ -13,25 +13,25 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
-through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
-above the kernel-owned legacy/transitional `VirtioTransport` adapter accepted
-by [ADR 0094](decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
-Ethernet-II link-layer proof is accepted under
-[ADR 0096](decisions/0096-phase-14-link-layer-consumer.md). Its native
-consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
-TX frame, rejects wrong destination and wrong EtherType, accepts one valid RX,
-and reaches terminal capability revocation. Acceptance also requires no non-boot virtio data disk attached,
-no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
-and `QEMU_OUTCOME success`.
+Phase 14 ARP is accepted under
+[ADR 0097](decisions/0097-phase-14-arp-consumer.md), above the frozen,
+boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capability-abi.md)
+and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
+boundaries. The opt-in native consumer performed one exact 60-byte broadcast
+ARP request, accepted one exact 60-byte reply, and reached terminal revocation
+with the six required markers exactly once in order and `QEMU_OUTCOME success`.
+The local proof also retained raw Virtio, `NetworkPort`, link-layer,
+default-boot, and normal-session regressions; the latter two do not launch the
+ARP consumer.
 
-Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
-consumer. Default and normal-session boot remain unchanged. This boundary does
-not claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi,
-modern or interrupt Virtio, multiqueue/offloads, multiple consumers or packet
-distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
-Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
-for the exact local evidence.
+Raw bytes remain below `NetworkPort`; ARP semantics live in the native
+consumer. The next Phase 14 design boundary is IP; do not start it from this
+roadmap entry. This acceptance does not claim IP or other higher protocols,
+sockets, a production ARP service, physical networking or NIC/Wi-Fi support,
+modern or interrupt Virtio, multiqueue/offloads, multiple consumers, zero-copy,
+persistent state, or PythTIG changes. Phase 15 hardware remains separate. See
+[HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence and the
+recorded absence of a hosted run for the unpublished feature tip.
 
 ## Accepted PythTIG Program Boundary
 
