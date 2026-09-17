@@ -394,6 +394,117 @@ class BuildOrchestrationTest(unittest.TestCase):
                     with self.subTest(arguments=arguments), self.assertRaises(SystemExit):
                         module.build_default_init_pak(**arguments)
 
+    def test_arp_probe_build_is_isolated_with_exact_native_command(self) -> None:
+        # Catches ARP builds sharing another probe's target state or linker script.
+        self.assertTrue((ROOT / "scripts" / "build-arp-probe.py").is_file())
+        module = load_script("build-arp-probe.py")
+        calls: list[tuple[list[object], dict[str, object]]] = []
+        module.subprocess.call = lambda command, **kwargs: calls.append((command, kwargs)) or 0
+
+        target_dir = ROOT / "target" / "arp-test"
+        with unittest.mock.patch.object(
+            sys, "argv", [str(module.__file__), "--target-dir", str(target_dir)]
+        ):
+            self.assertEqual(module.main(), 0)
+
+        self.assertEqual(len(calls), 1)
+        command, kwargs = calls[0]
+        self.assertEqual(
+            normalize(command),
+            [
+                "cargo", "build", "-p", "pythos-user-arp-probe", "--target",
+                "x86_64-unknown-none", "--bin", "pythos-user-arp-probe",
+                "--target-dir", str(target_dir).replace("\\", "/"),
+            ],
+        )
+        rustflags = str(kwargs["env"]["RUSTFLAGS"]).replace("\\", "/")
+        self.assertIn("relocation-model=static", rustflags)
+        self.assertIn("user/probes/arp/linker.ld", rustflags)
+
+    def test_arp_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
+        # Catches accidentally adding ARP to the default image or giving it another program identity.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "arp-probe.elf"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"arp-probe")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                opted_in = module.build_default_init_pak(arp_probe_elf=probe)
+
+        self.assertNotIn(b"arp-probe.elf", default)
+        records = parse_init_pak_bundle(opted_in)
+        named = [
+            parse_named_record(kind, payload)
+            for kind, payload in records
+            if kind == module.INIT_BUNDLE_NAMED_USER_ELF_TYPE
+        ]
+        self.assertEqual(
+            named[-1],
+            (
+                b"arp-probe.elf",
+                0x5059_4152_5052_0001,
+                module.digest64(b"arp-probe"),
+                b"arp-probe",
+            ),
+        )
+
+    def test_arp_probe_verification_precedes_packaging(self) -> None:
+        # Catches accepting an unverified ARP ELF into INIT.PAK.
+        module = load_script("build-image.py")
+        events: list[str] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            loader, kernel, probe = (root / name for name in ("loader", "kernel", "probe"))
+            for path in (loader, kernel, probe):
+                path.write_bytes(b"artifact")
+
+            def verify(*_args: object, **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                events.append("verify")
+                return subprocess.CompletedProcess([], 0)
+
+            def package(*_args: object, **_kwargs: object) -> bytes:
+                events.append("package")
+                return b"pak"
+
+            with unittest.mock.patch.object(module, "build_default_init_pak", side_effect=package), unittest.mock.patch.object(
+                module, "ESP", root / "esp"
+            ), unittest.mock.patch.object(module.shutil, "copy2"), unittest.mock.patch.object(
+                module, "write_binary_if_changed"
+            ), unittest.mock.patch.object(subprocess, "run", side_effect=verify), unittest.mock.patch.object(
+                sys, "argv", [str(module.__file__), "--loader", str(loader), "--kernel", str(kernel), "--arp-probe-elf", str(probe)]
+            ):
+                self.assertEqual(module.main(), 0)
+        self.assertEqual(events[:2], ["verify", "package"])
+
+    def test_arp_probe_selection_conflicts_reject_before_esp_mutation(self) -> None:
+        # Catches multiple network probe selections mutating an ESP before rejection.
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            loader, kernel, network, link_layer, arp = (
+                root / name for name in ("loader", "kernel", "network", "link-layer", "arp")
+            )
+            for path in (loader, kernel, network, link_layer, arp):
+                path.write_bytes(b"artifact")
+            conflicts = (
+                ("--network-port-probe-elf", network, "--link-layer-probe-elf", link_layer),
+                ("--network-port-probe-elf", network, "--arp-probe-elf", arp),
+                ("--link-layer-probe-elf", link_layer, "--arp-probe-elf", arp),
+            )
+            for left_flag, left, right_flag, right in conflicts:
+                with self.subTest(left_flag=left_flag, right_flag=right_flag), unittest.mock.patch.object(
+                    Path, "mkdir", side_effect=AssertionError("ESP was mutated")
+                ), unittest.mock.patch.object(
+                    sys, "argv", [str(module.__file__), "--loader", str(loader), "--kernel", str(kernel), left_flag, str(left), right_flag, str(right)]
+                ):
+                    with self.assertRaises(SystemExit):
+                        module.main()
+
     def test_session_runtime_build_is_isolated_and_uses_only_its_own_linker(self) -> None:
         # Catches building the retained runtime with the generic/probe linker or shared target state.
         self.assertTrue(

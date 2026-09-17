@@ -42,6 +42,14 @@ name = "pythos-shared"
 version = "0.1.0"
 
 [[package]]
+name = "pythos-user-arp-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+ "pythos-user-link-layer-probe",
+]
+
+[[package]]
 name = "pythos-user-link-layer-probe"
 version = "0.1.0"
 dependencies = [

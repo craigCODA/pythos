@@ -1,6 +1,6 @@
 # Phase 14 `link-layer` Design Specification
 
-Status: Proposed for owner review  
+Status: Proposed for owner review
 Date: 2026-09-15
 
 ## Goal

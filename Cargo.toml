@@ -13,6 +13,7 @@ members = [
     "user/probes/session-input",
     "user/probes/network-port",
     "user/probes/link-layer",
+    "user/probes/arp",
 ]
 
 [workspace.package]

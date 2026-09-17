@@ -20,16 +20,17 @@ Ethernet-II link-layer proof is accepted under
 [ADR 0096](decisions/0096-phase-14-link-layer-consumer.md): its native consumer
 uses a read-only bootstrap, describes the MAC, sends one fixed unicast TX,
 rejects wrong destination and wrong EtherType, accepts one valid RX, and
-reaches terminal revocation. Exact evidence is no non-boot virtio data disk attached,
+reaches terminal revocation. The ARP proof is accepted under
+[ADR 0097](decisions/0097-phase-14-arp-consumer.md). Exact evidence is no non-boot virtio data disk attached,
 no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
-consumer. Default and normal-session boot remain unchanged. This does not claim
-IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
+Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
+native consumer. Default and normal-session boot remain unchanged. This does not
+claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
 interrupt Virtio, multiqueue/offloads, multiple consumers or packet
-distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
-Phase 14 design boundary; Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
+distribution, zero-copy, persistent state, or PythTIG changes. IP is the next Phase 14 design boundary;
+Phase 15 remains separate. See [HANDOVER.md](HANDOVER.md)
 for the exact local evidence and non-claims.
 
 The SDHCI/eMMC backend has

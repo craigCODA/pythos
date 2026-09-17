@@ -20,12 +20,13 @@ also requires no non-boot virtio data disk attached, no storage-path markers obs
 boot ESP is snapshot-backed, no PythOS storage-path writes, and
 `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; Ethernet-II semantics live in the native
-consumer. Default and normal-session boot remain unchanged. This proof does not
-claim IP/protocols/sockets, a production service, physical NIC/Wi-Fi, modern or
-interrupt Virtio, multiqueue/offloads, multiple consumers or packet
-distribution, zero-copy, persistent state, or PythTIG changes. ARP is the next
-Phase 14 design boundary; Phase 15 remains separate.
+Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
+native consumer, and the ARP proof is accepted. Default and normal-session boot remain unchanged.
+This proof does not claim IP/protocols/sockets, a production service,
+physical NIC/Wi-Fi, modern or interrupt Virtio, multiqueue/offloads,
+multiple consumers or packet distribution, zero-copy, persistent state, or
+PythTIG changes. IP is the next Phase 14 design boundary; Phase 15 remains
+separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
