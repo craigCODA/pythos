@@ -15,6 +15,7 @@ members = [
     "user/probes/link-layer",
     "user/probes/arp",
     "user/probes/ipv4",
+    "user/probes/icmp",
 ]
 
 [workspace.package]
