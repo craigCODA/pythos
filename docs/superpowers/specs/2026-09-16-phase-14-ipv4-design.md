@@ -410,7 +410,7 @@ completed locally, the implementation record is:
    separate hosted gate.
 
 No Virtio transport refactor, `NetworkPort` ABI change, PythTIG change, boot
-cutover, or Phase 15 hardware work belongs in that plan.
+cutover, or Phase 15 hardware work belongs in that implementation record.
 
 ## Standards basis
 
@@ -458,5 +458,5 @@ The following are intentionally not decided here:
 This accepted decision authorizes only the bounded IPv4 proof recorded above
 and its completed local evidence. It does not authorize changes to the ABI,
 transport, boot path, Phase 15 hardware, or the follow-up ADR scope. The
-preserved scope and non-claims below remain in force, and no hosted IPv4 run is
-claimed.
+the preserved scope and non-claims stated in this accepted decision remain in
+force, and no hosted IPv4 run is claimed.
