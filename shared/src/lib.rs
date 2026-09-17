@@ -4,6 +4,7 @@ pub mod arp_markers;
 pub mod boot_protocol;
 pub mod capability_abi;
 pub mod evidence_log;
+pub mod icmp_markers;
 pub mod init_bundle;
 pub mod init_pak;
 pub mod input_types;

@@ -42,6 +42,8 @@ pub const ARP_PROBE_PROGRAM_NAME: &[u8] = b"arp-probe.elf";
 pub const ARP_PROBE_PRINCIPAL_ID: u64 = 0x5059_4152_5052_0001;
 pub const IPV4_PROBE_PROGRAM_NAME: &[u8] = b"ipv4-probe.elf";
 pub const IPV4_PROBE_PRINCIPAL_ID: u64 = 0x5059_4950_5052_0001;
+pub const ICMP_PROBE_PROGRAM_NAME: &[u8] = b"icmp-probe.elf";
+pub const ICMP_PROBE_PRINCIPAL_ID: u64 = 0x5059_4943_4D50_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {
@@ -320,5 +322,36 @@ mod tests {
         assert_ne!(IPV4_PROBE_PRINCIPAL_ID, NETWORK_PORT_PROBE_PRINCIPAL_ID);
         assert_ne!(IPV4_PROBE_PRINCIPAL_ID, LINK_LAYER_PROBE_PRINCIPAL_ID);
         assert_ne!(IPV4_PROBE_PRINCIPAL_ID, ARP_PROBE_PRINCIPAL_ID);
+    }
+
+    #[test]
+    fn icmp_probe_identity_is_exact_and_unique() {
+        assert_eq!(ICMP_PROBE_PROGRAM_NAME, b"icmp-probe.elf");
+        assert_eq!(ICMP_PROBE_PRINCIPAL_ID, 0x5059_4943_4D50_0001);
+
+        for existing_name in [
+            SESSION_INPUT_PROBE_PROGRAM_NAME,
+            SESSION_RUNTIME_PROGRAM_NAME,
+            NORMAL_SESSION_PROGRAM_NAME,
+            NETWORK_PORT_PROBE_PROGRAM_NAME,
+            LINK_LAYER_PROBE_PROGRAM_NAME,
+            ARP_PROBE_PROGRAM_NAME,
+            IPV4_PROBE_PROGRAM_NAME,
+        ] {
+            assert_ne!(ICMP_PROBE_PROGRAM_NAME, existing_name);
+        }
+
+        for existing_principal in [
+            SHELL_PRINCIPAL_ID,
+            INTRUDER_PRINCIPAL_ID,
+            SESSION_INPUT_PROBE_PRINCIPAL_ID,
+            SESSION_RUNTIME_PRINCIPAL_ID,
+            NETWORK_PORT_PROBE_PRINCIPAL_ID,
+            LINK_LAYER_PROBE_PRINCIPAL_ID,
+            ARP_PROBE_PRINCIPAL_ID,
+            IPV4_PROBE_PRINCIPAL_ID,
+        ] {
+            assert_ne!(ICMP_PROBE_PRINCIPAL_ID, existing_principal);
+        }
     }
 }
