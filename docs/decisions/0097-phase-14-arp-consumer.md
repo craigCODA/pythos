@@ -203,10 +203,11 @@ The live oracle rejected storage-path evidence, ARP error/panic/timeout and
 transport-error evidence, duplicate or reordered markers, and any extra peer
 transmit. The accepted run reported none of them and used `--no-virtio-blk`.
 
-Hosted evidence is pending for published PR #28. The red qemu-milestones run
-35176094046 is not accepted as green; the Task 7 workflow contains the strict
-ARP self-test and live-QEMU gate, but no hosted acceptance or green hosted
-evidence is claimed here.
+Hosted evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
+which completed successfully on 2026-09-17 at verified head
+`45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs
+`qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
+red run 35176094046 is superseded.
 
 ## Scope boundary and non-claims
 

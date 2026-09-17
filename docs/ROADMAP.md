@@ -36,7 +36,11 @@ or NIC/Wi-Fi support,
 modern or interrupt Virtio, multiqueue/offloads, multiple consumers, zero-copy,
 persistent state, or PythTIG changes. Phase 15 hardware remains separate. See
 [HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence. Hosted
-evidence is pending for PR #28; no green hosted acceptance is claimed.
+evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
+which completed successfully on 2026-09-17 at verified head
+`45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs
+`qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
+red run 35176094046 is superseded.
 
 ## Accepted PythTIG Program Boundary
 

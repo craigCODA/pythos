@@ -29,8 +29,11 @@ session (`NORMAL_SESSION_TWO_BOOT_ACCEPTANCE_OK`); default and normal-session
 profiles did not launch ARP. Full frame bytes and the exact evidence commands
 are recorded in ADR 0097. Default and normal-session boot remain unchanged.
 
-Hosted evidence is pending for published PR #28. The red qemu-milestones run
-35176094046 is not accepted as green; no hosted acceptance is claimed.
+Hosted evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
+which completed successfully on 2026-09-17 at verified head
+`45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs
+`qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
+red run 35176094046 is superseded.
 
 Raw bytes remain below `NetworkPort`; ARP semantics live in the native
 consumer. IP is the next Phase 14 design boundary and has not been started.
@@ -38,8 +41,7 @@ This proof does not claim IP/protocols/sockets, a production service, physical
 networking or NIC/Wi-Fi support, modern/interrupt Virtio,
 multiqueue/offloads, multiple consumers, zero-copy, persistent state, or
 PythTIG changes. Phase 15 hardware remains separate. PR #28 is published;
-no merge, physical-media deployment, or physical Wi-Fi probe is claimed, and
-hosted evidence remains pending.
+no merge, physical-media deployment, or physical Wi-Fi probe is claimed.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
