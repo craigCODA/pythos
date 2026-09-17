@@ -39,6 +39,8 @@ const IPV4_TTL: u8 = 64;
 const IPV4_DATAGRAM_BYTES: usize = 28;
 const IPV4_REQUEST_PAYLOAD: &[u8; 8] = b"PYTHIPRQ";
 const IPV4_REPLY_PAYLOAD: &[u8; 8] = b"PYTHIPRP";
+const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1024;
+const IPV4_ERROR_MARKER: &str = "PYTHOS:CORE:IPV4:ERROR";
 
 struct ProbeStorage(UnsafeCell<ProbeBuffers>);
 
@@ -261,14 +263,23 @@ fn send_frame(capability: PackedCapability, frame: [u8; NETWORK_PORT_MIN_FRAME_B
     request(buffers)
 }
 
+fn empty_receive_poll_exhausted(empty_polls: &mut usize) -> bool {
+    *empty_polls = empty_polls.saturating_add(1);
+    *empty_polls >= MAX_RECEIVE_POLL_ATTEMPTS
+}
+
 fn receive_matching_frame(
     capability: PackedCapability,
     console: PackedCapability,
     matches: fn(&[u8], [u8; 6]) -> bool,
 ) {
+    let mut empty_polls = 0;
     loop {
         let status = receive(capability);
         if status == NETWORK_PORT_STATUS_EMPTY {
+            if empty_receive_poll_exhausted(&mut empty_polls) {
+                error(console);
+            }
             core::hint::spin_loop();
             continue;
         }
@@ -365,7 +376,7 @@ fn success_breakpoint() -> ! {
 }
 
 fn error(console: PackedCapability) -> ! {
-    write_marker(console, "PYTHOS:CORE:IPV4:ERROR");
+    write_marker(console, IPV4_ERROR_MARKER);
     // SAFETY: this terminal error path must not return after malformed input or syscall failure.
     unsafe { asm!("ud2", options(noreturn, nomem, nostack)) }
 }
@@ -383,7 +394,8 @@ fn main() {}
 #[cfg(test)]
 mod tests {
     use super::{
-        arp_reply_frame_matches, arp_request_frame, ipv4_reply_frame_matches, ipv4_request_frame,
+        IPV4_ERROR_MARKER, MAX_RECEIVE_POLL_ATTEMPTS, arp_reply_frame_matches, arp_request_frame,
+        empty_receive_poll_exhausted, ipv4_reply_frame_matches, ipv4_request_frame,
     };
     use pythos_user_ipv4_probe::ipv4::ipv4_header_checksum;
 
@@ -421,6 +433,19 @@ mod tests {
         frame[24..26].fill(0);
         let checksum = ipv4_header_checksum(&frame[14..34]);
         frame[24..26].copy_from_slice(&checksum.to_be_bytes());
+    }
+
+    #[test]
+    fn empty_receive_responses_exhaust_at_the_bound_and_use_terminal_error_marker() {
+        assert_eq!(IPV4_ERROR_MARKER, "PYTHOS:CORE:IPV4:ERROR");
+
+        let mut empty_polls = 0;
+        for _ in 0..MAX_RECEIVE_POLL_ATTEMPTS - 1 {
+            assert!(!empty_receive_poll_exhausted(&mut empty_polls));
+        }
+        assert_eq!(empty_polls, MAX_RECEIVE_POLL_ATTEMPTS - 1);
+        assert!(empty_receive_poll_exhausted(&mut empty_polls));
+        assert_eq!(empty_polls, MAX_RECEIVE_POLL_ATTEMPTS);
     }
 
     #[test]
