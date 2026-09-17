@@ -13,12 +13,18 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 ARP is accepted under
-[ADR 0097](decisions/0097-phase-14-arp-consumer.md), above the frozen,
+Phase 14 bounded IPv4 is locally accepted under
+[ADR 0098](decisions/0098-phase-14-ipv4-consumer.md), above the frozen,
 boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capability-abi.md)
 and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
-boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, and
-the ARP proof is accepted under ADR 0097. The opt-in native consumer performed
+boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, the
+ARP proof is accepted under [ADR 0097](decisions/0097-phase-14-arp-consumer.md),
+and the IPv4 proof is accepted locally under ADR 0098. The IPv4 opt-in native
+consumer performed one exact private-address ARP setup followed by one exact
+60-byte Protocol 253 IPv4 request/reply and reached terminal revocation with
+the seven required IPv4 markers exactly once in order and `QEMU_OUTCOME
+success`. It rejected malformed or mismatched frames, storage-path evidence,
+and extra peer transmit. The earlier ARP consumer performed
 one exact 60-byte broadcast
 ARP request, accepted one exact 60-byte reply, and reached terminal revocation
 with the six required markers exactly once in order and `QEMU_OUTCOME success`.
@@ -29,13 +35,15 @@ no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage
 and `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; ARP semantics live in the native
-consumer. Default and normal-session boot remain unchanged. IP is the next Phase 14 design boundary;
+consumer, and IPv4 semantics live in the separate native IPv4 consumer.
+Default and normal-session boot remain unchanged. ICMP is the next Phase 14 design boundary;
 do not start it from this roadmap entry. This acceptance
-does not claim IP/protocols/sockets, a production service, physical networking
+does not claim ICMP/sockets/routing, a production service, physical networking
 or NIC/Wi-Fi support,
 modern or interrupt Virtio, multiqueue/offloads, multiple consumers, zero-copy,
 persistent state, or PythTIG changes. Phase 15 hardware remains separate. See
-[HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence. Hosted
+[HANDOVER.md](HANDOVER.md) and ADR 0098 for the exact IPv4 local evidence.
+No hosted IPv4 acceptance is claimed at this checkpoint. The preserved ARP hosted
 evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
 which completed successfully on 2026-09-17 at verified head
 `45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs

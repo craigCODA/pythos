@@ -108,9 +108,12 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
     required_statements = (
         "Ethernet-II link-layer proof is accepted",
         "ARP proof is accepted",
+        "IPv4 proof is accepted",
         "ADR 0096",
-        "IP is the next Phase 14 design boundary",
-        "IP/protocols/sockets",
+        "ADR 0097",
+        "ADR 0098",
+        "ICMP is the next Phase 14 design boundary",
+        "ICMP/sockets/routing",
         "a production service",
         "Default and normal-session boot remain unchanged",
     )

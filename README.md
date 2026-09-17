@@ -21,12 +21,19 @@ boot ESP is snapshot-backed, no PythOS storage-path writes, and
 `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
-native consumer, and the ARP proof is accepted. Default and normal-session boot remain unchanged.
-This proof does not claim IP/protocols/sockets, a production service,
+native consumer, and the ARP proof is accepted under
+[ADR 0097](docs/decisions/0097-phase-14-arp-consumer.md). The bounded IPv4 proof is accepted
+locally under [ADR 0098](docs/decisions/0098-phase-14-ipv4-consumer.md): the
+opt-in `ipv4-probe.elf` performed one exact private-address ARP setup and one
+exact 60-byte Protocol 253 IPv4 request/reply, observed all seven IPv4 markers
+once in order, rejected extra transmit and storage-path evidence, and ended in
+`QEMU_OUTCOME success`. No hosted IPv4 acceptance is claimed at this
+checkpoint. Default and normal-session boot remain unchanged.
+This proof does not claim ICMP/sockets/routing, a production service,
 physical NIC/Wi-Fi, modern or interrupt Virtio, multiqueue/offloads,
 multiple consumers or packet distribution, zero-copy, persistent state, or
-PythTIG changes. IP is the next Phase 14 design boundary; Phase 15 remains
-separate.
+PythTIG changes. ICMP is the next Phase 14 design boundary; Phase 15 physical
+hardware expansion remains separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
