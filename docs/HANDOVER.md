@@ -2,23 +2,21 @@
 
 ## Current Phase 14 Boundary
 
-Phase 14 bounded IPv4 is locally accepted under
-[ADR 0098](decisions/0098-phase-14-ipv4-consumer.md), building on the frozen
+Phase 14 bounded ICMP Echo is accepted locally under
+[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md), building on the frozen
 boot-local `NetworkPort` boundary in
 [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The
 Ethernet-II link-layer proof is accepted under ADR 0096, and the ARP proof is accepted under ADR 0097.
-The IPv4 proof is accepted locally under ADR 0098. At Task 6 implementation
-commit `27b957b1ac384fa446a66dcbef3d58ea9b553e85`, `py -3
-scripts/test-ipv4.py` rebuilt the opt-in profile and passed in 21.3 seconds
-with `IPV4_QEMU_ACCEPTANCE_OK`. The loopback peer observed exactly one
-private-address ARP request and sent one exact reply, then observed exactly one
-60-byte IPv4 request and sent one exact 60-byte reply. The source timeline was
-`COM2: IPV4:BOOTSTRAPPED, IPV4:DESCRIBE_OK, IPV4:ARP_SETUP_OK, IPV4:TX_OK,
-IPV4:RX_OK`; then `COM1: IPV4:TEARDOWN_REVOKED, IPV4_READY`; then `RUNNER:
-QEMU_OUTCOME success`. The live oracle rejected forbidden or storage-path
-evidence, duplicate/reordered markers, and extra peer transmit; none occurred.
-It used `--no-virtio-blk` and a snapshot-backed ESP. No hosted IPv4 acceptance
-is claimed at this checkpoint.
+The IPv4 proof is accepted locally under ADR 0098, and the ICMP Echo proof is accepted locally under ADR 0099. At Task 6 implementation commit `de0352f`,
+the serialized `py -3 scripts/test-icmp.py` proof passed with
+`ICMP_QEMU_ACCEPTANCE_OK` and `QEMU_OUTCOME success`. Its loopback peer
+observed exactly one ARP request/reply and one ICMP Echo request/reply, exactly
+four frames total. The seven ICMP markers appeared once in order; the oracle
+rejected malformed or mismatched frames, storage evidence, duplicate or
+reordered markers, and extra peer transmit. The run used `--no-virtio-blk`, a
+snapshot-backed ESP, and clean process and temporary-state teardown. This is a
+client-only deterministic acceptance proof; no hosted or remote ICMP evidence
+is claimed.
 
 The accepted ARP evidence remains unchanged. Phase 14 ARP is locally accepted
 under [ADR 0097](decisions/0097-phase-14-arp-consumer.md).
@@ -50,14 +48,13 @@ which completed successfully on 2026-09-17 at verified head
 `qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
 red run 35176094046 is superseded.
 
-Raw bytes remain below `NetworkPort`; ARP semantics live in the native
-consumer, and IPv4 semantics live in the separate native IPv4 consumer.
-ICMP is the next Phase 14 design boundary and has not been started.
-This proof does not claim ICMP/sockets/routing, a production service, physical
-networking or NIC/Wi-Fi support, modern/interrupt Virtio,
-multiqueue/offloads, multiple consumers, zero-copy, persistent state, or
-PythTIG changes. Phase 15 hardware remains separate. PR #28 is published;
-no merge, physical-media deployment, or physical Wi-Fi probe is claimed.
+Raw bytes remain below `NetworkPort`; ARP, IPv4, and ICMP semantics live in
+separate native consumers. The ICMP Echo proof does not claim a complete RFC 1122 host, a general Echo server, user interface, reusable ICMP service,
+routing, sockets, physical networking or NIC/Wi-Fi support, modern/interrupt
+Virtio, multiqueue/offloads, multiple consumers, zero-copy, persistent state,
+or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary. Phase 15 hardware remains separate. PR #28 is
+published; no merge, physical-media deployment, physical Wi-Fi probe, or
+hosted/remote ICMP evidence is claimed.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

@@ -25,18 +25,20 @@ reaches terminal revocation. The ARP proof is accepted under
 no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
-native consumer. The bounded IPv4 proof is accepted locally under
-[ADR 0098](decisions/0098-phase-14-ipv4-consumer.md): `ipv4-probe.elf` uses the
-unchanged port for one exact private-address ARP setup and one exact 60-byte
-Protocol 253 IPv4 request/reply, then proves terminal revocation. Its seven
-markers appeared exactly once in order, the live oracle rejected extra
-transmit and storage-path evidence, and the run ended in `QEMU_OUTCOME
-success`. No hosted IPv4 acceptance is claimed at this checkpoint. Default and normal-session boot remain unchanged. This does not
-claim ICMP/sockets/routing, a production service, physical NIC/Wi-Fi, modern or
+Raw bytes remain below `NetworkPort`; Ethernet-II, ARP, IPv4, and ICMP
+semantics live in native consumers. The bounded IPv4 proof is accepted locally
+under [ADR 0098](decisions/0098-phase-14-ipv4-consumer.md), and the ICMP Echo proof is accepted locally under
+[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md): its opt-in client
+uses the unchanged port for one exact ARP request/reply and one exact ICMP Echo
+request/reply, exactly four frames total, then proves terminal revocation. Its
+seven markers appeared exactly once in order, the live oracle rejected extra
+transmit and storage evidence, and the run ended in `QEMU_OUTCOME success`.
+No hosted or remote ICMP acceptance is claimed. Default and normal-session boot remain unchanged. This client-only deterministic acceptance proof does not
+claim a complete RFC 1122 host, a general Echo server, user interface,
+reusable ICMP service, routing, sockets, physical NIC/Wi-Fi, modern or
 interrupt Virtio, multiqueue/offloads, multiple consumers or packet
-distribution, zero-copy, persistent state, or PythTIG changes. ICMP is the next Phase 14 design boundary;
-Phase 15 physical hardware expansion remains separate. See [HANDOVER.md](HANDOVER.md)
+distribution, zero-copy, persistent state, or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary; Phase 15
+physical hardware expansion remains separate. See [HANDOVER.md](HANDOVER.md)
 for the exact local evidence and non-claims.
 
 The SDHCI/eMMC backend has

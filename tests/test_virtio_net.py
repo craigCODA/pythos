@@ -98,7 +98,7 @@ def test_frame_peer_rejects_a_same_length_frame_with_wrong_bytes():
     assert "TX frame mismatch" in str(peer.error)
 
 
-def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
+def test_canonical_docs_record_icmp_scope_and_next_boundary():
     documents = [
         ROOT / "docs/ROADMAP.md",
         ROOT / "docs/HANDOVER.md",
@@ -109,12 +109,14 @@ def test_canonical_docs_record_nic_driver_scope_and_next_boundary():
         "Ethernet-II link-layer proof is accepted",
         "ARP proof is accepted",
         "IPv4 proof is accepted",
+        "ICMP Echo proof is accepted",
         "ADR 0096",
         "ADR 0097",
         "ADR 0098",
-        "ICMP is the next Phase 14 design boundary",
-        "ICMP/sockets/routing",
-        "a production service",
+        "ADR 0099",
+        "client-only deterministic acceptance proof",
+        "bounded UDP design/slice is the next separately authorized Phase 14 boundary",
+        "complete RFC 1122 host",
         "Default and normal-session boot remain unchanged",
     )
     for document in documents:
