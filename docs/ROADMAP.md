@@ -19,11 +19,17 @@ boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capabil
 and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
 boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, the
 ARP proof is accepted under [ADR 0097](decisions/0097-phase-14-arp-consumer.md),
-and the IPv4 proof is accepted locally under ADR 0098. The ICMP Echo proof is accepted locally under ADR 0099. Its opt-in native client performed one exact
-ARP request/reply and one exact ICMP Echo request/reply, exactly four frames
-total, and reached terminal revocation with the seven required ICMP markers
-exactly once in order and `QEMU_OUTCOME success`. It rejected malformed or
-mismatched frames, storage evidence, and extra peer transmit. The earlier ARP consumer performed
+and the IPv4 proof is accepted locally under ADR 0098. The IPv4 opt-in native
+consumer performed one exact private-address ARP setup followed by one exact
+60-byte Protocol 253 IPv4 request/reply and reached terminal revocation with
+the seven required IPv4 markers exactly once in order and `QEMU_OUTCOME
+success`. It rejected malformed or mismatched frames, storage-path evidence,
+and extra peer transmit. The ICMP Echo proof is accepted locally under ADR
+0099. Its opt-in native client performed one exact ARP request/reply and one
+exact ICMP Echo request/reply, exactly four frames total, and reached terminal
+revocation with the seven required ICMP markers exactly once in order and
+`QEMU_OUTCOME success`. It rejected malformed or mismatched frames, storage
+evidence, and extra peer transmit. The earlier ARP consumer performed
 one exact 60-byte broadcast
 ARP request, accepted one exact 60-byte reply, and reached terminal revocation
 with the six required markers exactly once in order and `QEMU_OUTCOME success`.
@@ -35,6 +41,7 @@ and `QEMU_OUTCOME success`.
 
 Raw bytes remain below `NetworkPort`; ARP, IPv4, and ICMP semantics live in
 separate native consumers. Default and normal-session boot remain unchanged.
+No hosted IPv4 acceptance is claimed at this checkpoint.
 The ICMP Echo proof is a client-only deterministic acceptance proof, not a
 complete RFC 1122 host, general Echo server, user interface, reusable ICMP
 service, routing, sockets, or hosted/remote ICMP evidence. It does not claim

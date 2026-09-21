@@ -18,6 +18,19 @@ snapshot-backed ESP, and clean process and temporary-state teardown. This is a
 client-only deterministic acceptance proof; no hosted or remote ICMP evidence
 is claimed.
 
+The IPv4 proof remains accepted locally under ADR 0098. At Task 6
+implementation commit `27b957b1ac384fa446a66dcbef3d58ea9b553e85`, `py -3
+scripts/test-ipv4.py` rebuilt the opt-in profile and passed in 21.3 seconds
+with `IPV4_QEMU_ACCEPTANCE_OK`. The loopback peer observed exactly one
+private-address ARP request and sent one exact reply, then observed exactly one
+60-byte IPv4 request and sent one exact 60-byte reply. The source timeline was
+`COM2: IPV4:BOOTSTRAPPED, IPV4:DESCRIBE_OK, IPV4:ARP_SETUP_OK, IPV4:TX_OK,
+IPV4:RX_OK`; then `COM1: IPV4:TEARDOWN_REVOKED, IPV4_READY`; then `RUNNER:
+QEMU_OUTCOME success`. The live oracle rejected forbidden or storage-path
+evidence, duplicate/reordered markers, and extra peer transmit; none occurred.
+It used `--no-virtio-blk` and a snapshot-backed ESP. No hosted IPv4 acceptance
+is claimed at this checkpoint.
+
 The accepted ARP evidence remains unchanged. Phase 14 ARP is locally accepted
 under [ADR 0097](decisions/0097-phase-14-arp-consumer.md).
 At feature tip `63231415efbddbd5a5b683e32179ff754c6867d1`, the Task 8 local

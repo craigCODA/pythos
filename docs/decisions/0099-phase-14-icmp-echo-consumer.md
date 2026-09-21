@@ -79,8 +79,9 @@ configuration or a protocol registry.
 Task 6's review-approved local evidence at implementation commit `de0352f`
 accepts the following exact facts:
 
-- `py -3 scripts/test-icmp.py --self-test` passed the `scripts/test-icmp.py`
-  unit suite, 11/11, and emitted `ICMP_QEMU_ACCEPTANCE_OK`.
+- `py -3 -m unittest tests.test_icmp` passed the ICMP unit suite, 11/11.
+- `py -3 scripts/test-icmp.py --self-test` passed its self-test suite, 4/4,
+  and emitted `ICMP_QEMU_ACCEPTANCE_OK`.
 - `py -3 -m py_compile scripts/test-icmp.py tests/test_icmp.py` passed.
 - The serialized `py -3 scripts/test-icmp.py` live QEMU proof passed with
   `QEMU_OUTCOME success` and `ICMP_QEMU_ACCEPTANCE_OK`.

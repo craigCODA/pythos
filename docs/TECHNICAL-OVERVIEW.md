@@ -25,9 +25,16 @@ reaches terminal revocation. The ARP proof is accepted under
 no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; Ethernet-II, ARP, IPv4, and ICMP
-semantics live in native consumers. The bounded IPv4 proof is accepted locally
-under [ADR 0098](decisions/0098-phase-14-ipv4-consumer.md), and the ICMP Echo proof is accepted locally under
+Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
+native consumer. The bounded IPv4 proof is accepted locally under
+[ADR 0098](decisions/0098-phase-14-ipv4-consumer.md): `ipv4-probe.elf` uses the
+unchanged port for one exact private-address ARP setup and one exact 60-byte
+Protocol 253 IPv4 request/reply, then proves terminal revocation. Its seven
+markers appeared exactly once in order, the live oracle rejected extra
+transmit and storage-path evidence, and the run ended in `QEMU_OUTCOME
+success`. No hosted IPv4 acceptance is claimed at this checkpoint.
+
+The ICMP Echo proof is accepted locally under
 [ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md): its opt-in client
 uses the unchanged port for one exact ARP request/reply and one exact ICMP Echo
 request/reply, exactly four frames total, then proves terminal revocation. Its

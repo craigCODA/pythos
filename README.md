@@ -23,17 +23,23 @@ boot ESP is snapshot-backed, no PythOS storage-path writes, and
 Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
 native consumer, and the ARP proof is accepted under
 [ADR 0097](docs/decisions/0097-phase-14-arp-consumer.md). The bounded IPv4 proof is accepted
-locally under [ADR 0098](docs/decisions/0098-phase-14-ipv4-consumer.md). The
-ICMP Echo proof is accepted locally under
+locally under [ADR 0098](docs/decisions/0098-phase-14-ipv4-consumer.md): the
+opt-in `ipv4-probe.elf` performed one exact private-address ARP setup and one
+exact 60-byte Protocol 253 IPv4 request/reply, observed all seven IPv4 markers
+once in order, rejected extra transmit and storage-path evidence, and ended in
+`QEMU_OUTCOME success`. No hosted IPv4 acceptance is claimed at this
+checkpoint. Default and normal-session boot remain unchanged.
+
+The ICMP Echo proof is accepted locally under
 [ADR 0099](docs/decisions/0099-phase-14-icmp-echo-consumer.md): the opt-in
 client performed one exact ARP request/reply and one exact ICMP Echo
 request/reply, four frames total, with seven ICMP markers once in order and
-`QEMU_OUTCOME success`. It remains a client-only deterministic acceptance proof; no hosted or remote ICMP evidence is claimed. Default and normal-session boot remain unchanged. This does not claim a complete RFC 1122 host, a general
-Echo server, user interface, reusable ICMP service, routing, sockets, physical
-NIC/Wi-Fi, modern or interrupt Virtio, multiqueue/offloads, multiple consumers
-or packet distribution, zero-copy, persistent state, or PythTIG changes. The
-bounded UDP design/slice is the next separately authorized Phase 14 boundary;
-Phase 15 physical hardware expansion remains separate.
+`QEMU_OUTCOME success`. It remains a client-only deterministic acceptance proof; no hosted or remote ICMP evidence is claimed. This does not claim a
+complete RFC 1122 host, a general Echo server, user interface, reusable ICMP
+service, routing, sockets, physical NIC/Wi-Fi, modern or interrupt Virtio,
+multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
+persistent state, or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary; Phase 15 physical hardware expansion
+remains separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
