@@ -31,5 +31,6 @@ pub mod session_viewing_abi;
 pub mod session_viewing_result;
 pub mod sha256;
 pub mod task_abi;
+pub mod udp_markers;
 pub mod user_program_manifest;
 pub mod viewing;
