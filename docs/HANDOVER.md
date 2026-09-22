@@ -1393,9 +1393,10 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap boundary is the locally accepted Phase 13.5 Slice
-5 branch, stopping before Phase 14. The
-current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
+The current numbered-roadmap boundary is the locally accepted Phase 14 TCP
+proof, recorded under ADR 0101. DNS is the next separately authorized Phase
+14 boundary; Phase 15 hardware remains separate. The current PythTIG stop
+boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
@@ -1417,6 +1418,6 @@ under QEMU before accepting Slices 3 and 4; see the implementation map above.
 
 This boundary does not authorize default normal-boot cutover, production
 wait/wakeup, durable sessions, USB/xHCI integration, physical Lenovo acceptance,
-WakeContext/Waking, Kai, networking, updates, AI, SMP, hardware expansion, or
-later PythTIG work. Keep implementation details in the invoked slice's existing
-map and tests; add an ADR only for a new architectural decision.
+WakeContext/Waking, Kai, updates, AI, SMP, hardware expansion, or later PythTIG
+work. Keep implementation details in the invoked slice's existing map and
+tests; add an ADR only for a new architectural decision.

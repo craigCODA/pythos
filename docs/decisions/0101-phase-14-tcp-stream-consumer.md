@@ -171,7 +171,8 @@ defines the TCP header fields, sequence and acknowledgment numbers, flags,
 window, checksum, IPv4 pseudo-header, and TCP length/checksum input used by
 this proof.
 
-[RFC 9293 sections 3.2 and 3.7.1](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.2)
+[RFC 9293 section 3.2](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.2)
+and [section 3.7.1](https://www.rfc-editor.org/rfc/rfc9293.html#section-3.7.1)
 define TCP options and the mandatory MSS option. This proof uses only
 `02 04 04 00` on the two SYN segments and no options on ordinary segments.
 
