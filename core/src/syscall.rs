@@ -76,6 +76,7 @@ use core::mem::{align_of, size_of};
     feature = "ipv4-probe",
     feature = "icmp-probe",
     feature = "udp-probe",
+    feature = "tcp-probe",
     all(
         not(test),
         any(not(feature = "verify"), feature = "phase13-package-test")
@@ -91,7 +92,8 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 use pythos_shared::network_port_abi::{
     NETWORK_PORT_ABI_MAJOR, NETWORK_PORT_ABI_MINOR, NETWORK_PORT_MAX_FRAME_BYTES,
@@ -811,6 +813,7 @@ fn with_syscall_capabilities<R>(f: impl FnOnce(&mut CapabilityTable) -> R) -> R 
     feature = "ipv4-probe",
     feature = "icmp-probe",
     feature = "udp-probe",
+    feature = "tcp-probe",
     all(not(test), not(feature = "verify"))
 ))]
 pub fn grant_console_capability(
@@ -978,7 +981,8 @@ fn dispatch_console_read(args: SyscallArgs) -> Result<u64, SyscallError> {
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port_with_port<T: crate::network_port::NetworkTransport>(
     args: SyscallArgs,
@@ -1046,7 +1050,8 @@ fn dispatch_network_port_with_port<T: crate::network_port::NetworkTransport>(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port(args: SyscallArgs) -> Result<u64, SyscallError> {
     let caller = process_context::current_caller()?;
@@ -1066,7 +1071,8 @@ fn dispatch_network_port(args: SyscallArgs) -> Result<u64, SyscallError> {
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 pub(crate) fn bind_network_port_capabilities(
     consumer_holder: ActiveUserProcess,
@@ -1098,7 +1104,8 @@ pub(crate) fn bind_network_port_capabilities(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 pub(crate) fn grant_network_port_consumer_capabilities(
     consumer: ActiveUserProcess,
@@ -1129,7 +1136,8 @@ pub(crate) fn grant_network_port_consumer_capabilities(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 pub(crate) fn teardown_network_port_capabilities(
     owner_holder: ServiceId,
@@ -1156,7 +1164,8 @@ pub(crate) fn teardown_network_port_capabilities(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 pub(crate) fn network_port_consumer_revoked(
     consumer: ActiveUserProcess,
@@ -1185,7 +1194,8 @@ pub(crate) fn network_port_consumer_revoked(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn bind_network_port_capabilities_with_table<T: crate::network_port::NetworkTransport>(
     capabilities: &CapabilityTable,
@@ -1223,7 +1233,8 @@ fn bind_network_port_capabilities_with_table<T: crate::network_port::NetworkTran
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 )))]
 fn dispatch_network_port(_args: SyscallArgs) -> Result<u64, SyscallError> {
     // The capability is never granted and no transport is installed outside
@@ -1240,7 +1251,8 @@ fn dispatch_network_port(_args: SyscallArgs) -> Result<u64, SyscallError> {
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
     capabilities: &mut CapabilityTable,
@@ -1302,7 +1314,8 @@ fn dispatch_network_port_request<T: crate::network_port::NetworkTransport>(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn valid_network_port_request_header(request: &NetworkPortRequestV1) -> bool {
     request.abi_major == NETWORK_PORT_ABI_MAJOR
@@ -1322,7 +1335,8 @@ fn valid_network_port_request_header(request: &NetworkPortRequestV1) -> bool {
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port_describe<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
@@ -1368,7 +1382,8 @@ fn dispatch_network_port_describe<T: crate::network_port::NetworkTransport>(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
@@ -1408,7 +1423,8 @@ fn dispatch_network_port_send<T: crate::network_port::NetworkTransport>(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     copy_map: &UserCopyMap,
@@ -1458,7 +1474,8 @@ fn dispatch_network_port_receive<T: crate::network_port::NetworkTransport>(
     feature = "arp-probe",
     feature = "ipv4-probe",
     feature = "icmp-probe",
-    feature = "udp-probe"
+    feature = "udp-probe",
+    feature = "tcp-probe"
 ))]
 const fn network_port_response(status: u16, state: u16) -> NetworkPortResponseV1 {
     NetworkPortResponseV1::new(status, state)
@@ -2551,6 +2568,7 @@ fn task_operation_mutates(operation: u16) -> bool {
     feature = "ipv4-probe",
     feature = "icmp-probe",
     feature = "udp-probe",
+    feature = "tcp-probe",
     all(not(test), not(feature = "verify")),
     all(not(test), feature = "phase13-package-test")
 ))]
