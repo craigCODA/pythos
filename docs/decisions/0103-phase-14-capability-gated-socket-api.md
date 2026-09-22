@@ -46,8 +46,9 @@ resource model.
 
 The serialized denied profile launches with no `NetworkPort` capability. Its
 exact-endpoint `OPEN` is denied before any handle or frame is created. The
-host oracle observed `tx=0 rx=0 total=0`, exactly these four markers once and
-in order, one exact `QEMU_OUTCOME success`, and clean teardown:
+host oracle required an accepted QEMU transport connection and observed
+`tx=0 rx=0 total=0`, exactly these four markers once and in order, one exact
+`QEMU_OUTCOME success`, and clean QEMU/artifact teardown:
 
 ```text
 PYTHOS:CORE:SOCKET:DENIED_BOOTSTRAPPED
@@ -57,7 +58,12 @@ PYTHOS:CORE:SOCKET_DENIED_READY
 ```
 
 The denied profile does not claim capability revocation because no consumer
-capability was issued.
+capability was issued. On this Windows host the legacy QEMU socket backend
+terminates its transport connection with `WSAECONNRESET` after the successful
+terminal outcome rather than FIN/EOF. That one QEMU-terminal event is allowed
+only by the live denied-peer factory after the exact marker/outcome checks;
+the default peer rejects abortive resets, and the host tests reject missing
+connections, quiet timeouts, arbitrary bytes, and unapproved resets.
 
 The serialized granted profile receives the existing `NetworkPort` `READ |
 SEND` capability. It performs the exact ADR 0101 frame oracle: two ARP frames
@@ -83,12 +89,14 @@ transport-error, duplicate/reordered marker, and unexpected frame evidence.
 
 ## Local acceptance evidence
 
-Task 4 was accepted at commit `cbd5ed4` (`test(net): prove capability-gated
-socket cases`). The focused evidence commands and results were:
+Task 4 was initially implemented at commit `cbd5ed4` (`test(net): prove
+capability-gated socket cases`) and its denied-transport oracle correction was
+committed at `fdfd41f` (`fix(net): require denied transport EOF`). The focused
+evidence commands and results were:
 
 - `py -3 -m py_compile scripts/test-socket.py tests/test_socket.py` passed;
-- `py -3 -m unittest tests.test_socket` passed 5/5;
-- `py -3 scripts/test-socket.py --self-test` passed 3/3 and emitted
+- `py -3 -m unittest tests.test_socket` passed 9/9;
+- `py -3 scripts/test-socket.py --self-test` passed 7/7 and emitted
   `SOCKET_QEMU_ACCEPTANCE_OK`;
 - serialized `py -3 scripts/test-socket.py` passed both profiles; and
 - `git diff --check` passed.
@@ -110,7 +118,10 @@ SOCKET_QEMU_ACCEPTANCE_OK
 The host TCP socket was used only as the loopback transport carrying QEMU
 Virtio Ethernet frames between the oracle and guest. It is not a PythOS
 socket ABI or service. This is local QEMU evidence only; no hosted or remote
-socket acceptance is claimed.
+socket acceptance is claimed. The evidence requires the transport connection
+to be accepted and no frame bytes to be exchanged; QEMU's documented live
+terminal reset behavior on this host is not generalized into a PythOS reset
+or teardown contract.
 
 ## Scope boundary and non-claims
 

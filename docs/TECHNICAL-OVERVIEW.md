@@ -65,7 +65,7 @@ of complete UDP-host or RFC 1122 host compliance. No UDP service, socket API,
 port namespace or multiplexing, ICMP error delivery, retries, timers, routing,
 fragmentation, TCP, DNS, TLS, physical hardware, modern/interrupt Virtio,
 interrupts/MSI-X, offloads, zero-copy, multiple consumers, persistent state,
-PythTIG change, or Phase 15 work is claimed. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. DNS is the next separately authorized Phase 14 design boundary.
+PythTIG change, or Phase 15 work is claimed. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite capability-gated socket proof is accepted locally under [ADR 0103](decisions/0103-phase-14-capability-gated-socket-api.md); secure transport is the next separately authorized Phase 14 boundary.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro

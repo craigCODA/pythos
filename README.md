@@ -58,7 +58,7 @@ without claiming complete UDP-host or RFC 1122 host compliance. This does not
 claim a UDP service, socket API, port namespace or multiplexing, ICMP error
 delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS, physical
 hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads, zero-copy,
-multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP is now accepted locally as the finite proof recorded in [ADR 0101](docs/decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. DNS is the next separately authorized Phase 14 design boundary.
+multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP is now accepted locally as the finite proof recorded in [ADR 0101](docs/decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite capability-gated socket proof is accepted locally under [ADR 0103](docs/decisions/0103-phase-14-capability-gated-socket-api.md); secure transport is the next separately authorized Phase 14 boundary.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
