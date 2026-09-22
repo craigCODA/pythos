@@ -20,6 +20,16 @@ class NormalSessionProfilesTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("production `normal-session` conflicts", result.stderr)
 
+    def test_normal_default_rejects_socket_api_profiles(self):
+        for features in ("socket-api-probe", "socket-api-denied-probe"):
+            with self.subTest(features=features):
+                result = self.check_profile(features)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(
+                    "socket API proof features are mutually exclusive with normal-session",
+                    result.stderr,
+                )
+
     def test_earlier_hardware_dispatch_still_compiles_with_default_inheritance(self):
         result = self.check_profile("hardware-probe")
         self.assertEqual(result.returncode, 0, result.stderr)

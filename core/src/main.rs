@@ -43,6 +43,7 @@ compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mu
 #[cfg(all(
     any(feature = "socket-api-probe", feature = "socket-api-denied-probe"),
     any(
+        feature = "normal-session",
         feature = "phase13-package-test",
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
@@ -61,7 +62,9 @@ compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mu
         feature = "physical-keyboard-console"
     )
 ))]
-compile_error!("socket API proof features are mutually exclusive with existing proof profiles");
+compile_error!(
+    "socket API proof features are mutually exclusive with normal-session and existing proof profiles"
+);
 #[cfg(all(feature = "verify", feature = "usb-xhci-probe"))]
 compile_error!("features `verify` and `usb-xhci-probe` are mutually exclusive");
 #[cfg(all(feature = "hardware-probe", feature = "usb-xhci-probe"))]
