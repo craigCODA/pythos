@@ -12,6 +12,9 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
+Secure transport is the next separately authorized Phase 14 boundary; it is now
+the accepted bounded Phase 14 stopping point.
+
 Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
 through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
 with the kernel owning the legacy/transitional `VirtioTransport` adapter from

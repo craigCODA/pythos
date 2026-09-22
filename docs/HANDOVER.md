@@ -2,6 +2,9 @@
 
 ## Current Phase 14 Boundary
 
+Secure transport is the next separately authorized Phase 14 boundary; it is now
+the accepted bounded Phase 14 stopping point.
+
 Phase 14 bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), building on the frozen
 boot-local `NetworkPort` boundary in

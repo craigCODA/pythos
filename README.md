@@ -7,6 +7,9 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
+Secure transport is the next separately authorized Phase 14 boundary; it is now
+the accepted bounded Phase 14 stopping point.
+
 Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
 through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md),
 above the kernel-owned legacy/transitional `VirtioTransport` adapter from
