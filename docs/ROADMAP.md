@@ -75,6 +75,18 @@ which completed successfully on 2026-09-17 at verified head
 `qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
 red run 35176094046 is superseded.
 
+## Current Phase 15 Opening Slice
+
+Phase 15 has started with the dedicated read-only PCI network identity probe
+recorded in [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md).
+The opt-in `network-hardware-probe` profile is separate from the existing
+storage `hardware-probe`: it scans PCI configuration identity only, renders a
+bounded serial/framebuffer report, and halts. QEMU `e1000` and `e1000e` each
+report exactly one expected Ethernet controller with `-nic none` suppressing
+QEMU's implicit NIC. This is an identity proof, not Ethernet or Wi-Fi support.
+Lenovo Wi-Fi behavior, firmware, BAR/MMIO reachability, DMA, interrupts,
+controller ownership, and all later hardware work remain deferred.
+
 ## Accepted PythTIG Program Boundary
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is

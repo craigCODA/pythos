@@ -94,6 +94,7 @@ jobs:
           cargo test -p pythos-shared
           cargo test -p pythos-shared --features pyth-tig-test-support
           cargo test -p pythos-core
+          cargo test -p pythos-core --no-default-features --features network-hardware-probe network_hardware_probe
           cargo test -p pythos-core pyth_service_supervisor
           cargo test -p pythc
           cargo test -p pythos-user-pyth-runtime
@@ -154,6 +155,7 @@ jobs:
       - name: Clippy
         run: |
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings
@@ -202,6 +204,7 @@ jobs:
           python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py
           python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py
           python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py
+          python -m py_compile scripts/test-network-hardware-probe.py tests/test_network_hardware_probe.py
 
       - name: Python harness tests
         run: |
@@ -217,6 +220,7 @@ jobs:
           python -m unittest tests.test_socket
           python -m unittest tests.test_secure_transport_contract
           python -m unittest tests.test_secure_transport
+          python -m unittest tests.test_network_hardware_probe
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -265,6 +269,8 @@ jobs:
           python scripts/test-socket.py
           python scripts/test-secure-transport.py --self-test
           python scripts/test-secure-transport.py
+          python scripts/test-network-hardware-probe.py --self-test
+          python scripts/test-network-hardware-probe.py
 
       - name: PythTIG physical evidence tooling
         run: |

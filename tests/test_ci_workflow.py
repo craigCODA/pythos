@@ -111,6 +111,14 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-secure-transport.py --self-test",
         "python scripts/test-secure-transport.py",
     )
+    NETWORK_HARDWARE_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-core --no-default-features --features network-hardware-probe network_hardware_probe",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-probe -- -D warnings",
+        "python -m py_compile scripts/test-network-hardware-probe.py tests/test_network_hardware_probe.py",
+        "python -m unittest tests.test_network_hardware_probe",
+        "python scripts/test-network-hardware-probe.py --self-test",
+        "python scripts/test-network-hardware-probe.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -790,6 +798,25 @@ class CiWorkflowTest(unittest.TestCase):
                 commands.index(successor),
                 f"secure-transport gate must follow predecessor: {predecessor}",
             )
+
+    def test_network_hardware_identity_probe_has_ordered_dedicated_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.NETWORK_HARDWARE_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate network hardware gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        self.assertLess(
+            commands.index("python scripts/test-secure-transport.py"),
+            commands.index("python scripts/test-network-hardware-probe.py --self-test"),
+        )
+        self.assertLess(
+            commands.index("python scripts/test-network-hardware-probe.py --self-test"),
+            commands.index("python scripts/test-network-hardware-probe.py"),
+        )
 
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
