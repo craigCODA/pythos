@@ -61,7 +61,8 @@ endpoint:
 
 1. `socket-denied`: a process knows the endpoint but receives no
    `NetworkPort` capability. `OPEN` returns `DENIED`; the host oracle observes
-   zero Ethernet frames; the process revokes/cleans up and exits.
+   zero Ethernet frames; the process performs local cleanup and exits, with no
+   `NetworkPort` capability revoked.
 2. `socket-granted`: the owner grants the existing `NetworkPort READ | SEND`
    capability. `OPEN` succeeds, returns the one service-local handle, and the
    service performs the accepted ADR 0101 TCP exchange. `SEND`, `RECEIVE`, and
