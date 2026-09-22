@@ -117,7 +117,7 @@ acceptance.
 [RFC 768](https://www.rfc-editor.org/rfc/rfc768.html) defines the UDP source
 port, destination port, length, and checksum fields, including the IPv4
 pseudo-header checksum input and arithmetic zero padding for an odd byte
-count. [RFC 1122 section 4.2.3.1](https://www.rfc-editor.org/rfc/rfc1122.html#section-4.2.3.1)
+count. [RFC 1122 section 4.1.3.4](https://www.rfc-editor.org/rfc/rfc1122.html#section-4.1.3.4)
 requires UDP checksum support by a host. This fixed proof uses those rules for
 one datagram pair; it does not claim complete UDP-host or RFC 1122 host
 compliance.
