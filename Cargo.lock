@@ -50,6 +50,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-dns-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
+
+[[package]]
 name = "pythos-user-icmp-probe"
 version = "0.1.0"
 dependencies = [
