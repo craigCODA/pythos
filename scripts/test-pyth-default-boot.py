@@ -8,9 +8,7 @@ surfaces through the compatibility shell and proves reboot durability.
 
 from __future__ import annotations
 
-import os
 import re
-import signal
 import socket
 import subprocess
 import sys
@@ -18,6 +16,12 @@ import time
 from pathlib import Path
 
 import launcher_click
+from qemu_probe_support import (
+    AcceptanceTimeline,
+    RunnerCapture,
+    cleanup_runner_process,
+    spawn_runner_process,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = ROOT / "target"
@@ -73,32 +77,6 @@ def wait_for_marker_count(path: Path, marker: str, count: int, timeout: float) -
     raise AssertionError(
         f"expected {marker!r} at least {count} time(s); saw {text.count(marker)}"
     )
-
-
-def terminate_process_tree(process: subprocess.Popen[str]) -> None:
-    if sys.platform == "win32":
-        subprocess.run(
-            ["taskkill", "/F", "/T", "/PID", str(process.pid)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=False,
-        )
-    else:
-        try:
-            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-    try:
-        process.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        if sys.platform != "win32":
-            try:
-                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-        else:
-            process.kill()
-        process.wait(timeout=5)
 
 
 def connect_shell(timeout: float) -> socket.socket:
@@ -205,10 +183,7 @@ def drive_boot_and_reboot() -> None:
         SERIAL_LOG.unlink()
     if STORAGE_IMAGE.exists():
         STORAGE_IMAGE.unlink()
-    popen_kwargs: dict[str, object] = {}
-    if sys.platform != "win32":
-        popen_kwargs["start_new_session"] = True
-    process = subprocess.Popen(
+    runner = spawn_runner_process(
         [
             sys.executable,
             "scripts/run-qemu.py",
@@ -225,11 +200,9 @@ def drive_boot_and_reboot() -> None:
             "timeout",
         ],
         cwd=ROOT,
-        text=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **popen_kwargs,
     )
+    capture = RunnerCapture(runner.process, AcceptanceTimeline())
+    capture.start()
     try:
         with connect_shell(30) as sock:
             wait_for_file_marker(SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 30)
@@ -318,7 +291,8 @@ def drive_boot_and_reboot() -> None:
             )
             print("PYTH_DEFAULT_BOOT_REBOOT_TEST_OK")
     finally:
-        terminate_process_tree(process)
+        cleanup_runner_process(runner)
+        capture.finish()
 
 
 def drive_recovery_boot() -> None:
@@ -326,10 +300,7 @@ def drive_recovery_boot() -> None:
         RECOVERY_SERIAL_LOG.unlink()
     if RECOVERY_STORAGE_IMAGE.exists():
         RECOVERY_STORAGE_IMAGE.unlink()
-    popen_kwargs: dict[str, object] = {}
-    if sys.platform != "win32":
-        popen_kwargs["start_new_session"] = True
-    process = subprocess.Popen(
+    runner = spawn_runner_process(
         [
             sys.executable,
             "scripts/run-qemu.py",
@@ -345,11 +316,9 @@ def drive_recovery_boot() -> None:
             "timeout",
         ],
         cwd=ROOT,
-        text=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        **popen_kwargs,
     )
+    capture = RunnerCapture(runner.process, AcceptanceTimeline())
+    capture.start()
     try:
         with connect_shell(30) as sock:
             wait_for_file_marker(RECOVERY_SERIAL_LOG, "PYTHOS:CORE:COM2_READY", 30)
@@ -380,7 +349,8 @@ def drive_recovery_boot() -> None:
                 raise AssertionError(f"missing recovery shell ready banner: {banner!r}")
             print("PYTH_DEFAULT_RECOVERY_TEST_OK")
     finally:
-        terminate_process_tree(process)
+        cleanup_runner_process(runner)
+        capture.finish()
 
 
 def main() -> int:
