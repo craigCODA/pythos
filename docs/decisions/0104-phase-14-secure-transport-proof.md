@@ -74,6 +74,10 @@ Every case requires exact markers, one `QEMU_OUTCOME success`, no storage or
 panic evidence, and clean serial/ESP artifact teardown. Earlier Phase 14
 proofs and default/normal-session boot must remain green.
 
+The tamper case's frozen marker order is
+`BOOTSTRAPPED > OPEN_GRANTED > TCP_READY > TLS_HANDSHAKE_OK >
+REQUEST_ENCRYPTED > TAMPER_REJECTED > TEARDOWN_REVOKED > SECURE_TAMPER_READY`.
+
 ## Standards basis
 
 The profile follows RFC 8446 §§2, 4.1–4.4, 5.1–5.5, 7.1, and 8. The TLS 1.3

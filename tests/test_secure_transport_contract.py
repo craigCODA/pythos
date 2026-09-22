@@ -54,6 +54,24 @@ class SecureTransportContractTests(unittest.TestCase):
         self.assertIn("clean serial/ESP artifact teardown", self.adr)
         self.assertIn("05fbe163a52218a9f419c17b540e73b963f9a265a43b7bc05587934b07ea7a4e", self.adr)
         self.assertIn("CertVerifier::new(Certificate::X509(...))", self.adr)
+        self.assertIn(
+            """PYTHOS:CORE:SECURE:TLS_HANDSHAKE_OK
+PYTHOS:CORE:SECURE:REQUEST_ENCRYPTED
+PYTHOS:CORE:SECURE:TAMPER_REJECTED""",
+            self.spec,
+        )
+
+    def test_tamper_marker_array_preserves_request_encryption_order(self) -> None:
+        shared_markers = (ROOT / "shared" / "src" / "secure_transport_markers.rs").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("pub const SECURE_TAMPER_MARKERS: [&str; 8]", shared_markers)
+        self.assertIn(
+            """    SECURE_TLS_HANDSHAKE_OK_MARKER,
+    SECURE_REQUEST_ENCRYPTED_MARKER,
+    SECURE_TAMPER_REJECTED_MARKER,""",
+            shared_markers,
+        )
 
     def test_tamper_case_selects_private_core_final_marker_profile(self) -> None:
         socket_probe = (ROOT / "core" / "src" / "socket_probe.rs").read_text(encoding="utf-8")
