@@ -103,6 +103,7 @@ jobs:
           cargo test -p pythos-user-ipv4-probe
           cargo test -p pythos-user-icmp-probe
           cargo test -p pythos-user-udp-probe
+          cargo test -p pythos-user-tcp-probe
           cargo test -p pythos-user-session-runtime
           cargo test -p pythos-user-session-runtime --features session-viewing
           cargo test -p pythos-user-session-runtime --features normal-session
@@ -136,6 +137,7 @@ jobs:
           python scripts/build-session-runtime.py --features normal-session-fault-test
           python scripts/build-icmp-probe.py
           python scripts/build-udp-probe.py
+          python scripts/build-tcp-probe.py
 
       - name: Clippy
         run: |
@@ -152,6 +154,8 @@ jobs:
           cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features udp-probe -- -D warnings
           cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings
+          cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings
@@ -173,6 +177,7 @@ jobs:
           python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py
           python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py
           python -m py_compile scripts/build-udp-probe.py
+          python -m py_compile scripts/build-tcp-probe.py
 
       - name: Python harness tests
         run: |

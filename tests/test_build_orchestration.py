@@ -964,6 +964,192 @@ class BuildOrchestrationTest(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         module.main()
 
+    def test_tcp_probe_build_is_isolated_verified_and_names_artifact(self) -> None:
+        self.assertTrue((ROOT / "scripts" / "build-tcp-probe.py").is_file())
+        module = load_script("build-tcp-probe.py")
+        calls: list[tuple[str, list[str]]] = []
+        build_env: dict[str, str] = {}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "tcp-test"
+            cargo_elf = (
+                target_dir
+                / "x86_64-unknown-none"
+                / "debug"
+                / "pythos-user-tcp-probe"
+            )
+
+            def build(command: list[object], **kwargs: object) -> int:
+                calls.append(("build", normalize(command)))
+                build_env.update(kwargs["env"])
+                cargo_elf.parent.mkdir(parents=True)
+                cargo_elf.write_bytes(b"tcp-probe")
+                return 0
+
+            def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                calls.append(("verify", normalize(command)))
+                return subprocess.CompletedProcess(command, 0)
+
+            with unittest.mock.patch.object(
+                module.subprocess, "call", side_effect=build
+            ), unittest.mock.patch.object(
+                module.subprocess, "run", side_effect=verify
+            ), unittest.mock.patch.object(
+                sys,
+                "argv",
+                [str(module.__file__), "--target-dir", str(target_dir)],
+            ), unittest.mock.patch("builtins.print") as print_mock:
+                self.assertEqual(module.main(), 0)
+
+            artifact = target_dir / "tcp-probe.elf"
+            self.assertEqual(artifact.read_bytes(), b"tcp-probe")
+            print_mock.assert_called_once_with(artifact)
+
+        self.assertEqual(
+            calls[0][1],
+            [
+                "cargo", "build", "-p", "pythos-user-tcp-probe", "--target",
+                "x86_64-unknown-none", "--bin", "pythos-user-tcp-probe",
+                "--target-dir", str(target_dir).replace("\\", "/"),
+            ],
+        )
+        self.assertEqual(
+            calls[1][1][-3:],
+            [
+                str(ROOT / "scripts" / "verify-user-elf.py").replace("\\", "/"),
+                "--elf",
+                str(cargo_elf).replace("\\", "/"),
+            ],
+        )
+        rustflags = build_env["RUSTFLAGS"].replace("\\", "/")
+        self.assertIn("relocation-model=static", rustflags)
+        self.assertIn("user/probes/tcp/linker.ld", rustflags)
+
+    def test_tcp_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "tcp-probe.elf"
+            normal = root / "normal-session.elf"
+            graph = root / "session-manager.tig"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"tcp-probe")
+            normal.write_bytes(b"normal-session")
+            graph.write_bytes(b"graph")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                normal_session = module.build_default_init_pak(
+                    normal_session_elf=normal, normal_session_graph=graph
+                )
+                opted_in = module.build_default_init_pak(tcp_probe_elf=probe)
+
+        self.assertNotIn(b"tcp-probe.elf", default)
+        self.assertNotIn(b"tcp-probe.elf", normal_session)
+        self.assertNotIn(b"udp-probe.elf", normal_session)
+        records = parse_init_pak_bundle(opted_in)
+        named = [
+            parse_named_record(kind, payload)
+            for kind, payload in records
+            if kind == module.INIT_BUNDLE_NAMED_USER_ELF_TYPE
+        ]
+        self.assertEqual(
+            named[-1],
+            (
+                b"tcp-probe.elf",
+                0x5059_5443_5000_0001,
+                module.digest64(b"tcp-probe"),
+                b"tcp-probe",
+            ),
+        )
+
+    def test_tcp_probe_resolution_and_verification_precede_packaging(self) -> None:
+        module = load_script("build-image.py")
+        events: list[tuple[str, object]] = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            caller = root / "caller"
+            caller.mkdir()
+            loader = root / "loader"
+            kernel = root / "kernel"
+            probe = caller / "tcp-probe.elf"
+            for path in (loader, kernel, probe):
+                path.write_bytes(b"artifact")
+
+            def verify(command: list[object], **_kwargs: object) -> subprocess.CompletedProcess[bytes]:
+                events.append(("verify", normalize(command)))
+                return subprocess.CompletedProcess(command, 0)
+
+            def package(*_args: object, **kwargs: object) -> bytes:
+                events.append(("package", kwargs["tcp_probe_elf"]))
+                return b"pak"
+
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(caller)
+                with unittest.mock.patch.object(module, "build_default_init_pak", side_effect=package), unittest.mock.patch.object(
+                    module, "ESP", root / "esp"
+                ), unittest.mock.patch.object(module.shutil, "copy2"), unittest.mock.patch.object(
+                    module, "write_binary_if_changed"
+                ), unittest.mock.patch.object(subprocess, "run", side_effect=verify), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(module.__file__), "--loader", str(loader), "--kernel", str(kernel),
+                        "--tcp-probe-elf", "tcp-probe.elf",
+                    ],
+                ):
+                    self.assertEqual(module.main(), 0)
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual([kind for kind, _value in events[:2]], ["verify", "package"])
+        verified = Path(events[0][1][-1])
+        packaged = events[1][1]
+        self.assertTrue(verified.is_absolute())
+        self.assertEqual(packaged, verified)
+
+    def test_tcp_probe_conflicts_reject_before_esp_mutation(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            loader, kernel, tcp, other, runtime, normal, graph = (
+                root / name
+                for name in ("loader", "kernel", "tcp", "other", "runtime", "normal", "graph")
+            )
+            for path in (loader, kernel, tcp, other, runtime, normal, graph):
+                path.write_bytes(b"artifact")
+            conflicts = (
+                ("--network-port-probe-elf", other),
+                ("--link-layer-probe-elf", other),
+                ("--arp-probe-elf", other),
+                ("--ipv4-probe-elf", other),
+                ("--icmp-probe-elf", other),
+                ("--udp-probe-elf", other),
+                ("--session-runtime-elf", runtime),
+                ("--normal-session-elf", normal, "--normal-session-graph", graph),
+            )
+            for conflict in conflicts:
+                extra_args = [
+                    value
+                    for flag, path in zip(conflict[::2], conflict[1::2])
+                    for value in (flag, str(path))
+                ]
+                with self.subTest(conflict=conflict), unittest.mock.patch.object(
+                    Path, "mkdir", side_effect=AssertionError("ESP was mutated")
+                ), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(module.__file__), "--loader", str(loader), "--kernel", str(kernel),
+                        "--tcp-probe-elf", str(tcp), *extra_args,
+                    ],
+                ):
+                    with self.assertRaises(SystemExit):
+                        module.main()
+
     def test_arp_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
         # Catches accidentally adding ARP to the default image or giving it another program identity.
         module = load_script("build-image.py")
