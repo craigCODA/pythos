@@ -396,6 +396,8 @@ mod network_port_probe;
     )
 ))]
 mod network_port_probe_support;
+#[cfg(any(test, feature = "hardware-probe"))]
+mod network_probe;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
 #[cfg(any(
