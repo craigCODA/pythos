@@ -183,6 +183,9 @@ def drive_boot_and_reboot() -> None:
         SERIAL_LOG.unlink()
     if STORAGE_IMAGE.exists():
         STORAGE_IMAGE.unlink()
+    popen_kwargs: dict[str, object] = {"cwd": ROOT}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
     runner = spawn_runner_process(
         [
             sys.executable,
@@ -199,7 +202,7 @@ def drive_boot_and_reboot() -> None:
             "--expect-outcome",
             "timeout",
         ],
-        cwd=ROOT,
+        **popen_kwargs,
     )
     capture = RunnerCapture(runner.process, AcceptanceTimeline())
     capture.start()
@@ -300,6 +303,9 @@ def drive_recovery_boot() -> None:
         RECOVERY_SERIAL_LOG.unlink()
     if RECOVERY_STORAGE_IMAGE.exists():
         RECOVERY_STORAGE_IMAGE.unlink()
+    popen_kwargs: dict[str, object] = {"cwd": ROOT}
+    if sys.platform != "win32":
+        popen_kwargs["start_new_session"] = True
     runner = spawn_runner_process(
         [
             sys.executable,
@@ -315,7 +321,7 @@ def drive_recovery_boot() -> None:
             "--expect-outcome",
             "timeout",
         ],
-        cwd=ROOT,
+        **popen_kwargs,
     )
     capture = RunnerCapture(runner.process, AcceptanceTimeline())
     capture.start()
