@@ -46,6 +46,8 @@ pub const ICMP_PROBE_PROGRAM_NAME: &[u8] = b"icmp-probe.elf";
 pub const ICMP_PROBE_PRINCIPAL_ID: u64 = 0x5059_4943_4D50_0001;
 pub const UDP_PROBE_PROGRAM_NAME: &[u8] = b"udp-probe.elf";
 pub const UDP_PROBE_PRINCIPAL_ID: u64 = 0x5059_5544_5000_0001;
+pub const TCP_PROBE_PROGRAM_NAME: &[u8] = b"tcp-probe.elf";
+pub const TCP_PROBE_PRINCIPAL_ID: u64 = 0x5059_5443_5000_0001;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UserProgramManifestError {
@@ -372,5 +374,23 @@ mod tests {
         assert_ne!(UDP_PROBE_PRINCIPAL_ID, IPV4_PROBE_PRINCIPAL_ID);
         assert_ne!(UDP_PROBE_PRINCIPAL_ID, ICMP_PROBE_PRINCIPAL_ID);
         assert_ne!(UDP_PROBE_PROGRAM_NAME, b"normal-session.elf");
+    }
+
+    #[test]
+    fn tcp_probe_identity_is_exact_unique_and_absent_from_default_manifest() {
+        assert_eq!(TCP_PROBE_PROGRAM_NAME, b"tcp-probe.elf");
+        assert_eq!(TCP_PROBE_PRINCIPAL_ID, 0x5059_5443_5000_0001);
+        assert_ne!(TCP_PROBE_PROGRAM_NAME, NORMAL_SESSION_PROGRAM_NAME);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, SHELL_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, INTRUDER_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, SESSION_INPUT_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, SESSION_RUNTIME_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, NETWORK_PORT_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, LINK_LAYER_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, ARP_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, IPV4_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, ICMP_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PRINCIPAL_ID, UDP_PROBE_PRINCIPAL_ID);
+        assert_ne!(TCP_PROBE_PROGRAM_NAME, b"normal-session.elf");
     }
 }
