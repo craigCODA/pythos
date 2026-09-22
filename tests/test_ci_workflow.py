@@ -589,6 +589,7 @@ class CiWorkflowTest(unittest.TestCase):
             ("cargo test -p pythos-user-tcp-probe", "cargo test -p pythos-user-dns-probe"),
             ("cargo test -p pythos-user-dns-probe", "cargo test -p pythos-core dns_probe --features dns-probe"),
             ("python scripts/build-tcp-probe.py", "python scripts/build-dns-probe.py"),
+            ("python scripts/test-tcp.py", "python scripts/test-dns.py --self-test"),
             (
                 "cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings",
                 "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",

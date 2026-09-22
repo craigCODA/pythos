@@ -184,7 +184,6 @@ jobs:
           python -m py_compile scripts/build-udp-probe.py
           python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py
           python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py
-          python -m py_compile scripts/build-dns-probe.py
 
       - name: Python harness tests
         run: |
