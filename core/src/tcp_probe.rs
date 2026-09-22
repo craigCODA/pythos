@@ -262,6 +262,9 @@ mod tests {
             "ipv4-probe",
             "icmp-probe",
             "udp-probe",
+            "physical-wake-diagnostic",
+            "physical-input-event-diagnostic",
+            "physical-keyboard-console",
         ] {
             let tcp_first = format!("#[cfg(all(feature = \"tcp-probe\", feature = \"{other}\"))]");
             let other_first =
@@ -281,6 +284,6 @@ mod tests {
         assert!(manifest.contains("default = [\"normal-session\"]"));
         assert!(main.contains("feature = \"tcp-probe\""));
         assert!(main.contains("feature = \"normal-session\""));
-        assert!(main.contains("feature = \"tcp-probe\""));
+        assert!(main.contains("feature = \"tcp-probe\"\n        )))"));
     }
 }

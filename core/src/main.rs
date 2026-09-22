@@ -211,6 +211,16 @@ compile_error!("features `tcp-probe` and `ipv4-probe` are mutually exclusive");
 compile_error!("features `tcp-probe` and `icmp-probe` are mutually exclusive");
 #[cfg(all(feature = "tcp-probe", feature = "udp-probe"))]
 compile_error!("features `tcp-probe` and `udp-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "physical-wake-diagnostic"))]
+compile_error!("features `tcp-probe` and `physical-wake-diagnostic` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "physical-input-event-diagnostic"))]
+compile_error!(
+    "features `tcp-probe` and `physical-input-event-diagnostic` are mutually exclusive"
+);
+#[cfg(all(feature = "tcp-probe", feature = "physical-keyboard-console"))]
+compile_error!(
+    "features `tcp-probe` and `physical-keyboard-console` are mutually exclusive"
+);
 #[cfg(all(
     feature = "session-runtime-probe",
     any(
