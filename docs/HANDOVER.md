@@ -87,7 +87,7 @@ RFC 1122 UDP-checksum basis, but does not claim a complete RFC 1122 host,
 general UDP support, a UDP service, socket API, port namespace or multiplexing,
 ICMP error delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS,
 physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
-zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is the next separately authorized Phase 14 design boundary. Phase 15 hardware
+zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. DNS is the next separately authorized Phase 14 design boundary. Phase 15 hardware
 remains separate. PR #28 is published; no merge, physical-media deployment,
 physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 

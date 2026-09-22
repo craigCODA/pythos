@@ -63,7 +63,7 @@ PythTIG changes. The accepted UDP proof does not claim a UDP service, socket
 API, port namespace or multiplexing, ICMP error delivery, retries, timers,
 routing, fragmentation, TCP, DNS, TLS, physical hardware, interrupts/MSI-X,
 offloads, zero-copy, multiple consumers, persistent state, PythTIG changes, or
-complete RFC 1122 host compliance. TCP is the next separately authorized Phase 14 design boundary; Phase 15 hardware remains separate. See
+complete RFC 1122 host compliance. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. DNS is the next separately authorized Phase 14 design boundary; Phase 15 hardware remains separate. See
 [HANDOVER.md](HANDOVER.md) and [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md)
 for the exact UDP local evidence. The preserved ARP hosted
 evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
