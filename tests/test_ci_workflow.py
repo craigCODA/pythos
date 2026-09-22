@@ -527,6 +527,7 @@ class CiWorkflowTest(unittest.TestCase):
 
         ordered_pairs = (
             ("cargo test -p pythos-user-udp-probe", "cargo test -p pythos-user-tcp-probe"),
+            ("cargo test -p pythos-user-tcp-probe", "python scripts/build-tcp-probe.py"),
             ("python scripts/build-udp-probe.py", "python scripts/build-tcp-probe.py"),
             (
                 "cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings",

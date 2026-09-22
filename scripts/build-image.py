@@ -595,6 +595,12 @@ def build_default_init_pak(
         )
     ) > 1:
         raise SystemExit("select only one network probe ELF")
+    if tcp_probe_elf is not None and (
+        session_input_probe_elf is not None
+        or include_phase13_package_format_fixture
+        or phase13_package_sources
+    ):
+        raise SystemExit("TCP probe profile cannot include session-input or package fixtures")
     if session_runtime_elf is not None and (
         session_input_probe_elf is not None or network_port_probe_elf is not None or link_layer_probe_elf is not None
         or arp_probe_elf is not None or ipv4_probe_elf is not None or icmp_probe_elf is not None

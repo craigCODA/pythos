@@ -1115,11 +1115,14 @@ class BuildOrchestrationTest(unittest.TestCase):
         module = load_script("build-image.py")
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            loader, kernel, tcp, other, runtime, normal, graph = (
+            loader, kernel, tcp, other, runtime, normal, graph, session_input, package_source = (
                 root / name
-                for name in ("loader", "kernel", "tcp", "other", "runtime", "normal", "graph")
+                for name in (
+                    "loader", "kernel", "tcp", "other", "runtime", "normal", "graph",
+                    "session-input", "package-source",
+                )
             )
-            for path in (loader, kernel, tcp, other, runtime, normal, graph):
+            for path in (loader, kernel, tcp, other, runtime, normal, graph, session_input, package_source):
                 path.write_bytes(b"artifact")
             conflicts = (
                 ("--network-port-probe-elf", other),
@@ -1128,6 +1131,7 @@ class BuildOrchestrationTest(unittest.TestCase):
                 ("--ipv4-probe-elf", other),
                 ("--icmp-probe-elf", other),
                 ("--udp-probe-elf", other),
+                ("--session-input-probe-elf", session_input),
                 ("--session-runtime-elf", runtime),
                 ("--normal-session-elf", normal, "--normal-session-graph", graph),
             )
@@ -1145,6 +1149,23 @@ class BuildOrchestrationTest(unittest.TestCase):
                     [
                         str(module.__file__), "--loader", str(loader), "--kernel", str(kernel),
                         "--tcp-probe-elf", str(tcp), *extra_args,
+                    ],
+                ):
+                    with self.assertRaises(SystemExit):
+                        module.main()
+
+            for package_args in (
+                ("--with-phase13-package-format-fixture",),
+                ("--phase13-package-source", str(package_source)),
+            ):
+                with self.subTest(conflict=package_args), unittest.mock.patch.object(
+                    Path, "mkdir", side_effect=AssertionError("ESP was mutated")
+                ), unittest.mock.patch.object(
+                    sys,
+                    "argv",
+                    [
+                        str(module.__file__), "--loader", str(loader), "--kernel", str(kernel),
+                        "--tcp-probe-elf", str(tcp), *package_args,
                     ],
                 ):
                     with self.assertRaises(SystemExit):
