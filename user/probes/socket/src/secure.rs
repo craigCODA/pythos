@@ -225,6 +225,11 @@ pub(super) fn start(bootstrap_ptr: u64, console_raw: u64) -> ! {
                     console,
                     pythos_shared::secure_transport_markers::SECURE_TAMPER_REJECTED_MARKER,
                 );
+                let mut stream = match tls.close() {
+                    Ok(stream) => stream,
+                    Err((stream, _error)) => stream,
+                };
+                let _ = stream.close_tcp();
                 super::success_breakpoint();
             }
         }

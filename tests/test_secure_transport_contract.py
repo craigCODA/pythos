@@ -86,6 +86,25 @@ PYTHOS:CORE:SECURE:TAMPER_REJECTED""",
         self.assertIn("SECURE_TAMPER_READY_MARKER", socket_probe)
         self.assertIn('not(feature = "secure-transport-tamper-probe")', socket_probe)
 
+    def test_tamper_rejection_closes_tcp_before_guest_exit(self) -> None:
+        source = (ROOT / "user" / "probes" / "socket" / "src" / "secure.rs").read_text(
+            encoding="utf-8"
+        )
+        tamper_marker = source.index("SECURE_TAMPER_REJECTED_MARKER")
+        close_start = source.index("let mut stream = match tls.close()", tamper_marker)
+        expected_order = (
+            "SECURE_TAMPER_REJECTED_MARKER",
+            "let mut stream = match tls.close()",
+            "Ok(stream) => stream",
+            "Err((stream, _error)) => stream",
+            "let _ = stream.close_tcp();",
+            "super::success_breakpoint();",
+        )
+        positions = [source.index(snippet, tamper_marker) for snippet in expected_order]
+        self.assertEqual(positions, sorted(positions))
+        self.assertNotIn("SECURE_RESPONSE_DECRYPTED_MARKER", source[tamper_marker:close_start])
+        self.assertNotIn("SECURE_CLOSE_OK_MARKER", source[tamper_marker:close_start])
+
 
 if __name__ == "__main__":
     unittest.main()
