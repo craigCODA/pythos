@@ -35,7 +35,7 @@ impl<'a> DnsQuery<'a> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DnsResponse<'a> {
     question: &'a [u8],
-    answer_ipv4: [u8; 4],
+    answer_ipv4: &'a [u8],
 }
 
 impl<'a> DnsResponse<'a> {
@@ -43,7 +43,7 @@ impl<'a> DnsResponse<'a> {
         self.question
     }
 
-    pub const fn answer_ipv4(self) -> [u8; 4] {
+    pub const fn answer_ipv4(self) -> &'a [u8] {
         self.answer_ipv4
     }
 }
@@ -133,13 +133,14 @@ pub fn decode_response<'a>(
     if read_u16(bytes, 42) != DNS_ANSWER_IPV4.len() as u16 {
         return Err(DecodeError::InvalidAddress);
     }
-    if bytes[44..48] != DNS_ANSWER_IPV4 {
+    let answer_ipv4 = bytes.get(44..48).ok_or(DecodeError::InputTooShort)?;
+    if answer_ipv4 != DNS_ANSWER_IPV4 {
         return Err(DecodeError::InvalidAddress);
     }
 
     Ok(DnsResponse {
         question,
-        answer_ipv4: DNS_ANSWER_IPV4,
+        answer_ipv4,
     })
 }
 
@@ -247,7 +248,11 @@ mod tests {
             response.question().as_ptr(),
             RESPONSE_BYTES[DNS_HEADER_BYTES..].as_ptr()
         );
-        assert_eq!(response.answer_ipv4(), DNS_ANSWER_IPV4);
+        assert_eq!(response.answer_ipv4(), &DNS_ANSWER_IPV4);
+        assert_eq!(
+            response.answer_ipv4().as_ptr(),
+            RESPONSE_BYTES[44..].as_ptr()
+        );
     }
 
     #[test]
