@@ -191,9 +191,9 @@ mod tests {
 
     #[test]
     fn encodes_all_ten_exact_tcp_headers_options_payloads_and_checksums() {
-        for index in 0..SEGMENTS.len() {
+        for (index, expected) in EXPECTED.iter().enumerate() {
             let encoded = encode(index);
-            assert_eq!(encoded, EXPECTED[index]);
+            assert_eq!(encoded.as_slice(), *expected);
             let (source, destination) = addresses(index);
             assert_eq!(tcp_checksum(source, destination, &encoded), 0);
         }
@@ -201,8 +201,9 @@ mod tests {
 
     #[test]
     fn decodes_all_ten_exact_segments_and_borrows_payload() {
-        for index in 0..SEGMENTS.len() {
+        for (index, expected) in EXPECTED.iter().enumerate() {
             let encoded = encode(index);
+            assert_eq!(encoded.as_slice(), *expected);
             let (source, destination) = addresses(index);
             let decoded = decode_segment(&encoded, source, destination).unwrap();
             assert_eq!(decoded, SEGMENTS[index]);
@@ -343,7 +344,7 @@ mod tests {
         zero[16..18].fill(0);
         assert_eq!(
             decode_segment(&zero, LOCAL, PEER),
-            Err(DecodeError::ZeroChecksum)
+            Err(DecodeError::BadChecksum)
         );
         assert_eq!(
             decode_segment(&encoded, [192, 168, 14, 3], PEER),
@@ -489,7 +490,6 @@ pub enum DecodeError {
     InputTooLarge,
     InvalidDataOffset,
     InvalidOptions,
-    ZeroChecksum,
     BadChecksum,
     InvalidProfile,
 }
@@ -618,10 +618,6 @@ pub fn decode_segment(
         return Err(DecodeError::InputTooLarge);
     }
 
-    let checksum = u16::from_be_bytes([bytes[16], bytes[17]]);
-    if checksum == 0 {
-        return Err(DecodeError::ZeroChecksum);
-    }
     if tcp_checksum(source_ipv4, destination_ipv4, bytes) != 0 {
         return Err(DecodeError::BadChecksum);
     }
