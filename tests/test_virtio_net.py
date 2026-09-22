@@ -116,7 +116,8 @@ def test_canonical_docs_record_icmp_scope_and_next_boundary():
         "ADR 0099",
         "client-only deterministic acceptance proof",
         "bounded UDP datagram proof is accepted locally",
-        "TCP is the next separately authorized Phase 14 design boundary",
+        "TCP is now accepted locally as the finite proof",
+        "DNS is the next separately authorized Phase 14 design boundary",
         "complete RFC 1122 host",
         "Default and normal-session boot remain unchanged",
     )
