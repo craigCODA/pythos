@@ -33,6 +33,9 @@ ipv4-probe = ["verify"]
 # Opt-in only: launch the finite native ICMP Echo consumer through the existing
 # NetworkPort capability bootstrap ABI.
 icmp-probe = ["verify"]
+# Opt-in only: launch the finite native UDP datagram consumer through the
+# existing NetworkPort capability bootstrap ABI.
+udp-probe = ["verify"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]
