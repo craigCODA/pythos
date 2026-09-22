@@ -4,14 +4,15 @@
 //! Task 2 will adapt this bounded policy to the existing NetworkPort consumer
 //! path.
 
+use crate::capabilities::RightsMask;
 use pythos_shared::network_port_abi::NETWORK_PORT_RESOURCE_ID_NAMESPACE;
 use pythos_shared::socket_markers::{SOCKET_DENIED_MARKERS, SOCKET_GRANTED_MARKERS};
 
 pub(crate) const SOCKET_PAYLOAD_BYTES: usize = 6;
-pub(crate) const NETWORK_PORT_READ_RIGHT: u32 = 1 << 0;
-pub(crate) const NETWORK_PORT_SEND_RIGHT: u32 = 1 << 2;
-pub(crate) const NETWORK_PORT_REQUIRED_RIGHTS: u32 =
-    NETWORK_PORT_READ_RIGHT | NETWORK_PORT_SEND_RIGHT;
+pub(crate) const SOCKET_REQUEST_PAYLOAD: &[u8; SOCKET_PAYLOAD_BYTES] = b"PYTCPQ";
+pub(crate) const SOCKET_RESPONSE_PAYLOAD: &[u8; SOCKET_PAYLOAD_BYTES] = b"PYTCPR";
+pub(crate) const NETWORK_PORT_REQUIRED_RIGHTS: RightsMask =
+    RightsMask::new(RightsMask::READ | RightsMask::SEND);
 pub(crate) const SOCKET_NETWORK_RESOURCE_ID: u64 = NETWORK_PORT_RESOURCE_ID_NAMESPACE | 1;
 pub(crate) const SOCKET_CONSUMER_HOLDER_ID: u64 = 0x5059_534F_4353_0001;
 
@@ -34,7 +35,7 @@ pub(crate) const ACCEPTED_SOCKET_ENDPOINT: SocketEndpoint = SocketEndpoint {
 pub(crate) struct NetworkPortAuthority {
     pub(crate) resource_id: u64,
     pub(crate) holder_id: u64,
-    pub(crate) rights: u32,
+    pub(crate) rights: RightsMask,
     pub(crate) valid: bool,
 }
 
@@ -66,7 +67,7 @@ impl NetworkPortAuthority {
         }
     }
 
-    pub(crate) const fn with_rights(rights: u32) -> Self {
+    pub(crate) const fn with_rights(rights: RightsMask) -> Self {
         Self {
             resource_id: SOCKET_NETWORK_RESOURCE_ID,
             holder_id: SOCKET_CONSUMER_HOLDER_ID,
@@ -118,6 +119,7 @@ pub(crate) struct SocketPolicy {
     authority: Option<NetworkPortAuthority>,
     handle: Option<SocketHandle>,
     emitted_frames: usize,
+    next_generation: u32,
 }
 
 impl SocketPolicy {
@@ -127,6 +129,7 @@ impl SocketPolicy {
             authority: None,
             handle: None,
             emitted_frames: 0,
+            next_generation: 1,
         }
     }
 
@@ -148,9 +151,6 @@ impl SocketPolicy {
         endpoint: SocketEndpoint,
         admission: NetworkPortAdmission,
     ) -> Result<SocketHandle, OpenError> {
-        if self.handle.is_some() {
-            return Err(OpenError::AlreadyOpen);
-        }
         let authority = authority.ok_or(OpenError::MissingAuthority)?;
         if !self.authority_is_valid(authority) {
             return Err(OpenError::InvalidAuthority);
@@ -161,9 +161,12 @@ impl SocketPolicy {
         if admission != NetworkPortAdmission::Operational {
             return Err(OpenError::NetworkPortNotOperational);
         }
+        if self.handle.is_some() {
+            return Err(OpenError::AlreadyOpen);
+        }
         let handle = SocketHandle {
             slot: 0,
-            generation: 1,
+            generation: self.next_generation,
         };
         self.authority = Some(authority);
         self.handle = Some(handle);
@@ -194,7 +197,7 @@ impl SocketPolicy {
         if self.state != SocketState::Established {
             return Err(SocketError::WrongState);
         }
-        if payload.len() != SOCKET_PAYLOAD_BYTES {
+        if payload != SOCKET_REQUEST_PAYLOAD {
             return Err(SocketError::BadPayload);
         }
         self.emitted_frames += 1;
@@ -205,16 +208,20 @@ impl SocketPolicy {
         &self,
         handle: SocketHandle,
         authority: NetworkPortAuthority,
+        peer_payload: &[u8],
         output: &mut [u8],
     ) -> Result<(), SocketError> {
         self.validate_handle(handle, authority)?;
         if self.state != SocketState::Established {
             return Err(SocketError::WrongState);
         }
+        if peer_payload != SOCKET_RESPONSE_PAYLOAD {
+            return Err(SocketError::BadPayload);
+        }
         if output.len() < SOCKET_PAYLOAD_BYTES {
             return Err(SocketError::BufferTooSmall);
         }
-        output[..SOCKET_PAYLOAD_BYTES].copy_from_slice(b"PYTCPR");
+        output[..SOCKET_PAYLOAD_BYTES].copy_from_slice(SOCKET_RESPONSE_PAYLOAD);
         Ok(())
     }
 
@@ -228,14 +235,18 @@ impl SocketPolicy {
             return Err(SocketError::WrongState);
         }
         self.state = SocketState::Closing;
-        self.handle = None;
-        self.authority = None;
+        self.invalidate_handle();
         self.state = SocketState::Closed;
         Ok(())
     }
 
     pub(crate) fn revoke(&mut self) {
         self.state = SocketState::Closed;
+        self.invalidate_handle();
+    }
+
+    fn invalidate_handle(&mut self) {
+        self.next_generation = self.next_generation.wrapping_add(1);
         self.handle = None;
         self.authority = None;
     }
@@ -299,6 +310,19 @@ mod tests {
     }
 
     #[test]
+    fn open_checks_authority_before_existing_state() {
+        let (mut policy, _, _) = operational_open();
+        assert_eq!(
+            policy.open(
+                Some(NetworkPortAuthority::forged()),
+                ACCEPTED_SOCKET_ENDPOINT,
+                NetworkPortAdmission::Operational,
+            ),
+            Err(OpenError::InvalidAuthority)
+        );
+    }
+
+    #[test]
     fn open_requires_exact_endpoint_and_operational_network_port() {
         let authority = NetworkPortAuthority::valid_for_socket();
         let mut policy = SocketPolicy::new();
@@ -341,12 +365,32 @@ mod tests {
             policy.send(handle, authority, b"short"),
             Err(SocketError::BadPayload)
         );
+        assert_eq!(
+            policy.send(handle, authority, b"WRONG!"),
+            Err(SocketError::BadPayload)
+        );
         policy.send(handle, authority, b"PYTCPQ").unwrap();
         let mut output = [0u8; SOCKET_PAYLOAD_BYTES];
-        policy.receive(handle, authority, &mut output).unwrap();
+        policy
+            .receive(handle, authority, b"PYTCPR", &mut output)
+            .unwrap();
         assert_eq!(&output, b"PYTCPR");
         policy.close(handle, authority).unwrap();
         assert_eq!(policy.state(), SocketState::Closed);
+        assert_eq!(
+            policy.send(handle, authority, b"PYTCPQ"),
+            Err(SocketError::BadHandle)
+        );
+        let reopened = policy
+            .open(
+                Some(authority),
+                ACCEPTED_SOCKET_ENDPOINT,
+                NetworkPortAdmission::Operational,
+            )
+            .unwrap();
+        assert_eq!(reopened.slot, 0);
+        assert_eq!(reopened.generation, 2);
+        assert_ne!(reopened, handle);
         assert_eq!(
             policy.send(handle, authority, b"PYTCPQ"),
             Err(SocketError::BadHandle)
@@ -380,7 +424,9 @@ mod tests {
         assert!(
             policy
                 .open(
-                    Some(NetworkPortAuthority::with_rights(NETWORK_PORT_READ_RIGHT)),
+                    Some(NetworkPortAuthority::with_rights(RightsMask::new(
+                        RightsMask::READ,
+                    ))),
                     ACCEPTED_SOCKET_ENDPOINT,
                     NetworkPortAdmission::Operational,
                 )
