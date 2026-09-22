@@ -209,6 +209,12 @@ impl SocketService {
     }
 }
 
+impl Default for SocketService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

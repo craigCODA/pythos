@@ -42,6 +42,10 @@ tcp-probe = ["verify"]
 # Opt-in only: launch the finite native DNS query consumer through the
 # existing NetworkPort capability bootstrap ABI.
 dns-probe = ["verify"]
+# Opt-in granted finite capability-gated socket proof above NetworkPort/TCP.
+socket-api-probe = ["verify"]
+# Opt-in denied companion case: valid bootstrap, no NetworkPort authority.
+socket-api-denied-probe = ["verify"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]

@@ -11,7 +11,9 @@ use crate::capabilities::{CapabilityHandle, CapabilityTable, ResourceId};
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -36,7 +38,9 @@ static NETWORK_PORT_BOOT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::VirtioTransport>>>);
 
@@ -59,7 +63,9 @@ struct NetworkPortStorage(UnsafeCell<Option<NetworkPort<crate::virtio_net::Virti
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 unsafe impl Sync for NetworkPortStorage {}
 
@@ -73,7 +79,9 @@ unsafe impl Sync for NetworkPortStorage {}
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 static ACTIVE_NETWORK_PORT: NetworkPortStorage = NetworkPortStorage(UnsafeCell::new(None));
 
@@ -315,7 +323,9 @@ impl<T: NetworkTransport> NetworkPort<T> {
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 pub(crate) fn install_operational_transport(
     transport: crate::virtio_net::VirtioTransport,
@@ -338,7 +348,9 @@ pub(crate) fn install_operational_transport(
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 pub(crate) fn with_active_port<R>(
     f: impl FnOnce(&mut NetworkPort<crate::virtio_net::VirtioTransport>) -> R,
@@ -358,7 +370,9 @@ pub(crate) fn with_active_port<R>(
     feature = "icmp-probe",
     feature = "udp-probe",
     feature = "tcp-probe",
-    feature = "dns-probe"
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
 ))]
 impl NetworkTransport for crate::virtio_net::VirtioTransport {
     fn mac(&self) -> [u8; 6] {

@@ -82,6 +82,16 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-dns.py --self-test",
         "python scripts/test-dns.py",
     )
+    SOCKET_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-socket-probe",
+        "cargo test -p pythos-core socket_probe --features socket-api-probe",
+        "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+        "python scripts/build-socket-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+        "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+        "python -m py_compile scripts/build-socket-probe.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -620,6 +630,51 @@ class CiWorkflowTest(unittest.TestCase):
                 commands.index(predecessor),
                 commands.index(successor),
                 f"DNS gate must follow predecessor: {predecessor}",
+            )
+
+    def test_socket_has_ordered_compile_package_and_strict_gates_after_dns(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.SOCKET_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate socket gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-dns-probe", "cargo test -p pythos-user-socket-probe"),
+            (
+                "cargo test -p pythos-user-socket-probe",
+                "cargo test -p pythos-core socket_probe --features socket-api-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --features socket-api-probe",
+                "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+            ),
+            ("python scripts/build-dns-probe.py", "python scripts/build-socket-probe.py"),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+                "python -m py_compile scripts/build-socket-probe.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"socket gate must follow predecessor: {predecessor}",
             )
 
 
