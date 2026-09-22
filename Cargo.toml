@@ -19,6 +19,7 @@ members = [
     "user/probes/udp",
     "user/probes/tcp",
     "user/probes/dns",
+    "user/probes/socket",
 ]
 
 [workspace.package]

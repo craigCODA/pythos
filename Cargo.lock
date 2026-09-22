@@ -124,6 +124,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-socket-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+ "pythos-user-arp-probe",
+ "pythos-user-ipv4-probe",
+ "pythos-user-link-layer-probe",
+ "pythos-user-tcp-probe",
+]
+
+[[package]]
 name = "pythos-user-tcp-probe"
 version = "0.1.0"
 dependencies = [
