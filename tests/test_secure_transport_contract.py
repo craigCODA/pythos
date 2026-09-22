@@ -97,7 +97,8 @@ PYTHOS:CORE:SECURE:TAMPER_REJECTED""",
             "let mut stream = match tls.close()",
             "Ok(stream) => stream",
             "Err((stream, _error)) => stream",
-            "let _ = stream.close_tcp();",
+            "if stream.close_tcp().is_err()",
+            "error(console);",
             "super::success_breakpoint();",
         )
         positions = [source.index(snippet, tamper_marker) for snippet in expected_order]

@@ -79,9 +79,8 @@ git commit -m "docs(net): freeze secure transport proof contract"
 ### Task 2: Implement the finite native TLS consumer
 
 **Files:**
-- Create or modify: `user/probes/secure-transport/src/lib.rs`, `src/main.rs`, and `Cargo.toml`
-- Create: `user/probes/secure-transport/linker.ld`
-- Modify: `core/src/main.rs`, `core/src/secure_transport_probe.rs`, and `core/Cargo.toml`
+- Modify: `user/probes/socket/src/secure.rs`, `src/main.rs`, `Cargo.toml`, and `linker.ld`
+- Modify: `core/src/main.rs`, `core/src/socket_probe.rs`, and `core/Cargo.toml`
 - Modify: `shared/src/secure_transport_markers.rs` and `shared/src/lib.rs` only for private marker literals
 - Test: Rust unit tests in the secure probe and core contract tests
 
@@ -115,18 +114,20 @@ The denied path stops before TCP setup and produces zero frames.
 - [ ] **Step 4: Run focused guest tests**
 
 ```text
-cargo test -p pythos-user-secure-transport-probe
-cargo test -p pythos-core secure_transport_probe --features secure-transport-probe
-cargo test -p pythos-core secure_transport_probe --features secure-transport-denied-probe
-cargo clippy -p pythos-core --target x86_64-unknown-none --features secure-transport-probe -- -D warnings
-cargo clippy -p pythos-core --target x86_64-unknown-none --features secure-transport-denied-probe -- -D warnings
-cargo clippy -p pythos-user-secure-transport-probe --target x86_64-unknown-none -- -D warnings
+cargo test -p pythos-user-socket-probe --features secure-transport
+cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe
+cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe
+cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe
+cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings
+cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings
+cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings
 ```
 
 - [ ] **Step 5: Commit**
 
 ```text
-git add core shared user/probes/secure-transport Cargo.toml Cargo.lock
+git add core shared user/probes/socket Cargo.toml Cargo.lock
 git commit -m "feat(net): add bounded secure transport proof"
 ```
 

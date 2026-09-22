@@ -6,6 +6,7 @@ import subprocess
 import sys
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -159,6 +160,7 @@ class SecureTransportHostTest(unittest.TestCase):
         self.assertIn('"--features"', source)
         self.assertIn('"secure-transport"', source)
         self.assertIn('"--release"', source)
+        self.assertIn('"--locked"', source)
         self.assertIn("verify-user-elf.py", source)
         self.assertIn('"--cfg"', source)
         self.assertIn('"aes_force_soft"', source)
@@ -166,6 +168,18 @@ class SecureTransportHostTest(unittest.TestCase):
         self.assertIn('"release" / "socket-probe"', source)
         self.assertNotIn('"debug" / "socket-probe"', source)
         self.assertIn("secure-transport-probe.elf", source)
+
+    def test_live_secure_profiles_require_exact_frame_counts(self) -> None:
+        valid = SimpleNamespace(tx_frames=[b""] * 11, rx_frames=[b""] * 10)
+        SECURE.assert_secure_frame_counts(valid)
+
+        for tx_count, rx_count in ((10, 10), (11, 9), (12, 10), (11, 11)):
+            with self.subTest(tx_count=tx_count, rx_count=rx_count), self.assertRaises(
+                AssertionError
+            ):
+                SECURE.assert_secure_frame_counts(
+                    SimpleNamespace(tx_frames=[b""] * tx_count, rx_frames=[b""] * rx_count)
+                )
 
     def test_self_test_command_exercises_the_real_harness(self) -> None:
         completed = subprocess.run(

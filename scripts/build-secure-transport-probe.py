@@ -40,6 +40,7 @@ def main() -> int:
     command: list[str | Path] = [
         "cargo",
         "build",
+        "--locked",
         "-p",
         "pythos-user-socket-probe",
         "--target",

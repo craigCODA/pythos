@@ -229,7 +229,9 @@ pub(super) fn start(bootstrap_ptr: u64, console_raw: u64) -> ! {
                     Ok(stream) => stream,
                     Err((stream, _error)) => stream,
                 };
-                let _ = stream.close_tcp();
+                if stream.close_tcp().is_err() {
+                    error(console);
+                }
                 super::success_breakpoint();
             }
         }
@@ -593,15 +595,33 @@ impl TcpStream {
         if peer.sequence != self.peer_sequence {
             return Err(FrameError);
         }
+        let buffered_end = self
+            .receive_start
+            .checked_add(self.receive_len)
+            .ok_or(FrameError)?;
+        if buffered_end > self.receive.len() {
+            return Err(FrameError);
+        }
         if peer.data_len > self.receive.len().saturating_sub(self.receive_len) {
             return Err(FrameError);
         }
-        let end = self.receive_start + self.receive_len + peer.data_len;
+        if peer.data_len > self.receive.len().saturating_sub(buffered_end) {
+            self.receive
+                .copy_within(self.receive_start..buffered_end, 0);
+            self.receive_start = 0;
+        }
+        let append_start = self
+            .receive_start
+            .checked_add(self.receive_len)
+            .ok_or(FrameError)?;
+        let end = append_start.checked_add(peer.data_len).ok_or(FrameError)?;
+        if end > self.receive.len() {
+            return Err(FrameError);
+        }
         // SAFETY: `peer` identifies the serialized segment data produced by
         // the immediately preceding `receive_segment` call.
         let data = unsafe { &*SECURE_SEGMENT_DATA.0.get() };
-        self.receive[self.receive_start + self.receive_len..end]
-            .copy_from_slice(&data[..peer.data_len]);
+        self.receive[append_start..end].copy_from_slice(&data[..peer.data_len]);
         self.receive_len += peer.data_len;
         self.peer_sequence = self
             .peer_sequence
@@ -703,12 +723,53 @@ impl Write for TcpStream {
 
 #[cfg(test)]
 mod tests {
-    use super::{SECURE_REQUEST, SECURE_RESPONSE, SERVER_CERT_DER};
+    use pythos_shared::capability_abi::PackedCapability;
+
+    use super::{
+        ReceivedSegment, SECURE_REQUEST, SECURE_RESPONSE, SECURE_SEGMENT_DATA, SERVER_CERT_DER,
+        STREAM_RX_BYTES, TCP_FLAG_ACK, TcpStream,
+    };
 
     #[test]
     fn finite_secure_profile_is_bounded_and_pinned() {
         assert_eq!(SERVER_CERT_DER.len(), 311);
         assert_eq!(SECURE_REQUEST, b"PYTHOS-SECURE-REQUEST");
         assert_eq!(SECURE_RESPONSE, b"PYTHOS-SECURE-RESPONSE");
+    }
+
+    #[test]
+    fn residual_receive_bytes_are_compacted_before_another_append() {
+        let mut stream = TcpStream::new(PackedCapability::from_raw(1));
+        stream.peer_sequence = 7;
+        stream.receive[STREAM_RX_BYTES - 2..].copy_from_slice(b"ef");
+        stream.receive_start = STREAM_RX_BYTES - 2;
+        stream.receive_len = 2;
+        // SAFETY:
+        // 1. Invariant: this test is the only test that mutates the serialized
+        //    secure segment scratch storage.
+        // 2. Established by: the module has one test for `accept_peer_data`.
+        // 3. Lifetime: the mutable borrow ends before `accept_peer_data` reads it.
+        // 4. Pointer ownership: `SECURE_SEGMENT_DATA` owns the fixed array.
+        // 5. Alignment: `[u8; STREAM_RX_BYTES]` has byte alignment.
+        // 6. Mapped length: the static's complete fixed array is mapped.
+        // 7. Concurrency: this unit test has no concurrent secure consumer.
+        // 8. Violation: concurrent mutation could make this assertion nondeterministic.
+        unsafe {
+            (&mut *SECURE_SEGMENT_DATA.0.get())[..3].copy_from_slice(b"ghi");
+        }
+
+        assert_eq!(
+            stream.accept_peer_data(ReceivedSegment {
+                sequence: 7,
+                acknowledgment: 0,
+                flags: TCP_FLAG_ACK,
+                data_len: 3,
+            }),
+            Ok(())
+        );
+        assert_eq!(stream.receive_start, 0);
+        assert_eq!(stream.receive_len, 5);
+        assert_eq!(&stream.receive[..5], b"efghi");
+        assert_eq!(stream.peer_sequence, 10);
     }
 }

@@ -696,6 +696,18 @@ def assert_denied_acceptance(serial: str, qemu_output: str) -> None:
     _assert_case(serial, qemu_output, DENIED_REQUIRED_MARKERS)
 
 
+def assert_secure_frame_counts(peer: SecurePeer) -> None:
+    tx_count = len(peer.tx_frames)
+    rx_count = len(peer.rx_frames)
+    total_count = tx_count + rx_count
+    if (tx_count, rx_count, total_count) != (11, 10, 21):
+        raise AssertionError(
+            "secure frame count mismatch: "
+            f"expected tx=11 rx=10 total=21, got "
+            f"tx={tx_count} rx={rx_count} total={total_count}"
+        )
+
+
 def assert_peer_exchange(peer: SecurePeer, case: str) -> None:
     if isinstance(peer, DeniedPeer):
         assert_denied_peer(peer)
@@ -704,8 +716,7 @@ def assert_peer_exchange(peer: SecurePeer, case: str) -> None:
         raise AssertionError(f"secure frame peer failed: {peer.error}") from peer.error
     if not peer.connected or not peer.completed:
         raise AssertionError("secure frame peer did not connect and finish cleanly")
-    if not peer.tx_frames or not peer.rx_frames:
-        raise AssertionError("secure frame peer exchanged no Ethernet frames")
+    assert_secure_frame_counts(peer)
     TCP.assert_exact_arp_request(DESCRIBED_DEVICE_MAC, peer.tx_frames[0])
     TCP.assert_exact_arp_reply(DESCRIBED_DEVICE_MAC, peer.rx_frames[0])
     for frame in peer.tx_frames[1:]:

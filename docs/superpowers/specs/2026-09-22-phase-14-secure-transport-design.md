@@ -48,8 +48,12 @@ The acceptance profile is:
 - one client connection and one full 1-RTT handshake;
 - one explicitly authenticated test server using a pinned test identity;
 - one approved TLS 1.3 AEAD suite selected by the backend profile;
-- cryptographically secure randomness for a real deployment backend;
-- deterministic RFC test-vector randomness only in isolated unit/self-tests;
+- cryptographically secure randomness is required for any real deployment
+  backend;
+- deterministic xorshift randomness is permitted only in the finite secure
+  acceptance image and deterministic host/unit/self-tests because Phase 14 has
+  no approved entropy source; this is a protocol-proof limitation and provides
+  no deployment-security claim;
 - one bounded encrypted request and one bounded encrypted response;
 - bounded TCP reassembly that accepts segmentation and coalescing;
 - sequence-derived record nonces and AEAD tag validation performed by the TLS
@@ -186,6 +190,8 @@ Acceptance requires:
 - the tamper QEMU case rejects the altered protected record and releases no
   application bytes;
 - the denied QEMU case has zero frames and no TLS activity;
+- the granted and tamper QEMU cases each exchange exactly 11 guest TX frames,
+  10 host RX frames, and 21 total frames; the denied case remains at zero;
 - all three cases emit exact marker order and one successful terminal outcome;
 - no storage, panic, timeout, transport-error, or extra-frame evidence occurs;
 - default boot, normal-session boot, all accepted earlier networking proofs,

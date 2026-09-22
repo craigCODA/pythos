@@ -29,17 +29,22 @@ Keep the ADR 0029 guarded-stack authority and permission contract:
   inspection.
 
 PythTIG Phase 3 increased each static usable user-stack extent from one page to
-four pages. The later accepted Phase 14 finite TLS proof uses the same guarded
-slot contract with a current static usable extent of 16 pages (64 KiB). The
-16-page extent supersedes the four-page configured headroom while retaining
-the Phase 3 evidence and the Phase 8 guard-page contract. This remains bounded
-headroom for ring-3 acceptance profiles, not a dynamic stack allocator and not
-a new process model.
+four pages. Four pages remain the baseline for default boot, normal-session,
+the secure denied profile, and all other profiles that do not opt into the
+secure transport proof.
+
+The later accepted Phase 14 finite TLS proof selects a feature-specific static
+usable extent of 16 pages (64 KiB) only when `secure-transport-probe` is active.
+The tamper profile inherits that granted feature; the denied profile does not.
+Both sizes retain the same Phase 8 guard-page contract. The larger extent is
+bounded proof headroom, not a new baseline, dynamic stack allocator, or process
+model.
 
 ## Consequences
 
-PythTIG Phase 3 object graphs and the finite Phase 14 TLS proof can run through
-their accepted bounded paths without tripping the guard during normal setup.
+PythTIG Phase 3 object graphs retain the four-page baseline, while the finite
+Phase 14 TLS granted/tamper proof can use its isolated 16-page headroom without
+tripping the guard during certificate processing.
 
 The guard-page behavior remains intact: stack overflow still faults into the
 existing user-fault containment path. No marker strings, syscall numbers,

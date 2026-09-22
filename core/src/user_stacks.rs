@@ -5,11 +5,14 @@ use core::cell::UnsafeCell;
 
 pub const USER_STACK_PAGE_SIZE: usize = 4096;
 pub const USER_STACK_COUNT: usize = 2;
-/// ADR 0067 keeps the ADR 0029 guard-page contract but gives each static
-/// user stack bounded headroom for PythTIG, object-service requests, and the
-/// Phase 14 finite TLS proof's certificate-verification and DER-decoding call
-/// chains.
+/// The opt-in Phase 14 secure-transport granted/tamper profile needs bounded
+/// headroom for certificate-verification and DER-decoding call chains.
+#[cfg(feature = "secure-transport-probe")]
 pub const USER_STACK_USABLE_PAGES: usize = 16;
+/// ADR 0067's baseline remains four guarded usable pages for default,
+/// normal-session, denied, and other non-secure profiles.
+#[cfg(not(feature = "secure-transport-probe"))]
+pub const USER_STACK_USABLE_PAGES: usize = 4;
 pub const USER_STACK_USABLE_BYTES: usize = USER_STACK_USABLE_PAGES * USER_STACK_PAGE_SIZE;
 const USER_STACK_SLOT_PAGES: usize = 1 + USER_STACK_USABLE_PAGES;
 const USER_STACK_SLOT_SIZE: usize = USER_STACK_SLOT_PAGES * USER_STACK_PAGE_SIZE;
@@ -137,5 +140,17 @@ mod tests {
         assert_eq!(proof_stack_region(), (first.stack_start, first.stack_len));
         assert!(proof_stack_top() < first.stack_start + first.stack_len);
         assert!(proof_stack_top() >= first.stack_start);
+    }
+
+    #[cfg(not(feature = "secure-transport-probe"))]
+    #[test]
+    fn baseline_profiles_keep_four_usable_stack_pages() {
+        assert_eq!(USER_STACK_USABLE_PAGES, 4);
+    }
+
+    #[cfg(feature = "secure-transport-probe")]
+    #[test]
+    fn secure_transport_profile_uses_sixteen_usable_stack_pages() {
+        assert_eq!(USER_STACK_USABLE_PAGES, 16);
     }
 }
