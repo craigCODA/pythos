@@ -468,6 +468,8 @@ mod session_runtime_probe;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
+#[cfg(test)]
+mod socket_policy;
 mod software_renderer;
 mod storage_adversarial;
 mod storage_allocator;

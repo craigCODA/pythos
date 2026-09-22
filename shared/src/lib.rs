@@ -31,6 +31,7 @@ pub mod session_runtime_lifecycle;
 pub mod session_viewing_abi;
 pub mod session_viewing_result;
 pub mod sha256;
+pub mod socket_markers;
 pub mod task_abi;
 pub mod tcp_markers;
 pub mod udp_markers;
