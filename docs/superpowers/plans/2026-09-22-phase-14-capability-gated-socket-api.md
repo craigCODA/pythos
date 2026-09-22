@@ -31,9 +31,11 @@ it until both denied and granted cases, live evidence, and broad review pass.
 ### Task 1 — policy identity and private socket contract
 
 Add shared identity/markers and private policy tests for authority-before-open,
-exact endpoint matching, one generation-checked handle, bounded operations, and
-denied/granted marker order. Do not add a public ABI, syscall, or kernel socket
-object.
+exact endpoint matching, operational-`NetworkPort` admission, one
+generation-checked handle, bounded operations, and denied/granted marker order.
+The denied case ends with `DENIED_TEARDOWN_COMPLETE`; it does not claim a
+capability revocation when no capability was issued. Do not add a public ABI,
+syscall, or kernel socket object.
 
 ### Task 2 — finite socket service/consumer
 

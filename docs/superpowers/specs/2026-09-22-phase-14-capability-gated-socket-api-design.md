@@ -93,7 +93,8 @@ The private proof contract is deliberately finite:
 
 ```text
 OPEN(endpoint, authority)
-  valid authority + exact endpoint -> handle { slot: 0, generation: 1 }
+  valid authority + exact endpoint + NetworkPort Operational
+    -> handle { slot: 0, generation: 1 }
   anything else -> DENIED; no allocation; no frame
 
 SEND(handle, authority, b"PYTCPQ")
@@ -143,7 +144,7 @@ case emits:
 ```text
 PYTHOS:CORE:SOCKET:DENIED_BOOTSTRAPPED
 PYTHOS:CORE:SOCKET:OPEN_WITHOUT_CAP_DENIED
-PYTHOS:CORE:SOCKET:DENIED_TEARDOWN_REVOKED
+PYTHOS:CORE:SOCKET:DENIED_TEARDOWN_COMPLETE
 PYTHOS:CORE:SOCKET_DENIED_READY
 ```
 
