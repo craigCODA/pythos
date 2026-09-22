@@ -54,6 +54,10 @@ name = "pythos-user-dns-probe"
 version = "0.1.0"
 dependencies = [
  "pythos-shared",
+ "pythos-user-arp-probe",
+ "pythos-user-ipv4-probe",
+ "pythos-user-link-layer-probe",
+ "pythos-user-udp-probe",
 ]
 
 [[package]]
