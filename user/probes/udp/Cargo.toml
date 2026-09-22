@@ -6,5 +6,11 @@ license.workspace = true
 publish.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+pythos-shared = { path = "../../../shared" }
+pythos-user-link-layer-probe = { path = "../link-layer" }
+pythos-user-arp-probe = { path = "../arp" }
+pythos-user-ipv4-probe = { path = "../ipv4" }
+
 [lib]
 path = "src/lib.rs"
