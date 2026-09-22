@@ -91,7 +91,8 @@ transport-error, duplicate/reordered marker, and unexpected frame evidence.
 
 Task 4 was initially implemented at commit `cbd5ed4` (`test(net): prove
 capability-gated socket cases`) and its denied-transport oracle correction was
-committed at `fdfd41f` (`fix(net): require denied transport EOF`). The focused
+committed at `fdfd41f` (`fix(net): require denied transport EOF`) and finalized
+at `363e138` (`fix(net): scope denied transport reset handling`). The focused
 evidence commands and results were:
 
 - `py -3 -m py_compile scripts/test-socket.py tests/test_socket.py` passed;

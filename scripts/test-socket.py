@@ -7,6 +7,7 @@ import importlib.util
 import select
 import socket
 import sys
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -80,6 +81,7 @@ finalize_com2_transcript = TCP.finalize_com2_transcript
 assert_image_preflight = TCP.assert_image_preflight
 run = TCP.run
 
+
 SERIAL_LOG = TARGET / "socket-granted-com1.log"
 ESP_IMAGE = TARGET / "socket-granted-com1-esp.img"
 SUCCESS_MARKER = GRANTED_SUCCESS_MARKER
@@ -114,8 +116,6 @@ class DeniedPeer:
     def start(self) -> None:
         if self._thread is not None:
             raise RuntimeError("denied peer is already started")
-        import threading
-
         self._thread = threading.Thread(target=self._serve_once, daemon=True)
         self._thread.start()
 
