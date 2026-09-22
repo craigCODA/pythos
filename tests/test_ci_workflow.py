@@ -22,6 +22,95 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-normal-session.py",
         "python scripts/test-normal-session.py --fault",
     )
+    LINK_LAYER_MILESTONE_ONLY_COMMANDS = (
+        "python scripts/test-link-layer.py --self-test",
+        "python scripts/test-link-layer.py",
+    )
+    ARP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-arp-probe",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py",
+        "python -m unittest tests.test_arp",
+        "python scripts/test-arp.py --self-test",
+        "python scripts/test-arp.py",
+    )
+    IPV4_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-ipv4-probe",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+        "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+        "python -m unittest tests.test_ipv4",
+        "python scripts/test-ipv4.py --self-test",
+        "python scripts/test-ipv4.py",
+    )
+    ICMP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-icmp-probe",
+        "python scripts/build-icmp-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py",
+        "python -m unittest tests.test_icmp",
+        "python scripts/test-icmp.py --self-test",
+        "python scripts/test-icmp.py",
+    )
+    UDP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-udp-probe",
+        "python scripts/build-udp-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features udp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-udp-probe.py",
+    )
+    TCP_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-tcp-probe",
+        "python scripts/build-tcp-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings",
+        "cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+        "python -m unittest tests.test_tcp",
+        "python scripts/test-tcp.py --self-test",
+        "python scripts/test-tcp.py",
+    )
+    DNS_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-dns-probe",
+        "cargo test -p pythos-core dns_probe --features dns-probe",
+        "python scripts/build-dns-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
+        "cargo clippy -p pythos-user-dns-probe --target x86_64-unknown-none -- -D warnings",
+        "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+        "python -m unittest tests.test_dns",
+        "python scripts/test-dns.py --self-test",
+        "python scripts/test-dns.py",
+    )
+    SOCKET_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-socket-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
+        "python scripts/build-socket-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
+        "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+        "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+        "python -m unittest tests.test_socket",
+        "python scripts/test-socket.py --self-test",
+        "python scripts/test-socket.py",
+    )
+    SECURE_TRANSPORT_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-socket-probe --features secure-transport",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe",
+        "python scripts/build-secure-transport-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+        "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings",
+        "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+        "python -m unittest tests.test_secure_transport_contract",
+        "python -m unittest tests.test_secure_transport",
+        "python scripts/test-secure-transport.py --self-test",
+        "python scripts/test-secure-transport.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -135,6 +224,7 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo test -p pythc",
             "cargo test -p pythos-user-pyth-runtime",
             "cargo test -p pythos-user-session-input-probe",
+            "cargo test -p pythos-user-link-layer-probe",
             "python scripts/test-pyth-tig-format.py",
             "cargo run -p pythc -- build programs/session-manager/main.pyth -o target/pyth-tig/session-manager.tig",
             "cargo run -p pyth-tig-tool -- verify target/pyth-tig/session-manager.tig",
@@ -144,9 +234,14 @@ class CiWorkflowTest(unittest.TestCase):
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify -- -D warnings",
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings",
             "cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings",
+            "cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings",
+            "cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings",
             "cargo clippy -p pythos-boot --target x86_64-unknown-uefi -- -D warnings",
             "scripts/build-session-input-probe.py",
             "scripts/test-session-input-bridge-probe.py",
+            "python -m py_compile scripts/test-link-layer.py",
+            "python scripts/test-link-layer.py --self-test",
+            "python scripts/test-link-layer.py",
             "python scripts/test-session-input-bridge-probe.py --self-test",
             "python -m unittest tests.test_iso_image tests.test_boot_marker_contract tests.test_qemu_exit tests.test_qemu_boot_media tests.test_ci_workflow tests.test_build_orchestration tests.test_verify_user_elf tests.test_interface_compatibility_freeze",
             "python scripts/test-pyth-graph-runtime.py",
@@ -281,6 +376,421 @@ class CiWorkflowTest(unittest.TestCase):
             workflow,
             "verify excludes the real normal kernel and cannot be presented as its strict gate",
         )
+
+    def test_link_layer_has_host_strict_build_and_sequential_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.LINK_LAYER_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate link-layer gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py --self-test"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer oracle self-test must precede its live QEMU proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-network-port.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the NetworkPort proof",
+        )
+
+    def test_arp_has_host_strict_build_and_sequential_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.ARP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate ARP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        self.assertIn("cargo test -p pythos-user-session-runtime", commands)
+        self.assertIn(
+            "cargo test -p pythos-user-session-runtime --features normal-session",
+            commands,
+        )
+        self.assertLess(
+            commands.index("cargo test -p pythos-user-link-layer-probe"),
+            commands.index("cargo test -p pythos-user-arp-probe"),
+            "ARP probe unit coverage must follow the link-layer probe",
+        )
+        self.assertLess(
+            commands.index("cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings"),
+            commands.index("cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings"),
+            "ARP strict coverage must follow link-layer strict coverage",
+        )
+        self.assertLess(
+            commands.index("cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings"),
+            commands.index("cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings"),
+            "ARP consumer strict coverage must follow the ARP core profile",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py"),
+            commands.index("python scripts/test-arp.py --self-test"),
+            "ARP oracle self-test must follow the link-layer live proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-arp.py --self-test"),
+            commands.index("python scripts/test-arp.py"),
+            "ARP oracle self-test must precede its live QEMU proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-virtio-net.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the raw Virtio proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-network-port.py"),
+            commands.index("python scripts/test-link-layer.py"),
+            "link-layer live proof must follow the NetworkPort proof",
+        )
+        self.assertLess(
+            commands.index("python scripts/test-link-layer.py"),
+            commands.index("python scripts/test-arp.py"),
+            "ARP live proof must follow the link-layer proof",
+        )
+
+    def test_ipv4_has_host_strict_build_and_sequential_future_live_gates(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.IPV4_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate IPv4 gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-arp-probe", "cargo test -p pythos-user-ipv4-probe"),
+            (
+                "cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings",
+                "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py",
+                "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+            ),
+            ("python -m unittest tests.test_arp", "python -m unittest tests.test_ipv4"),
+            ("python scripts/test-arp.py", "python scripts/test-ipv4.py --self-test"),
+            ("python scripts/test-ipv4.py --self-test", "python scripts/test-ipv4.py"),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"IPv4 gate must follow predecessor: {predecessor}",
+            )
+
+    def test_icmp_has_ordered_unit_build_strict_and_live_gates_after_ipv4(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.ICMP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate ICMP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-ipv4-probe", "cargo test -p pythos-user-icmp-probe"),
+            ("cargo test -p pythos-user-icmp-probe", "python scripts/build-icmp-probe.py"),
+            (
+                "cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings",
+                "cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py",
+                "python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py",
+            ),
+            ("python -m unittest tests.test_ipv4", "python -m unittest tests.test_icmp"),
+            ("python scripts/test-ipv4.py", "python scripts/test-icmp.py --self-test"),
+            ("python scripts/test-icmp.py --self-test", "python scripts/test-icmp.py"),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"ICMP gate must follow predecessor: {predecessor}",
+            )
+
+    def test_udp_has_ordered_unit_build_and_strict_gates_after_icmp(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.UDP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate UDP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-icmp-probe", "cargo test -p pythos-user-udp-probe"),
+            ("python scripts/build-icmp-probe.py", "python scripts/build-udp-probe.py"),
+            (
+                "cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features udp-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features udp-probe -- -D warnings",
+                "cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py",
+                "python -m py_compile scripts/build-udp-probe.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"UDP gate must follow predecessor: {predecessor}",
+            )
+
+    def test_tcp_has_ordered_unit_build_and_strict_gates_after_udp(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.TCP_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate TCP gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-udp-probe", "cargo test -p pythos-user-tcp-probe"),
+            ("cargo test -p pythos-user-tcp-probe", "python scripts/build-tcp-probe.py"),
+            ("python scripts/build-udp-probe.py", "python scripts/build-tcp-probe.py"),
+            (
+                "cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings",
+                "cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-udp-probe.py",
+                "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+            ),
+            (
+                "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+                "python -m unittest tests.test_tcp",
+            ),
+            (
+                "python -m unittest tests.test_tcp",
+                "python scripts/test-tcp.py --self-test",
+            ),
+            (
+                "python scripts/test-tcp.py --self-test",
+                "python scripts/test-tcp.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"TCP gate must follow predecessor: {predecessor}",
+            )
+
+    def test_dns_has_ordered_compile_package_clippy_and_self_test_gates_after_tcp(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.DNS_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate DNS gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-tcp-probe", "cargo test -p pythos-user-dns-probe"),
+            ("cargo test -p pythos-user-dns-probe", "cargo test -p pythos-core dns_probe --features dns-probe"),
+            ("python scripts/build-tcp-probe.py", "python scripts/build-dns-probe.py"),
+            ("python scripts/test-tcp.py", "python scripts/test-dns.py --self-test"),
+            (
+                "cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
+                "cargo clippy -p pythos-user-dns-probe --target x86_64-unknown-none -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+            ),
+            (
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+                "python -m unittest tests.test_dns",
+            ),
+            (
+                "python -m unittest tests.test_dns",
+                "python scripts/test-dns.py --self-test",
+            ),
+            (
+                "python scripts/test-dns.py --self-test",
+                "python scripts/test-dns.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"DNS gate must follow predecessor: {predecessor}",
+            )
+
+    def test_socket_has_ordered_compile_package_strict_and_live_gates_after_dns(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.SOCKET_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(commands.count(command), 1, f"missing or duplicate socket gate: {command}")
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            ("cargo test -p pythos-user-dns-probe", "cargo test -p pythos-user-socket-probe"),
+            (
+                "cargo test -p pythos-user-socket-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
+            ),
+            ("python scripts/build-dns-probe.py", "python scripts/build-socket-probe.py"),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+            ),
+            (
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+                "python -m unittest tests.test_socket",
+            ),
+            (
+                "python scripts/test-dns.py",
+                "python scripts/test-socket.py --self-test",
+            ),
+            (
+                "python -m unittest tests.test_socket",
+                "python scripts/test-socket.py --self-test",
+            ),
+            (
+                "python scripts/test-socket.py --self-test",
+                "python scripts/test-socket.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"socket gate must follow predecessor: {predecessor}",
+            )
+
+    def test_secure_transport_has_ordered_milestone_only_gates_after_socket(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.SECURE_TRANSPORT_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(
+                commands.count(command),
+                1,
+                f"missing or duplicate secure-transport gate: {command}",
+            )
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
+                "cargo test -p pythos-user-socket-probe --features secure-transport",
+            ),
+            (
+                "cargo test -p pythos-user-socket-probe --features secure-transport",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe",
+            ),
+            (
+                "python scripts/build-socket-probe.py",
+                "python scripts/build-secure-transport-probe.py",
+            ),
+            (
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+                "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+            ),
+            (
+                "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+                "python -m unittest tests.test_secure_transport_contract",
+            ),
+            (
+                "python -m unittest tests.test_secure_transport_contract",
+                "python -m unittest tests.test_secure_transport",
+            ),
+            (
+                "python scripts/test-socket.py",
+                "python scripts/test-secure-transport.py --self-test",
+            ),
+            (
+                "python scripts/test-secure-transport.py --self-test",
+                "python scripts/test-secure-transport.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"secure-transport gate must follow predecessor: {predecessor}",
+            )
+
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")

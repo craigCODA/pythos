@@ -18,11 +18,49 @@ pyth-tig-session-manager-fault-test = []
 verify = []
 # Opt-in only: the probe remains unavailable in default and phase13 builds.
 session-input-bridge-probe = ["verify"]
+# Opt-in only: launch the bounded native NetworkPort consumer through the
+# capability bootstrap ABI. Default and normal-session boots receive no port.
+network-port-probe = ["verify"]
+# Opt-in only: launch the bounded native link-layer consumer through the
+# existing NetworkPort capability bootstrap ABI.
+link-layer-probe = ["verify"]
+# Opt-in only: launch the finite native ARP consumer through the existing
+# NetworkPort capability bootstrap ABI.
+arp-probe = ["verify"]
+# Opt-in only: launch the finite native IPv4 consumer through the existing
+# NetworkPort capability bootstrap ABI.
+ipv4-probe = ["verify"]
+# Opt-in only: launch the finite native ICMP Echo consumer through the existing
+# NetworkPort capability bootstrap ABI.
+icmp-probe = ["verify"]
+# Opt-in only: launch the finite native UDP datagram consumer through the
+# existing NetworkPort capability bootstrap ABI.
+udp-probe = ["verify"]
+# Opt-in only: launch the finite native TCP stream consumer through the
+# existing NetworkPort capability bootstrap ABI.
+tcp-probe = ["verify"]
+# Opt-in only: launch the finite native DNS query consumer through the
+# existing NetworkPort capability bootstrap ABI.
+dns-probe = ["verify"]
+# Opt-in granted finite capability-gated socket proof above NetworkPort/TCP.
+socket-api-probe = ["verify"]
+# Opt-in denied companion case: valid bootstrap, no NetworkPort authority.
+socket-api-denied-probe = ["verify"]
+# Opt-in finite TLS 1.3 secure-transport proof above the private socket path.
+secure-transport-probe = ["verify", "socket-api-probe"]
+# Opt-in tamper-only secure-transport proof; inherits the granted secure/socket path.
+secure-transport-tamper-probe = ["secure-transport-probe"]
+# Opt-in denied companion case for the secure-transport proof.
+secure-transport-denied-probe = ["verify", "socket-api-denied-probe"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]
 session-viewing-probe = ["session-runtime-probe"]
 evidence-terminal = ["verify"]
+# Opt-in legacy virtio-net TX/RX diagnostic. It attaches no non-boot virtio
+# data disk; the boot ESP remains snapshot-backed IDE media. The default
+# normal-session boot path is unchanged.
+virtio-net-probe = ["verify"]
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []

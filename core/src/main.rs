@@ -1,10 +1,29 @@
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(not(test), no_std)]
-// The hardware-probe feature intentionally exits after early PCI inventory.
-// Most of PythCore remains in the crate but is unreachable in that diagnostic
-// image, so suppress unused warnings only for that non-test build.
+// Early-exit probe features intentionally leave most of PythCore unreachable.
+// Suppress unused warnings only in their non-test diagnostic images.
 #![cfg_attr(
-    all(not(test), any(feature = "hardware-probe", feature = "usb-xhci-probe")),
+    all(
+        not(test),
+        any(
+            feature = "hardware-probe",
+            feature = "usb-xhci-probe",
+            feature = "virtio-net-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe",
+            feature = "secure-transport-probe",
+            feature = "secure-transport-tamper-probe",
+            feature = "secure-transport-denied-probe"
+        )
+    ),
     allow(unused)
 )]
 // The session-input bridge deliberately terminates once its bounded ring-3
@@ -22,6 +41,46 @@
 
 #[cfg(all(feature = "verify", feature = "hardware-probe"))]
 compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
+#[cfg(all(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
+compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mutually exclusive");
+#[cfg(all(
+    feature = "secure-transport-probe",
+    feature = "secure-transport-denied-probe"
+))]
+compile_error!(
+    "features `secure-transport-probe` and `secure-transport-denied-probe` are mutually exclusive"
+);
+#[cfg(all(
+    any(
+        feature = "socket-api-probe",
+        feature = "socket-api-denied-probe",
+        feature = "secure-transport-probe",
+        feature = "secure-transport-tamper-probe",
+        feature = "secure-transport-denied-probe"
+    ),
+    any(
+        feature = "normal-session",
+        feature = "phase13-package-test",
+        feature = "session-input-bridge-probe",
+        feature = "session-runtime-probe",
+        feature = "evidence-terminal",
+        feature = "virtio-net-probe",
+        feature = "network-port-probe",
+        feature = "link-layer-probe",
+        feature = "arp-probe",
+        feature = "ipv4-probe",
+        feature = "icmp-probe",
+        feature = "udp-probe",
+        feature = "tcp-probe",
+        feature = "dns-probe",
+        feature = "physical-wake-diagnostic",
+        feature = "physical-input-event-diagnostic",
+        feature = "physical-keyboard-console"
+    )
+))]
+compile_error!(
+    "socket API proof features are mutually exclusive with normal-session and existing proof profiles"
+);
 #[cfg(all(feature = "verify", feature = "usb-xhci-probe"))]
 compile_error!("features `verify` and `usb-xhci-probe` are mutually exclusive");
 #[cfg(all(feature = "hardware-probe", feature = "usb-xhci-probe"))]
@@ -72,6 +131,168 @@ compile_error!("features `session-runtime-probe` and `evidence-terminal` are mut
 compile_error!("features `session-runtime-probe` and `hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "session-runtime-probe", feature = "usb-xhci-probe"))]
 compile_error!("features `session-runtime-probe` and USB xHCI diagnostics are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "phase13-package-test"))]
+compile_error!("features `virtio-net-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `virtio-net-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "virtio-net-probe", feature = "session-runtime-probe"))]
+compile_error!("features `virtio-net-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "virtio-net-probe", feature = "evidence-terminal"))]
+compile_error!("features `virtio-net-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "phase13-package-test"))]
+compile_error!("features `network-port-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `network-port-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "network-port-probe", feature = "session-runtime-probe"))]
+compile_error!("features `network-port-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "evidence-terminal"))]
+compile_error!("features `network-port-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "network-port-probe", feature = "virtio-net-probe"))]
+compile_error!("features `network-port-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "network-port-probe"))]
+compile_error!("features `link-layer-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "virtio-net-probe"))]
+compile_error!("features `link-layer-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "session-input-bridge-probe"))]
+compile_error!(
+    "features `link-layer-probe` and `session-input-bridge-probe` are mutually exclusive"
+);
+#[cfg(all(feature = "link-layer-probe", feature = "session-runtime-probe"))]
+compile_error!("features `link-layer-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "phase13-package-test"))]
+compile_error!("features `link-layer-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "link-layer-probe", feature = "evidence-terminal"))]
+compile_error!("features `link-layer-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "phase13-package-test"))]
+compile_error!("features `arp-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `arp-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "session-runtime-probe"))]
+compile_error!("features `arp-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "evidence-terminal"))]
+compile_error!("features `arp-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "virtio-net-probe"))]
+compile_error!("features `arp-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "network-port-probe"))]
+compile_error!("features `arp-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "arp-probe", feature = "link-layer-probe"))]
+compile_error!("features `arp-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "phase13-package-test"))]
+compile_error!("features `ipv4-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `ipv4-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "session-runtime-probe"))]
+compile_error!("features `ipv4-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "evidence-terminal"))]
+compile_error!("features `ipv4-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "virtio-net-probe"))]
+compile_error!("features `ipv4-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "network-port-probe"))]
+compile_error!("features `ipv4-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "link-layer-probe"))]
+compile_error!("features `ipv4-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "ipv4-probe", feature = "arp-probe"))]
+compile_error!("features `ipv4-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "phase13-package-test"))]
+compile_error!("features `icmp-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `icmp-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "session-runtime-probe"))]
+compile_error!("features `icmp-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "evidence-terminal"))]
+compile_error!("features `icmp-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "virtio-net-probe"))]
+compile_error!("features `icmp-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "network-port-probe"))]
+compile_error!("features `icmp-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "link-layer-probe"))]
+compile_error!("features `icmp-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "arp-probe"))]
+compile_error!("features `icmp-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "icmp-probe", feature = "ipv4-probe"))]
+compile_error!("features `icmp-probe` and `ipv4-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "phase13-package-test"))]
+compile_error!("features `udp-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `udp-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "session-runtime-probe"))]
+compile_error!("features `udp-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "evidence-terminal"))]
+compile_error!("features `udp-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "virtio-net-probe"))]
+compile_error!("features `udp-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "network-port-probe"))]
+compile_error!("features `udp-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "link-layer-probe"))]
+compile_error!("features `udp-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "arp-probe"))]
+compile_error!("features `udp-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "ipv4-probe"))]
+compile_error!("features `udp-probe` and `ipv4-probe` are mutually exclusive");
+#[cfg(all(feature = "udp-probe", feature = "icmp-probe"))]
+compile_error!("features `udp-probe` and `icmp-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "phase13-package-test"))]
+compile_error!("features `tcp-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `tcp-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "session-runtime-probe"))]
+compile_error!("features `tcp-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "evidence-terminal"))]
+compile_error!("features `tcp-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "virtio-net-probe"))]
+compile_error!("features `tcp-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "network-port-probe"))]
+compile_error!("features `tcp-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "link-layer-probe"))]
+compile_error!("features `tcp-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "arp-probe"))]
+compile_error!("features `tcp-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "ipv4-probe"))]
+compile_error!("features `tcp-probe` and `ipv4-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "icmp-probe"))]
+compile_error!("features `tcp-probe` and `icmp-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "udp-probe"))]
+compile_error!("features `tcp-probe` and `udp-probe` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "physical-wake-diagnostic"))]
+compile_error!("features `tcp-probe` and `physical-wake-diagnostic` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "physical-input-event-diagnostic"))]
+compile_error!("features `tcp-probe` and `physical-input-event-diagnostic` are mutually exclusive");
+#[cfg(all(feature = "tcp-probe", feature = "physical-keyboard-console"))]
+compile_error!("features `tcp-probe` and `physical-keyboard-console` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "phase13-package-test"))]
+compile_error!("features `dns-probe` and `phase13-package-test` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "session-input-bridge-probe"))]
+compile_error!("features `dns-probe` and `session-input-bridge-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "session-runtime-probe"))]
+compile_error!("features `dns-probe` and `session-runtime-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "evidence-terminal"))]
+compile_error!("features `dns-probe` and `evidence-terminal` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "virtio-net-probe"))]
+compile_error!("features `dns-probe` and `virtio-net-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "network-port-probe"))]
+compile_error!("features `dns-probe` and `network-port-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "link-layer-probe"))]
+compile_error!("features `dns-probe` and `link-layer-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "arp-probe"))]
+compile_error!("features `dns-probe` and `arp-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "ipv4-probe"))]
+compile_error!("features `dns-probe` and `ipv4-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "icmp-probe"))]
+compile_error!("features `dns-probe` and `icmp-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "udp-probe"))]
+compile_error!("features `dns-probe` and `udp-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "tcp-probe"))]
+compile_error!("features `dns-probe` and `tcp-probe` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "physical-wake-diagnostic"))]
+compile_error!("features `dns-probe` and `physical-wake-diagnostic` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "physical-input-event-diagnostic"))]
+compile_error!("features `dns-probe` and `physical-input-event-diagnostic` are mutually exclusive");
+#[cfg(all(feature = "dns-probe", feature = "physical-keyboard-console"))]
+compile_error!("features `dns-probe` and `physical-keyboard-console` are mutually exclusive");
 #[cfg(all(
     feature = "session-runtime-probe",
     any(
@@ -101,6 +322,8 @@ compile_error!("feature `physical-input-event-diagnostic` requires `verify`");
 compile_error!("feature `normal-boot-diagnostic` requires normal boot");
 
 mod architecture;
+#[cfg(any(test, feature = "arp-probe"))]
+mod arp_probe;
 mod audio;
 mod audit;
 mod block_device;
@@ -111,6 +334,8 @@ mod capabilities;
 mod cinematic_boot;
 mod compositor;
 mod context_switch;
+#[cfg(any(test, feature = "dns-probe"))]
+mod dns_probe;
 mod dynamic_capabilities;
 mod dynamic_object_store;
 #[cfg(feature = "evidence-terminal")]
@@ -126,13 +351,51 @@ mod general_storage_persistence;
 mod hardware_probe_boot;
 #[cfg(any(test, feature = "hardware-probe"))]
 mod hardware_probe_screen;
+#[cfg(any(test, feature = "icmp-probe"))]
+mod icmp_probe;
 mod input_drivers;
 mod input_events;
 mod interpreter;
 mod ipc_channels;
+#[cfg(any(test, feature = "ipv4-probe"))]
+mod ipv4_probe;
 mod kernel_stacks;
 mod launcher_screen;
+#[cfg(any(test, feature = "link-layer-probe"))]
+mod link_layer_probe;
 mod memory;
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe",
+    feature = "arp-probe",
+    feature = "ipv4-probe",
+    feature = "icmp-probe",
+    feature = "udp-probe",
+    feature = "tcp-probe",
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
+))]
+mod network_port;
+#[cfg(any(test, feature = "network-port-probe"))]
+mod network_port_probe;
+#[cfg(any(
+    feature = "network-port-probe",
+    feature = "link-layer-probe",
+    feature = "arp-probe",
+    feature = "ipv4-probe",
+    feature = "icmp-probe",
+    all(not(test), feature = "udp-probe"),
+    all(not(test), feature = "tcp-probe"),
+    all(not(test), feature = "dns-probe"),
+    all(
+        not(test),
+        any(feature = "socket-api-probe", feature = "socket-api-denied-probe")
+    )
+))]
+mod network_port_probe_support;
 #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
 mod normal_boot;
 #[cfg(any(
@@ -256,6 +519,14 @@ mod session_runtime_probe;
 mod shared_memory;
 mod shell_apps;
 mod shell_objects;
+#[cfg(test)]
+mod socket_policy;
+#[cfg(any(
+    test,
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
+))]
+mod socket_probe;
 mod software_renderer;
 mod storage_adversarial;
 mod storage_allocator;
@@ -273,7 +544,11 @@ mod task_context;
 #[cfg(any(test, all(not(test), not(feature = "verify"))))]
 mod task_service;
 mod tasks;
+#[cfg(any(test, feature = "tcp-probe"))]
+mod tcp_probe;
 mod typed_object_format;
+#[cfg(any(test, feature = "udp-probe"))]
+mod udp_probe;
 #[cfg(any(test, feature = "usb-xhci-command-probe"))]
 mod usb_xhci_driver;
 #[cfg(any(test, feature = "usb-xhci-probe"))]
@@ -296,6 +571,21 @@ mod value_validation;
 mod viewing;
 #[cfg(any(test, feature = "viewing-input-probe"))]
 mod viewing_input_probe;
+#[cfg(any(
+    test,
+    feature = "virtio-net-probe",
+    feature = "network-port-probe",
+    feature = "link-layer-probe",
+    feature = "arp-probe",
+    feature = "ipv4-probe",
+    feature = "icmp-probe",
+    feature = "udp-probe",
+    feature = "tcp-probe",
+    feature = "dns-probe",
+    feature = "socket-api-probe",
+    feature = "socket-api-denied-probe"
+))]
+mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
@@ -415,27 +705,67 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         // ADR 0048: discover the HDA controller now (PCI config I/O works before
         // the VM switch) so its MMIO can be mapped into the kernel address space.
         let hda_controller = audio::probe_hda();
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         let hda_mmio =
             hda_controller.map(|c| (c.mmio_base, audio::HDA_MMIO_VIRT, audio::HDA_MMIO_LEN));
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         // ADR 0054: discover an AHCI controller before the VM switch for the
         // same reason; the polling driver uses a fixed kernel virtual window.
         let ahci_controller = block_device::probe_ahci();
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         let ahci_mmio = ahci_controller.map(|c| {
             (
@@ -447,7 +777,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe",
+                feature = "arp-probe",
+                feature = "ipv4-probe",
+                feature = "icmp-probe",
+                feature = "udp-probe",
+                feature = "tcp-probe",
+                feature = "dns-probe",
+                feature = "socket-api-probe",
+                feature = "socket-api-denied-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -462,7 +802,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe",
+                feature = "arp-probe",
+                feature = "ipv4-probe",
+                feature = "icmp-probe",
+                feature = "udp-probe",
+                feature = "tcp-probe",
+                feature = "dns-probe",
+                feature = "socket-api-probe",
+                feature = "socket-api-denied-probe"
             )),
             feature = "sdhci-emmc-backend"
         ))]
@@ -476,7 +826,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(all(
             not(any(
                 feature = "session-input-bridge-probe",
-                feature = "session-runtime-probe"
+                feature = "session-runtime-probe",
+                feature = "network-port-probe",
+                feature = "link-layer-probe",
+                feature = "arp-probe",
+                feature = "ipv4-probe",
+                feature = "icmp-probe",
+                feature = "udp-probe",
+                feature = "tcp-probe",
+                feature = "dns-probe",
+                feature = "socket-api-probe",
+                feature = "socket-api-denied-probe"
             )),
             not(feature = "sdhci-emmc-backend")
         ))]
@@ -484,7 +844,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
 
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         let kernel_address_space_options = {
             let mut options = memory::r#virtual::KernelAddressSpaceBuildOptions::new();
@@ -512,6 +882,114 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
         };
+        #[cfg(feature = "network-port-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            network_port_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "link-layer-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            link_layer_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "arp-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            arp_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "ipv4-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            ipv4_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "icmp-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            icmp_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "udp-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            udp_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "tcp-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            tcp_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(feature = "dns-probe")]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            dns_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
+        #[cfg(any(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
+        let address_space = match memory::r#virtual::KernelAddressSpace::build(
+            &mut physical_memory,
+            boot_info,
+            socket_probe::minimal_kernel_address_space_options(),
+        ) {
+            Ok(address_space) => address_space,
+            Err(_) => {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+        };
         #[cfg(feature = "session-runtime-probe")]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -526,7 +1004,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         };
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "network-port-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         let address_space = match memory::r#virtual::KernelAddressSpace::build(
             &mut physical_memory,
@@ -547,6 +1035,60 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         #[cfg(feature = "session-runtime-probe")]
         if session_runtime_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err()
         {
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "network-port-probe")]
+        if network_port_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "link-layer-probe")]
+        if link_layer_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "arp-probe")]
+        if arp_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:ARP:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "ipv4-probe")]
+        if ipv4_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:IPV4:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "icmp-probe")]
+        if icmp_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:ICMP:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "udp-probe")]
+        if udp_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:UDP:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "tcp-probe")]
+        if tcp_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:TCP:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(feature = "dns-probe")]
+        if dns_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:DNS:ERROR:PREPARE");
+            serial::write_line("PYTHOS:PANIC");
+            qemu_exit::panic();
+        }
+        #[cfg(any(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
+        if socket_probe::prepare(boot_info, &mut physical_memory, &address_space).is_err() {
+            serial::write_line("PYTHOS:CORE:SOCKET:ERROR:PREPARE");
             serial::write_line("PYTHOS:PANIC");
             qemu_exit::panic();
         }
@@ -633,9 +1175,243 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             }
             qemu_exit::success();
         }
+        #[cfg(feature = "network-port-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if network_port_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:NETWORK_PORT:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "link-layer-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if link_layer_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:LINK_LAYER:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "arp-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:ARP:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if arp_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:ARP:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "ipv4-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:IPV4:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if ipv4_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:IPV4:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "icmp-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:ICMP:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if icmp_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:ICMP:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "udp-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:UDP:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if udp_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:UDP:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "tcp-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:TCP:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if tcp_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:TCP:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(feature = "dns-probe")]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:DNS:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if dns_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:DNS:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
+        #[cfg(any(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
+        {
+            unsafe {
+                address_space.activate();
+            }
+            if address_space.validate_active(boot_info).is_err()
+                || memory::r#virtual::prove_old_identity_map_removed().is_err()
+                || memory::r#virtual::prove_syscall_stack_guard_pages_unmapped().is_err()
+            {
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            syscall::initialize();
+            if user_stacks::initialize().is_err() {
+                serial::write_line("PYTHOS:CORE:SOCKET:ERROR:STACKS");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            if socket_probe::run(boot_info, &mut physical_memory, &address_space).is_err() {
+                serial::write_line("PYTHOS:CORE:SOCKET:ERROR:RUN");
+                serial::write_line("PYTHOS:PANIC");
+                qemu_exit::panic();
+            }
+            qemu_exit::success();
+        }
         #[cfg(not(any(
             feature = "session-input-bridge-probe",
-            feature = "session-runtime-probe"
+            feature = "session-runtime-probe",
+            feature = "link-layer-probe",
+            feature = "arp-probe",
+            feature = "ipv4-probe",
+            feature = "icmp-probe",
+            feature = "udp-probe",
+            feature = "tcp-probe",
+            feature = "dns-probe",
+            feature = "socket-api-probe",
+            feature = "socket-api-denied-probe"
         )))]
         {
             let user_address_space =
@@ -783,6 +1559,19 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
                 qemu_exit::panic();
             }
             serial::write_line("PYTHOS:CORE:VM_READY");
+            #[cfg(feature = "virtio-net-probe")]
+            match virtio_net::run_probe(&mut physical_memory) {
+                Ok(()) => {
+                    serial::write_line("PYTHOS:CORE:VIRTIO_NET_PROBE:READY");
+                    qemu_exit::success();
+                }
+                Err(error) => {
+                    serial::write_str("PYTHOS:CORE:VIRTIO_NET_PROBE:ERROR:");
+                    serial::write_line(error.kind());
+                    serial::write_line("PYTHOS:PANIC");
+                    qemu_exit::panic();
+                }
+            }
             #[cfg(feature = "sdhci-emmc-backend")]
             let sdhci_emmc_device = match sdhci_emmc_controller {
                 Some(controller) => match sdhci_emmc::initialize_device(controller) {
@@ -999,6 +1788,16 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
             serial::write_line("PYTHOS:CORE:PHASE_5_COMPLETE");
             // ADR 0048 slice 2a: if an HDA controller was discovered and its MMIO
             // mapped into the kernel address space, prove its registers are reachable.
+            #[cfg(not(any(
+                feature = "network-port-probe",
+                feature = "link-layer-probe",
+                feature = "arp-probe",
+                feature = "ipv4-probe",
+                feature = "icmp-probe",
+                feature = "udp-probe",
+                feature = "tcp-probe",
+                feature = "dns-probe"
+            )))]
             if let Some(hda) = hda_controller {
                 audio::hda_report_mapped(&hda);
                 // Slices 2b/3: bring the controller up (reset + CORB/RIRB) then

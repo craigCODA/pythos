@@ -7,21 +7,58 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-The merged baseline contains Phase 13.5 Slices 1 and 2, accepted in bounded,
-opt-in QEMU profiles:
-ADR 0090 delivers normalized input to one authorized ring-3 consumer, and
-ADR 0091 retains one session runtime across two fresh Session Manager graph
-invocations with fault containment. The owner then invoked Slices 3 and 4 for
-retained session-owned Viewing and capability-checked snapshot presentation.
-Slice 5 is now implemented and locally QEMU-accepted on its unmerged branch:
-normal boot enters the retained ring-3 session, waits interruptibly for PS/2
-input or COM2 commands, and falls back one way to the existing recovery shell
-after explicit recovery or a contained native fault. See the
-[Slice 5 implementation map](docs/superpowers/plans/2026-09-09-phase13-5-slice5-normal-session.md)
-for current verification. Durable session state, USB/xHCI session integration,
-physical Lenovo acceptance, publication, and later phases remain pending. See
-the [current roadmap boundary](docs/ROADMAP.md#current-phase-135-boundary) and
-[handover](docs/HANDOVER.md) for the exact local/merged boundary.
+Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
+through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md),
+above the kernel-owned legacy/transitional `VirtioTransport` adapter from
+[ADR 0094](docs/decisions/0094-phase-14-virtio-net-nic-driver.md). The opt-in
+Ethernet-II link-layer proof is accepted under
+[ADR 0096](docs/decisions/0096-phase-14-link-layer-consumer.md): the native
+consumer uses a read-only bootstrap, describes the MAC, sends one fixed unicast
+frame, rejects wrong destination and wrong EtherType frames, accepts one valid
+RX frame, and reaches terminal capability revocation. The accepted evidence
+also requires no non-boot virtio data disk attached, no storage-path markers observed,
+boot ESP is snapshot-backed, no PythOS storage-path writes, and
+`QEMU_OUTCOME success`.
+
+Raw bytes remain below `NetworkPort`; Ethernet-II and ARP semantics live in the
+native consumer, and the ARP proof is accepted under
+[ADR 0097](docs/decisions/0097-phase-14-arp-consumer.md). The bounded IPv4 proof is accepted
+locally under [ADR 0098](docs/decisions/0098-phase-14-ipv4-consumer.md): the
+opt-in `ipv4-probe.elf` performed one exact private-address ARP setup and one
+exact 60-byte Protocol 253 IPv4 request/reply, observed all seven IPv4 markers
+once in order, rejected extra transmit and storage-path evidence, and ended in
+`QEMU_OUTCOME success`. No hosted IPv4 acceptance is claimed at this
+checkpoint. Default and normal-session boot remain unchanged.
+
+The ICMP Echo proof is accepted locally under
+[ADR 0099](docs/decisions/0099-phase-14-icmp-echo-consumer.md): the opt-in
+client performed one exact ARP request/reply and one exact ICMP Echo
+request/reply, four frames total, with seven ICMP markers once in order and
+`QEMU_OUTCOME success`. It remains a client-only deterministic acceptance proof; no hosted or remote ICMP evidence is claimed. This does not claim a
+complete RFC 1122 host, a general Echo server, user interface, reusable ICMP
+service, routing, sockets, physical NIC/Wi-Fi, modern or interrupt Virtio,
+multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
+persistent state, or PythTIG changes. Phase 15 physical hardware expansion
+remains separate.
+
+The bounded UDP datagram proof is accepted locally under
+[ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6
+commit `4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply,
+UDP request, and reversed UDP reply between local MAC `52:54:00:12:34:56` /
+IPv4 `192.168.14.2` and peer MAC `02:00:00:00:00:02` / IPv4
+`192.168.14.1`. The fixed UDP IPv4 packets use protocol 17, total length 35,
+IDs/checksums `0x1405`/`0xC971` and `0x1406`/`0xC970`, ports
+`0x1405 -> 0x1406` and reversed, data `PYTHUDP`, UDP length 15, and checksum
+`0xF08A`. All four software frames are 60 bytes excluding FCS; UDP frames have
+eleven zero Ethernet pad bytes, and the odd checksum pad is arithmetic only.
+The seven UDP markers appeared once in order with one `QEMU_OUTCOME success`;
+no extra transmit, storage evidence, error marker, or hosted claim occurred.
+RFC 768 and RFC 1122's UDP-checksum requirement provide the standards basis,
+without claiming complete UDP-host or RFC 1122 host compliance. This does not
+claim a UDP service, socket API, port namespace or multiplexing, ICMP error
+delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS, physical
+hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads, zero-copy,
+multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP is now accepted locally as the finite proof recorded in [ADR 0101](docs/decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite capability-gated socket proof is accepted locally under [ADR 0103](docs/decisions/0103-phase-14-capability-gated-socket-api.md). The bounded secure-transport proof is accepted locally under [ADR 0104](docs/decisions/0104-phase-14-secure-transport-proof.md): granted and tamper each used 21 frames with exactly nine and eight ordered markers respectively, tamper preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED` without plaintext release, and denied used zero frames with exactly four markers. All three cases had one `QEMU_OUTCOME success` and clean artifacts. This accepted bounded proof is Phase 14's current stopping point; it does not claim production TLS, update authenticity, physical networking, or a generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo Wi-Fi, remains separate.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

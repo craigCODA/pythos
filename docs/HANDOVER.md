@@ -1,5 +1,97 @@
 # PythOS Handover
 
+## Current Phase 14 Boundary
+
+Phase 14 bounded UDP datagram proof is accepted locally under
+[ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), building on the frozen
+boot-local `NetworkPort` boundary in
+[ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The
+Ethernet-II link-layer proof is accepted under ADR 0096, and the ARP proof is accepted under ADR 0097.
+The IPv4 proof is accepted locally under ADR 0098, and the ICMP Echo proof is accepted locally under ADR 0099. At UDP Task 6 implementation commit `4dc5679`,
+the serialized `py -3 scripts/test-udp.py` proof passed with
+`UDP_QEMU_ACCEPTANCE_OK` and one `QEMU_OUTCOME success`. Its loopback peer
+observed exactly ARP request, ARP reply, UDP request, and reversed UDP reply;
+the UDP frames use local MAC `52:54:00:12:34:56`, peer MAC
+`02:00:00:00:00:02`, local IPv4 `192.168.14.2`, peer IPv4 `192.168.14.1`,
+protocol 17, total length 35, IDs/checksums `0x1405`/`0xC971` and
+`0x1406`/`0xC970`, ports `0x1405 -> 0x1406` and reversed, data `PYTHUDP`,
+length 15, and checksum `0xF08A`. The four software frames are 60 bytes
+excluding FCS; the UDP frames have eleven zero Ethernet pad bytes and the odd
+checksum pad is arithmetic only. The seven UDP markers appeared once in order;
+the oracle rejected extra transmit, storage evidence, and error markers. The
+run used `--no-virtio-blk`, a snapshot-backed ESP, no non-boot virtio data disk,
+no PythOS storage-path writes, and clean process and temporary-state teardown.
+This is a deterministic local acceptance proof; no hosted or remote UDP
+evidence is claimed.
+
+The accepted ICMP evidence remains unchanged. At Task 6 implementation commit `de0352f`,
+the serialized `py -3 scripts/test-icmp.py` proof passed with
+`ICMP_QEMU_ACCEPTANCE_OK` and `QEMU_OUTCOME success`. Its loopback peer
+observed exactly one ARP request/reply and one ICMP Echo request/reply, exactly
+four frames total. The seven ICMP markers appeared once in order; the oracle
+rejected malformed or mismatched frames, storage evidence, duplicate or
+reordered markers, and extra peer transmit. The run used `--no-virtio-blk`, a
+snapshot-backed ESP, and clean process and temporary-state teardown. This is a
+client-only deterministic acceptance proof; no hosted or remote ICMP evidence
+is claimed.
+
+The IPv4 proof remains accepted locally under ADR 0098. At Task 6
+implementation commit `27b957b1ac384fa446a66dcbef3d58ea9b553e85`, `py -3
+scripts/test-ipv4.py` rebuilt the opt-in profile and passed in 21.3 seconds
+with `IPV4_QEMU_ACCEPTANCE_OK`. The loopback peer observed exactly one
+private-address ARP request and sent one exact reply, then observed exactly one
+60-byte IPv4 request and sent one exact 60-byte reply. The source timeline was
+`COM2: IPV4:BOOTSTRAPPED, IPV4:DESCRIBE_OK, IPV4:ARP_SETUP_OK, IPV4:TX_OK,
+IPV4:RX_OK`; then `COM1: IPV4:TEARDOWN_REVOKED, IPV4_READY`; then `RUNNER:
+QEMU_OUTCOME success`. The live oracle rejected forbidden or storage-path
+evidence, duplicate/reordered markers, and extra peer transmit; none occurred.
+It used `--no-virtio-blk` and a snapshot-backed ESP. No hosted IPv4 acceptance
+is claimed at this checkpoint.
+
+The accepted ARP evidence remains unchanged. Phase 14 ARP is locally accepted
+under [ADR 0097](decisions/0097-phase-14-arp-consumer.md).
+At feature tip `63231415efbddbd5a5b683e32179ff754c6867d1`, the Task 8 local
+QEMU proof used QEMU `11.0.50 (v11.0.0-12631-g54e84cdc7a)` and passed
+`ARP_QEMU_ACCEPTANCE_OK`. Its loopback peer observed exactly one 60-byte
+broadcast ARP request, sent exactly one 60-byte matching reply, and completed
+cleanly. The one-time source timeline was `COM2: ARP:BOOTSTRAPPED,
+ARP:DESCRIBE_OK, ARP:REQUEST_OK, ARP:REPLY_OK`; then `COM1:
+ARP:TEARDOWN_REVOKED, ARP_READY`; then `RUNNER: QEMU_OUTCOME success`. The
+oracle rejected error, panic, timeout, transport-error, duplicate/reordered
+marker, storage-path, and additional-transmit evidence; none occurred. It used
+`--no-virtio-blk`. Exact storage-topology evidence is no non-boot virtio data disk attached,
+no storage-path markers observed, boot ESP is snapshot-backed,
+no PythOS storage-path writes, and `QEMU_OUTCOME success`.
+
+The final local gate passed `cargo fmt --all -- --check`, `cargo test
+--workspace`, `py -m unittest discover -s tests` (237 tests), and fresh ARP
+self-test (9 tests) plus QEMU proof. Serialized raw Virtio, `NetworkPort`, and
+link-layer self-test/QEMU regressions also passed, as did default boot
+(`PYTH_DEFAULT_RECOVERY_TEST_OK`, `PYTH_DEFAULT_BOOT_TEST_OK`) and normal
+session (`NORMAL_SESSION_TWO_BOOT_ACCEPTANCE_OK`); default and normal-session
+profiles did not launch ARP. Full frame bytes and the exact evidence commands
+are recorded in ADR 0097. Default and normal-session boot remain unchanged.
+
+Hosted evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
+which completed successfully on 2026-09-17 at verified head
+`45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs
+`qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
+red run 35176094046 is superseded.
+
+Raw bytes remain below `NetworkPort`; ARP, IPv4, ICMP, and UDP semantics live in
+separate native consumers. The ICMP Echo proof does not claim a complete RFC 1122 host, a general Echo server, user interface, reusable ICMP service,
+routing, sockets, physical networking or NIC/Wi-Fi support, modern/interrupt
+Virtio, multiqueue/offloads, multiple consumers, zero-copy, persistent state,
+or PythTIG changes. The accepted UDP proof has the RFC 768 fixed datagram and
+RFC 1122 UDP-checksum basis, but does not claim a complete RFC 1122 host,
+general UDP support, a UDP service, socket API, port namespace or multiplexing,
+ICMP error delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS,
+physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
+zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. DNS is now accepted locally under [ADR 0102](decisions/0102-phase-14-dns-query-consumer.md): Task 4 observed exactly 2 TX + 2 RX / 4 Ethernet frames, 60-byte ARP request/reply frames, a 74-byte DNS query, a 90-byte DNS response, seven ordered markers, one `QEMU_OUTCOME success`, no non-boot Virtio block disk, snapshot-backed ESP, and clean teardown. Those finite protocol proofs do not claim a socket API, general protocol services, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite native capability-gated socket proof is now accepted locally under [ADR 0103](decisions/0103-phase-14-capability-gated-socket-api.md): Task 4's denied profile had no `NetworkPort` capability, exactly four markers, zero TX/RX/frames, one `QEMU_OUTCOME success`, and clean teardown; its granted profile reused the existing `READ | SEND` capability and exact ADR 0101 oracle of 2 ARP + 10 TCP frames, 7 TX/5 RX and 12 total, with exactly eight socket markers, one `QEMU_OUTCOME success`, no storage evidence, and clean teardown. This local proof makes no hosted/remote claim and is not a general socket API or service; the host TCP socket carried only QEMU Virtio frames. The bounded secure-transport proof is accepted locally under [ADR 0104](decisions/0104-phase-14-secure-transport-proof.md). Granted used 21 frames and exactly nine markers. Tamper used 21 frames and exactly eight markers, preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED`, and released no plaintext. Denied used zero frames and exactly four markers. Every case had one `QEMU_OUTCOME success` and clean serial/ESP artifact teardown. The private `secure-transport-tamper-probe` core profile selects the tamper terminal marker without adding public ABI. This accepted bounded proof is Phase 14's current stopping point; it does not claim production TLS, update authenticity, physical networking, or a generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo Wi-Fi, remains separate. PR #28 is published; no merge, physical-media deployment,
+physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
+
+## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
+
 Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
 on `agent/phase13-5-normal-session`; PR #25 and the Slice 3-4 branch are
 unchanged. [ADR 0093](decisions/0093-normal-session-wait-recovery.md) governs
@@ -16,7 +108,7 @@ items are the isolated unknown-exit fixture, stale PS/2 commentary, and the
 disclosed strict-normal lint debt. No remote, merge, publication, USB, or
 physical write is claimed.
 
-The following is the completed Slice 3-4 checkpoint:
+## Prior Phase 13.5 Slices 3-4 Viewing Checkpoint (2026-09-09)
 
 Current authorized scope: Phase 13.5 Slices 3 and 4, explicitly invoked together
 on 2026-09-09. Implementation and current verification live in the
@@ -1300,9 +1392,13 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap boundary is the locally accepted Phase 13.5 Slice
-5 branch, stopping before Phase 14. The
-current PythTIG stop boundary is Phase 7 -> later PythTIG phases.
+The current numbered-roadmap boundary and Phase 14 stopping point is the
+locally accepted bounded secure-transport proof recorded under ADR 0104. It
+does not establish production TLS, update authenticity, physical networking,
+or a generalized socket/TLS service. Phase 15 hardware expansion, including
+Lenovo Wi-Fi, remains separate.
+The current PythTIG stop
+boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
 `docs/pyth-tig/ACCEPTANCE.md` describe the corresponding gates.
 
@@ -1324,6 +1420,6 @@ under QEMU before accepting Slices 3 and 4; see the implementation map above.
 
 This boundary does not authorize default normal-boot cutover, production
 wait/wakeup, durable sessions, USB/xHCI integration, physical Lenovo acceptance,
-WakeContext/Waking, Kai, networking, updates, AI, SMP, hardware expansion, or
-later PythTIG work. Keep implementation details in the invoked slice's existing
-map and tests; add an ADR only for a new architectural decision.
+WakeContext/Waking, Kai, updates, AI, SMP, hardware expansion, or later PythTIG
+work. Keep implementation details in the invoked slice's existing map and
+tests; add an ADR only for a new architectural decision.
