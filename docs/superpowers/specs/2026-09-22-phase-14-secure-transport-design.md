@@ -1,6 +1,6 @@
 # Phase 14 Secure-Transport Proof Design
 
-Status: Proposed for implementation review
+Status: Accepted
 
 ## Purpose
 

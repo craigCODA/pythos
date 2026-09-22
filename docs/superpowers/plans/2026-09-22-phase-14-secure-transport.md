@@ -72,14 +72,14 @@ py -3 -m unittest tests.test_secure_transport_contract -v
 - [ ] **Step 4: Commit**
 
 ```text
-git add Cargo.toml Cargo.lock core/Cargo.toml docs/decisions/0104-phase-14-secure-transport-proof.md tests/test_secure_transport_contract.py
+git add Cargo.toml Cargo.lock core/Cargo.toml user/probes/socket/Cargo.toml docs/decisions/0104-phase-14-secure-transport-proof.md tests/test_secure_transport_contract.py
 git commit -m "docs(net): freeze secure transport proof contract"
 ```
 
 ### Task 2: Implement the finite native TLS consumer
 
 **Files:**
-- Modify: `user/probes/socket/src/secure.rs`, `src/main.rs`, `Cargo.toml`, and `linker.ld`
+- Modify: `user/probes/socket/src/secure.rs`, `user/probes/socket/src/main.rs`, `user/probes/socket/Cargo.toml`, and `user/probes/socket/linker.ld`
 - Modify: `core/src/main.rs`, `core/src/socket_probe.rs`, and `core/Cargo.toml`
 - Modify: `shared/src/secure_transport_markers.rs` and `shared/src/lib.rs` only for private marker literals
 - Test: Rust unit tests in the secure probe and core contract tests
@@ -195,8 +195,8 @@ git commit -m "test(net): prove secure transport acceptance cases"
 - [ ] **Step 1: Add secure-transport commands once, after socket, to the
   milestone workflow and never to handoff**
 
-Add compile, host tests, self-test, live serialized acceptance, and the two
-guest feature checks. Add ordering/uniqueness contract tests.
+Add compile, host tests, self-test, live serialized acceptance, three core
+profiles, and the secure user-probe check. Add ordering/uniqueness contract tests.
 
 - [ ] **Step 2: Update current documentation only**
 
