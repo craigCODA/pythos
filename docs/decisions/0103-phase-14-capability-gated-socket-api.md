@@ -96,8 +96,8 @@ at `363e138` (`fix(net): scope denied transport reset handling`). The focused
 evidence commands and results were:
 
 - `py -3 -m py_compile scripts/test-socket.py tests/test_socket.py` passed;
-- `py -3 -m unittest tests.test_socket` passed 9/9;
-- `py -3 scripts/test-socket.py --self-test` passed 7/7 and emitted
+- `py -3 -m unittest tests.test_socket` passed 10/10;
+- `py -3 scripts/test-socket.py --self-test` passed 8/8 and emitted
   `SOCKET_QEMU_ACCEPTANCE_OK`;
 - serialized `py -3 scripts/test-socket.py` passed both profiles; and
 - `git diff --check` passed.
