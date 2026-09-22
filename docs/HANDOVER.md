@@ -87,7 +87,7 @@ RFC 1122 UDP-checksum basis, but does not claim a complete RFC 1122 host,
 general UDP support, a UDP service, socket API, port namespace or multiplexing,
 ICMP error delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS,
 physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
-zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. DNS is now accepted locally under [ADR 0102](decisions/0102-phase-14-dns-query-consumer.md): Task 4 observed exactly 2 TX + 2 RX / 4 Ethernet frames, 60-byte ARP request/reply frames, a 74-byte DNS query, a 90-byte DNS response, seven ordered markers, one `QEMU_OUTCOME success`, no non-boot Virtio block disk, snapshot-backed ESP, and clean teardown. These finite proofs do not claim a socket API, general protocol services, hosted/remote networking, or the excluded TCP/Phase 15 features. The capability-gated socket API is the next separately authorized Phase 14 boundary. Phase 15 hardware
+zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. DNS is now accepted locally under [ADR 0102](decisions/0102-phase-14-dns-query-consumer.md): Task 4 observed exactly 2 TX + 2 RX / 4 Ethernet frames, 60-byte ARP request/reply frames, a 74-byte DNS query, a 90-byte DNS response, seven ordered markers, one `QEMU_OUTCOME success`, no non-boot Virtio block disk, snapshot-backed ESP, and clean teardown. Those finite protocol proofs do not claim a socket API, general protocol services, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite native capability-gated socket proof is now accepted locally under [ADR 0103](decisions/0103-phase-14-capability-gated-socket-api.md): Task 4's denied profile had no `NetworkPort` capability, exactly four markers, zero TX/RX/frames, one `QEMU_OUTCOME success`, and clean teardown; its granted profile reused the existing `READ | SEND` capability and exact ADR 0101 oracle of 2 ARP + 10 TCP frames, 7 TX/5 RX and 12 total, with exactly eight socket markers, one `QEMU_OUTCOME success`, no storage evidence, and clean teardown. This local proof makes no hosted/remote claim and is not a general socket API or service; the host TCP socket carried only QEMU Virtio frames. Secure transport is the next separately authorized Phase 14 boundary. Phase 15 hardware
 remains separate. PR #28 is published; no merge, physical-media deployment,
 physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 
@@ -1393,9 +1393,10 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap boundary is the locally accepted Phase 14 DNS
-proof, recorded under ADR 0102. The capability-gated socket API is the next
-separately authorized Phase 14 boundary; Phase 15 hardware remains separate.
+The current numbered-roadmap boundary is the locally accepted finite Phase 14
+capability-gated socket proof, recorded under ADR 0103. Secure transport is
+the next separately authorized Phase 14 boundary; Phase 15 hardware remains
+separate.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
