@@ -106,7 +106,45 @@ class SocketHostTest(unittest.TestCase):
             EXPECTED_DENIED_MARKERS[-1],
         )
 
-    def test_denied_peer_rejects_any_frame_and_accepts_zero_frame_completion(self) -> None:
+    def test_denied_peer_accepts_connected_zero_frame_eof(self) -> None:
+        peer = SOCKET.DeniedPeer(timeout=1.0)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0):
+                pass
+            peer.join(timeout=2.0)
+            SOCKET.assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_no_connection_timeout(self) -> None:
+        peer = SOCKET.DeniedPeer(timeout=0.1)
+        peer.start()
+        try:
+            peer.join(timeout=1.0)
+            self.assertIsInstance(peer.error, TimeoutError)
+            self.assertFalse(peer.connected)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                SOCKET.assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_connected_quiet_timeout(self) -> None:
+        peer = SOCKET.DeniedPeer(timeout=0.1)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0):
+                peer.join(timeout=1.0)
+            self.assertIsInstance(peer.error, TimeoutError)
+            self.assertTrue(peer.connected)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                SOCKET.assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_any_frame(self) -> None:
         peer = SOCKET.DeniedPeer(timeout=1.0)
         peer.start()
         try:

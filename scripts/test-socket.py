@@ -99,9 +99,9 @@ class DeniedPeer:
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", port))
         self.listener.listen(1)
-        self.listener.settimeout(min(timeout, 5.0))
+        self.listener.settimeout(timeout)
         self.port = self.listener.getsockname()[1]
-        self.timeout = min(timeout, 5.0)
+        self.timeout = timeout
         self.error: BaseException | None = None
         self.connected = False
         self.completed = False
@@ -131,8 +131,7 @@ class DeniedPeer:
         try:
             ready, _, _ = select.select([self.listener], [], [], self.timeout)
             if not ready:
-                self.completed = True
-                return
+                raise TimeoutError("denied peer did not accept the QEMU transport connection")
             connection, _ = self.listener.accept()
             with connection:
                 self.connected = True
@@ -141,13 +140,14 @@ class DeniedPeer:
                 while True:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        self.completed = True
-                        return
+                        raise TimeoutError("denied peer did not reach clean EOF")
                     ready, _, _ = select.select([connection], [], [], remaining)
                     if not ready:
-                        self.completed = True
-                        return
-                    data = connection.recv(4096)
+                        raise TimeoutError("denied peer did not reach clean EOF")
+                    try:
+                        data = connection.recv(4096)
+                    except ConnectionResetError:
+                        data = b""
                     if data:
                         self.tx_frames.append(data)
                         raise AssertionError("denied socket proof emitted Ethernet bytes")
@@ -289,8 +289,8 @@ def assert_denied_peer(peer: DeniedPeer) -> None:
         raise AssertionError(f"denied peer failed: {peer.error}") from peer.error
     if peer.tx_frames or peer.rx_frames:
         raise AssertionError("denied socket proof exchanged Ethernet frames")
-    if not peer.completed:
-        raise AssertionError("denied peer did not finish cleanly")
+    if not peer.connected or not peer.completed:
+        raise AssertionError("denied peer did not connect and finish on clean EOF")
 
 
 def assert_live_timeline(timeline: AcceptanceTimeline) -> None:
@@ -341,6 +341,46 @@ class SocketAcceptanceSelfTest(unittest.TestCase):
         configure_case("denied")
         valid = "\n".join(DENIED_REQUIRED_MARKERS)
         assert_denied_acceptance(valid, "QEMU_OUTCOME success\n")
+
+    def test_denied_peer_accepts_connected_zero_frame_eof(self) -> None:
+        peer = DeniedPeer(timeout=1.0)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0):
+                pass
+            peer.join(timeout=2.0)
+            assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_no_connection_timeout(self) -> None:
+        peer = DeniedPeer(timeout=0.1)
+        peer.start()
+        try:
+            peer.join(timeout=1.0)
+            self.assertIsInstance(peer.error, TimeoutError)
+            self.assertFalse(peer.connected)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_connected_quiet_timeout(self) -> None:
+        peer = DeniedPeer(timeout=0.1)
+        peer.start()
+        try:
+            with socket.create_connection(("127.0.0.1", peer.port), timeout=1.0):
+                peer.join(timeout=1.0)
+            self.assertIsInstance(peer.error, TimeoutError)
+            self.assertTrue(peer.connected)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_any_frame(self) -> None:
         peer = DeniedPeer(timeout=1.0)
         peer.start()
         try:
