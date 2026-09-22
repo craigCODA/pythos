@@ -48,6 +48,7 @@ def main() -> int:
         "socket-probe",
         "--features",
         "secure-transport",
+        "--release",
         "--target-dir",
         target_dir,
     ]
@@ -55,7 +56,7 @@ def main() -> int:
     if result != 0:
         return result
 
-    cargo_elf = target_dir / "x86_64-unknown-none" / "debug" / "socket-probe"
+    cargo_elf = target_dir / "x86_64-unknown-none" / "release" / "socket-probe"
     if not cargo_elf.is_file():
         raise FileNotFoundError(f"cargo did not produce the secure probe ELF: {cargo_elf}")
     verification = subprocess.run(

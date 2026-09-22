@@ -157,10 +157,13 @@ class SecureTransportHostTest(unittest.TestCase):
         source = (ROOT / "scripts" / "build-secure-transport-probe.py").read_text(encoding="utf-8")
         self.assertIn('"--features"', source)
         self.assertIn('"secure-transport"', source)
+        self.assertIn('"--release"', source)
         self.assertIn("verify-user-elf.py", source)
         self.assertIn('"--cfg"', source)
         self.assertIn('"aes_force_soft"', source)
         self.assertIn('"polyval_force_soft"', source)
+        self.assertIn('"release" / "socket-probe"', source)
+        self.assertNotIn('"debug" / "socket-probe"', source)
         self.assertIn("secure-transport-probe.elf", source)
 
     def test_self_test_command_exercises_the_real_harness(self) -> None:
