@@ -87,8 +87,7 @@ RFC 1122 UDP-checksum basis, but does not claim a complete RFC 1122 host,
 general UDP support, a UDP service, socket API, port namespace or multiplexing,
 ICMP error delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS,
 physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
-zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is
-the next separately authorized Phase 14 design boundary. Phase 15 hardware
+zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is the next separately authorized Phase 14 design boundary. Phase 15 hardware
 remains separate. PR #28 is published; no merge, physical-media deployment,
 physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 

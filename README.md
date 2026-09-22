@@ -58,8 +58,7 @@ without claiming complete UDP-host or RFC 1122 host compliance. This does not
 claim a UDP service, socket API, port namespace or multiplexing, ICMP error
 delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS, physical
 hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads, zero-copy,
-multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP
-is the next separately authorized Phase 14 design boundary.
+multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP is the next separately authorized Phase 14 design boundary.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

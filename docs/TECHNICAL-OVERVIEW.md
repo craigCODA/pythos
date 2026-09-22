@@ -65,8 +65,7 @@ of complete UDP-host or RFC 1122 host compliance. No UDP service, socket API,
 port namespace or multiplexing, ICMP error delivery, retries, timers, routing,
 fragmentation, TCP, DNS, TLS, physical hardware, modern/interrupt Virtio,
 interrupts/MSI-X, offloads, zero-copy, multiple consumers, persistent state,
-PythTIG change, or Phase 15 work is claimed. TCP is the next separately
-authorized Phase 14 design boundary.
+PythTIG change, or Phase 15 work is claimed. TCP is the next separately authorized Phase 14 design boundary.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro
