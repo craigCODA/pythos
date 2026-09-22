@@ -1,5 +1,7 @@
 //! Private bounded socket-operation state used by the finite proof consumer.
 
+use pythos_shared::capability_abi::PackedCapability;
+
 pub const SOCKET_PAYLOAD_BYTES: usize = 6;
 pub const REQUEST_PAYLOAD: &[u8; SOCKET_PAYLOAD_BYTES] = b"PYTCPQ";
 pub const RESPONSE_PAYLOAD: &[u8; SOCKET_PAYLOAD_BYTES] = b"PYTCPR";
@@ -21,8 +23,21 @@ pub const ACCEPTED_ENDPOINT: Endpoint = Endpoint {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CapabilityAuthority {
-    pub valid: bool,
+    pub capability: PackedCapability,
     pub operational: bool,
+}
+
+impl CapabilityAuthority {
+    pub const fn new(capability: PackedCapability, operational: bool) -> Self {
+        Self {
+            capability,
+            operational,
+        }
+    }
+
+    pub const fn is_valid(self) -> bool {
+        self.capability.raw() != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,7 +101,7 @@ impl SocketService {
         endpoint: Endpoint,
     ) -> Result<SocketHandle, OpenError> {
         let authority = authority.ok_or(OpenError::MissingAuthority)?;
-        if !authority.valid || !authority.operational {
+        if !authority.is_valid() || !authority.operational {
             return Err(OpenError::InvalidAuthority);
         }
         if endpoint != ACCEPTED_ENDPOINT {
@@ -186,7 +201,8 @@ impl SocketService {
         handle: SocketHandle,
         authority: CapabilityAuthority,
     ) -> Result<(), OperationError> {
-        if self.handle != Some(handle) || self.authority != Some(authority) || !authority.valid {
+        if self.handle != Some(handle) || self.authority != Some(authority) || !authority.is_valid()
+        {
             return Err(OperationError::BadHandle);
         }
         Ok(())
@@ -198,7 +214,7 @@ mod tests {
     use super::*;
 
     const AUTHORITY: CapabilityAuthority = CapabilityAuthority {
-        valid: true,
+        capability: PackedCapability::from_raw(1),
         operational: true,
     };
 
@@ -224,7 +240,7 @@ mod tests {
         assert_eq!(
             service.open(
                 Some(CapabilityAuthority {
-                    valid: true,
+                    capability: PackedCapability::from_raw(1),
                     operational: false,
                 }),
                 ACCEPTED_ENDPOINT,

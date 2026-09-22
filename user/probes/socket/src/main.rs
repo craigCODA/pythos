@@ -19,7 +19,7 @@ use pythos_shared::{
     object_shell_abi::{SYSCALL_CONSOLE_WRITE_BYTE, SYSCALL_OK},
     socket_markers::{
         SOCKET_BOOTSTRAPPED_MARKER, SOCKET_CLOSE_OK_MARKER, SOCKET_DENIED_BOOTSTRAPPED_MARKER,
-        SOCKET_DENIED_READY_MARKER, SOCKET_HANDSHAKE_OK_MARKER, SOCKET_OPEN_GRANTED_MARKER,
+        SOCKET_HANDSHAKE_OK_MARKER, SOCKET_OPEN_GRANTED_MARKER,
         SOCKET_OPEN_WITHOUT_CAP_DENIED_MARKER, SOCKET_REQUEST_OK_MARKER, SOCKET_RESPONSE_OK_MARKER,
     },
 };
@@ -80,10 +80,16 @@ pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
     let console = PackedCapability::from_raw(console_raw);
     // SAFETY: PythCore supplies one aligned bootstrap page for this probe.
     let bootstrap = unsafe { (bootstrap_ptr as *const NetworkPortBootstrapV1).read() };
+    let mut service = SocketService::new();
+    if !valid_bootstrap_header(bootstrap) {
+        error(console);
+    }
     if bootstrap.port_capability.raw() == 0 {
+        if service.open(None, ACCEPTED_ENDPOINT).is_ok() || service.handle().is_some() {
+            error(console);
+        }
         write_marker(console, SOCKET_DENIED_BOOTSTRAPPED_MARKER);
         write_marker(console, SOCKET_OPEN_WITHOUT_CAP_DENIED_MARKER);
-        write_marker(console, SOCKET_DENIED_READY_MARKER);
         success_breakpoint();
     }
     if !valid_bootstrap(bootstrap) {
@@ -95,11 +101,7 @@ pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
     if describe(capability) != NETWORK_PORT_STATUS_OK || !valid_description() {
         error(console);
     }
-    let authority = CapabilityAuthority {
-        valid: true,
-        operational: true,
-    };
-    let mut service = SocketService::new();
+    let authority = CapabilityAuthority::new(capability, true);
     let handle = match service.open(Some(authority), ACCEPTED_ENDPOINT) {
         Ok(handle) => handle,
         Err(_) => error(console),
@@ -156,12 +158,15 @@ pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
 }
 
 fn valid_bootstrap(bootstrap: NetworkPortBootstrapV1) -> bool {
+    valid_bootstrap_header(bootstrap) && bootstrap.port_capability.raw() != 0
+}
+
+fn valid_bootstrap_header(bootstrap: NetworkPortBootstrapV1) -> bool {
     bootstrap.magic == NETWORK_PORT_BOOTSTRAP_MAGIC
         && bootstrap.abi_major == NETWORK_PORT_ABI_MAJOR
         && bootstrap.abi_minor == NETWORK_PORT_ABI_MINOR
         && bootstrap.reserved0 == 0
         && bootstrap.reserved == [0; 5]
-        && bootstrap.port_capability.raw() != 0
 }
 
 fn valid_description() -> bool {
@@ -206,6 +211,9 @@ fn arp_reply_matches(frame_bytes: &[u8], _: usize) -> bool {
     if frame.destination != LOCAL_MAC
         || frame.source != PEER_MAC
         || frame.ether_type != ARP_ETHER_TYPE
+        || !frame.payload[ARP_PAYLOAD_BYTES..]
+            .iter()
+            .all(|byte| *byte == 0)
     {
         return false;
     }
@@ -399,7 +407,22 @@ fn tcp_frame_matches(frame_bytes: &[u8], index: usize) -> bool {
     } else {
         TCP_HEADER_BYTES
     } + expected.data.len();
-    if packet.total_length as usize != 20 + tcp_len {
+    let expected_header = Ipv4Header {
+        version: 4,
+        ihl: 5,
+        dscp_ecn: 0,
+        identification: TCP_IP_IDENTIFICATIONS[index],
+        flags_fragment_offset: 0,
+        ttl: 64,
+        protocol: TCP_PROTOCOL,
+        source,
+        destination,
+    };
+    let ip_len = 20 + tcp_len;
+    if packet.total_length as usize != ip_len
+        || packet.header != expected_header
+        || !frame.payload[ip_len..].iter().all(|byte| *byte == 0)
+    {
         return false;
     }
     decode_segment(packet.payload, source, destination)
@@ -483,14 +506,21 @@ fn request(buffers: &mut ProbeBuffers) -> u16 {
         size_of::<NetworkPortResponseV1>() as u64,
         0,
     );
-    if result == SYSCALL_OK
-        && buffers.response.status <= NETWORK_PORT_STATUS_TRANSPORT_ERROR
-        && buffers.response.state == NETWORK_PORT_STATE_READY
-    {
+    if result == SYSCALL_OK && valid_response(buffers.response) {
         buffers.response.status
     } else {
         u16::MAX
     }
+}
+
+fn valid_response(response: NetworkPortResponseV1) -> bool {
+    response.status <= NETWORK_PORT_STATUS_TRANSPORT_ERROR
+        && response.state == NETWORK_PORT_STATE_READY
+        && response.reserved0 == 0
+        && response.reserved1 == 0
+        && response.reserved2 == 0
+        && response.reserved3 == 0
+        && response.reserved4 == 0
 }
 
 fn syscall5(number: u64, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) -> u64 {
@@ -531,6 +561,34 @@ fn error(console: PackedCapability) -> ! {
     write_marker(console, SOCKET_ERROR_MARKER);
     // SAFETY: malformed input and syscall failures are terminal.
     unsafe { asm!("ud2", options(noreturn, nomem, nostack)) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_tcp_validator_rejects_header_and_padding_mutations() {
+        let canonical = tcp_frame(1).expect("canonical TCP frame");
+        assert!(tcp_frame_matches(&canonical, 1));
+
+        let mut header_mutation = canonical;
+        header_mutation[14] ^= 1;
+        assert!(!tcp_frame_matches(&header_mutation, 1));
+
+        let mut padding_mutation = canonical;
+        *padding_mutation.last_mut().unwrap() = 1;
+        assert!(!tcp_frame_matches(&padding_mutation, 1));
+    }
+
+    #[test]
+    fn native_response_validator_rejects_reserved_bytes() {
+        let response = NetworkPortResponseV1::new(NETWORK_PORT_STATUS_OK, 0);
+        assert!(valid_response(response));
+        let mut reserved = response;
+        reserved.reserved3 = 1;
+        assert!(!valid_response(reserved));
+    }
 }
 
 #[cfg(not(test))]
