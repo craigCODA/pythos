@@ -84,11 +84,11 @@ class CiWorkflowTest(unittest.TestCase):
     )
     SOCKET_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-socket-probe",
-        "cargo test -p pythos-core socket_probe --features socket-api-probe",
-        "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
         "python scripts/build-socket-probe.py",
-        "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
-        "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
         "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
         "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
         "python -m unittest tests.test_socket",
@@ -665,23 +665,23 @@ class CiWorkflowTest(unittest.TestCase):
             ("cargo test -p pythos-user-dns-probe", "cargo test -p pythos-user-socket-probe"),
             (
                 "cargo test -p pythos-user-socket-probe",
-                "cargo test -p pythos-core socket_probe --features socket-api-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
             ),
             (
-                "cargo test -p pythos-core socket_probe --features socket-api-probe",
-                "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
             ),
             ("python scripts/build-dns-probe.py", "python scripts/build-socket-probe.py"),
             (
                 "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
-                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
             ),
             (
-                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
-                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
             ),
             (
-                "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings",
                 "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
             ),
             (
@@ -728,7 +728,7 @@ class CiWorkflowTest(unittest.TestCase):
 
         ordered_pairs = (
             (
-                "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe",
                 "cargo test -p pythos-user-socket-probe --features secure-transport",
             ),
             (

@@ -107,8 +107,8 @@ jobs:
           cargo test -p pythos-user-dns-probe
           cargo test -p pythos-user-socket-probe
           cargo test -p pythos-core dns_probe --features dns-probe
-          cargo test -p pythos-core socket_probe --features socket-api-probe
-          cargo test -p pythos-core socket_probe --features socket-api-denied-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe
           cargo test -p pythos-user-socket-probe --features secure-transport
           cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe
           cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe
@@ -170,8 +170,8 @@ jobs:
           cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings
           cargo clippy -p pythos-user-dns-probe --target x86_64-unknown-none -- -D warnings
-          cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings
-          cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings
           cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings
