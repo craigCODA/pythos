@@ -17,6 +17,7 @@ members = [
     "user/probes/ipv4",
     "user/probes/icmp",
     "user/probes/udp",
+    "user/probes/tcp",
 ]
 
 [workspace.package]
