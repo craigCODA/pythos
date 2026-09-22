@@ -51,7 +51,10 @@ const TCP_IP_IDENTIFICATIONS: [u16; 10] = [
 const TCP_TRANSMIT_INDICES: [usize; 6] = [0, 2, 3, 5, 6, 9];
 #[cfg(test)]
 const TCP_RECEIVE_INDICES: [usize; 4] = [1, 4, 7, 8];
-const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1024;
+// Keep the consumer's bounded empty-receive window aligned with the
+// transport's bounded completion window. Hosted QEMU can deliver the close
+// exchange substantially later than the earlier data frames.
+const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1_000_000;
 const TCP_ERROR_MARKER: &str = "PYTHOS:CORE:TCP:ERROR";
 
 struct ProbeStorage(UnsafeCell<ProbeBuffers>);
@@ -609,8 +612,9 @@ fn panic(_info: &PanicInfo<'_>) -> ! {
 #[cfg(test)]
 mod tests {
     use super::{
-        TCP_RECEIVE_INDICES, TCP_TRANSMIT_INDICES, arp_reply_frame_matches, arp_request_frame,
-        empty_receive_poll_exhausted, tcp_frame, tcp_frame_matches,
+        MAX_RECEIVE_POLL_ATTEMPTS, TCP_RECEIVE_INDICES, TCP_TRANSMIT_INDICES,
+        arp_reply_frame_matches, arp_request_frame, empty_receive_poll_exhausted, tcp_frame,
+        tcp_frame_matches,
     };
 
     const LOCAL_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
@@ -679,7 +683,7 @@ mod tests {
     #[test]
     fn bounded_empty_polling_exhausts_at_the_finite_limit() {
         let mut empty_polls = 0;
-        for _ in 0..1023 {
+        for _ in 0..MAX_RECEIVE_POLL_ATTEMPTS - 1 {
             assert!(!empty_receive_poll_exhausted(&mut empty_polls));
         }
         assert!(empty_receive_poll_exhausted(&mut empty_polls));
