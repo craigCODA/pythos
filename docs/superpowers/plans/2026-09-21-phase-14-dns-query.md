@@ -49,8 +49,8 @@ final two teardown markers to the privileged launch path in Task 3.
 
 Add only additive cfg/manifest/build/CI plumbing for `dns-probe.elf`. Keep it
 mutually exclusive with existing probes and session/diagnostic profiles. Add
-compile, package, Clippy, host-test, self-test, and live QEMU CI gates after
-TCP with exact ordering assertions.
+compile, package, Clippy, and self-test CI gates after TCP with exact ordering
+assertions. Host-oracle and live-QEMU proof remain reserved for Task 4.
 
 ### Task 4 — host oracle and live QEMU proof
 

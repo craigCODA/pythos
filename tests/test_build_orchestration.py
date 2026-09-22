@@ -1065,6 +1065,45 @@ class BuildOrchestrationTest(unittest.TestCase):
             ),
         )
 
+    def test_dns_probe_record_has_manifest_identity_and_default_stays_unchanged(self) -> None:
+        module = load_script("build-image.py")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            shell = root / "shell.elf"
+            probe = root / "dns-probe.elf"
+            normal = root / "normal-session.elf"
+            graph = root / "session-manager.tig"
+            shell.write_bytes(b"shell")
+            probe.write_bytes(b"dns-probe")
+            normal.write_bytes(b"normal-session")
+            graph.write_bytes(b"graph")
+            with unittest.mock.patch.object(module, "SHELL_ELF", shell), unittest.mock.patch.object(
+                module, "build_runtime_payload", return_value=b"runtime"
+            ):
+                default = module.build_default_init_pak()
+                normal_session = module.build_default_init_pak(
+                    normal_session_elf=normal, normal_session_graph=graph
+                )
+                opted_in = module.build_default_init_pak(dns_probe_elf=probe)
+
+        self.assertNotIn(b"dns-probe.elf", default)
+        self.assertNotIn(b"dns-probe.elf", normal_session)
+        records = parse_init_pak_bundle(opted_in)
+        named = [
+            parse_named_record(kind, payload)
+            for kind, payload in records
+            if kind == module.INIT_BUNDLE_NAMED_USER_ELF_TYPE
+        ]
+        self.assertEqual(
+            named[-1],
+            (
+                b"dns-probe.elf",
+                0x5059_444E_5300_0001,
+                module.digest64(b"dns-probe"),
+                b"dns-probe",
+            ),
+        )
+
     def test_tcp_probe_resolution_and_verification_precede_packaging(self) -> None:
         module = load_script("build-image.py")
         events: list[tuple[str, object]] = []
