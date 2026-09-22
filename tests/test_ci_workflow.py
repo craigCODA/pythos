@@ -77,7 +77,10 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/build-dns-probe.py",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings",
         "cargo clippy -p pythos-user-dns-probe --target x86_64-unknown-none -- -D warnings",
-        "python -m py_compile scripts/build-dns-probe.py",
+        "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+        "python -m unittest tests.test_dns",
+        "python scripts/test-dns.py --self-test",
+        "python scripts/test-dns.py",
     )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
@@ -596,7 +599,19 @@ class CiWorkflowTest(unittest.TestCase):
             ),
             (
                 "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
-                "python -m py_compile scripts/build-dns-probe.py",
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+            ),
+            (
+                "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
+                "python -m unittest tests.test_dns",
+            ),
+            (
+                "python -m unittest tests.test_dns",
+                "python scripts/test-dns.py --self-test",
+            ),
+            (
+                "python scripts/test-dns.py --self-test",
+                "python scripts/test-dns.py",
             ),
         )
         for predecessor, successor in ordered_pairs:
@@ -606,8 +621,6 @@ class CiWorkflowTest(unittest.TestCase):
                 f"DNS gate must follow predecessor: {predecessor}",
             )
 
-        self.assertNotIn("test-dns.py", milestone)
-        self.assertNotIn("test_dns", milestone)
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
