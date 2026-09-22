@@ -40,10 +40,10 @@ malformed labels, unsupported types/classes, and no allocation.
 ### Task 2 — finite native DNS consumer
 
 Add the opt-in native consumer using the existing `READ | SEND` capability and
-the accepted ARP/IPv4/UDP frame flow. Emit the seven markers, reject any first
-nonmatching frame or malformed DNS message, deny new requests, revoke the
-consumer capability, stop queue admission, then perform owner reset, and
-expose no socket/resource.
+the accepted ARP/IPv4/UDP frame flow. Emit the first five DNS markers in order,
+reject any first nonmatching frame or malformed DNS message, and expose no
+socket/resource. Leave capability revocation, queue stop, owner reset, and the
+final two teardown markers to the privileged launch path in Task 3.
 
 ### Task 3 — privileged launch and image/CI orchestration
 
