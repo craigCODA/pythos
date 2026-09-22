@@ -284,6 +284,8 @@ mod tests {
         assert!(manifest.contains("default = [\"normal-session\"]"));
         assert!(main.contains("feature = \"tcp-probe\""));
         assert!(main.contains("feature = \"normal-session\""));
-        assert!(main.contains("feature = \"tcp-probe\"\n        )))"));
+        assert!(main.contains(
+            "feature = \"tcp-probe\",\n            feature = \"dns-probe\""
+        ));
     }
 }
