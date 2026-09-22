@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import socket
+import struct
 import subprocess
 import sys
 import unittest
@@ -117,6 +118,21 @@ class SocketHostTest(unittest.TestCase):
         finally:
             peer.close()
 
+    def test_denied_peer_rejects_connection_reset(self) -> None:
+        peer = SOCKET.DeniedPeer(timeout=1.0)
+        peer.start()
+        try:
+            connection = socket.create_connection(("127.0.0.1", peer.port), timeout=1.0)
+            SOCKET.set_abortive_close(connection)
+            connection.close()
+            peer.join(timeout=2.0)
+            self.assertIsInstance(peer.error, ConnectionResetError)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                SOCKET.assert_denied_peer(peer)
+        finally:
+            peer.close()
+
     def test_denied_peer_rejects_no_connection_timeout(self) -> None:
         peer = SOCKET.DeniedPeer(timeout=0.1)
         peer.start()
@@ -138,6 +154,24 @@ class SocketHostTest(unittest.TestCase):
                 peer.join(timeout=1.0)
             self.assertIsInstance(peer.error, TimeoutError)
             self.assertTrue(peer.connected)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                SOCKET.assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_abortive_reset(self) -> None:
+        peer = SOCKET.DeniedPeer(timeout=1.0)
+        peer.start()
+        try:
+            connection = socket.create_connection(("127.0.0.1", peer.port), timeout=1.0)
+            try:
+                linger = struct.pack("hh", 1, 0) if sys.platform == "win32" else struct.pack("ii", 1, 0)
+                connection.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, linger)
+            finally:
+                connection.close()
+            peer.join(timeout=2.0)
+            self.assertIsInstance(peer.error, ConnectionResetError)
             self.assertFalse(peer.completed)
             with self.assertRaises(AssertionError):
                 SOCKET.assert_denied_peer(peer)

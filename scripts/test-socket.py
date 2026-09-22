@@ -94,7 +94,7 @@ ASSERT_PEER = None
 class DeniedPeer:
     """Bounded host transport observer that permits no Ethernet frame."""
 
-    def __init__(self, port: int = 0, timeout: float = 10.0) -> None:
+    def __init__(self, port: int = 0, timeout: float = 10.0, *, allow_qemu_reset: bool = False) -> None:
         self.listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.listener.bind(("127.0.0.1", port))
@@ -102,9 +102,11 @@ class DeniedPeer:
         self.listener.settimeout(timeout)
         self.port = self.listener.getsockname()[1]
         self.timeout = timeout
+        self.allow_qemu_reset = allow_qemu_reset
         self.error: BaseException | None = None
         self.connected = False
         self.completed = False
+        self.terminal_reset = False
         self.tx_frames: list[bytes] = []
         self.rx_frames: list[bytes] = []
         self._thread = None
@@ -147,7 +149,11 @@ class DeniedPeer:
                     try:
                         data = connection.recv(4096)
                     except ConnectionResetError:
-                        data = b""
+                        if not self.allow_qemu_reset:
+                            raise
+                        self.terminal_reset = True
+                        self.completed = True
+                        return
                     if data:
                         self.tx_frames.append(data)
                         raise AssertionError("denied socket proof emitted Ethernet bytes")
@@ -170,7 +176,9 @@ def configure_case(case: str) -> None:
         REQUIRED_MARKERS = DENIED_REQUIRED_MARKERS
         CONSUMER_MARKERS = DENIED_CONSUMER_MARKERS
         KERNEL_MARKERS = DENIED_KERNEL_MARKERS
-        PEER_FACTORY = DeniedPeer
+        PEER_FACTORY = lambda port=0, timeout=10.0: DeniedPeer(
+            port, timeout, allow_qemu_reset=True
+        )
         ASSERT_ACCEPTANCE = assert_denied_acceptance
         ASSERT_PEER = assert_denied_peer
     elif case == "granted":
@@ -290,7 +298,9 @@ def assert_denied_peer(peer: DeniedPeer) -> None:
     if peer.tx_frames or peer.rx_frames:
         raise AssertionError("denied socket proof exchanged Ethernet frames")
     if not peer.connected or not peer.completed:
-        raise AssertionError("denied peer did not connect and finish on clean EOF")
+        raise AssertionError("denied peer did not connect and finish cleanly")
+    if peer.terminal_reset and not peer.allow_qemu_reset:
+        raise AssertionError("denied peer accepted an unapproved transport reset")
 
 
 def assert_live_timeline(timeline: AcceptanceTimeline) -> None:
@@ -350,6 +360,21 @@ class SocketAcceptanceSelfTest(unittest.TestCase):
                 pass
             peer.join(timeout=2.0)
             assert_denied_peer(peer)
+        finally:
+            peer.close()
+
+    def test_denied_peer_rejects_connection_reset(self) -> None:
+        peer = DeniedPeer(timeout=1.0)
+        peer.start()
+        try:
+            connection = socket.create_connection(("127.0.0.1", peer.port), timeout=1.0)
+            set_abortive_close(connection)
+            connection.close()
+            peer.join(timeout=2.0)
+            self.assertIsInstance(peer.error, ConnectionResetError)
+            self.assertFalse(peer.completed)
+            with self.assertRaises(AssertionError):
+                assert_denied_peer(peer)
         finally:
             peer.close()
 
