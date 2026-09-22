@@ -1,10 +1,10 @@
 # ADR 0104: Phase 14 Secure-Transport Proof
 
-Status: Proposed for implementation review
+Status: Accepted
 
 ## Decision
 
-The next Phase 14 networking slice is one finite, client-only TLS 1.3 proof
+The final accepted Phase 14 networking slice is one finite, client-only TLS 1.3 proof
 above the accepted capability-gated socket/TCP path. The proof uses
 `embedded-tls` `0.19.0` with default features disabled and the `rustpki`
 feature, compiled for `x86_64-unknown-none`. Its PythOS consumer remains an
@@ -74,6 +74,25 @@ Every case requires exact markers, one `QEMU_OUTCOME success`, no storage or
 panic evidence, and clean serial/ESP artifact teardown. Earlier Phase 14
 proofs and default/normal-session boot must remain green.
 
+The accepted local evidence is:
+
+- granted: 21 frames, exactly nine ordered markers, one `QEMU_OUTCOME
+  success`, and clean serial/ESP artifact teardown;
+- tamper: 21 frames, exactly eight ordered markers including
+  `REQUEST_ENCRYPTED > TAMPER_REJECTED`, no plaintext release, one
+  `QEMU_OUTCOME success`, and clean serial/ESP artifact teardown;
+- denied: zero frames, exactly four ordered markers, one `QEMU_OUTCOME
+  success`, and clean serial/ESP artifact teardown.
+
+The tamper image uses the private `secure-transport-tamper-probe` core profile
+to select `SECURE_TAMPER_READY`; the granted profile selects `SECURE_READY`.
+This distinction is acceptance-only and adds no public ABI or service surface.
+
+The finite TLS proof uses the existing guarded user-stack contract with 64 KiB
+(16 pages) of usable stack headroom and the retained unmapped guard page. This
+is bounded static headroom for the proof; it does not change the Phase 8
+guard-page authority/permission contract or add dynamic stack allocation.
+
 The tamper case's frozen marker order is
 `BOOTSTRAPPED > OPEN_GRANTED > TCP_READY > TLS_HANDSHAKE_OK >
 REQUEST_ENCRYPTED > TAMPER_REJECTED > TEARDOWN_REVOKED > SECURE_TAMPER_READY`.
@@ -90,3 +109,8 @@ This ADR does not decide public TLS/socket ABI design, reusable capability or
 resource allocation, entropy provisioning, certificate/key lifecycle, CA
 policy, update transport, package signing, session resumption, multiple peers,
 or any Phase 15 hardware behavior.
+
+This accepted bounded proof is Phase 14's current stopping point. It does not
+establish production TLS, update authenticity, physical networking, or a
+generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo
+Wi-Fi, remains separate.

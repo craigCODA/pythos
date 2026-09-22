@@ -95,6 +95,22 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-socket.py --self-test",
         "python scripts/test-socket.py",
     )
+    SECURE_TRANSPORT_MILESTONE_ONLY_COMMANDS = (
+        "cargo test -p pythos-user-socket-probe --features secure-transport",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+        "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe",
+        "python scripts/build-secure-transport-probe.py",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+        "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings",
+        "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+        "python -m unittest tests.test_secure_transport_contract",
+        "python -m unittest tests.test_secure_transport",
+        "python scripts/test-secure-transport.py --self-test",
+        "python scripts/test-secure-transport.py",
+    )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
         "cargo test -p pythos-core session_runtime",
@@ -694,6 +710,85 @@ class CiWorkflowTest(unittest.TestCase):
                 commands.index(predecessor),
                 commands.index(successor),
                 f"socket gate must follow predecessor: {predecessor}",
+            )
+
+    def test_secure_transport_has_ordered_milestone_only_gates_after_socket(self) -> None:
+        workflow = WORKFLOW.read_text(encoding="utf-8")
+        milestone = self._job_block(workflow, "milestone_acceptance")
+        handoff = self._job_block(workflow, "handoff_acceptance")
+        commands = self._commands(milestone)
+
+        for command in self.SECURE_TRANSPORT_MILESTONE_ONLY_COMMANDS:
+            self.assertEqual(
+                commands.count(command),
+                1,
+                f"missing or duplicate secure-transport gate: {command}",
+            )
+            self.assertNotIn(command, self._commands(handoff))
+
+        ordered_pairs = (
+            (
+                "cargo test -p pythos-core socket_probe --features socket-api-denied-probe",
+                "cargo test -p pythos-user-socket-probe --features secure-transport",
+            ),
+            (
+                "cargo test -p pythos-user-socket-probe --features secure-transport",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+            ),
+            (
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe",
+                "cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe",
+            ),
+            (
+                "python scripts/build-socket-probe.py",
+                "python scripts/build-secure-transport-probe.py",
+            ),
+            (
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings",
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+            ),
+            (
+                "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings",
+                "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings",
+            ),
+            (
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+                "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+            ),
+            (
+                "python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py",
+                "python -m unittest tests.test_secure_transport_contract",
+            ),
+            (
+                "python -m unittest tests.test_secure_transport_contract",
+                "python -m unittest tests.test_secure_transport",
+            ),
+            (
+                "python scripts/test-socket.py",
+                "python scripts/test-secure-transport.py --self-test",
+            ),
+            (
+                "python scripts/test-secure-transport.py --self-test",
+                "python scripts/test-secure-transport.py",
+            ),
+        )
+        for predecessor, successor in ordered_pairs:
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"secure-transport gate must follow predecessor: {predecessor}",
             )
 
 

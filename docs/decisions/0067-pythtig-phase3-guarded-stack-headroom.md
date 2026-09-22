@@ -28,14 +28,18 @@ Keep the ADR 0029 guarded-stack authority and permission contract:
 * guard pages remain supervisor-only and are validated by page-table
   inspection.
 
-Increase each static usable user-stack extent from one page to four pages. This
-is bounded headroom for the existing ring-3 debug acceptance profile, not a
-dynamic stack allocator and not a new process model.
+PythTIG Phase 3 increased each static usable user-stack extent from one page to
+four pages. The later accepted Phase 14 finite TLS proof uses the same guarded
+slot contract with a current static usable extent of 16 pages (64 KiB). The
+16-page extent supersedes the four-page configured headroom while retaining
+the Phase 3 evidence and the Phase 8 guard-page contract. This remains bounded
+headroom for ring-3 acceptance profiles, not a dynamic stack allocator and not
+a new process model.
 
 ## Consequences
 
-PythTIG Phase 3 object graphs can run through the existing retained object
-service without tripping the guard during normal decoder/interpreter setup.
+PythTIG Phase 3 object graphs and the finite Phase 14 TLS proof can run through
+their accepted bounded paths without tripping the guard during normal setup.
 
 The guard-page behavior remains intact: stack overflow still faults into the
 existing user-fault containment path. No marker strings, syscall numbers,
