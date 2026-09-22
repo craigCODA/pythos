@@ -583,7 +583,7 @@ mod tests {
 
     #[test]
     fn native_response_validator_rejects_reserved_bytes() {
-        let response = NetworkPortResponseV1::new(NETWORK_PORT_STATUS_OK, 0);
+        let response = NetworkPortResponseV1::new(NETWORK_PORT_STATUS_OK, NETWORK_PORT_STATE_READY);
         assert!(valid_response(response));
         let mut reserved = response;
         reserved.reserved3 = 1;
