@@ -37,29 +37,27 @@ Phase 13.5 slice 1 accepted in QEMU   session-input bridge, ADR 0090
 Phase 13.5 slice 2 accepted in QEMU   bounded retained runtime, ADR 0091
 Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
                               ADRs 0092-0093
-Phase 14 link-layer accepted in QEMU   opt-in Ethernet-II consumer, ADR 0096
+Phase 14 TCP accepted locally          bounded stream proof, ADRs 0095-0101
+                                      DNS is the next separately authorized
+                                      Phase 14 boundary; acceptance reserves 0102
 ```
 
-Phase 14 `link-layer` is accepted under [ADR 0096](decisions/0096-phase-14-link-layer-consumer.md),
-and Phase 14 is not complete. The opt-in native proof uses a read-only
-bootstrap, describes the MAC, sends one fixed unicast TX, rejects wrong
-destination and wrong EtherType, accepts one valid RX, and reaches terminal
-revocation. Exact acceptance evidence is no non-boot virtio data disk attached, no
-storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path
-writes, and `QEMU_OUTCOME success`. Raw bytes remain below
-`NetworkPort`; Ethernet-II semantics live in the native consumer, and default
-and normal-session boot remain unchanged. This does not claim IP/protocols/
-sockets, a production service, physical NIC/Wi-Fi, modern or interrupt Virtio,
+Phase 14 has locally accepted bounded proofs through TCP under [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md).
+The current TCP proof is a finite, opt-in native stream exchange above the
+accepted `NetworkPort` boundary: exact ARP/TCP frames, ordered markers,
+`QEMU_OUTCOME success`, no storage-path writes, snapshot-backed ESP, and clean
+capability teardown. It does not claim a socket API, general protocol service,
+hosted/remote networking, physical NIC/Wi-Fi, modern or interrupt Virtio,
 multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
-persistent state, or PythTIG changes. ARP is the next Phase 14 design boundary.
-See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
-[handover](HANDOVER.md) for the exact local evidence and scope. Physical
+persistent state, or PythTIG changes. DNS is the next separately authorized
+Phase 14 design boundary. See the [current roadmap boundary](ROADMAP.md#current-phase-14-boundary)
+and [handover](HANDOVER.md) for exact local evidence and scope. Physical
 Lenovo Wi-Fi remains deferred to Phase 15.
 
-ADRs are allocated through 0096 in this checkout. Check `docs/decisions/` and
-in-progress branches before allocating another number; this recap does not
-reserve one. Later Phase 14 slices and Phases 15-17 remain separately invoked
-work.
+ADRs are allocated through 0101 in this checkout; DNS acceptance reserves
+0102. Check `docs/decisions/` and in-progress branches before allocating
+another number. Later Phase 14 slices and Phases 15-17 remain separately
+invoked work.
 
 ---
 
