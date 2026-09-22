@@ -280,6 +280,8 @@ mod tests {
         assert!(manifest.contains("default = [\"normal-session\"]"));
         assert!(main.contains("feature = \"dns-probe\""));
         assert!(main.contains("feature = \"normal-session\""));
-        assert!(main.contains("feature = \"dns-probe\"\n        )))"));
+        assert!(main.contains(
+            "feature = \"dns-probe\",\n            feature = \"socket-api-probe\",\n            feature = \"socket-api-denied-probe\"\n        )))"
+        ));
     }
 }
