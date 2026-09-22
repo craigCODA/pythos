@@ -9,7 +9,9 @@ state, or Phase 15 file changed.
 
 The status updates retain the accepted `NetworkPort`, Ethernet-II, ARP, IPv4,
 and ICMP evidence and references. `VirtioTransport` remains the privileged
-transport adapter and `NetworkPort` remains the copied-frame boundary.
+transport adapter and `NetworkPort` remains the copied-frame boundary. The
+follow-up status-contract assertion cleanup was limited to the stale
+UDP-next-boundary wording in `tests/test_virtio_net.py`.
 
 ## Accepted local UDP evidence
 
@@ -59,7 +61,7 @@ PYTHOS:CORE:UDP_READY
 
 ADR 0100 bases the fixed source/destination ports, length, checksum, IPv4
 pseudo-header, and arithmetic odd-byte padding on RFC 768. RFC 1122 section
-4.2.3.1 supplies the UDP-checksum host requirement. This does not claim a
+4.1.3.4 supplies the UDP-checksum host requirement. This does not claim a
 complete UDP host or complete RFC 1122 host compliance.
 
 The proof does not claim a UDP service, socket API, port namespace or
@@ -71,27 +73,25 @@ boundary.
 
 ## Verification
 
-The focused documentation contract verifies that ADR 0100 and every named
-current-status document contain the accepted UDP reference, Task 6 commit,
-fixed `PYTHUDP` profile, and TCP next-boundary statement. The Task 6 focused
-host suite passed 12/12:
+The focused status-contract test checks that each named current-status
+document retains the predecessor evidence and contains the accepted UDP
+wording and TCP next-boundary statement. It passed all 9 tests. The Task 6
+focused host suite passed 12/12:
 
 ```text
 py -3 -m unittest tests.test_udp
 ```
 
-The existing current-status pytest was run:
+The current-status pytest was run:
 
 ```text
 py -3 -m pytest tests/test_virtio_net.py -q
 ```
 
-It has one stale failure in
-`test_canonical_docs_record_icmp_scope_and_next_boundary`: that test still
-requires the superseded statement that UDP is the next Phase 14 boundary. The
-Task 7 scope explicitly excludes test edits, so it remains unchanged. Its
-other eight tests passed; the repository also emitted the pre-existing
-`.pytest_cache` permission warnings. `git diff --check` passed.
+The stale UDP-next-boundary assertion was updated to require accepted UDP
+wording and TCP as the next boundary; all 9 tests passed. Pytest emitted only
+the pre-existing `.pytest_cache` permission warning. `git diff --check`
+passed.
 
 ## Commit
 
