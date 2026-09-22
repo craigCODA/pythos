@@ -579,6 +579,57 @@ pub fn encode_segment(
     Ok(segment_bytes)
 }
 
+/// Encode a TCP segment for the private stream transport proof.
+///
+/// The original `encode_segment` function intentionally retains the finite
+/// six-byte socket acceptance profile. This companion keeps that proof
+/// unchanged while allowing bounded TLS records to be carried as ordinary
+/// ACK data above the same TCP wire codec.
+pub fn encode_stream_segment(
+    segment: TcpSegment<'_>,
+    source_ipv4: [u8; 4],
+    destination_ipv4: [u8; 4],
+    output: &mut [u8],
+) -> Result<usize, EncodeError> {
+    validate_stream_profile(segment)?;
+
+    let header_bytes = if is_syn(segment.flags) {
+        TCP_SYN_HEADER_BYTES
+    } else {
+        TCP_HEADER_BYTES
+    };
+    let segment_bytes = header_bytes
+        .checked_add(segment.data.len())
+        .ok_or(EncodeError::PayloadTooLong)?;
+    if u16::try_from(segment_bytes).is_err() {
+        return Err(EncodeError::PayloadTooLong);
+    }
+    if output.len() != segment_bytes {
+        return if output.len() < segment_bytes {
+            Err(EncodeError::OutputTooSmall)
+        } else {
+            Err(EncodeError::OutputTooLarge)
+        };
+    }
+
+    output[0..2].copy_from_slice(&segment.source_port.to_be_bytes());
+    output[2..4].copy_from_slice(&segment.destination_port.to_be_bytes());
+    output[4..8].copy_from_slice(&segment.sequence.to_be_bytes());
+    output[8..12].copy_from_slice(&segment.acknowledgment.to_be_bytes());
+    output[12] = ((header_bytes / 4) as u8) << 4;
+    output[13] = segment.flags;
+    output[14..16].copy_from_slice(&segment.window.to_be_bytes());
+    output[16..18].fill(0);
+    output[18..20].copy_from_slice(&segment.urgent_pointer.to_be_bytes());
+    if is_syn(segment.flags) {
+        output[TCP_HEADER_BYTES..TCP_SYN_HEADER_BYTES].copy_from_slice(&[0x02, 0x04, 0x04, 0x00]);
+    }
+    output[header_bytes..segment_bytes].copy_from_slice(segment.data);
+    let checksum = tcp_checksum(source_ipv4, destination_ipv4, output);
+    output[16..18].copy_from_slice(&checksum.to_be_bytes());
+    Ok(segment_bytes)
+}
+
 pub fn decode_segment(
     bytes: &[u8],
     source_ipv4: [u8; 4],
@@ -642,6 +693,59 @@ pub fn decode_segment(
     };
     validate_profile(segment, source_ipv4, destination_ipv4)
         .map_err(|_| DecodeError::InvalidProfile)?;
+    Ok(segment)
+}
+
+/// Decode a bounded stream segment while leaving the finite socket profile
+/// enforced by `decode_segment` unchanged.
+pub fn decode_stream_segment(
+    bytes: &[u8],
+    source_ipv4: [u8; 4],
+    destination_ipv4: [u8; 4],
+) -> Result<TcpSegment<'_>, DecodeError> {
+    if bytes.len() < TCP_HEADER_BYTES {
+        return Err(DecodeError::InputTooShort);
+    }
+    let data_offset = bytes[12] >> 4;
+    if !(5..=6).contains(&data_offset) {
+        return Err(DecodeError::InvalidDataOffset);
+    }
+    if bytes[12] & 0x0f != 0 {
+        return Err(DecodeError::InvalidProfile);
+    }
+    let header_bytes = usize::from(data_offset) * 4;
+    if header_bytes > bytes.len() {
+        return Err(DecodeError::InputTooShort);
+    }
+    let flags = bytes[13];
+    if data_offset == 6 {
+        if !is_syn(flags) || bytes[20..24] != [0x02, 0x04, 0x04, 0x00] {
+            return Err(DecodeError::InvalidOptions);
+        }
+    } else if is_syn(flags) {
+        return Err(DecodeError::InvalidOptions);
+    }
+    if tcp_checksum(source_ipv4, destination_ipv4, bytes) != 0 {
+        return Err(DecodeError::BadChecksum);
+    }
+
+    let data = &bytes[header_bytes..];
+    let segment = TcpSegment {
+        source_port: u16::from_be_bytes([bytes[0], bytes[1]]),
+        destination_port: u16::from_be_bytes([bytes[2], bytes[3]]),
+        sequence: u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+        acknowledgment: u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]),
+        flags,
+        window: u16::from_be_bytes([bytes[14], bytes[15]]),
+        urgent_pointer: u16::from_be_bytes([bytes[18], bytes[19]]),
+        mss: if data_offset == 6 {
+            Some(TCP_MSS)
+        } else {
+            None
+        },
+        data,
+    };
+    validate_stream_profile(segment).map_err(|_| DecodeError::InvalidProfile)?;
     Ok(segment)
 }
 
@@ -719,4 +823,18 @@ fn validate_profile(
     } else {
         Err(EncodeError::InvalidProfile)
     }
+}
+
+fn validate_stream_profile(segment: TcpSegment<'_>) -> Result<(), EncodeError> {
+    if !valid_flags(segment.flags)
+        || segment.window == 0
+        || segment.urgent_pointer != 0
+        || (is_syn(segment.flags) && segment.mss != Some(TCP_MSS))
+        || (!is_syn(segment.flags) && segment.mss.is_some())
+        || (is_syn(segment.flags) && !segment.data.is_empty())
+        || (segment.flags & TCP_FLAG_FIN != 0 && !segment.data.is_empty())
+    {
+        return Err(EncodeError::InvalidProfile);
+    }
+    Ok(())
 }

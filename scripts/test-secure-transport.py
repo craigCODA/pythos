@@ -468,7 +468,8 @@ class SecurePeer:
             data=data,
         )
         self._ip_identification = (self._ip_identification + 1) & 0xFFFF
-        self._host_next = (self._host_next + len(data) + (1 if flags & FIN else 0)) & 0xFFFFFFFF
+        sequence_space = 1 if flags & (SYN | FIN) else 0
+        self._host_next = (self._host_next + len(data) + sequence_space) & 0xFFFFFFFF
         self._send_frame(connection, frame)
 
     def _read_guest(self, connection: socket.socket) -> ParsedSecureFrame:
@@ -918,7 +919,7 @@ def run_self_tests() -> int:
 def main() -> int:
     for case, feature in (
         ("granted", "secure-transport-probe"),
-        ("tamper", "secure-transport-probe"),
+        ("tamper", "secure-transport-tamper-probe"),
         ("denied", "secure-transport-denied-probe"),
     ):
         configure_case(case)

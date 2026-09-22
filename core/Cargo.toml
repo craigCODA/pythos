@@ -46,6 +46,12 @@ dns-probe = ["verify"]
 socket-api-probe = ["verify"]
 # Opt-in denied companion case: valid bootstrap, no NetworkPort authority.
 socket-api-denied-probe = ["verify"]
+# Opt-in finite TLS 1.3 secure-transport proof above the private socket path.
+secure-transport-probe = ["verify", "socket-api-probe"]
+# Opt-in tamper-only secure-transport proof; inherits the granted secure/socket path.
+secure-transport-tamper-probe = ["secure-transport-probe"]
+# Opt-in denied companion case for the secure-transport proof.
+secure-transport-denied-probe = ["verify", "socket-api-denied-probe"]
 # Opt-in only: compose one retained Slice 2 runtime and return through a
 # bounded breakpoint into the already validated kernel root.
 session-runtime-probe = ["verify"]

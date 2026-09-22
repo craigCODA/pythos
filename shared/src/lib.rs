@@ -24,6 +24,7 @@ pub mod pyth_runtime_abi;
 pub mod pyth_tig;
 pub mod qemu_exit;
 pub mod runtime_payload;
+pub mod secure_transport_markers;
 pub mod session_controls;
 pub mod session_input_abi;
 pub mod session_runtime_abi;

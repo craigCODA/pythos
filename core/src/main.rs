@@ -18,7 +18,10 @@
             feature = "tcp-probe",
             feature = "dns-probe",
             feature = "socket-api-probe",
-            feature = "socket-api-denied-probe"
+            feature = "socket-api-denied-probe",
+            feature = "secure-transport-probe",
+            feature = "secure-transport-tamper-probe",
+            feature = "secure-transport-denied-probe"
         )
     ),
     allow(unused)
@@ -41,7 +44,20 @@ compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
 compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mutually exclusive");
 #[cfg(all(
-    any(feature = "socket-api-probe", feature = "socket-api-denied-probe"),
+    feature = "secure-transport-probe",
+    feature = "secure-transport-denied-probe"
+))]
+compile_error!(
+    "features `secure-transport-probe` and `secure-transport-denied-probe` are mutually exclusive"
+);
+#[cfg(all(
+    any(
+        feature = "socket-api-probe",
+        feature = "socket-api-denied-probe",
+        feature = "secure-transport-probe",
+        feature = "secure-transport-tamper-probe",
+        feature = "secure-transport-denied-probe"
+    ),
     any(
         feature = "normal-session",
         feature = "phase13-package-test",

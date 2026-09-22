@@ -1,3 +1,8 @@
+#[cfg(not(test))]
+use pythos_shared::secure_transport_markers::{
+    SECURE_DENIED_READY_MARKER, SECURE_DENIED_TEARDOWN_COMPLETE_MARKER, SECURE_READY_MARKER,
+    SECURE_TAMPER_READY_MARKER, SECURE_TEARDOWN_REVOKED_MARKER,
+};
 use pythos_shared::socket_markers::{
     SOCKET_BOOTSTRAPPED_MARKER, SOCKET_CLOSE_OK_MARKER, SOCKET_CONSUMER_SERVICE_ID,
     SOCKET_DENIED_BOOTSTRAPPED_MARKER, SOCKET_DENIED_READY_MARKER,
@@ -110,8 +115,7 @@ pub fn run(
             NetworkPortLaunchError::UserMode(error) => SocketProbeError::UserMode(error),
             error => SocketProbeError::Launch(error),
         })?;
-        crate::serial::write_line(SOCKET_DENIED_TEARDOWN_COMPLETE_MARKER);
-        crate::serial::write_line(SOCKET_DENIED_READY_MARKER);
+        write_denied_final_markers();
         Ok(())
     }
 
@@ -159,9 +163,44 @@ pub fn run(
         {
             return Err(SocketProbeError::Teardown);
         }
+        write_granted_final_markers();
+        Ok(())
+    }
+}
+
+#[cfg(not(test))]
+fn write_denied_final_markers() {
+    #[cfg(feature = "secure-transport-denied-probe")]
+    {
+        crate::serial::write_line(SECURE_DENIED_TEARDOWN_COMPLETE_MARKER);
+        crate::serial::write_line(SECURE_DENIED_READY_MARKER);
+    }
+    #[cfg(not(feature = "secure-transport-denied-probe"))]
+    {
+        crate::serial::write_line(SOCKET_DENIED_TEARDOWN_COMPLETE_MARKER);
+        crate::serial::write_line(SOCKET_DENIED_READY_MARKER);
+    }
+}
+
+#[cfg(not(test))]
+fn write_granted_final_markers() {
+    #[cfg(feature = "secure-transport-tamper-probe")]
+    {
+        crate::serial::write_line(SECURE_TEARDOWN_REVOKED_MARKER);
+        crate::serial::write_line(SECURE_TAMPER_READY_MARKER);
+    }
+    #[cfg(all(
+        feature = "secure-transport-probe",
+        not(feature = "secure-transport-tamper-probe")
+    ))]
+    {
+        crate::serial::write_line(SECURE_TEARDOWN_REVOKED_MARKER);
+        crate::serial::write_line(SECURE_READY_MARKER);
+    }
+    #[cfg(not(feature = "secure-transport-probe"))]
+    {
         crate::serial::write_line(SOCKET_TEARDOWN_REVOKED_MARKER);
         crate::serial::write_line(SOCKET_READY_MARKER);
-        Ok(())
     }
 }
 

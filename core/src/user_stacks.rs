@@ -6,9 +6,10 @@ use core::cell::UnsafeCell;
 pub const USER_STACK_PAGE_SIZE: usize = 4096;
 pub const USER_STACK_COUNT: usize = 2;
 /// ADR 0067 keeps the ADR 0029 guard-page contract but gives each static
-/// user stack enough bounded headroom for the Phase 3 PythTIG interpreter and
-/// object-service syscall request construction in debug acceptance builds.
-pub const USER_STACK_USABLE_PAGES: usize = 4;
+/// user stack bounded headroom for PythTIG, object-service requests, and the
+/// Phase 14 finite TLS proof's certificate-verification and DER-decoding call
+/// chains.
+pub const USER_STACK_USABLE_PAGES: usize = 16;
 pub const USER_STACK_USABLE_BYTES: usize = USER_STACK_USABLE_PAGES * USER_STACK_PAGE_SIZE;
 const USER_STACK_SLOT_PAGES: usize = 1 + USER_STACK_USABLE_PAGES;
 const USER_STACK_SLOT_SIZE: usize = USER_STACK_SLOT_PAGES * USER_STACK_PAGE_SIZE;

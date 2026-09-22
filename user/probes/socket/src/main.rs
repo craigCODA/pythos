@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 #![cfg_attr(not(test), no_main)]
 #![cfg_attr(test, allow(dead_code, unused_imports))]
+#![cfg_attr(feature = "secure-transport", allow(dead_code, unused_imports))]
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -37,6 +38,9 @@ use pythos_user_tcp_probe::tcp::{
     TCP_PROTOCOL, TCP_SYN_HEADER_BYTES, TcpSegment, decode_segment, encode_segment,
 };
 
+#[cfg(feature = "secure-transport")]
+mod secure;
+
 const BROADCAST_MAC: [u8; 6] = [0xff; 6];
 const LOCAL_MAC: [u8; 6] = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
 const PEER_MAC: [u8; 6] = [0x02, 0x00, 0x00, 0x00, 0x00, 0x02];
@@ -60,7 +64,7 @@ struct ProbeBuffers {
     request: NetworkPortRequestV1,
     response: NetworkPortResponseV1,
     description: NetworkPortDescriptionV1,
-    tx: [u8; NETWORK_PORT_MIN_FRAME_BYTES],
+    tx: [u8; NETWORK_PORT_MAX_FRAME_BYTES],
     rx: [u8; NETWORK_PORT_MAX_FRAME_BYTES],
 }
 
@@ -70,11 +74,11 @@ static STORAGE: ProbeStorage = ProbeStorage(UnsafeCell::new(ProbeBuffers {
     request: NetworkPortRequestV1::new(0, PackedCapability::from_raw(0)),
     response: NetworkPortResponseV1::new(0, 0),
     description: NetworkPortDescriptionV1::empty(),
-    tx: [0; NETWORK_PORT_MIN_FRAME_BYTES],
+    tx: [0; NETWORK_PORT_MAX_FRAME_BYTES],
     rx: [0; NETWORK_PORT_MAX_FRAME_BYTES],
 }));
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "secure-transport")))]
 #[unsafe(no_mangle)]
 pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
     let console = PackedCapability::from_raw(console_raw);
@@ -155,6 +159,12 @@ pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
     }
     write_marker(console, SOCKET_CLOSE_OK_MARKER);
     success_breakpoint();
+}
+
+#[cfg(all(not(test), feature = "secure-transport"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
+    secure::start(bootstrap_ptr, console_raw)
 }
 
 fn valid_bootstrap(bootstrap: NetworkPortBootstrapV1) -> bool {
@@ -476,12 +486,20 @@ fn send_frame(
     capability: PackedCapability,
     frame: [u8; NETWORK_PORT_MIN_FRAME_BYTES],
 ) -> Result<(), ()> {
+    send_frame_bytes(capability, &frame)
+}
+
+fn send_frame_bytes(capability: PackedCapability, frame: &[u8]) -> Result<(), ()> {
+    if !(NETWORK_PORT_MIN_FRAME_BYTES..=NETWORK_PORT_MAX_FRAME_BYTES).contains(&frame.len()) {
+        return Err(());
+    }
     // SAFETY: one probe thread accesses fixed storage serially.
     let buffers = unsafe { &mut *STORAGE.0.get() };
-    buffers.tx = frame;
+    buffers.tx.fill(0);
+    buffers.tx[..frame.len()].copy_from_slice(frame);
     buffers.request = NetworkPortRequestV1::new(NETWORK_PORT_OP_SEND, capability);
     buffers.request.input_ptr = buffers.tx.as_ptr() as u64;
-    buffers.request.input_len = buffers.tx.len() as u64;
+    buffers.request.input_len = frame.len() as u64;
     (request(buffers) == NETWORK_PORT_STATUS_OK)
         .then_some(())
         .ok_or(())
