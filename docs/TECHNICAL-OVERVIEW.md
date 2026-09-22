@@ -44,9 +44,29 @@ No hosted or remote ICMP acceptance is claimed. Default and normal-session boot 
 claim a complete RFC 1122 host, a general Echo server, user interface,
 reusable ICMP service, routing, sockets, physical NIC/Wi-Fi, modern or
 interrupt Virtio, multiqueue/offloads, multiple consumers or packet
-distribution, zero-copy, persistent state, or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary; Phase 15
+distribution, zero-copy, persistent state, or PythTIG changes. Phase 15
 physical hardware expansion remains separate. See [HANDOVER.md](HANDOVER.md)
 for the exact local evidence and non-claims.
+
+The bounded UDP datagram proof is accepted locally under
+[ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6 commit
+`4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply, UDP
+request, and reversed UDP reply between local MAC `52:54:00:12:34:56` / IPv4
+`192.168.14.2` and peer MAC `02:00:00:00:00:02` / IPv4 `192.168.14.1`. Both
+UDP IPv4 packets use protocol 17, total length 35, IDs/checksums
+`0x1405`/`0xC971` and `0x1406`/`0xC970`, ports `0x1405 -> 0x1406` and reversed,
+the 7-byte data `PYTHUDP`, UDP length 15, and checksum `0xF08A`. The four
+software frames are 60 bytes excluding FCS; UDP frames carry eleven zero
+Ethernet pad bytes, while the odd checksum pad is arithmetic only. Seven UDP
+markers appeared once in order with one `QEMU_OUTCOME success`, and no extra
+transmit, storage evidence, error marker, or hosted claim occurred. RFC 768
+and RFC 1122's UDP-checksum requirement are the standards basis, not a claim
+of complete UDP-host or RFC 1122 host compliance. No UDP service, socket API,
+port namespace or multiplexing, ICMP error delivery, retries, timers, routing,
+fragmentation, TCP, DNS, TLS, physical hardware, modern/interrupt Virtio,
+interrupts/MSI-X, offloads, zero-copy, multiple consumers, persistent state,
+PythTIG change, or Phase 15 work is claimed. TCP is the next separately
+authorized Phase 14 design boundary.
 
 The SDHCI/eMMC backend has
 target-specific physical evidence on the confirmed disposable O2 Micro

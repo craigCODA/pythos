@@ -38,8 +38,28 @@ request/reply, four frames total, with seven ICMP markers once in order and
 complete RFC 1122 host, a general Echo server, user interface, reusable ICMP
 service, routing, sockets, physical NIC/Wi-Fi, modern or interrupt Virtio,
 multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
-persistent state, or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary; Phase 15 physical hardware expansion
+persistent state, or PythTIG changes. Phase 15 physical hardware expansion
 remains separate.
+
+The bounded UDP datagram proof is accepted locally under
+[ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6
+commit `4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply,
+UDP request, and reversed UDP reply between local MAC `52:54:00:12:34:56` /
+IPv4 `192.168.14.2` and peer MAC `02:00:00:00:00:02` / IPv4
+`192.168.14.1`. The fixed UDP IPv4 packets use protocol 17, total length 35,
+IDs/checksums `0x1405`/`0xC971` and `0x1406`/`0xC970`, ports
+`0x1405 -> 0x1406` and reversed, data `PYTHUDP`, UDP length 15, and checksum
+`0xF08A`. All four software frames are 60 bytes excluding FCS; UDP frames have
+eleven zero Ethernet pad bytes, and the odd checksum pad is arithmetic only.
+The seven UDP markers appeared once in order with one `QEMU_OUTCOME success`;
+no extra transmit, storage evidence, error marker, or hosted claim occurred.
+RFC 768 and RFC 1122's UDP-checksum requirement provide the standards basis,
+without claiming complete UDP-host or RFC 1122 host compliance. This does not
+claim a UDP service, socket API, port namespace or multiplexing, ICMP error
+delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS, physical
+hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads, zero-copy,
+multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP
+is the next separately authorized Phase 14 design boundary.
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a

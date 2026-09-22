@@ -2,12 +2,29 @@
 
 ## Current Phase 14 Boundary
 
-Phase 14 bounded ICMP Echo is accepted locally under
-[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md), building on the frozen
+Phase 14 bounded UDP datagram proof is accepted locally under
+[ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), building on the frozen
 boot-local `NetworkPort` boundary in
 [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md). The
 Ethernet-II link-layer proof is accepted under ADR 0096, and the ARP proof is accepted under ADR 0097.
-The IPv4 proof is accepted locally under ADR 0098, and the ICMP Echo proof is accepted locally under ADR 0099. At Task 6 implementation commit `de0352f`,
+The IPv4 proof is accepted locally under ADR 0098, and the ICMP Echo proof is accepted locally under ADR 0099. At UDP Task 6 implementation commit `4dc5679`,
+the serialized `py -3 scripts/test-udp.py` proof passed with
+`UDP_QEMU_ACCEPTANCE_OK` and one `QEMU_OUTCOME success`. Its loopback peer
+observed exactly ARP request, ARP reply, UDP request, and reversed UDP reply;
+the UDP frames use local MAC `52:54:00:12:34:56`, peer MAC
+`02:00:00:00:00:02`, local IPv4 `192.168.14.2`, peer IPv4 `192.168.14.1`,
+protocol 17, total length 35, IDs/checksums `0x1405`/`0xC971` and
+`0x1406`/`0xC970`, ports `0x1405 -> 0x1406` and reversed, data `PYTHUDP`,
+length 15, and checksum `0xF08A`. The four software frames are 60 bytes
+excluding FCS; the UDP frames have eleven zero Ethernet pad bytes and the odd
+checksum pad is arithmetic only. The seven UDP markers appeared once in order;
+the oracle rejected extra transmit, storage evidence, and error markers. The
+run used `--no-virtio-blk`, a snapshot-backed ESP, no non-boot virtio data disk,
+no PythOS storage-path writes, and clean process and temporary-state teardown.
+This is a deterministic local acceptance proof; no hosted or remote UDP
+evidence is claimed.
+
+The accepted ICMP evidence remains unchanged. At Task 6 implementation commit `de0352f`,
 the serialized `py -3 scripts/test-icmp.py` proof passed with
 `ICMP_QEMU_ACCEPTANCE_OK` and `QEMU_OUTCOME success`. Its loopback peer
 observed exactly one ARP request/reply and one ICMP Echo request/reply, exactly
@@ -61,13 +78,19 @@ which completed successfully on 2026-09-17 at verified head
 `qemu-milestones`, `qemu-handoff`, and `qemu-acceptance` all passed. The earlier
 red run 35176094046 is superseded.
 
-Raw bytes remain below `NetworkPort`; ARP, IPv4, and ICMP semantics live in
+Raw bytes remain below `NetworkPort`; ARP, IPv4, ICMP, and UDP semantics live in
 separate native consumers. The ICMP Echo proof does not claim a complete RFC 1122 host, a general Echo server, user interface, reusable ICMP service,
 routing, sockets, physical networking or NIC/Wi-Fi support, modern/interrupt
 Virtio, multiqueue/offloads, multiple consumers, zero-copy, persistent state,
-or PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary. Phase 15 hardware remains separate. PR #28 is
-published; no merge, physical-media deployment, physical Wi-Fi probe, or
-hosted/remote ICMP evidence is claimed.
+or PythTIG changes. The accepted UDP proof has the RFC 768 fixed datagram and
+RFC 1122 UDP-checksum basis, but does not claim a complete RFC 1122 host,
+general UDP support, a UDP service, socket API, port namespace or multiplexing,
+ICMP error delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS,
+physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
+zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is
+the next separately authorized Phase 14 design boundary. Phase 15 hardware
+remains separate. PR #28 is published; no merge, physical-media deployment,
+physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

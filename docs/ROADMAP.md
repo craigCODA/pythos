@@ -13,8 +13,8 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 bounded ICMP Echo is accepted locally under
-[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md), above the frozen,
+Phase 14 bounded UDP datagram proof is accepted locally under
+[ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), above the frozen,
 boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capability-abi.md)
 and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
 boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, the
@@ -24,8 +24,8 @@ consumer performed one exact private-address ARP setup followed by one exact
 60-byte Protocol 253 IPv4 request/reply and reached terminal revocation with
 the seven required IPv4 markers exactly once in order and `QEMU_OUTCOME
 success`. It rejected malformed or mismatched frames, storage-path evidence,
-and extra peer transmit. The ICMP Echo proof is accepted locally under ADR
-0099. Its opt-in native client performed one exact ARP request/reply and one
+and extra peer transmit. The ICMP Echo proof is accepted locally under
+[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md). Its opt-in native client performed one exact ARP request/reply and one
 exact ICMP Echo request/reply, exactly four frames total, and reached terminal
 revocation with the seven required ICMP markers exactly once in order and
 `QEMU_OUTCOME success`. It rejected malformed or mismatched frames, storage
@@ -39,17 +39,34 @@ ARP consumer. Exact storage-topology evidence is no non-boot virtio data disk at
 no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; ARP, IPv4, and ICMP semantics live in
+At UDP Task 6 implementation commit `4dc5679`, the serialized local QEMU proof
+observed exactly four frames in order: ARP request, ARP reply, UDP request,
+and reversed UDP reply. It used local MAC `52:54:00:12:34:56`, peer MAC
+`02:00:00:00:00:02`, local IPv4 `192.168.14.2`, peer IPv4 `192.168.14.1`, and
+UDP/IPv4 protocol `17`. The fixed UDP request/reply has IPv4 total length 35,
+IDs/checksums `0x1405`/`0xC971` and `0x1406`/`0xC970`, ports
+`0x1405 -> 0x1406` and reversed, data `PYTHUDP`, length 15, and checksum
+`0xF08A`. Its 60-byte software frames exclude FCS and the UDP frames have
+eleven zero Ethernet pad bytes; the odd checksum pad is arithmetic only. The
+seven UDP markers appeared once in order with one `QEMU_OUTCOME success`; no
+extra transmit, storage evidence, error marker, or hosted claim occurred.
+
+Raw bytes remain below `NetworkPort`; ARP, IPv4, ICMP, and UDP semantics live in
 separate native consumers. Default and normal-session boot remain unchanged.
-No hosted IPv4 acceptance is claimed at this checkpoint.
+No hosted IPv4, ICMP, or UDP acceptance is claimed at this checkpoint.
 The ICMP Echo proof is a client-only deterministic acceptance proof, not a
 complete RFC 1122 host, general Echo server, user interface, reusable ICMP
 service, routing, sockets, or hosted/remote ICMP evidence. It does not claim
 physical networking or NIC/Wi-Fi support, modern or interrupt Virtio,
 multiqueue/offloads, multiple consumers, zero-copy, persistent state, or
-PythTIG changes. The bounded UDP design/slice is the next separately authorized Phase 14 boundary; do not implement it from this roadmap entry. Phase 15
-hardware remains separate. See [HANDOVER.md](HANDOVER.md) and ADR 0099 for the
-exact ICMP local evidence. The preserved ARP hosted
+PythTIG changes. The accepted UDP proof does not claim a UDP service, socket
+API, port namespace or multiplexing, ICMP error delivery, retries, timers,
+routing, fragmentation, TCP, DNS, TLS, physical hardware, interrupts/MSI-X,
+offloads, zero-copy, multiple consumers, persistent state, PythTIG changes, or
+complete RFC 1122 host compliance. TCP is the next separately authorized Phase
+14 design boundary; Phase 15 hardware remains separate. See
+[HANDOVER.md](HANDOVER.md) and [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md)
+for the exact UDP local evidence. The preserved ARP hosted
 evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
 which completed successfully on 2026-09-17 at verified head
 `45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs
