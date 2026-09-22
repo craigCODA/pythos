@@ -229,22 +229,9 @@ pub fn decode_memory_bar(low: u32, high: u32) -> Option<MemoryBar> {
 #[cfg(not(test))]
 pub fn run_probe() -> StorageProbeReport {
     let mut report = StorageProbeReport::new();
-    scan_pci_functions(|function| {
-        if let Some(controller) = classify_storage_controller(function) {
-            report.record(controller);
-        }
-    });
-    report
-}
-
-/// Enumerate PCI functions through the existing read-only configuration-space
-/// path. Consumers use this only to classify their own bounded evidence; this
-/// helper does not enable devices, write command registers, map MMIO, or
-/// access BAR memory.
-#[cfg(not(test))]
-pub fn scan_pci_functions(mut visitor: impl FnMut(PciFunctionSnapshot)) {
     let mut visited = [false; 256];
-    scan_bus(0, &mut visited, &mut visitor);
+    scan_bus(0, &mut visited, &mut report);
+    report
 }
 
 #[cfg(not(test))]
@@ -334,10 +321,7 @@ impl StorageControllerKind {
 }
 
 #[cfg(not(test))]
-fn scan_bus<F>(bus: u8, visited: &mut [bool; 256], visitor: &mut F)
-where
-    F: FnMut(PciFunctionSnapshot),
-{
+fn scan_bus(bus: u8, visited: &mut [bool; 256], report: &mut StorageProbeReport) {
     if visited[usize::from(bus)] {
         return;
     }
@@ -347,13 +331,13 @@ where
     while device < PCI_DEVICE_COUNT {
         let function0 = read_function(bus, device, 0);
         if vendor(function0.vendor_device) != PCI_VENDOR_INVALID {
-            scan_function(function0, visited, visitor);
+            scan_function(function0, visited, report);
             if function0.header_type & PCI_HEADER_MULTIFUNCTION != 0 {
                 let mut function = 1;
                 while function < PCI_FUNCTION_COUNT {
                     let snapshot = read_function(bus, device, function);
                     if vendor(snapshot.vendor_device) != PCI_VENDOR_INVALID {
-                        scan_function(snapshot, visited, visitor);
+                        scan_function(snapshot, visited, report);
                     }
                     function += 1;
                 }
@@ -367,11 +351,13 @@ where
 fn scan_function(
     function: PciFunctionSnapshot,
     visited: &mut [bool; 256],
-    visitor: &mut impl FnMut(PciFunctionSnapshot),
+    report: &mut StorageProbeReport,
 ) {
-    visitor(function);
+    if let Some(controller) = classify_storage_controller(function) {
+        report.record(controller);
+    }
     if is_pci_to_pci_bridge(function) && function.secondary_bus != 0 {
-        scan_bus(function.secondary_bus, visited, visitor);
+        scan_bus(function.secondary_bus, visited, report);
     }
 }
 

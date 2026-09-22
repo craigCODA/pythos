@@ -7,7 +7,7 @@
 //! enables one sacrificial eMMC sector write.
 
 use crate::memory::physical::PhysicalMemory;
-use crate::{fb_debug, hardware_probe_screen, network_probe, sdhci_probe, serial, storage_probe};
+use crate::{fb_debug, hardware_probe_screen, sdhci_probe, serial, storage_probe};
 use pythos_shared::boot_protocol::PythBootInfo;
 
 pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemory) -> ! {
@@ -18,8 +18,6 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
 
     let report = storage_probe::run_probe();
     storage_probe::emit_serial_report(&report);
-    let network_report = network_probe::run_probe();
-    network_probe::emit_serial_report(&network_report);
     let selected_sdhci = select_sdhci_controller(&report);
     let mut sdhci_snapshot = None;
     let mut sdhci_init = None;
@@ -107,7 +105,6 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     if hardware_probe_screen::render(
         &boot_info.framebuffer,
         &report,
-        &network_report,
         sdhci_snapshot,
         sdhci_init,
         emmc_identification,
@@ -119,9 +116,6 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     .is_ok()
     {
         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_READY");
-        if network_report.count() > 0 {
-            serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:NETWORK_FRAMEBUFFER_IDENTITY_READY");
-        }
     } else {
         serial::write_line("PYTHOS:CORE:HARDWARE_PROBE:FRAMEBUFFER_IDENTITY_FAILED");
     }

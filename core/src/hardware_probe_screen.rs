@@ -6,7 +6,6 @@
 
 #[cfg(feature = "hardware-probe")]
 use crate::framebuffer;
-use crate::network_probe::{NetworkController, NetworkProbeReport};
 use crate::sdhci_probe::{
     EmmcIdentificationReport, EmmcReadBlockError, EmmcReadBlockReport, EmmcWriteBlockError,
     EmmcWriteBlockReport, SdhciInitializationReport, SdhciRegisterSnapshot,
@@ -17,7 +16,7 @@ use crate::storage_probe::{
 #[cfg(feature = "hardware-probe")]
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
-const PROBE_SCREEN_MAX_LINES: usize = 20;
+const PROBE_SCREEN_MAX_LINES: usize = 13;
 const PROBE_LINE_MAX_BYTES: usize = 32;
 
 #[derive(Clone, Copy)]
@@ -343,49 +342,10 @@ fn build_screen_with_sdhci_state(
     screen
 }
 
-fn build_screen_with_optional_network_state(
-    report: &StorageProbeReport,
-    network_report: Option<&NetworkProbeReport>,
-    sdhci_snapshot: Option<SdhciRegisterSnapshot>,
-    sdhci_init: Option<SdhciInitializationReport>,
-    emmc_identification: Option<EmmcIdentificationReport>,
-    emmc_read: Option<EmmcReadBlockReport>,
-    emmc_read_error: Option<EmmcReadBlockError>,
-    emmc_write: Option<EmmcWriteBlockReport>,
-    emmc_write_error: Option<EmmcWriteBlockError>,
-) -> ProbeScreen {
-    let base = build_screen_with_sdhci_state(
-        report,
-        sdhci_snapshot,
-        sdhci_init,
-        emmc_identification,
-        emmc_read,
-        emmc_read_error,
-        emmc_write,
-        emmc_write_error,
-    );
-    let Some(network_report) = network_report else {
-        return base;
-    };
-
-    let mut screen = ProbeScreen::new();
-    push_text(&mut screen, "PythOS");
-    push_network_summary(&mut screen, network_report);
-    let mut index = 1;
-    while index < base.line_count() {
-        if let Some(line) = base.line(index) {
-            push_text(&mut screen, line);
-        }
-        index += 1;
-    }
-    screen
-}
-
 #[cfg(feature = "hardware-probe")]
 pub fn render(
     framebuffer_info: &PythFramebufferInfo,
     report: &StorageProbeReport,
-    network_report: &NetworkProbeReport,
     sdhci_snapshot: Option<SdhciRegisterSnapshot>,
     sdhci_init: Option<SdhciInitializationReport>,
     emmc_identification: Option<EmmcIdentificationReport>,
@@ -394,9 +354,8 @@ pub fn render(
     emmc_write: Option<EmmcWriteBlockReport>,
     emmc_write_error: Option<EmmcWriteBlockError>,
 ) -> Result<(), ()> {
-    let screen = build_screen_with_optional_network_state(
+    let screen = build_screen_with_sdhci_state(
         report,
-        Some(network_report),
         sdhci_snapshot,
         sdhci_init,
         emmc_identification,
@@ -432,81 +391,6 @@ fn select_controller(report: &StorageProbeReport) -> Option<StorageController> {
 fn push_text(screen: &mut ProbeScreen, text: &str) {
     let mut line = ProbeLine::new();
     line.push_str(text);
-    screen.push(line);
-}
-
-fn push_network_summary(screen: &mut ProbeScreen, report: &NetworkProbeReport) {
-    match report.first_controller() {
-        Some(controller) => {
-            push_text(screen, controller.kind.screen_label());
-            push_labeled_hex(screen, "net count ", report.count() as u64, 16);
-            push_network_bdf(screen, controller);
-            push_network_vid_did(screen, controller);
-            push_network_class(screen, controller);
-            push_network_bar(screen, controller);
-            if report.overflowed() {
-                push_text(screen, "network overflow");
-            }
-        }
-        None => push_text(screen, "no network"),
-    }
-}
-
-fn push_network_bdf(screen: &mut ProbeScreen, controller: NetworkController) {
-    let mut line = ProbeLine::new();
-    line.push_str("net bdf ");
-    line.push_hex(u64::from(controller.bus), 2);
-    line.push_str(" ");
-    line.push_hex(u64::from(controller.device), 2);
-    line.push_str(" ");
-    line.push_hex(u64::from(controller.function), 2);
-    screen.push(line);
-}
-
-fn push_network_vid_did(screen: &mut ProbeScreen, controller: NetworkController) {
-    let mut line = ProbeLine::new();
-    line.push_str("net vid did ");
-    line.push_hex(u64::from(controller.vendor_id), 4);
-    line.push_str(" ");
-    line.push_hex(u64::from(controller.device_id), 4);
-    screen.push(line);
-}
-
-fn push_network_class(screen: &mut ProbeScreen, controller: NetworkController) {
-    let mut line = ProbeLine::new();
-    line.push_str("net class sub ");
-    line.push_hex(u64::from(controller.class_code), 2);
-    line.push_str(" ");
-    line.push_hex(u64::from(controller.subclass), 2);
-    line.push_str(" ");
-    line.push_hex(u64::from(controller.prog_if), 2);
-    screen.push(line);
-}
-
-fn push_network_bar(screen: &mut ProbeScreen, controller: NetworkController) {
-    let mut line = ProbeLine::new();
-    line.push_str("net bar0 ");
-    match controller.bar0 {
-        Some(MemoryBar::Memory32(base)) => {
-            line.push_str("32 ");
-            line.push_hex(base, 16);
-        }
-        Some(MemoryBar::Memory64(base)) => {
-            line.push_str("64 ");
-            line.push_hex(base, 16);
-        }
-        None => {
-            line.push_str("-- ");
-            line.push_hex(0, 16);
-        }
-    }
-    screen.push(line);
-}
-
-fn push_labeled_hex(screen: &mut ProbeScreen, label: &str, value: u64, digits: usize) {
-    let mut line = ProbeLine::new();
-    line.push_str(label);
-    line.push_hex(value, digits);
     screen.push(line);
 }
 
