@@ -36,7 +36,10 @@ const STREAM_IP_BYTES: usize = 20 + STREAM_TCP_BYTES;
 const STREAM_RX_BYTES: usize = NETWORK_PORT_MAX_FRAME_BYTES - 54;
 const TLS_READ_BUFFER_BYTES: usize = 4096;
 const TLS_WRITE_BUFFER_BYTES: usize = 2048;
-const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1024;
+// Keep the consumer's bounded empty-receive window aligned with the
+// transport's bounded completion window. Hosted QEMU can deliver a later
+// stream segment substantially later than the earlier data frames.
+const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1_000_000;
 const TLS_SERVER_NAME: &str = "pythos.test";
 const SECURE_REQUEST: &[u8] = b"PYTHOS-SECURE-REQUEST";
 const SECURE_RESPONSE: &[u8] = b"PYTHOS-SECURE-RESPONSE";

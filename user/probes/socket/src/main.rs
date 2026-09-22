@@ -56,7 +56,10 @@ const TCP_PEER_ISS: u32 = 0x2506_0000;
 const TCP_IP_IDENTIFICATIONS: [u16; 10] = [
     0x1501, 0x1502, 0x1503, 0x1504, 0x1505, 0x1506, 0x1507, 0x1508, 0x1509, 0x150a,
 ];
-const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1024;
+// Keep the consumer's bounded empty-receive window aligned with the
+// transport's bounded completion window. Hosted QEMU can deliver the close
+// exchange substantially later than the earlier data frames.
+const MAX_RECEIVE_POLL_ATTEMPTS: usize = 1_000_000;
 const SOCKET_ERROR_MARKER: &str = "PYTHOS:CORE:SOCKET:ERROR";
 
 struct ProbeStorage(UnsafeCell<ProbeBuffers>);
