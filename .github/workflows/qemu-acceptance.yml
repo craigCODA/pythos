@@ -177,7 +177,7 @@ jobs:
           python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py
           python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py
           python -m py_compile scripts/build-udp-probe.py
-          python -m py_compile scripts/build-tcp-probe.py
+          python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py
 
       - name: Python harness tests
         run: |
@@ -188,6 +188,7 @@ jobs:
           python -m unittest tests.test_arp
           python -m unittest tests.test_ipv4
           python -m unittest tests.test_icmp
+          python -m unittest tests.test_tcp
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -228,6 +229,8 @@ jobs:
           python scripts/test-ipv4.py
           python scripts/test-icmp.py --self-test
           python scripts/test-icmp.py
+          python scripts/test-tcp.py --self-test
+          python scripts/test-tcp.py
 
       - name: PythTIG physical evidence tooling
         run: |

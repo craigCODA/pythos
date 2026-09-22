@@ -66,7 +66,10 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/build-tcp-probe.py",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings",
         "cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings",
-        "python -m py_compile scripts/build-tcp-probe.py",
+        "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+        "python -m unittest tests.test_tcp",
+        "python scripts/test-tcp.py --self-test",
+        "python scripts/test-tcp.py",
     )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
@@ -539,7 +542,19 @@ class CiWorkflowTest(unittest.TestCase):
             ),
             (
                 "python -m py_compile scripts/build-udp-probe.py",
-                "python -m py_compile scripts/build-tcp-probe.py",
+                "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+            ),
+            (
+                "python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py",
+                "python -m unittest tests.test_tcp",
+            ),
+            (
+                "python -m unittest tests.test_tcp",
+                "python scripts/test-tcp.py --self-test",
+            ),
+            (
+                "python scripts/test-tcp.py --self-test",
+                "python scripts/test-tcp.py",
             ),
         )
         for predecessor, successor in ordered_pairs:
