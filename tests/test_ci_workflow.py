@@ -90,7 +90,10 @@ class CiWorkflowTest(unittest.TestCase):
         "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-probe -- -D warnings",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --features socket-api-denied-probe -- -D warnings",
         "cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings",
-        "python -m py_compile scripts/build-socket-probe.py",
+        "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+        "python -m unittest tests.test_socket",
+        "python scripts/test-socket.py --self-test",
+        "python scripts/test-socket.py",
     )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
@@ -632,7 +635,7 @@ class CiWorkflowTest(unittest.TestCase):
                 f"DNS gate must follow predecessor: {predecessor}",
             )
 
-    def test_socket_has_ordered_compile_package_and_strict_gates_after_dns(self) -> None:
+    def test_socket_has_ordered_compile_package_strict_and_live_gates_after_dns(self) -> None:
         workflow = WORKFLOW.read_text(encoding="utf-8")
         milestone = self._job_block(workflow, "milestone_acceptance")
         handoff = self._job_block(workflow, "handoff_acceptance")
@@ -667,7 +670,23 @@ class CiWorkflowTest(unittest.TestCase):
             ),
             (
                 "python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py",
-                "python -m py_compile scripts/build-socket-probe.py",
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+            ),
+            (
+                "python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py",
+                "python -m unittest tests.test_socket",
+            ),
+            (
+                "python scripts/test-dns.py",
+                "python scripts/test-socket.py --self-test",
+            ),
+            (
+                "python -m unittest tests.test_socket",
+                "python scripts/test-socket.py --self-test",
+            ),
+            (
+                "python scripts/test-socket.py --self-test",
+                "python scripts/test-socket.py",
             ),
         )
         for predecessor, successor in ordered_pairs:
