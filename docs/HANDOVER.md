@@ -1408,11 +1408,13 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap boundary and Phase 14 stopping point is the
-locally accepted bounded secure-transport proof recorded under ADR 0104. It
-does not establish production TLS, update authenticity, physical networking,
-or a generalized socket/TLS service. Phase 15 hardware expansion, including
-Lenovo Wi-Fi, remains separate.
+The accepted Phase 14 stopping point remains the bounded secure-transport
+proof recorded under ADR 0104. It does not establish production TLS, update
+authenticity, physical networking, or a generalized socket/TLS service. The
+accepted Phase 15 opening boundary is the read-only PCI network-identity probe
+under ADR 0105. It does not establish physical networking, Lenovo Wi-Fi,
+controller operation, or later hardware support; subsequent Phase 15 expansion
+remains separately authorized.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and
