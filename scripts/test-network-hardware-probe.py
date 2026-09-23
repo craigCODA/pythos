@@ -21,12 +21,14 @@ NETWORK_IDENTITIES = {
         "device": "0x000000000000100E",
         "class": "0x0000000000000002",
         "subclass": "0x0000000000000000",
+        "prog_if": "0x0000000000000000",
     },
     "e1000e": {
         "vendor": "0x0000000000008086",
         "device": "0x00000000000010D3",
         "class": "0x0000000000000002",
         "subclass": "0x0000000000000000",
+        "prog_if": "0x0000000000000000",
     },
 }
 
@@ -110,7 +112,7 @@ def required_markers(network_device: str) -> tuple[str, ...]:
         *IDENTITY_MARKER_PREFIXES[4:6],
         f"PYTHOS:CORE:NETWORK_HARDWARE_PROBE:CLASS={identity['class']}",
         f"PYTHOS:CORE:NETWORK_HARDWARE_PROBE:SUBCLASS={identity['subclass']}",
-        IDENTITY_MARKER_PREFIXES[6],
+        f"PYTHOS:CORE:NETWORK_HARDWARE_PROBE:PROG_IF={identity['prog_if']}",
         *FINAL_REQUIRED_MARKERS,
     )
 
@@ -225,6 +227,14 @@ class NetworkHardwareProbeSelfTest(unittest.TestCase):
             marker if not marker.endswith("=") else f"{marker}0x0000000000000000"
             for marker in required_markers("e1000")
         ).replace("DEVICE_ID=0x000000000000100E", "DEVICE_ID=0x00000000000010D3")
+        with self.assertRaises(AssertionError):
+            assert_network_identity(serial, "e1000")
+
+    def test_identity_oracle_rejects_wrong_programming_interface(self) -> None:
+        serial = "\n".join(
+            marker if not marker.endswith("=") else f"{marker}0x0000000000000000"
+            for marker in required_markers("e1000")
+        ).replace("PROG_IF=0x0000000000000000", "PROG_IF=0x0000000000000001")
         with self.assertRaises(AssertionError):
             assert_network_identity(serial, "e1000")
 
