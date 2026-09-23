@@ -155,10 +155,6 @@ pub(super) fn start(bootstrap_ptr: u64, console_raw: u64) -> ! {
             console,
             pythos_shared::secure_transport_markers::SECURE_OPEN_WITHOUT_CAP_DENIED_MARKER,
         );
-        write_marker(
-            console,
-            pythos_shared::secure_transport_markers::SECURE_DENIED_TEARDOWN_COMPLETE_MARKER,
-        );
         super::success_breakpoint();
     }
     if !valid_bootstrap(bootstrap) {
