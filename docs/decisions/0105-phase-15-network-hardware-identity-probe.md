@@ -127,5 +127,5 @@ reset, bus-master, BAR-access, and PCI-configuration-write evidence.
 
 Focused Rust tests cover Ethernet and `OtherNetwork` classification, the
 recorded Lenovo RTL8822CE identity fixture without calling it Wi-Fi, invalid
-functions, and bounded overflow. Full workspace and Python verification
-remain required before changing this ADR to Accepted.
+functions, and bounded overflow. Focused and full verification gates remain
+required before treating this implementation slice as complete.
