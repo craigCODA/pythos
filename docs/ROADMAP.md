@@ -13,12 +13,26 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Phase 14 ARP is accepted under
-[ADR 0097](decisions/0097-phase-14-arp-consumer.md), above the frozen,
+Secure transport is the next separately authorized Phase 14 boundary; it is now
+the accepted bounded Phase 14 stopping point.
+
+Phase 14 bounded UDP datagram proof is accepted locally under
+[ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), above the frozen,
 boot-local [ADR 0095 `NetworkPort`](decisions/0095-phase-14-network-port-capability-abi.md)
 and [ADR 0096 Ethernet-II](decisions/0096-phase-14-link-layer-consumer.md)
-boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, and
-the ARP proof is accepted under ADR 0097. The opt-in native consumer performed
+boundaries. The Ethernet-II link-layer proof is accepted under ADR 0096, the
+ARP proof is accepted under [ADR 0097](decisions/0097-phase-14-arp-consumer.md),
+and the IPv4 proof is accepted locally under ADR 0098. The IPv4 opt-in native
+consumer performed one exact private-address ARP setup followed by one exact
+60-byte Protocol 253 IPv4 request/reply and reached terminal revocation with
+the seven required IPv4 markers exactly once in order and `QEMU_OUTCOME
+success`. It rejected malformed or mismatched frames, storage-path evidence,
+and extra peer transmit. The ICMP Echo proof is accepted locally under
+[ADR 0099](decisions/0099-phase-14-icmp-echo-consumer.md). Its opt-in native client performed one exact ARP request/reply and one
+exact ICMP Echo request/reply, exactly four frames total, and reached terminal
+revocation with the seven required ICMP markers exactly once in order and
+`QEMU_OUTCOME success`. It rejected malformed or mismatched frames, storage
+evidence, and extra peer transmit. The earlier ARP consumer performed
 one exact 60-byte broadcast
 ARP request, accepted one exact 60-byte reply, and reached terminal revocation
 with the six required markers exactly once in order and `QEMU_OUTCOME success`.
@@ -28,14 +42,33 @@ ARP consumer. Exact storage-topology evidence is no non-boot virtio data disk at
 no storage-path markers observed, boot ESP is snapshot-backed, no PythOS storage-path writes,
 and `QEMU_OUTCOME success`.
 
-Raw bytes remain below `NetworkPort`; ARP semantics live in the native
-consumer. Default and normal-session boot remain unchanged. IP is the next Phase 14 design boundary;
-do not start it from this roadmap entry. This acceptance
-does not claim IP/protocols/sockets, a production service, physical networking
-or NIC/Wi-Fi support,
-modern or interrupt Virtio, multiqueue/offloads, multiple consumers, zero-copy,
-persistent state, or PythTIG changes. Phase 15 hardware remains separate. See
-[HANDOVER.md](HANDOVER.md) and ADR 0097 for the exact local evidence. Hosted
+At UDP Task 6 implementation commit `4dc5679`, the serialized local QEMU proof
+observed exactly four frames in order: ARP request, ARP reply, UDP request,
+and reversed UDP reply. It used local MAC `52:54:00:12:34:56`, peer MAC
+`02:00:00:00:00:02`, local IPv4 `192.168.14.2`, peer IPv4 `192.168.14.1`, and
+UDP/IPv4 protocol `17`. The fixed UDP request/reply has IPv4 total length 35,
+IDs/checksums `0x1405`/`0xC971` and `0x1406`/`0xC970`, ports
+`0x1405 -> 0x1406` and reversed, data `PYTHUDP`, length 15, and checksum
+`0xF08A`. Its 60-byte software frames exclude FCS and the UDP frames have
+eleven zero Ethernet pad bytes; the odd checksum pad is arithmetic only. The
+seven UDP markers appeared once in order with one `QEMU_OUTCOME success`; no
+extra transmit, storage evidence, error marker, or hosted claim occurred.
+
+Raw bytes remain below `NetworkPort`; ARP, IPv4, ICMP, and UDP semantics live in
+separate native consumers. Default and normal-session boot remain unchanged.
+No hosted IPv4, ICMP, or UDP acceptance is claimed at this checkpoint.
+The ICMP Echo proof is a client-only deterministic acceptance proof, not a
+complete RFC 1122 host, general Echo server, user interface, reusable ICMP
+service, routing, sockets, or hosted/remote ICMP evidence. It does not claim
+physical networking or NIC/Wi-Fi support, modern or interrupt Virtio,
+multiqueue/offloads, multiple consumers, zero-copy, persistent state, or
+PythTIG changes. The accepted UDP proof does not claim a UDP service, socket
+API, port namespace or multiplexing, ICMP error delivery, retries, timers,
+routing, fragmentation, TCP, DNS, TLS, physical hardware, interrupts/MSI-X,
+offloads, zero-copy, multiple consumers, persistent state, PythTIG changes, or
+complete RFC 1122 host compliance. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. DNS is now accepted locally under [ADR 0102](decisions/0102-phase-14-dns-query-consumer.md): Task 4 observed exactly 2 TX + 2 RX / 4 Ethernet frames consisting of 60-byte ARP request/reply frames, a 74-byte DNS query, and a 90-byte DNS response, with seven ordered markers, one `QEMU_OUTCOME success`, snapshot-backed ESP, no non-boot Virtio block disk, and clean teardown. Those finite protocol proofs do not claim a socket API, general protocol services, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite native capability-gated socket proof is now accepted locally under [ADR 0103](decisions/0103-phase-14-capability-gated-socket-api.md): Task 4's denied profile had no `NetworkPort` capability, exactly four markers, zero TX/RX/frames, one `QEMU_OUTCOME success`, and clean teardown; its granted profile reused the existing `READ | SEND` capability and exact ADR 0101 oracle of 2 ARP + 10 TCP frames, 7 TX/5 RX and 12 total, with exactly eight socket markers, one `QEMU_OUTCOME success`, no storage evidence, and clean teardown. This local proof makes no hosted/remote claim and is not a general socket API or service; the host TCP socket carried only QEMU Virtio frames. The bounded secure-transport proof is accepted locally under [ADR 0104](decisions/0104-phase-14-secure-transport-proof.md): granted and tamper each used 21 frames with exactly nine and eight ordered markers respectively, tamper preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED` without plaintext release, and denied used zero frames with exactly four markers. All three cases had one `QEMU_OUTCOME success` and clean artifacts. This accepted bounded proof is Phase 14's current stopping point; it does not claim production TLS, update authenticity, physical networking, or a generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo Wi-Fi, remains separate. See
+[HANDOVER.md](HANDOVER.md) and [ADR 0104](decisions/0104-phase-14-secure-transport-proof.md)
+for the exact secure-transport local evidence. The preserved ARP hosted
 evidence is recorded by [GitHub Actions run 35178259978](https://github.com/craigCODA/pythos/actions/runs/35178259978),
 which completed successfully on 2026-09-17 at verified head
 `45daf7a8070b59be0a3db1728f53bf8b56d46180`. The aggregate jobs

@@ -14,6 +14,12 @@ members = [
     "user/probes/network-port",
     "user/probes/link-layer",
     "user/probes/arp",
+    "user/probes/ipv4",
+    "user/probes/icmp",
+    "user/probes/udp",
+    "user/probes/tcp",
+    "user/probes/dns",
+    "user/probes/socket",
 ]
 
 [workspace.package]

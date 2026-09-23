@@ -100,6 +100,19 @@ jobs:
           cargo test -p pythos-user-session-input-probe
           cargo test -p pythos-user-link-layer-probe
           cargo test -p pythos-user-arp-probe
+          cargo test -p pythos-user-ipv4-probe
+          cargo test -p pythos-user-icmp-probe
+          cargo test -p pythos-user-udp-probe
+          cargo test -p pythos-user-tcp-probe
+          cargo test -p pythos-user-dns-probe
+          cargo test -p pythos-user-socket-probe
+          cargo test -p pythos-core dns_probe --features dns-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features socket-api-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features socket-api-denied-probe
+          cargo test -p pythos-user-socket-probe --features secure-transport
+          cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-tamper-probe
+          cargo test -p pythos-core socket_probe --no-default-features --features secure-transport-denied-probe
           cargo test -p pythos-user-session-runtime
           cargo test -p pythos-user-session-runtime --features session-viewing
           cargo test -p pythos-user-session-runtime --features normal-session
@@ -131,6 +144,12 @@ jobs:
           python scripts/verify-user-elf.py --elf target/session-runtime-probe/x86_64-unknown-none/debug/pythos-user-session-runtime
           python scripts/build-session-runtime.py --features normal-session
           python scripts/build-session-runtime.py --features normal-session-fault-test
+          python scripts/build-icmp-probe.py
+          python scripts/build-udp-probe.py
+          python scripts/build-tcp-probe.py
+          python scripts/build-dns-probe.py
+          python scripts/build-socket-probe.py
+          python scripts/build-secure-transport-probe.py
 
       - name: Clippy
         run: |
@@ -141,6 +160,23 @@ jobs:
           cargo clippy -p pythos-user-link-layer-probe --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features arp-probe -- -D warnings
           cargo clippy -p pythos-user-arp-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features ipv4-probe -- -D warnings
+          cargo clippy -p pythos-user-ipv4-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features icmp-probe -- -D warnings
+          cargo clippy -p pythos-user-icmp-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features udp-probe -- -D warnings
+          cargo clippy -p pythos-user-udp-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features tcp-probe -- -D warnings
+          cargo clippy -p pythos-user-tcp-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --features dns-probe -- -D warnings
+          cargo clippy -p pythos-user-dns-probe --target x86_64-unknown-none -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features socket-api-denied-probe -- -D warnings
+          cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-tamper-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features secure-transport-denied-probe -- -D warnings
+          cargo clippy -p pythos-user-socket-probe --target x86_64-unknown-none --bin socket-probe --features secure-transport -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-runtime-probe -- -D warnings
           cargo clippy -p pythos-user-session-runtime --target x86_64-unknown-none --features session-viewing -- -D warnings
@@ -159,6 +195,13 @@ jobs:
           python -m py_compile scripts/test-network-port.py
           python -m py_compile scripts/test-link-layer.py
           python -m py_compile scripts/build-arp-probe.py scripts/test-arp.py
+          python -m py_compile scripts/build-ipv4-probe.py scripts/test-ipv4.py
+          python -m py_compile scripts/build-icmp-probe.py scripts/test-icmp.py
+          python -m py_compile scripts/build-udp-probe.py
+          python -m py_compile scripts/build-tcp-probe.py scripts/test-tcp.py
+          python -m py_compile scripts/build-dns-probe.py scripts/test-dns.py
+          python -m py_compile scripts/build-socket-probe.py scripts/test-socket.py tests/test_socket.py
+          python -m py_compile scripts/build-secure-transport-probe.py scripts/test-secure-transport.py tests/test_secure_transport_contract.py tests/test_secure_transport.py
 
       - name: Python harness tests
         run: |
@@ -167,6 +210,13 @@ jobs:
           python -m unittest tests.test_network_port
           python -m unittest tests.test_link_layer
           python -m unittest tests.test_arp
+          python -m unittest tests.test_ipv4
+          python -m unittest tests.test_icmp
+          python -m unittest tests.test_tcp
+          python -m unittest tests.test_dns
+          python -m unittest tests.test_socket
+          python -m unittest tests.test_secure_transport_contract
+          python -m unittest tests.test_secure_transport
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -203,6 +253,18 @@ jobs:
           python scripts/test-link-layer.py
           python scripts/test-arp.py --self-test
           python scripts/test-arp.py
+          python scripts/test-ipv4.py --self-test
+          python scripts/test-ipv4.py
+          python scripts/test-icmp.py --self-test
+          python scripts/test-icmp.py
+          python scripts/test-tcp.py --self-test
+          python scripts/test-tcp.py
+          python scripts/test-dns.py --self-test
+          python scripts/test-dns.py
+          python scripts/test-socket.py --self-test
+          python scripts/test-socket.py
+          python scripts/test-secure-transport.py --self-test
+          python scripts/test-secure-transport.py
 
       - name: PythTIG physical evidence tooling
         run: |

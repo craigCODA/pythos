@@ -1,0 +1,21 @@
+[package]
+name = "pythos-user-dns-probe"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pythos-shared = { path = "../../../shared" }
+pythos-user-arp-probe = { path = "../arp" }
+pythos-user-ipv4-probe = { path = "../ipv4" }
+pythos-user-link-layer-probe = { path = "../link-layer" }
+pythos-user-udp-probe = { path = "../udp" }
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "pythos-user-dns-probe"
+path = "src/main.rs"

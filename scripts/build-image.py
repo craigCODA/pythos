@@ -75,6 +75,12 @@ SESSION_INPUT_PROBE_PRINCIPAL_ID = 0x5059_5349_4E50_0001
 NETWORK_PORT_PROBE_PRINCIPAL_ID = 0x5059_4E50_5254_0001
 LINK_LAYER_PROBE_PRINCIPAL_ID = 0x5059_4C4C_5052_0001
 ARP_PROBE_PRINCIPAL_ID = 0x5059_4152_5052_0001
+IPV4_PROBE_PRINCIPAL_ID = 0x5059_4950_5052_0001
+ICMP_PROBE_PRINCIPAL_ID = 0x5059_4943_4D50_0001
+UDP_PROBE_PRINCIPAL_ID = 0x5059_5544_5000_0001
+TCP_PROBE_PRINCIPAL_ID = 0x5059_5443_5000_0001
+DNS_PROBE_PRINCIPAL_ID = 0x5059_444E_5300_0001
+SOCKET_PROBE_PRINCIPAL_ID = 0x5059_534F_4300_0001
 SESSION_RUNTIME_PRINCIPAL_ID = 0x5059_5352_544D_0001
 PYTH_RUNTIME_PRINCIPAL_ID = 0x5059_5448_5254_0001
 HELLO_GRAPH_PRINCIPAL_ID = 0x5059_5448_4752_0001
@@ -555,6 +561,12 @@ def build_default_init_pak(
     network_port_probe_elf: Path | None = None,
     link_layer_probe_elf: Path | None = None,
     arp_probe_elf: Path | None = None,
+    ipv4_probe_elf: Path | None = None,
+    icmp_probe_elf: Path | None = None,
+    udp_probe_elf: Path | None = None,
+    tcp_probe_elf: Path | None = None,
+    dns_probe_elf: Path | None = None,
+    socket_probe_elf: Path | None = None,
 ) -> bytes:
     if (normal_session_elf is None) != (normal_session_graph is None):
         raise SystemExit("normal-session ELF and graph must be supplied together")
@@ -576,17 +588,51 @@ def build_default_init_pak(
         )
     if sum(
         probe is not None
-        for probe in (network_port_probe_elf, link_layer_probe_elf, arp_probe_elf)
+        for probe in (
+            network_port_probe_elf,
+            link_layer_probe_elf,
+            arp_probe_elf,
+            ipv4_probe_elf,
+            icmp_probe_elf,
+            udp_probe_elf,
+            tcp_probe_elf,
+            dns_probe_elf,
+            socket_probe_elf,
+        )
     ) > 1:
         raise SystemExit("select only one network probe ELF")
+    if tcp_probe_elf is not None and (
+        session_input_probe_elf is not None
+        or include_phase13_package_format_fixture
+        or phase13_package_sources
+    ):
+        raise SystemExit("TCP probe profile cannot include session-input or package fixtures")
+    if dns_probe_elf is not None and (
+        session_input_probe_elf is not None
+        or include_phase13_package_format_fixture
+        or phase13_package_sources
+    ):
+        raise SystemExit("DNS probe profile cannot include session-input or package fixtures")
+    if socket_probe_elf is not None and (
+        session_input_probe_elf is not None
+        or include_phase13_package_format_fixture
+        or phase13_package_sources
+    ):
+        raise SystemExit("socket probe profile cannot include session-input or package fixtures")
     if session_runtime_elf is not None and (
         session_input_probe_elf is not None or network_port_probe_elf is not None or link_layer_probe_elf is not None
-        or arp_probe_elf is not None
+        or arp_probe_elf is not None or ipv4_probe_elf is not None or icmp_probe_elf is not None
+        or udp_probe_elf is not None or tcp_probe_elf is not None
+        or dns_probe_elf is not None
+        or socket_probe_elf is not None
     ):
         raise SystemExit("session runtime profile cannot include a probe ELF")
     if normal_session_elf is not None and (
         session_input_probe_elf is not None or network_port_probe_elf is not None or link_layer_probe_elf is not None
-        or arp_probe_elf is not None
+        or arp_probe_elf is not None or ipv4_probe_elf is not None or icmp_probe_elf is not None
+        or udp_probe_elf is not None or tcp_probe_elf is not None
+        or dns_probe_elf is not None
+        or socket_probe_elf is not None
         or include_phase13_package_format_fixture or phase13_package_sources
     ):
         raise SystemExit("normal session profile cannot include probe or package fixtures")
@@ -639,6 +685,72 @@ def build_default_init_pak(
                     b"arp-probe.elf",
                     ARP_PROBE_PRINCIPAL_ID,
                     require_file(arp_probe_elf, "ARP probe ELF"),
+                ),
+            )
+        )
+    if ipv4_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"ipv4-probe.elf",
+                    IPV4_PROBE_PRINCIPAL_ID,
+                    require_file(ipv4_probe_elf, "IPv4 probe ELF"),
+                ),
+            )
+        )
+    if icmp_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"icmp-probe.elf",
+                    ICMP_PROBE_PRINCIPAL_ID,
+                    require_file(icmp_probe_elf, "ICMP probe ELF"),
+                ),
+            )
+        )
+    if udp_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"udp-probe.elf",
+                    UDP_PROBE_PRINCIPAL_ID,
+                    require_file(udp_probe_elf, "UDP probe ELF"),
+                ),
+            )
+        )
+    if tcp_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"tcp-probe.elf",
+                    TCP_PROBE_PRINCIPAL_ID,
+                    require_file(tcp_probe_elf, "TCP probe ELF"),
+                ),
+            )
+        )
+    if dns_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"dns-probe.elf",
+                    DNS_PROBE_PRINCIPAL_ID,
+                    require_file(dns_probe_elf, "DNS probe ELF"),
+                ),
+            )
+        )
+    if socket_probe_elf is not None:
+        records.append(
+            (
+                INIT_BUNDLE_NAMED_USER_ELF_TYPE,
+                build_named_user_program(
+                    b"socket-probe.elf",
+                    SOCKET_PROBE_PRINCIPAL_ID,
+                    require_file(socket_probe_elf, "socket probe ELF"),
                 ),
             )
         )
@@ -802,6 +914,120 @@ def resolve_arp_probe_elf(path: Path) -> Path:
     return resolved
 
 
+def verify_ipv4_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("IPv4 probe ELF verification failed")
+
+
+def resolve_ipv4_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing IPv4 probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"IPv4 probe ELF is not a file: {resolved}")
+    return resolved
+
+
+def verify_icmp_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("ICMP probe ELF verification failed")
+
+
+def resolve_icmp_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing ICMP probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"ICMP probe ELF is not a file: {resolved}")
+    return resolved
+
+
+def verify_udp_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("UDP probe ELF verification failed")
+
+
+def resolve_udp_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing UDP probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"UDP probe ELF is not a file: {resolved}")
+    return resolved
+
+
+def verify_tcp_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("TCP probe ELF verification failed")
+
+
+def resolve_tcp_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing TCP probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"TCP probe ELF is not a file: {resolved}")
+    return resolved
+
+
+def verify_dns_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("DNS probe ELF verification failed")
+
+
+def resolve_dns_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing DNS probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"DNS probe ELF is not a file: {resolved}")
+    return resolved
+
+
+def verify_socket_probe_elf(path: Path) -> None:
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("socket probe ELF verification failed")
+
+
+def resolve_socket_probe_elf(path: Path) -> Path:
+    try:
+        resolved = path.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"missing socket probe ELF: {path}") from error
+    if not resolved.is_file():
+        raise SystemExit(f"socket probe ELF is not a file: {resolved}")
+    return resolved
+
+
 def verify_session_runtime_elf(path: Path) -> None:
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "verify-user-elf.py"), "--elf", str(path)],
@@ -836,6 +1062,12 @@ def main() -> int:
     parser.add_argument("--network-port-probe-elf", type=Path)
     parser.add_argument("--link-layer-probe-elf", type=Path)
     parser.add_argument("--arp-probe-elf", type=Path)
+    parser.add_argument("--ipv4-probe-elf", type=Path)
+    parser.add_argument("--icmp-probe-elf", type=Path)
+    parser.add_argument("--udp-probe-elf", type=Path)
+    parser.add_argument("--tcp-probe-elf", type=Path)
+    parser.add_argument("--dns-probe-elf", type=Path)
+    parser.add_argument("--socket-probe-elf", type=Path)
     parser.add_argument("--session-runtime-elf", type=Path)
     parser.add_argument("--normal-session-elf", type=Path)
     parser.add_argument("--normal-session-graph", type=Path)
@@ -853,6 +1085,12 @@ def main() -> int:
             args.network_port_probe_elf,
             args.link_layer_probe_elf,
             args.arp_probe_elf,
+            args.ipv4_probe_elf,
+            args.icmp_probe_elf,
+            args.udp_probe_elf,
+            args.tcp_probe_elf,
+            args.dns_probe_elf,
+            args.socket_probe_elf,
         )
     ) > 1:
         raise SystemExit("select only one network probe ELF")
@@ -872,6 +1110,30 @@ def main() -> int:
     if args.arp_probe_elf is not None:
         arp_probe_elf = resolve_arp_probe_elf(args.arp_probe_elf)
         verify_arp_probe_elf(arp_probe_elf)
+    ipv4_probe_elf = None
+    if args.ipv4_probe_elf is not None:
+        ipv4_probe_elf = resolve_ipv4_probe_elf(args.ipv4_probe_elf)
+        verify_ipv4_probe_elf(ipv4_probe_elf)
+    icmp_probe_elf = None
+    if args.icmp_probe_elf is not None:
+        icmp_probe_elf = resolve_icmp_probe_elf(args.icmp_probe_elf)
+        verify_icmp_probe_elf(icmp_probe_elf)
+    udp_probe_elf = None
+    if args.udp_probe_elf is not None:
+        udp_probe_elf = resolve_udp_probe_elf(args.udp_probe_elf)
+        verify_udp_probe_elf(udp_probe_elf)
+    tcp_probe_elf = None
+    if args.tcp_probe_elf is not None:
+        tcp_probe_elf = resolve_tcp_probe_elf(args.tcp_probe_elf)
+        verify_tcp_probe_elf(tcp_probe_elf)
+    dns_probe_elf = None
+    if args.dns_probe_elf is not None:
+        dns_probe_elf = resolve_dns_probe_elf(args.dns_probe_elf)
+        verify_dns_probe_elf(dns_probe_elf)
+    socket_probe_elf = None
+    if args.socket_probe_elf is not None:
+        socket_probe_elf = resolve_socket_probe_elf(args.socket_probe_elf)
+        verify_socket_probe_elf(socket_probe_elf)
     session_runtime_elf = None
     if args.session_runtime_elf is not None:
         session_runtime_elf = resolve_session_runtime_elf(args.session_runtime_elf)
@@ -892,6 +1154,12 @@ def main() -> int:
         network_port_probe_elf=network_port_probe_elf,
         link_layer_probe_elf=link_layer_probe_elf,
         arp_probe_elf=arp_probe_elf,
+        ipv4_probe_elf=ipv4_probe_elf,
+        icmp_probe_elf=icmp_probe_elf,
+        udp_probe_elf=udp_probe_elf,
+        tcp_probe_elf=tcp_probe_elf,
+        dns_probe_elf=dns_probe_elf,
+        socket_probe_elf=socket_probe_elf,
     )
     boot_dir = ESP / "EFI" / "BOOT"
     pythos_dir = ESP / "PYTHOS"
