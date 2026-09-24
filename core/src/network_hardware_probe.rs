@@ -4,7 +4,16 @@
 //! PCI configuration space only, reports bounded identity evidence, and never
 //! maps or operates a network controller.
 
-#![cfg_attr(any(test, not(feature = "network-hardware-probe")), allow(dead_code))]
+#![cfg_attr(
+    any(
+        test,
+        not(any(
+            feature = "network-hardware-probe",
+            feature = "network-hardware-bar-probe"
+        ))
+    ),
+    allow(dead_code)
+)]
 
 #[cfg(not(test))]
 use crate::serial;
@@ -20,6 +29,7 @@ const PCI_CLASS_REVISION_OFFSET: u8 = 0x08;
 const PCI_HEADER_TYPE_OFFSET: u8 = 0x0C;
 const PCI_BUS_NUMBERS_OFFSET: u8 = 0x18;
 const PCI_SUBSYSTEM_VENDOR_DEVICE_OFFSET: u8 = 0x2C;
+const PCI_BAR0_OFFSET: u8 = 0x10;
 const PCI_CLASS_NETWORK: u8 = 0x02;
 const PCI_SUBCLASS_ETHERNET: u8 = 0x00;
 const PCI_CLASS_BRIDGE: u8 = 0x06;
@@ -187,6 +197,22 @@ pub fn run_probe() -> NetworkProbeReport {
     let mut visited = [false; 256];
     scan_bus(0, &mut visited, &mut report);
     report
+}
+
+#[cfg(not(test))]
+pub fn read_controller_bar_dwords(controller: NetworkController) -> [u32; 6] {
+    let mut raw = [0; 6];
+    let mut slot = 0;
+    while slot < raw.len() {
+        raw[slot] = read_config_u32(
+            controller.bus,
+            controller.device,
+            controller.function,
+            PCI_BAR0_OFFSET + (slot as u8 * 4),
+        );
+        slot += 1;
+    }
+    raw
 }
 
 #[cfg(not(test))]

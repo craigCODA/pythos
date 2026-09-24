@@ -1,10 +1,16 @@
 from pathlib import Path
+import re
 import unittest
 
 
 ROOT = Path(__file__).resolve().parents[1]
 ADR = ROOT / "docs" / "decisions" / "0106-phase-15-network-hardware-bar-layout-probe.md"
 PLAN = ROOT / "docs" / "superpowers" / "plans" / "2026-09-24-phase-15-network-hardware-bar-layout.md"
+CORE_CARGO = ROOT / "core" / "Cargo.toml"
+CORE_MAIN = ROOT / "core" / "src" / "main.rs"
+IDENTITY_BOOT = ROOT / "core" / "src" / "network_hardware_probe_boot.rs"
+BAR_BOOT = ROOT / "core" / "src" / "network_hardware_bar_probe_boot.rs"
+BAR_SCREEN = ROOT / "core" / "src" / "network_hardware_bar_probe_screen.rs"
 
 
 class NetworkHardwareBarProbeContractTest(unittest.TestCase):
@@ -12,6 +18,11 @@ class NetworkHardwareBarProbeContractTest(unittest.TestCase):
     def setUpClass(cls):
         cls.adr_text = ADR.read_text(encoding="utf-8")
         cls.plan_text = PLAN.read_text(encoding="utf-8")
+        cls.cargo_text = CORE_CARGO.read_text(encoding="utf-8")
+        cls.main_text = CORE_MAIN.read_text(encoding="utf-8")
+        cls.identity_boot_text = IDENTITY_BOOT.read_text(encoding="utf-8")
+        cls.bar_boot_text = BAR_BOOT.read_text(encoding="utf-8")
+        cls.bar_screen_text = BAR_SCREEN.read_text(encoding="utf-8")
         cls.adr_flat = " ".join(cls.adr_text.split())
         cls.plan_flat = " ".join(cls.plan_text.split())
 
@@ -85,6 +96,7 @@ class NetworkHardwareBarProbeContractTest(unittest.TestCase):
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_RAW_LOW=",
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_RAW_HIGH=",
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_KIND=",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_BASE=",
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_LAYOUT_READY",
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:FRAMEBUFFER_BAR_LAYOUT_READY",
             "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY",
@@ -103,6 +115,62 @@ class NetworkHardwareBarProbeContractTest(unittest.TestCase):
             self.plan_text,
         )
 
+    def test_bar_boot_and_screen_preserve_read_only_complete_metadata(self):
+        for marker in (
+            "NETWORK_HARDWARE_BAR_PROBE:ENTER",
+            "NETWORK_HARDWARE_BAR_PROBE:PCI_SCAN_READY",
+            "NETWORK_HARDWARE_BAR_PROBE:NETWORK_CONTROLLER_FOUND",
+            "NETWORK_HARDWARE_BAR_PROBE:BAR_SCAN_READY",
+            "NETWORK_HARDWARE_BAR_PROBE:BAR_LAYOUT_READY",
+            "NETWORK_HARDWARE_BAR_PROBE:FRAMEBUFFER_BAR_LAYOUT_READY",
+            "NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY",
+            "NETWORK_HARDWARE_BAR_PROBE_READY",
+        ):
+            with self.subTest(marker=marker):
+                self.assertIn(marker, self.bar_boot_text)
+        self.assertIn("decode_bar_layout", self.bar_boot_text)
+        self.assertIn("read_controller_bar_dwords", self.bar_boot_text)
+        self.assertIn("BAR_SLOT_0_BASE=", self.bar_boot_text)
+        self.assertIn("BAR_SLOT_5_BASE=", self.bar_boot_text)
+        self.assertIn("const MAX_BYTES: usize = 48", self.bar_screen_text)
+        for slot in range(6):
+            for field in ("RAW_LOW", "RAW_HIGH", "KIND", "BASE"):
+                with self.subTest(slot=slot, field=field):
+                    self.assertIn(f"BAR_SLOT_{slot}_{field}", self.bar_boot_text)
+        implementation_markers = (
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:ENTER",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_SCAN_READY",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_CONTROLLER_FOUND",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SCAN_READY",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_LAYOUT_READY",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:FRAMEBUFFER_BAR_LAYOUT_READY",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY",
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE_READY",
+        )
+        positions = [self.bar_boot_text.find(marker) for marker in implementation_markers]
+        self.assertTrue(all(position >= 0 for position in positions))
+        self.assertEqual(positions, sorted(positions))
+        self.assertRegex(
+            self.bar_boot_text,
+            r"else \{\s*"
+            r'serial::write_line\("PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:FRAMEBUFFER_BAR_LAYOUT_FAILED"\);\s*'
+            r'serial::write_line\("PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY"\);\s*'
+            r"halt\(\);\s*\}",
+        )
+        self.assertIn("BAR_SLOT_{n}_BASE", self.plan_text)
+        for forbidden in (
+            "write_config",
+            "BAR_MAPPED",
+            "MMIO",
+            "REGISTER",
+            "DMA",
+            "INTERRUPT",
+            "RESET",
+            "BUS_MASTER",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, self.bar_boot_text)
+
     def test_plan_freezes_future_implementation_paths_without_requiring_them(self):
         expected_paths = (
             "core/src/network_hardware_bar_probe.rs",
@@ -118,6 +186,38 @@ class NetworkHardwareBarProbeContractTest(unittest.TestCase):
         for path in expected_paths:
             with self.subTest(path=path):
                 self.assertIn(path, self.plan_text)
+
+    def test_bar_profile_is_isolated_without_changing_identity_dispatch(self):
+        self.assertIn("network-hardware-bar-probe = []", self.cargo_text)
+        for feature in (
+            "normal-session",
+            "verify",
+            "hardware-probe",
+            "usb-xhci-probe",
+            "network-hardware-probe",
+        ):
+            with self.subTest(feature=feature):
+                self.assertRegex(
+                    self.main_text,
+                    rf'#\[cfg\(all\(\s*feature = "{feature}",\s*'
+                    r'feature = "network-hardware-bar-probe"\s*\)\)\]',
+                )
+
+        self.assertIn(
+            '#[cfg(all(not(test), feature = "network-hardware-probe"))]\n'
+            "    network_hardware_probe_boot::run(boot_info, &mut physical_memory);",
+            self.main_text,
+        )
+        self.assertIn(
+            '#[cfg(all(not(test), feature = "network-hardware-bar-probe"))]\n'
+            "    network_hardware_bar_probe_boot::run(boot_info, &mut physical_memory);",
+            self.main_text,
+        )
+        self.assertIn(
+            "PYTHOS:CORE:NETWORK_HARDWARE_PROBE:ENTER",
+            self.identity_boot_text,
+        )
+        self.assertNotIn("NETWORK_HARDWARE_BAR_PROBE", self.identity_boot_text)
 
 
 if __name__ == "__main__":

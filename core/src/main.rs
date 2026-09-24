@@ -8,6 +8,7 @@
         any(
             feature = "hardware-probe",
             feature = "network-hardware-probe",
+            feature = "network-hardware-bar-probe",
             feature = "usb-xhci-probe",
             feature = "virtio-net-probe",
             feature = "network-port-probe",
@@ -50,6 +51,21 @@ compile_error!("features `normal-session` and `network-hardware-probe` are mutua
 compile_error!("features `hardware-probe` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "usb-xhci-probe", feature = "network-hardware-probe"))]
 compile_error!("USB xHCI diagnostics and `network-hardware-probe` are mutually exclusive");
+#[cfg(all(feature = "normal-session", feature = "network-hardware-bar-probe"))]
+compile_error!("features `normal-session` and `network-hardware-bar-probe` are mutually exclusive");
+#[cfg(all(feature = "verify", feature = "network-hardware-bar-probe"))]
+compile_error!("features `verify` and `network-hardware-bar-probe` are mutually exclusive");
+#[cfg(all(feature = "hardware-probe", feature = "network-hardware-bar-probe"))]
+compile_error!("features `hardware-probe` and `network-hardware-bar-probe` are mutually exclusive");
+#[cfg(all(feature = "usb-xhci-probe", feature = "network-hardware-bar-probe"))]
+compile_error!("USB xHCI diagnostics and `network-hardware-bar-probe` are mutually exclusive");
+#[cfg(all(
+    feature = "network-hardware-probe",
+    feature = "network-hardware-bar-probe"
+))]
+compile_error!(
+    "features `network-hardware-probe` and `network-hardware-bar-probe` are mutually exclusive"
+);
 #[cfg(all(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
 compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mutually exclusive");
 #[cfg(all(
@@ -373,8 +389,12 @@ mod launcher_screen;
 #[cfg(any(test, feature = "link-layer-probe"))]
 mod link_layer_probe;
 mod memory;
-#[cfg(any(test, feature = "network-hardware-probe"))]
+#[cfg(any(test, feature = "network-hardware-bar-probe"))]
 mod network_hardware_bar_probe;
+#[cfg(all(not(test), feature = "network-hardware-bar-probe"))]
+mod network_hardware_bar_probe_boot;
+#[cfg(any(test, feature = "network-hardware-bar-probe"))]
+mod network_hardware_bar_probe_screen;
 mod network_hardware_probe;
 #[cfg(all(not(test), feature = "network-hardware-probe"))]
 mod network_hardware_probe_boot;
@@ -692,7 +712,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         feature = "normal-boot-diagnostic",
         not(feature = "verify"),
         not(feature = "hardware-probe"),
-        not(feature = "network-hardware-probe")
+        not(feature = "network-hardware-probe"),
+        not(feature = "network-hardware-bar-probe")
     ))]
     normal_boot_diagnostic::report(
         &boot_info.framebuffer,
@@ -703,6 +724,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     hardware_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "network-hardware-probe"))]
     network_hardware_probe_boot::run(boot_info, &mut physical_memory);
+    #[cfg(all(not(test), feature = "network-hardware-bar-probe"))]
+    network_hardware_bar_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "usb-xhci-probe"))]
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
 

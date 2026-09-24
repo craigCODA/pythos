@@ -204,6 +204,7 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_RAW_LOW=...
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_RAW_HIGH=...
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_KIND=...
+  PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_0_BASE=...
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_LAYOUT_READY
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:FRAMEBUFFER_BAR_LAYOUT_READY
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY
@@ -211,11 +212,16 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   ```
 
   For each slot `0` through `5`, use the corresponding `BAR_SLOT_{n}_RAW_LOW`,
-  `BAR_SLOT_{n}_RAW_HIGH`, and `BAR_SLOT_{n}_KIND` record names; omit a
-  consumed high slot as a duplicate.
+  `BAR_SLOT_{n}_RAW_HIGH`, `BAR_SLOT_{n}_KIND`, and `BAR_SLOT_{n}_BASE` record
+  names; omit a consumed high slot as a duplicate. A non-present or malformed
+  slot uses `NONE` for high/base values. The decoded base is configuration
+  metadata only and is not a mapping or reachability claim.
 
-  Emit one bounded raw/kind record per slot, omit the consumed high slot as a
-  duplicate, render the same metadata to the framebuffer, and halt. Never emit
+  Emit one bounded raw/high/kind/base record per slot, omit the consumed high
+  slot as a duplicate, render the same metadata to the framebuffer, and halt.
+  If framebuffer rendering fails, emit a failure marker and
+  `PCI_CONFIG_READ_ONLY` but do not emit `FRAMEBUFFER_BAR_LAYOUT_READY` or the
+  final `..._READY` marker. Never emit
   `MMIO`, `BAR_MAPPED`, `REGISTER`, `DMA`, `INTERRUPT`, `RESET`, `BUS_MASTER`,
   or frame markers.
 
