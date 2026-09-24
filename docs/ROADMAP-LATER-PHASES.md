@@ -39,6 +39,8 @@ Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
                               ADRs 0092-0093
 Phase 14 accepted locally              bounded secure-transport proof through
                                       ADR 0104; current stopping point
+Phase 15 opening slice accepted locally dedicated PCI network identity probe
+                                       ADR 0105; hardware expansion continues
 ```
 
 Phase 14 has locally accepted bounded proofs through secure transport under
@@ -50,13 +52,14 @@ one `QEMU_OUTCOME success` and clean artifacts. This bounded proof is Phase
 14's current stopping point, not production TLS, update authenticity,
 physical networking, or a generalized socket/TLS service. See the [current
 roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
-[handover](HANDOVER.md) for exact local evidence and scope. Phase 15 hardware
-expansion, including physical Lenovo Wi-Fi, remains separate.
+[handover](HANDOVER.md) for exact local evidence and scope. The separately
+accepted Phase 15 opening identity slice is the read-only PCI network-identity
+probe under ADR 0105. It does not establish physical networking, Lenovo Wi-Fi,
+controller operation, or later hardware support. Later Phase 15 expansion and
+Phases 16-17 remain separately invoked work.
 
-ADRs are allocated through 0104 in this checkout. Check `docs/decisions/` and
-in-progress branches before allocating
-another number. Later Phase 14 slices and Phases 15-17 remain separately
-invoked work.
+ADRs are allocated through 0105 in this checkout. Check `docs/decisions/` and
+in-progress branches before allocating another number.
 
 ---
 

@@ -93,6 +93,19 @@ physical hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads,
 zero-copy, multiple consumers, persistent state, or PythTIG changes. TCP is now accepted locally as the finite proof recorded in [ADR 0101](decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. DNS is now accepted locally under [ADR 0102](decisions/0102-phase-14-dns-query-consumer.md): Task 4 observed exactly 2 TX + 2 RX / 4 Ethernet frames, 60-byte ARP request/reply frames, a 74-byte DNS query, a 90-byte DNS response, seven ordered markers, one `QEMU_OUTCOME success`, no non-boot Virtio block disk, snapshot-backed ESP, and clean teardown. Those finite protocol proofs do not claim a socket API, general protocol services, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite native capability-gated socket proof is now accepted locally under [ADR 0103](decisions/0103-phase-14-capability-gated-socket-api.md): Task 4's denied profile had no `NetworkPort` capability, exactly four markers, zero TX/RX/frames, one `QEMU_OUTCOME success`, and clean teardown; its granted profile reused the existing `READ | SEND` capability and exact ADR 0101 oracle of 2 ARP + 10 TCP frames, 7 TX/5 RX and 12 total, with exactly eight socket markers, one `QEMU_OUTCOME success`, no storage evidence, and clean teardown. This local proof makes no hosted/remote claim and is not a general socket API or service; the host TCP socket carried only QEMU Virtio frames. The bounded secure-transport proof is accepted locally under [ADR 0104](decisions/0104-phase-14-secure-transport-proof.md). Granted used 21 frames and exactly nine markers. Tamper used 21 frames and exactly eight markers, preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED`, and released no plaintext. Denied used zero frames and exactly four markers. Every case had one `QEMU_OUTCOME success` and clean serial/ESP artifact teardown. The private `secure-transport-tamper-probe` core profile selects the tamper terminal marker without adding public ABI. This accepted bounded proof is Phase 14's current stopping point; it does not claim production TLS, update authenticity, physical networking, or a generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo Wi-Fi, remains separate. PR #28 is published; no merge, physical-media deployment,
 physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 
+## Current Phase 15 Opening Slice
+
+Phase 15 has started with [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md),
+a dedicated `network-hardware-probe` profile for read-only PCI network-controller
+identity. It is deliberately separate from the storage `hardware-probe` and
+does not alter `VirtioTransport`, the transport adapter, `NetworkPort`, or the
+Phase 14 ABI. QEMU `e1000` and `e1000e` both pass the exact one-controller
+identity proof with `-nic none`; the probe emits serial and framebuffer
+identity evidence and then halts. No Ethernet/Wi-Fi datapath or physical
+hardware support is claimed. Lenovo Wi-Fi behavior, firmware, BAR/MMIO,
+DMA, interrupts, controller ownership, and later hardware slices remain
+deferred.
+
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
 Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
@@ -1395,11 +1408,13 @@ debug acceptance image. The Phase 12 `path-adversarial-suite` slice is recorded
 through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package
 lifecycle and package-defined schema extensibility are recorded through
 ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
-The current numbered-roadmap boundary and Phase 14 stopping point is the
-locally accepted bounded secure-transport proof recorded under ADR 0104. It
-does not establish production TLS, update authenticity, physical networking,
-or a generalized socket/TLS service. Phase 15 hardware expansion, including
-Lenovo Wi-Fi, remains separate.
+The accepted Phase 14 stopping point remains the bounded secure-transport
+proof recorded under ADR 0104. It does not establish production TLS, update
+authenticity, physical networking, or a generalized socket/TLS service. The
+accepted Phase 15 opening boundary is the read-only PCI network-identity probe
+under ADR 0105. It does not establish physical networking, Lenovo Wi-Fi,
+controller operation, or later hardware support; subsequent Phase 15 expansion
+remains separately authorized.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and

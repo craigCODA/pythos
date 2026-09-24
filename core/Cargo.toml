@@ -61,6 +61,9 @@ evidence-terminal = ["verify"]
 # data disk; the boot ESP remains snapshot-backed IDE media. The default
 # normal-session boot path is unchanged.
 virtio-net-probe = ["verify"]
+# `network-hardware-probe` is a dedicated no-write PCI identity diagnostic.
+# It does not share the storage probe's device-control path and then halts.
+network-hardware-probe = []
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []

@@ -185,6 +185,22 @@ def virtio_net_qemu_args(peer_port: int | None) -> list[str]:
     ]
 
 
+NETWORK_DEVICE_CHOICES = ("e1000", "e1000e")
+NETWORK_IDENTITY_DEVICE_ID = "pythos_network_identity"
+
+
+def network_device_qemu_args(network_device: str) -> list[str]:
+    if network_device not in NETWORK_DEVICE_CHOICES:
+        choices = ", ".join(NETWORK_DEVICE_CHOICES)
+        raise ValueError(f"network device must be one of: {choices}")
+    return [
+        "-nic",
+        "none",
+        "-device",
+        f"{network_device},id={NETWORK_IDENTITY_DEVICE_ID}",
+    ]
+
+
 QMP_PORT = 4488
 USB_MOUSE_SEQUENCE_LENGTH = 16
 
@@ -410,6 +426,11 @@ def main() -> int:
         help="connect --virtio-net to a loopback socket peer on this TCP port",
     )
     parser.add_argument(
+        "--network-device",
+        choices=NETWORK_DEVICE_CHOICES,
+        help="disable implicit NICs and attach one explicit PCI identity device",
+    )
+    parser.add_argument(
         "--ahci",
         action="store_true",
         help="attach a polling-test SATA disk behind an explicit AHCI controller",
@@ -509,6 +530,8 @@ def main() -> int:
         raise SystemExit("--esp and --iso are mutually exclusive")
     if args.virtio_net_peer_port is not None and not args.virtio_net:
         raise SystemExit("--virtio-net-peer-port requires --virtio-net")
+    if args.network_device and args.virtio_net:
+        raise SystemExit("--network-device and --virtio-net are mutually exclusive")
     if (
         args.virtio_net_peer_port is not None
         and not 1 <= args.virtio_net_peer_port <= 65535
@@ -675,6 +698,8 @@ def main() -> int:
         ]
     if args.virtio_net:
         command += virtio_net_qemu_args(args.virtio_net_peer_port)
+    if args.network_device:
+        command += network_device_qemu_args(args.network_device)
     if args.screendump:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
     command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
