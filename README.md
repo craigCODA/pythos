@@ -7,8 +7,8 @@ SDHCI/eMMC block backends verified in QEMU, and carries the accepted PythTIG
 version 1 graph-package direction through Phase 7 cutover/cross-target
 evidence.
 
-Secure transport is the next separately authorized Phase 14 boundary; it is now
-the accepted bounded Phase 14 stopping point.
+Secure transport was the separately authorized Phase 14 boundary and is now the
+accepted bounded Phase 14 stopping point.
 
 Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
 through [ADR 0095](docs/decisions/0095-phase-14-network-port-capability-abi.md),
@@ -62,6 +62,15 @@ claim a UDP service, socket API, port namespace or multiplexing, ICMP error
 delivery, retries, timers, routing, fragmentation, TCP, DNS, TLS, physical
 hardware, modern/interrupt Virtio, interrupts/MSI-X, offloads, zero-copy,
 multiple consumers, persistent state, PythTIG changes, or Phase 15 work. TCP is now accepted locally as the finite proof recorded in [ADR 0101](docs/decisions/0101-phase-14-tcp-stream-consumer.md): Task 6 observed exactly 2 ARP + 10 TCP frames, 7 TX/5 RX, nine ordered markers, one `QEMU_OUTCOME success`, `--no-virtio-blk`, snapshot-backed ESP, and clean teardown. This does not claim a socket API, general TCP service, hosted/remote networking, or the excluded TCP/Phase 15 features. The finite capability-gated socket proof is accepted locally under [ADR 0103](docs/decisions/0103-phase-14-capability-gated-socket-api.md). The bounded secure-transport proof is accepted locally under [ADR 0104](docs/decisions/0104-phase-14-secure-transport-proof.md): granted and tamper each used 21 frames with exactly nine and eight ordered markers respectively, tamper preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED` without plaintext release, and denied used zero frames with exactly four markers. All three cases had one `QEMU_OUTCOME success` and clean artifacts. This accepted bounded proof is Phase 14's current stopping point; it does not claim production TLS, update authenticity, physical networking, or a generalized socket/TLS service. Phase 15 hardware expansion, including Lenovo Wi-Fi, remains separate.
+
+Phase 15's opening identity slice is now accepted in QEMU and physically
+observed on the Lenovo `81VS` under [ADR 0105](docs/decisions/0105-phase-15-network-hardware-identity-probe.md).
+The read-only probe found one controller at BDF `02:00.0`, vendor/device
+`10EC:C82F`, subsystem `17AA:C02F`, and class/subclass/programming interface
+`02/80/00`. This is target-specific PCI identity evidence; it does not claim
+Wi-Fi operation, firmware, BAR/MMIO, DMA, interrupts, frame movement, or
+generalized hardware support. See the [physical evidence
+record](docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md).
 
 Phase 12
 `path-vs-graph-decision` is recorded by ADR 0069: PythOS uses a
@@ -405,7 +414,7 @@ Current-state references:
 
 - [Technical overview](docs/TECHNICAL-OVERVIEW.md)
 - [Handover](docs/HANDOVER.md)
-- [Phase 12 roadmap](docs/ROADMAP-LATER-PHASES.md)
+- [Later-phase roadmap](docs/ROADMAP-LATER-PHASES.md)
 - [ADR 0069: object locator namespace and semantic checkpoints](docs/decisions/0069-phase-12-object-locator-and-semantic-checkpoints.md)
 - [ADR 0070: object locator resolution ABI](docs/decisions/0070-phase-12-object-locator-resolution-abi.md)
 - [ADR 0072: path adversarial suite](docs/decisions/0072-phase-12-path-adversarial-suite.md)
@@ -426,8 +435,10 @@ Current-state references:
 - [ADR 0087: USB xHCI one-shot boot-mouse decode probe](docs/decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088: USB xHCI recurring boot-mouse probe](docs/decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
 - [ADR 0089: Viewing input routing foundation](docs/decisions/0089-viewing-input-routing-foundation.md)
+- [ADR 0105: Phase 15 network-hardware identity probe](docs/decisions/0105-phase-15-network-hardware-identity-probe.md)
 - [Physical ADR 0087 boot-mouse decode report](docs/evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Physical ADR 0088 recurring boot-mouse report](docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
+- [2026-09-24 Phase 15 Lenovo network-identity evidence](docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)
