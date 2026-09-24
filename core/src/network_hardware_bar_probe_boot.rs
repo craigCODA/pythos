@@ -18,6 +18,26 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     };
 
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_CONTROLLER_FOUND");
+    serial::write_hex_u64(
+        "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_VENDOR=",
+        u64::from(controller.vendor_id),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_DEVICE_ID=",
+        u64::from(controller.device_id),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_CLASS=",
+        u64::from(controller.class_code),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_SUBCLASS=",
+        u64::from(controller.subclass),
+    );
+    serial::write_hex_u64(
+        "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:NETWORK_PROG_IF=",
+        u64::from(controller.prog_if),
+    );
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SCAN_READY");
     let layout = decode_bar_layout(network_hardware_probe::read_controller_bar_dwords(
         controller,

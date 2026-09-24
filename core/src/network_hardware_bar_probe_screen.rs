@@ -5,7 +5,7 @@ use crate::network_hardware_bar_probe::{NetworkBarLayout, PciBarKind};
 use crate::network_hardware_probe::NetworkController;
 use pythos_shared::boot_protocol::PythFramebufferInfo;
 
-const MAX_LINES: usize = 11;
+const MAX_LINES: usize = 12;
 const MAX_BYTES: usize = 48;
 
 #[derive(Clone, Copy)]
@@ -74,6 +74,7 @@ pub fn render(
     push(&mut storage, &mut count, "config read only");
     push_bdf(&mut storage, &mut count, controller);
     push_vid_did(&mut storage, &mut count, controller);
+    push_class_sub_if(&mut storage, &mut count, controller);
     let mut slot = 0;
     while slot < layout.raw.len() {
         if !is_consumed_high_slot(layout, slot) {
@@ -126,6 +127,24 @@ fn push_vid_did(lines: &mut [Line; MAX_LINES], count: &mut usize, controller: Ne
     line.hex(u64::from(controller.vendor_id), 4);
     line.text(" ");
     line.hex(u64::from(controller.device_id), 4);
+    *count += 1;
+}
+
+fn push_class_sub_if(
+    lines: &mut [Line; MAX_LINES],
+    count: &mut usize,
+    controller: NetworkController,
+) {
+    if *count >= MAX_LINES {
+        return;
+    }
+    let line = &mut lines[*count];
+    line.text("class sub if ");
+    line.hex(u64::from(controller.class_code), 2);
+    line.text(" ");
+    line.hex(u64::from(controller.subclass), 2);
+    line.text(" ");
+    line.hex(u64::from(controller.prog_if), 2);
     *count += 1;
 }
 
@@ -186,6 +205,31 @@ fn kind_label(kind: PciBarKind) -> &'static str {
 mod tests {
     use super::*;
     use crate::network_hardware_bar_probe::PciBarSnapshot;
+    use crate::network_hardware_probe::NetworkControllerKind;
+
+    #[test]
+    fn compact_identity_line_includes_class_subclass_and_programming_interface() {
+        let controller = NetworkController {
+            kind: NetworkControllerKind::Ethernet,
+            bus: 0,
+            device: 3,
+            function: 0,
+            vendor_id: 0x1AF4,
+            device_id: 0x1000,
+            subsystem_vendor_id: 0,
+            subsystem_device_id: 0,
+            class_code: 0x02,
+            subclass: 0x00,
+            prog_if: 0x01,
+        };
+        let mut lines = [Line::new(); MAX_LINES];
+        let mut count = 0;
+
+        push_class_sub_if(&mut lines, &mut count, controller);
+
+        assert_eq!(count, 1);
+        assert_eq!(lines[0].as_str(), Some("class sub if 02 00 01"));
+    }
 
     #[test]
     fn compact_bar_line_retains_the_full_64_bit_base_without_truncation() {
