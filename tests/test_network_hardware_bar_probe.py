@@ -1,5 +1,7 @@
+import importlib.util
 from pathlib import Path
 import re
+import sys
 import unittest
 
 
@@ -11,6 +13,17 @@ CORE_MAIN = ROOT / "core" / "src" / "main.rs"
 IDENTITY_BOOT = ROOT / "core" / "src" / "network_hardware_probe_boot.rs"
 BAR_BOOT = ROOT / "core" / "src" / "network_hardware_bar_probe_boot.rs"
 BAR_SCREEN = ROOT / "core" / "src" / "network_hardware_bar_probe_screen.rs"
+BAR_ORACLE = ROOT / "scripts" / "test-network-hardware-bar-probe.py"
+
+
+def load_bar_oracle():
+    spec = importlib.util.spec_from_file_location("network_hardware_bar_oracle", BAR_ORACLE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {BAR_ORACLE}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 class NetworkHardwareBarProbeContractTest(unittest.TestCase):
@@ -235,6 +248,75 @@ class NetworkHardwareBarProbeContractTest(unittest.TestCase):
             self.identity_boot_text,
         )
         self.assertNotIn("NETWORK_HARDWARE_BAR_PROBE", self.identity_boot_text)
+
+
+class NetworkHardwareBarProbeOracleTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.oracle = load_bar_oracle()
+
+    def test_runner_and_probe_command_are_backend_free(self):
+        for device in ("e1000", "e1000e"):
+            with self.subTest(device=device):
+                self.oracle.assert_runner_isolated(device)
+                command = self.oracle.probe_runner_command(device)
+                self.assertIn("--no-virtio-blk", command)
+                self.assertNotIn("--virtio-net", command)
+                self.assertNotIn("-netdev", command)
+                self.assertNotIn("socket", " ".join(command))
+
+    def test_parser_accepts_complete_reports_for_both_models(self):
+        for device in ("e1000", "e1000e"):
+            with self.subTest(device=device):
+                self.oracle.assert_bar_probe_report(
+                    self.oracle.synthetic_serial_report(device), device
+                )
+
+    def test_parser_rejects_wrong_device_and_missing_bar_slot(self):
+        serial = self.oracle.synthetic_serial_report("e1000").replace(
+            "NETWORK_DEVICE_ID=0x000000000000100E",
+            "NETWORK_DEVICE_ID=0x00000000000010D3",
+        )
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_bar_probe_report(serial, "e1000")
+
+        serial = self.oracle.synthetic_serial_report("e1000").replace(
+            "PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_2_BASE=0x0000000000001000\n", ""
+        )
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_bar_probe_report(serial, "e1000")
+
+    def test_parser_rejects_malformed_pairs_and_control_markers(self):
+        serial = self.oracle.synthetic_serial_report("e1000").replace(
+            "BAR_SLOT_0_KIND=MEMORY64", "BAR_SLOT_0_KIND=MEMORY32"
+        )
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_bar_probe_report(serial, "e1000")
+
+    def test_parser_rejects_malformed_layouts_and_out_of_range_fields(self):
+        valid = self.oracle.synthetic_serial_report("e1000")
+        malformed = valid.replace(
+            "BAR_SLOT_5_RAW_LOW=0x0000000000000000",
+            "BAR_SLOT_5_RAW_LOW=0x0000000000000006",
+        ).replace("BAR_SLOT_5_KIND=UNIMPLEMENTED", "BAR_SLOT_5_KIND=MALFORMED")
+        raw_high_above_dword = valid.replace(
+            "BAR_SLOT_0_RAW_HIGH=0x0000000000000001",
+            "BAR_SLOT_0_RAW_HIGH=0x0000000100000000",
+        ).replace(
+            "BAR_SLOT_0_BASE=0x0000000100000000",
+            "BAR_SLOT_0_BASE=0x10000000000000000",
+        )
+        out_of_range_slot = valid + (
+            "\nPYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:BAR_SLOT_6_RAW_LOW="
+            "0x0000000000000000"
+        )
+        for serial in (malformed, raw_high_above_dword, out_of_range_slot):
+            with self.subTest(serial=serial), self.assertRaises(AssertionError):
+                self.oracle.assert_bar_probe_report(serial, "e1000")
+
+        serial = self.oracle.synthetic_serial_report("e1000") + "\nNETWORK_DMA"
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_bar_probe_report(serial, "e1000")
 
 
 if __name__ == "__main__":
