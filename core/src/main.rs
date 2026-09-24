@@ -374,6 +374,7 @@ mod launcher_screen;
 mod link_layer_probe;
 mod memory;
 #[cfg(any(test, feature = "network-hardware-probe"))]
+mod network_hardware_bar_probe;
 mod network_hardware_probe;
 #[cfg(all(not(test), feature = "network-hardware-probe"))]
 mod network_hardware_probe_boot;

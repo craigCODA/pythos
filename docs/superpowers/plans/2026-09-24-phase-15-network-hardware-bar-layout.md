@@ -26,7 +26,8 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
 - Start from `origin/main`, which contains the accepted Phase 15 identity
   implementation. Do not mix this slice into the documentation-only PR.
 - Keep `network-hardware-probe` behavior and markers unchanged.
-- Read only PCI configuration offsets `0x10` through `0x24`; never write PCI
+- Read only PCI configuration offsets `0x10`, `0x14`, `0x18`, `0x1c`, `0x20`,
+  and `0x24`; never write PCI
   configuration and never probe BAR size by writing `0xFFFF_FFFF`.
 - Decode I/O, 32-bit memory, below-1-MiB memory, and 64-bit memory BARs; a
   64-bit BAR consumes its adjacent slot and slot 5 cannot start a pair.
@@ -41,6 +42,9 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   repository gates are green.
 - Do not claim BAR reachability, MMIO operation, Wi-Fi, Ethernet, firmware,
   DMA, interrupts, controller ownership, or generalized hardware support.
+- The boundary contract is no PCI configuration writes, BAR-size writes, BAR
+  mapping or dereference, MMIO or device-register reads, DMA, interrupts, reset,
+  firmware, bus mastering, queue setup, frame movement, or controller operation.
 
 ## Review Focus
 
@@ -78,12 +82,15 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   plan. Assert that the accepted identity profile remains named
   `network-hardware-probe`.
 
-- [ ] **Step 2: Run the contract test to verify it fails**
+- [ ] **Step 2: Run the contract test before adding it, when the task is
+  executed from a clean worktree**
 
   Run: `py -3 -m unittest tests.test_network_hardware_bar_probe`
 
-  Expected: FAIL because the contract test file and the new implementation
-  files do not exist yet.
+  Expected: the module-import check fails because the contract test file does
+  not exist yet. If parallel task scheduling has already created the test,
+  record that the pre-test red state was not observable and continue without
+  treating that as an implementation result.
 
 - [ ] **Step 3: Add the scope documents**
 
@@ -127,7 +134,7 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   assert_eq!(decode_bar_layout([0; 6]).bars[0], None);
   assert_eq!(decode_bar_layout([0x0000_1001, 0, 0, 0, 0, 0]).bars[0].unwrap().kind, PciBarKind::Io);
   assert_eq!(decode_bar_layout([0xFEBF_0000, 0, 0, 0, 0, 0]).bars[0].unwrap().kind, PciBarKind::Memory32);
-  assert_eq!(decode_bar_layout([0x0008_0000, 0, 0, 0, 0, 0]).bars[0].unwrap().kind, PciBarKind::MemoryBelow1MiB);
+  assert_eq!(decode_bar_layout([0x0008_0002, 0, 0, 0, 0, 0]).bars[0].unwrap().kind, PciBarKind::MemoryBelow1MiB);
   let layout = decode_bar_layout([0x0000_0004, 0x0000_0001, 0, 0, 0, 0]);
   assert_eq!(layout.bars[0].unwrap().kind, PciBarKind::Memory64);
   assert_eq!(layout.bars[0].unwrap().base, 0x0000_0001_0000_0000);
@@ -138,7 +145,7 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
 
 - [ ] **Step 2: Run the focused Rust test to verify it fails**
 
-  Run: `cargo test -p pythos-core --lib network_hardware_bar_probe`
+  Run: `cargo test -p pythos-core --bin pythcore network_hardware_bar_probe`
 
   Expected: FAIL because the decoder types and function do not exist.
 
@@ -151,7 +158,7 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
 
 - [ ] **Step 4: Run the focused Rust test to verify it passes**
 
-  Run: `cargo test -p pythos-core --lib network_hardware_bar_probe`
+  Run: `cargo test -p pythos-core --bin pythcore network_hardware_bar_probe`
 
   Expected: PASS, including all eight decoder cases.
 
@@ -179,7 +186,7 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
 
 - [ ] **Step 2: Run the feature-boundary tests to verify they fail**
 
-  Run: `cargo test -p pythos-core --lib network_hardware_bar_probe` and
+  Run: `cargo test -p pythos-core --bin pythcore network_hardware_bar_probe` and
   `py -3 -m unittest tests.test_network_hardware_bar_probe`
 
   Expected: FAIL because the feature and boot modules are absent.
@@ -202,6 +209,10 @@ ADR 0105, and `docs/phase-11-real-hardware-findings.md`.
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE:PCI_CONFIG_READ_ONLY
   PYTHOS:CORE:NETWORK_HARDWARE_BAR_PROBE_READY
   ```
+
+  For each slot `0` through `5`, use the corresponding `BAR_SLOT_{n}_RAW_LOW`,
+  `BAR_SLOT_{n}_RAW_HIGH`, and `BAR_SLOT_{n}_KIND` record names; omit a
+  consumed high slot as a duplicate.
 
   Emit one bounded raw/kind record per slot, omit the consumed high slot as a
   duplicate, render the same metadata to the framebuffer, and halt. Never emit

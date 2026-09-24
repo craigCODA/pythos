@@ -25,12 +25,15 @@ controller. It records the raw low dword, any paired high dword, the decoded
 I/O or memory type, the 32/64-bit pairing, and the decoded address value as
 configuration metadata.
 
+The six offsets are exactly `0x10`, `0x14`, `0x18`, `0x1c`, `0x20`, and
+`0x24`.
+
 The decoder is bounded and pure:
 
 - an all-zero slot is unimplemented;
 - an I/O BAR records its raw value and masked I/O base;
 - a 32-bit memory BAR records its raw value and masked memory base;
-- a below-1-MiB memory BAR is reported distinctly;
+- a below-1-MiB memory BAR (memory type bits `01`) is reported distinctly;
 - a 64-bit memory BAR consumes the next slot and records both dwords; and
 - a reserved type or an invalid 64-bit BAR in slot 5 is reported as malformed
   rather than being followed or guessed.
@@ -40,6 +43,10 @@ enable memory or I/O space, enable bus mastering, map a BAR, dereference a BAR,
 read a device register, reset or power-manage a controller, allocate DMA,
 configure queues, load firmware, enable interrupts, send or receive frames, or
 claim controller ownership.
+
+For the bounded decoder fixture, raw low dword `0x0008_0002` represents a
+below-1-MiB memory BAR and decodes to base `0x0008_0000`; the low type bits are
+retained in the raw field and removed only when computing the base.
 
 The accepted `network-hardware-probe` identity profile remains unchanged. The
 new profile has its own marker and framebuffer contract so the identity slice
@@ -83,6 +90,10 @@ The existing storage `hardware-probe`, Phase 14 `VirtioTransport`, transport
 adapter, `NetworkPort`, PythTIG v1 ABI, capability model, and Phase 14
 acceptance claims remain unchanged. Later Phase 15 work still requires its own
 scope decision.
+
+The boundary contract is no PCI configuration writes, BAR-size writes, BAR
+mapping or dereference, MMIO or device-register reads, DMA, interrupts, reset,
+firmware, bus mastering, queue setup, frame movement, or controller operation.
 
 ## Acceptance
 
