@@ -1,8 +1,9 @@
 //! Probe-only PCI network-controller identity evidence.
 //!
-//! This is intentionally separate from the storage hardware probe. It reads
-//! PCI configuration space only, reports bounded identity evidence, and never
-//! maps or operates a network controller.
+//! This is intentionally separate from the storage hardware probe. It reports
+//! bounded identity evidence and exposes only the feature-gated PCI command
+//! word write required by ADR 0108; no general network-controller operation is
+//! provided here.
 
 #![cfg_attr(
     any(
@@ -10,7 +11,8 @@
         not(any(
             feature = "network-hardware-probe",
             feature = "network-hardware-bar-probe",
-            feature = "network-hardware-register-probe"
+            feature = "network-hardware-register-probe",
+            feature = "network-hardware-register-enable-probe"
         ))
     ),
     allow(dead_code)
@@ -227,6 +229,17 @@ pub fn read_controller_command_status(controller: NetworkController) -> u32 {
     )
 }
 
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+pub fn write_controller_command_word(controller: NetworkController, command: u16) {
+    write_config_u16(
+        controller.bus,
+        controller.device,
+        controller.function,
+        PCI_COMMAND_STATUS_OFFSET,
+        command,
+    );
+}
+
 #[cfg(not(test))]
 fn scan_bus(bus: u8, visited: &mut [bool; 256], report: &mut NetworkProbeReport) {
     if visited[usize::from(bus)] {
@@ -304,6 +317,19 @@ fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     inl(PCI_CONFIG_DATA)
 }
 
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+fn write_config_u16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    outl(
+        PCI_CONFIG_ADDRESS,
+        0x8000_0000
+            | (u32::from(bus) << 16)
+            | (u32::from(device) << 11)
+            | (u32::from(function) << 8)
+            | u32::from(offset & 0xFC),
+    );
+    outw(PCI_CONFIG_DATA + u16::from(offset & 0x02), value);
+}
+
 #[cfg(not(test))]
 fn outl(port: u16, value: u32) {
     // SAFETY: the dedicated probe supplies only the PCI configuration address
@@ -332,6 +358,21 @@ fn inl(port: u16) -> u32 {
         );
     }
     value
+}
+
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+fn outw(port: u16, value: u16) {
+    // SAFETY: the caller supplies only PCI configuration-data port 0xCFC plus
+    // the command-word lane at offset 0x04; the probe runs before interrupts
+    // or other code can compete for the legacy configuration mechanism.
+    unsafe {
+        asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
 }
 
 #[cfg(not(test))]
