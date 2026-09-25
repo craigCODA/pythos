@@ -113,11 +113,17 @@ class CiWorkflowTest(unittest.TestCase):
     )
     NETWORK_HARDWARE_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-core --no-default-features --features network-hardware-probe network_hardware_probe",
+        "cargo test -p pythos-core --no-default-features --features network-hardware-register-enable-probe",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-register-enable-probe -- -D warnings",
         "python -m py_compile scripts/test-network-hardware-probe.py tests/test_network_hardware_probe.py",
+        "python -m py_compile scripts/test-network-hardware-register-enable-probe.py tests/test_network_hardware_register_enable_probe.py",
         "python -m unittest tests.test_network_hardware_probe",
+        "python -m unittest tests.test_network_hardware_register_enable_probe",
         "python scripts/test-network-hardware-probe.py --self-test",
         "python scripts/test-network-hardware-probe.py",
+        "python scripts/test-network-hardware-register-enable-probe.py --self-test",
+        "python scripts/test-network-hardware-register-enable-probe.py",
     )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
