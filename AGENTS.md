@@ -92,9 +92,10 @@ MMIO, enables memory space, sets bus mastering, resets, uses firmware, enables
 interrupts, allocates DMA, configures queues, moves packets, or claims
 Ethernet/Wi-Fi operation. The physical Lenovo result is still pending.
 
-The QEMU `e1000`/`e1000e` register oracle is recorded in the new plan and the
-physical result will be added beside the existing BAR evidence. Preserve the
-PythOS architectural names `VirtioTransport`, transport adapter, and
+The QEMU `e1000`/`e1000e` register oracle is recorded in the new plan and now
+requires the fixed framebuffer result marker as well as the serial read proof.
+The physical result will be added beside the existing BAR evidence. Preserve
+the PythOS architectural names `VirtioTransport`, transport adapter, and
 `NetworkPort`; this slice does not alter the Phase 14 ABI or PythTIG.
 
 The following is the completed Slice 3-4 checkpoint, not the new invocation:

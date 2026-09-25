@@ -73,12 +73,15 @@ The probe's serial markers are ordered as follows:
 ...:ENTER
 ...:PCI_SCAN_READY
 ...:NETWORK_CONTROLLER_FOUND
-...:PCI_COMMAND_READ
+...:PCI_COMMAND_STATUS=...
 ...:PCI_MEMORY_SPACE_ENABLED
+...:BAR_SLOT=...
 ...:BAR_TARGET_SELECTED
+...:TARGET_INTEL_DEVICE_STATUS or ...:TARGET_REALTEK_SYS_STATUS1
+...:REGISTER_OFFSET=...
 ...:MMIO_MAPPED
-...:REGISTER_READ_OFFSET=...
 ...:REGISTER_READ_VALUE=...
+...:FRAMEBUFFER_REGISTER_READY
 ...:REGISTER_REACHABILITY_READY
 ...:PCI_CONFIG_READ_ONLY
 ..._READY
@@ -86,8 +89,10 @@ The probe's serial markers are ordered as follows:
 
 The safe skip path replaces the enable/mapping/read suffix with one of
 `NETWORK_CONTROLLER_NOT_FOUND`, `UNSUPPORTED_CONTROLLER`,
-`PCI_MEMORY_SPACE_DISABLED`, or `MMIO_TARGET_INVALID`, followed by
-`REGISTER_REACHABILITY_SKIPPED`, `PCI_CONFIG_READ_ONLY`, and `READY`.
+`PCI_MEMORY_SPACE_DISABLED`, or `MMIO_TARGET_INVALID`. When a framebuffer is
+available, the bounded result panel emits `FRAMEBUFFER_REGISTER_READY` before
+the terminal `REGISTER_REACHABILITY_SKIPPED` marker. The path then emits
+`PCI_CONFIG_READ_ONLY` and `READY`.
 
 `REGISTER_REACHABILITY_READY` means only that the one fixed volatile read
 completed without a fault under the explicit mapping and configuration gates.
@@ -101,8 +106,9 @@ controller, network datapath, or Wi-Fi association.
 2. Synthetic marker tests reject reordered, duplicated, malformed, or
    write/control evidence and accept the bounded read and skip transcripts.
 3. QEMU runs with exactly one explicit `e1000` or `e1000e`, `-nic none`, and no
-   network backend. The oracle requires the fixed `0x08` read and forbids
-   writes, DMA, interrupts, reset, queues, packets, and NetworkPort markers.
+   network backend. The oracle requires the fixed `0x08` read, the framebuffer
+   result marker, and forbids writes, DMA, interrupts, reset, queues, packets,
+   and NetworkPort markers.
 4. The physical Lenovo run uses a newly named ISO under `F:\iso` and preserves
    the existing Phase 15 ISO. It records either the fixed `0xF4` read or the
    specification-safe `PCI_MEMORY_SPACE_DISABLED` skip; neither result is

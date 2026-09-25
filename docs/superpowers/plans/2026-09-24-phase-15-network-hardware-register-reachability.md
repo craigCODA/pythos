@@ -40,10 +40,10 @@
 - Consume `NetworkController`, `read_controller_bar_dwords`, and `decode_bar_layout`.
 - Produce fixed target selection, PCI command-bit validation, BAR validation, and a mapping tuple for the boot path.
 
-- [ ] Add constants for PCI command offset `0x04`, Memory Space Enable bit `1 << 1`, a 4 KiB register window, the dedicated virtual address, and the fixed target offsets `0x08` and `0xF4`.
-- [ ] Add tests for all supported IDs, disabled memory space, I/O BAR rejection, malformed/unaligned/overflowing windows, and successful QEMU/Realtek policy selection.
-- [ ] Implement the smallest pure policy functions needed by the boot path; keep hardware `inl`/volatile access outside the pure test surface.
-- [ ] Run the focused Rust tests and commit the policy slice.
+- [x] Add constants for PCI command offset `0x04`, Memory Space Enable bit `1 << 1`, a 4 KiB register window, the dedicated virtual address, and the fixed target offsets `0x08` and `0xF4`.
+- [x] Add tests for all supported IDs, disabled memory space, I/O BAR rejection, malformed/unaligned/overflowing windows, and successful QEMU/Realtek policy selection.
+- [x] Implement the smallest pure policy functions needed by the boot path; keep hardware `inl`/volatile access outside the pure test surface.
+- [x] Run the focused Rust tests and commit the policy slice (`65f08bf`).
 
 ### Task 2: Wire the opt-in mapped boot path
 
@@ -57,12 +57,12 @@
 - Consume the Task 1 mapping decision.
 - Produce an isolated feature-gated address-space build and boot dispatch.
 
-- [ ] Add the feature and mutual-exclusion guards without changing normal, identity, BAR, or USB probe dispatch.
-- [ ] Add one dedicated `network_hardware_register_mmio` mapping option using `PTE_NO_EXECUTE | PTE_CACHE_DISABLE`; retain the existing mapping options unchanged.
-- [ ] Discover the mapping from PCI configuration before building the dedicated root, activate and validate that root, verify the translated address, then run the boot probe.
-- [ ] Emit only the ADR 0107 markers and halt with the QEMU success outcome; use explicit safe skip markers for every precondition failure.
-- [ ] Perform one fixed volatile 32-bit read only after all gates pass; do not add a write helper.
-- [ ] Run `cargo fmt --check` and the focused Rust build/test commands.
+- [x] Add the feature and mutual-exclusion guards without changing normal, identity, BAR, or USB probe dispatch.
+- [x] Add one dedicated `network_hardware_register_mmio` mapping option using `PTE_NO_EXECUTE | PTE_CACHE_DISABLE`; retain the existing mapping options unchanged.
+- [x] Discover the mapping from PCI configuration before building the dedicated root, activate and validate that root, verify the translated address, then run the boot probe.
+- [x] Emit only the ADR 0107 markers and halt with the QEMU success outcome; use explicit safe skip markers for every precondition failure.
+- [x] Perform one fixed volatile 32-bit read only after all gates pass; do not add a write helper.
+- [x] Run `cargo fmt --check` and the focused Rust build/test commands.
 
 ### Task 3: Add synthetic and QEMU acceptance oracles
 
@@ -75,10 +75,10 @@
 - Consume the Task 2 markers and existing QEMU runner.
 - Produce self-tests plus live `e1000` and `e1000e` acceptance.
 
-- [ ] Freeze ordered read and safe-skip marker contracts.
-- [ ] Reject write/control, DMA, interrupt, reset, queue, packet, socket, NetworkPort, and Phase 15-later markers.
-- [ ] Build the new feature, run both QEMU models with `-nic none`, require exactly one controller, and require one successful outcome.
-- [ ] Run the Python self-test and live oracle; record exact serial logs.
+- [x] Freeze ordered read and safe-skip marker contracts, including the framebuffer result marker.
+- [x] Reject write/control, DMA, interrupt, reset, queue, packet, socket, NetworkPort, and Phase 15-later markers.
+- [x] Build the new feature, run both QEMU models with `-nic none`, require exactly one controller, and require one successful outcome.
+- [x] Run the Python self-test and live oracle; record exact serial logs.
 
 ### Task 4: Build and document physical Lenovo observation
 
@@ -91,7 +91,7 @@
 - Consume the accepted QEMU logs and new physical serial/photo evidence.
 - Produce a reproducible evidence record that distinguishes a real register read from a safe skip.
 
-- [ ] Build a uniquely named ISO without overwriting any existing `F:\iso` file.
+- [x] Build a uniquely named ISO without overwriting any existing `F:\iso` file. Local image prepared; `F:` is not mounted in this environment.
 - [ ] Owner boots the Lenovo and supplies the serial/photo result; record BDF, command word, BAR selection, register offset/value or skip reason, image hash, and photo hash.
 - [ ] Update current status documents only after the evidence is captured; leave Phase 15 later scope explicitly pending.
 

@@ -112,10 +112,14 @@ The next bounded slice is governed by [ADR 0107](decisions/0107-phase-15-network
 and its [implementation plan](superpowers/plans/2026-09-24-phase-15-network-hardware-register-reachability.md).
 The opt-in `network-hardware-register-probe` requires PCI Memory Space Enable
 to be already set, maps one cache-disabled/NX 4 KiB memory-BAR window, and
-performs one fixed 32-bit status read. QEMU `e1000` and `e1000e` passed; the
-Lenovo physical result remains pending. No PCI/MMIO writes, device enablement,
-bus mastering, reset, firmware, interrupts, DMA, queues, packets, or
-Ethernet/Wi-Fi operation are included.
+performs one fixed 32-bit status read and renders the bounded result on the
+framebuffer. QEMU `e1000` and `e1000e` passed; the Lenovo physical result
+remains pending. The prepared ISO is
+`target/pythos-phase15-network-hardware-register-probe-20260924.iso` with
+SHA-256 `9D2597044B4E120A375257A9F652BE836299F065DD6902310ACE56B06D262CE7`.
+Copy it to `F:\iso` under that unique name and preserve the existing images.
+No PCI/MMIO writes, device enablement, bus mastering, reset, firmware,
+interrupts, DMA, queues, packets, or Ethernet/Wi-Fi operation are included.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
