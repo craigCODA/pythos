@@ -178,6 +178,7 @@ pub struct KernelAddressSpaceBuildOptions {
     pub ahci_mmio: Option<PhysicalDeviceMapping>,
     pub sdhci_emmc_mmio: Option<PhysicalDeviceMapping>,
     pub xhci_mmio: Option<PhysicalDeviceMapping>,
+    pub network_hardware_register_mmio: Option<PhysicalDeviceMapping>,
     pub shell_bootstrap_frame: Option<u64>,
     pub evidence_log_mapping: Option<PhysicalDeviceMapping>,
 }
@@ -189,6 +190,7 @@ impl KernelAddressSpaceBuildOptions {
             ahci_mmio: None,
             sdhci_emmc_mmio: None,
             xhci_mmio: None,
+            network_hardware_register_mmio: None,
             shell_bootstrap_frame: None,
             evidence_log_mapping: None,
         }
@@ -282,6 +284,12 @@ impl KernelAddressSpace {
                 len,
                 PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
             )?;
+        }
+        // Probe-only network-controller register mapping. The diagnostic reads
+        // one fixed status register after the PCI Memory Space Enable gate;
+        // it never writes PCI configuration or device registers.
+        if let Some((phys, virt, len)) = options.network_hardware_register_mmio {
+            tables.map_physical_range(virt, phys, len, PTE_NO_EXECUTE | PTE_CACHE_DISABLE)?;
         }
         if let Some(frame) = options.shell_bootstrap_frame {
             tables.map_physical_range(frame, frame, PAGE_SIZE, PTE_WRITE | PTE_NO_EXECUTE)?;

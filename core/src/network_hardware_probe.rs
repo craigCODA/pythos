@@ -9,7 +9,8 @@
         test,
         not(any(
             feature = "network-hardware-probe",
-            feature = "network-hardware-bar-probe"
+            feature = "network-hardware-bar-probe",
+            feature = "network-hardware-register-probe"
         ))
     ),
     allow(dead_code)
@@ -30,6 +31,7 @@ const PCI_HEADER_TYPE_OFFSET: u8 = 0x0C;
 const PCI_BUS_NUMBERS_OFFSET: u8 = 0x18;
 const PCI_SUBSYSTEM_VENDOR_DEVICE_OFFSET: u8 = 0x2C;
 const PCI_BAR0_OFFSET: u8 = 0x10;
+const PCI_COMMAND_STATUS_OFFSET: u8 = 0x04;
 const PCI_CLASS_NETWORK: u8 = 0x02;
 const PCI_SUBCLASS_ETHERNET: u8 = 0x00;
 const PCI_CLASS_BRIDGE: u8 = 0x06;
@@ -213,6 +215,16 @@ pub fn read_controller_bar_dwords(controller: NetworkController) -> [u32; 6] {
         slot += 1;
     }
     raw
+}
+
+#[cfg(not(test))]
+pub fn read_controller_command_status(controller: NetworkController) -> u32 {
+    read_config_u32(
+        controller.bus,
+        controller.device,
+        controller.function,
+        PCI_COMMAND_STATUS_OFFSET,
+    )
 }
 
 #[cfg(not(test))]

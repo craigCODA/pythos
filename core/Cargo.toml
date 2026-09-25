@@ -67,6 +67,9 @@ network-hardware-probe = []
 # `network-hardware-bar-probe` records only the selected controller's PCI BAR
 # configuration metadata, then halts without mapping or operating the device.
 network-hardware-bar-probe = []
+# `network-hardware-register-probe` maps one already-enabled memory BAR and
+# reads one fixed status register; it never enables or operates the device.
+network-hardware-register-probe = []
 # `hardware-probe` builds a no-write real-hardware diagnostic image. It scans
 # PCI config space for storage-controller identity and then halts.
 hardware-probe = []
