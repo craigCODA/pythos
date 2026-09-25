@@ -19,6 +19,7 @@ class NetworkHardwareRegisterEnableProbeContractTest(unittest.TestCase):
     def test_enable_boot_contract_requires_readback_and_restore(self):
         boot = (ROOT / "core" / "src" / "network_hardware_register_enable_probe_boot.rs").read_text(encoding="utf-8")
         for marker in (
+            "discover_enable_setup",
             "PCI_COMMAND_MSE_WRITE",
             "PCI_COMMAND_STATUS_AFTER_ENABLE",
             "PCI_COMMAND_MSE_RESTORE",
@@ -27,6 +28,12 @@ class NetworkHardwareRegisterEnableProbeContractTest(unittest.TestCase):
         ):
             with self.subTest(marker=marker):
                 self.assertIn(marker, boot)
+
+    def test_enable_profile_has_a_visible_safe_skip_path(self):
+        boot = (ROOT / "core" / "src" / "network_hardware_register_enable_probe_boot.rs").read_text(encoding="utf-8")
+        screen = (ROOT / "core" / "src" / "network_hardware_register_enable_probe_screen.rs").read_text(encoding="utf-8")
+        self.assertIn("render_skip", boot)
+        self.assertIn("pub fn render_skip", screen)
 
     def test_enable_profile_does_not_authorize_operational_networking(self):
         boot = (ROOT / "core" / "src" / "network_hardware_register_enable_probe_boot.rs").read_text(encoding="utf-8")

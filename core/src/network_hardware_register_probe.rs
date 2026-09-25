@@ -107,6 +107,25 @@ pub fn prepare_plan(
     if command_status & PCI_MEMORY_SPACE_ENABLE == 0 {
         return Err(RegisterProbeSkip::PciMemorySpaceDisabled);
     }
+    prepare_target_plan(target, layout)
+}
+
+/// Prepare the same fixed target for the enable experiment. Unlike the
+/// read-only profile, this deliberately permits a clear MSE bit so the caller
+/// can perform the bounded Command-register transition before the MMIO read.
+pub fn prepare_enable_plan(
+    controller: NetworkController,
+    _command_status: u32,
+    layout: NetworkBarLayout,
+) -> Result<RegisterProbePlan, RegisterProbeSkip> {
+    let target = select_target(controller).ok_or(RegisterProbeSkip::UnsupportedController)?;
+    prepare_target_plan(target, layout)
+}
+
+fn prepare_target_plan(
+    target: RegisterTarget,
+    layout: NetworkBarLayout,
+) -> Result<RegisterProbePlan, RegisterProbeSkip> {
     if layout.malformed {
         return Err(RegisterProbeSkip::MalformedBarLayout);
     }
@@ -164,6 +183,34 @@ pub fn discover_setup() -> RegisterProbeSetup {
         controller,
     ));
     match prepare_plan(controller, command_status, layout) {
+        Ok(plan) => RegisterProbeSetup::Ready {
+            controller,
+            command_status,
+            plan,
+        },
+        Err(reason) => RegisterProbeSetup::Skipped {
+            controller: Some(controller),
+            command_status: Some(command_status),
+            reason,
+        },
+    }
+}
+
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+pub fn discover_enable_setup() -> RegisterProbeSetup {
+    let report = crate::network_hardware_probe::run_probe();
+    let Some(controller) = report.preferred_controller() else {
+        return RegisterProbeSetup::Skipped {
+            controller: None,
+            command_status: None,
+            reason: RegisterProbeSkip::UnsupportedController,
+        };
+    };
+    let command_status = crate::network_hardware_probe::read_controller_command_status(controller);
+    let layout = decode_bar_layout(crate::network_hardware_probe::read_controller_bar_dwords(
+        controller,
+    ));
+    match prepare_enable_plan(controller, command_status, layout) {
         Ok(plan) => RegisterProbeSetup::Ready {
             controller,
             command_status,
@@ -281,6 +328,14 @@ mod tests {
             plan.register_virtual_address(),
             NETWORK_REGISTER_MMIO_VIRT + 0x08
         );
+    }
+
+    #[test]
+    fn enable_profile_accepts_target_before_memory_space_is_enabled() {
+        let qemu = controller(0x8086, 0x100E, NetworkControllerKind::Ethernet);
+        let plan = prepare_enable_plan(qemu, 0, layout_with_bar(0, 0x8104_0000, 0)).unwrap();
+        assert_eq!(plan.physical_base, 0x8104_0000);
+        assert_eq!(plan.target.register_offset, INTEL_STATUS_REGISTER_OFFSET);
     }
 
     #[test]

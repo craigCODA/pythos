@@ -9,7 +9,9 @@ use crate::network_hardware_register_enable_probe::{
     validate_enable_readback, validate_restore_readback,
 };
 use crate::network_hardware_register_enable_probe_screen;
-use crate::network_hardware_register_probe::{RegisterProbeSetup, discover_setup, read_register};
+use crate::network_hardware_register_probe::{
+    RegisterProbeSetup, discover_enable_setup, read_register,
+};
 use crate::{fb_debug, serial};
 use pythos_shared::boot_protocol::PythBootInfo;
 
@@ -17,7 +19,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:ENTER");
     fb_debug::fill(&boot_info.framebuffer, fb_debug::COLOR_HARDWARE_PROBE_ENTER);
 
-    let setup = discover_setup();
+    let setup = discover_enable_setup();
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:PCI_SCAN_READY");
     emit_setup_identity(setup);
 
@@ -27,7 +29,7 @@ pub fn run(boot_info: &'static PythBootInfo, physical_memory: &mut PhysicalMemor
         plan,
     } = setup
     else {
-        emit_skip(setup);
+        emit_skip(boot_info, setup);
     };
 
     serial::write_hex_u64(
@@ -193,18 +195,37 @@ fn emit_setup_identity(setup: RegisterProbeSetup) {
     );
 }
 
-fn emit_skip(setup: RegisterProbeSetup) -> ! {
-    if let RegisterProbeSetup::Skipped {
-        command_status: Some(command_status),
-        reason,
-        ..
-    } = setup
-    {
+fn emit_skip(boot_info: &'static PythBootInfo, setup: RegisterProbeSetup) -> ! {
+    let (controller, command_status, reason) = match setup {
+        RegisterProbeSetup::Skipped {
+            controller,
+            command_status,
+            reason,
+        } => (controller, command_status, reason),
+        RegisterProbeSetup::Ready { .. } => unreachable!(),
+    };
+    if let Some(command_status) = command_status {
         serial::write_hex_u64(
             "PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:PCI_COMMAND_STATUS_ORIGINAL=",
             u64::from(command_status),
         );
         serial::write_line(marker(reason.marker()));
+    }
+    if network_hardware_register_enable_probe_screen::render_skip(
+        &boot_info.framebuffer,
+        controller,
+        command_status,
+        skip_screen_reason(reason),
+    )
+    .is_ok()
+    {
+        serial::write_line(
+            "PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:FRAMEBUFFER_REGISTER_READY",
+        );
+    } else {
+        serial::write_line(
+            "PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:FRAMEBUFFER_REGISTER_FAILED",
+        );
     }
     serial::write_line(
         "PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE:REGISTER_REACHABILITY_SKIPPED",
@@ -214,6 +235,20 @@ fn emit_skip(setup: RegisterProbeSetup) -> ! {
     );
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_REGISTER_ENABLE_PROBE_READY");
     halt();
+}
+
+fn skip_screen_reason(
+    reason: crate::network_hardware_register_probe::RegisterProbeSkip,
+) -> &'static str {
+    match reason {
+        crate::network_hardware_register_probe::RegisterProbeSkip::UnsupportedController => {
+            "unsupported controller"
+        }
+        crate::network_hardware_register_probe::RegisterProbeSkip::PciMemorySpaceDisabled => {
+            "memory space disabled"
+        }
+        _ => "mmio target invalid",
+    }
 }
 
 fn fail_after_write(

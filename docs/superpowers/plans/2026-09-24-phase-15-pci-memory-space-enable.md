@@ -39,10 +39,10 @@
 - Consume: `NetworkController`, ADR 0107 `RegisterProbePlan`, and the original command/status dword.
 - Produce: pure `derive_enabled_command`, `restore_command`, and readback-validation functions plus unit/static tests.
 
-- [ ] Write tests for setting only bit 1, preserving unrelated command bits, refusing Bus Master Enable, and restoring the original command.
-- [ ] Run the focused tests and observe the expected missing-function failure.
-- [ ] Implement the pure policy without hardware access.
-- [ ] Rerun focused Rust/Python tests and commit the policy.
+- [x] Write tests for setting only bit 1, preserving unrelated command bits, refusing Bus Master Enable, and restoring the original command.
+- [x] Run the focused tests and observe the expected missing-function failure.
+- [x] Implement the pure policy without hardware access.
+- [x] Rerun focused Rust/Python tests and commit the policy.
 
 ### Task 2: Add the isolated 16-bit PCI command write and boot path
 
@@ -58,11 +58,11 @@
 - Consume: Task 1 command policy and ADR 0107 target/mapping policy.
 - Produce: feature-gated boot flow with `write_controller_command_word(controller, value: u16)` and verified enable/read/restore markers.
 
-- [ ] Add feature isolation and a 16-bit config-data write at offset `0x04`; keep all existing profiles unchanged.
-- [ ] Add the failing boot/contract assertions for missing write, readback, restore, and final-marker ordering.
-- [ ] Implement the minimal enable, verify, one-read, restore, verify flow; halt on any failed gate.
-- [ ] Render original/after/restored command state and the fixed register result on the framebuffer.
-- [ ] Run focused Rust tests, bare-metal build, and clippy.
+- [x] Add feature isolation and a 16-bit config-data write at offset `0x04`; keep all existing profiles unchanged.
+- [x] Add the failing boot/contract assertions for missing write, readback, restore, and final-marker ordering.
+- [x] Implement the minimal enable, verify, one-read, restore, verify flow; halt on any failed gate.
+- [x] Render original/after/restored command state and the fixed register result on the framebuffer.
+- [x] Run focused Rust tests, bare-metal build, and clippy.
 
 ### Task 3: Add synthetic and QEMU safety oracles
 
@@ -74,10 +74,10 @@
 - Consume: Task 2 markers and the existing QEMU runner.
 - Produce: static forbidden-operation checks, synthetic disabled/write/restore transcripts, and live QEMU already-enabled acceptance.
 
-- [ ] Require exact ordered command/readback/restore markers and reject missing restoration.
-- [ ] Reject dword PCI writes, BAR/MMIO writes, Bus Master Enable, DMA, interrupts, reset, queues, packets, sockets, NetworkPort, Wi-Fi, and later Phase 15 markers.
-- [ ] Run QEMU `e1000` and `e1000e` with `-nic none` and verify the already-enabled path.
-- [ ] Run the self-test and focused Python tests.
+- [x] Require exact ordered command/readback/restore markers and reject missing restoration.
+- [x] Reject dword PCI writes, BAR/MMIO writes, Bus Master Enable, DMA, interrupts, reset, queues, packets, sockets, NetworkPort, Wi-Fi, and later Phase 15 markers.
+- [x] Run QEMU `e1000` and `e1000e` with `-nic none` and verify the already-enabled path.
+- [x] Run the self-test and focused Python tests.
 
 ### Task 4: Build the physical gated image and observe Lenovo
 
@@ -89,8 +89,8 @@
 - Consume: QEMU acceptance, the unique ISO, and owner-provided Lenovo photo/serial evidence.
 - Produce: command-before/after/restored evidence or an explicitly failed restoration result.
 
-- [ ] Build a unique ISO without overwriting any existing image under `F:\iso`.
-- [ ] Only after QEMU acceptance, boot Lenovo and record command-before, command-after, register result, command-restored, and the photo hash.
+- [x] Build a unique initial ISO without overwriting any existing image under `F:\iso`; the first physical attempt exposed a discovery-policy defect.
+- [ ] Boot the corrected ISO on Lenovo and record command-before, command-after, register result, command-restored, and the photo hash.
 - [ ] Treat missing or mismatched restoration as failure; do not claim register reachability in that case.
 
 ### Task 5: Final verification and handoff
@@ -99,9 +99,9 @@
 - Modify: this plan with completed checks and verification notes.
 - Modify: ADR 0108 status only after all acceptance gates pass.
 
-- [ ] Run focused/full Rust tests, Python tests, clippy, formatting, static safety scans, and prior ADR 0107/BAR oracles.
-- [ ] Confirm default and normal-session profiles remain unchanged.
-- [ ] Perform the final scope scan and complete a whole-branch self-review.
+- [x] Run focused/full Rust tests, Python tests, clippy, formatting, static safety scans, and prior ADR 0107/BAR oracles for the corrected path.
+- [x] Confirm default and normal-session profiles remain unchanged.
+- [x] Perform the correction scope scan and complete a whole-branch self-review.
 - [ ] Mark ADR 0108 Accepted only after QEMU acceptance and a verified physical restore.
 
 ## Self-Review Notes

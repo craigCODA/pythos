@@ -94,6 +94,30 @@ pub fn render_ready(
     render_lines(framebuffer, &storage, count)
 }
 
+pub fn render_skip(
+    framebuffer: &PythFramebufferInfo,
+    controller: Option<NetworkController>,
+    command_status: Option<u32>,
+    reason: &str,
+) -> Result<(), ()> {
+    let mut storage = [Line::new(); MAX_LINES];
+    let mut count = 0;
+    push(&mut storage, &mut count, "PythOS");
+    push(&mut storage, &mut count, "network pci enable");
+    push(&mut storage, &mut count, "safe skip");
+    if let Some(controller) = controller {
+        push_bdf(&mut storage, &mut count, controller);
+        push_vid_did(&mut storage, &mut count, controller);
+    }
+    if let Some(command_status) = command_status {
+        push_command(&mut storage, &mut count, "orig", command_status);
+    }
+    push(&mut storage, &mut count, reason);
+    push(&mut storage, &mut count, "no config write");
+    push(&mut storage, &mut count, "no bus master");
+    render_lines(framebuffer, &storage, count)
+}
+
 fn render_lines(
     framebuffer: &PythFramebufferInfo,
     storage: &[Line; MAX_LINES],

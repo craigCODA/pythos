@@ -64,6 +64,21 @@ the final screen, and stop at this experiment. It must not proceed to device
 initialization, DMA, interrupts, queue setup, packet movement, or Wi-Fi
 association.
 
+### Implementation correction after the first physical attempt
+
+The first image remained on the violet hardware-probe entry screen on Lenovo.
+That image incorrectly reused ADR 0107's `discover_setup()` policy, which
+returns `PciMemorySpaceDisabled` before the enable path can derive its bounded
+target. The enable path then halted without rendering a safe-skip result. The
+existing Lenovo observation (`0x00100000`) therefore explains the symptom; no
+PCI command write, BAR mapping, or MMIO read was reached.
+
+The correction adds `discover_enable_setup()`: it reuses the same identity and
+BAR/target validation but intentionally permits a clear MSE bit so this ADR can
+perform its own gated Command-register transition. Unsupported or malformed
+targets now render a visible safe-skip panel. ADR 0107's read-only discovery
+policy remains unchanged.
+
 ## Evidence contract
 
 The new profile emits an ordered transcript that distinguishes the temporary
@@ -99,9 +114,11 @@ failure marker and never emits the final ready marker.
 3. QEMU `e1000` and `e1000e` pass the already-enabled branch with the fixed
    status read and no configuration write required; synthetic transcripts cover
    the disabled/write/restore branch and all failure ordering.
-4. The physical Lenovo run is attempted only with this opt-in ISO and records
-   the original command, post-enable command, register result or failure, and
-   restored command. Any inability to verify restoration is a failed result.
+4. The physical Lenovo run is attempted only with the corrected opt-in ISO and
+   records the original command, post-enable command, register result or
+   failure, and restored command. Any inability to verify restoration is a
+   failed result. The first violet-screen attempt is diagnostic evidence only,
+   not a completed physical acceptance.
 5. Existing ADR 0107, identity, BAR, Phase 14, default, and normal-session
    profiles remain unchanged.
 
