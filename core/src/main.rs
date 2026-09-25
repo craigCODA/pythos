@@ -433,6 +433,8 @@ mod network_hardware_probe_screen;
 mod network_hardware_register_probe;
 #[cfg(all(not(test), feature = "network-hardware-register-probe"))]
 mod network_hardware_register_probe_boot;
+#[cfg(any(test, feature = "network-hardware-register-probe"))]
+mod network_hardware_register_probe_screen;
 #[cfg(any(
     test,
     feature = "virtio-net-probe",

@@ -107,6 +107,7 @@ def assert_register_probe_report(serial: str, network_device: str) -> None:
             f"{PREFIX}REGISTER_OFFSET=",
             f"{PREFIX}MMIO_MAPPED",
             f"{PREFIX}REGISTER_READ_VALUE=",
+            f"{PREFIX}FRAMEBUFFER_REGISTER_READY",
             f"{PREFIX}REGISTER_REACHABILITY_READY",
             f"{PREFIX}PCI_CONFIG_READ_ONLY",
             SUCCESS_MARKER,
@@ -125,6 +126,7 @@ def assert_register_probe_report(serial: str, network_device: str) -> None:
     else:
         suffix = [
             f"{PREFIX}PCI_MEMORY_SPACE_DISABLED",
+            f"{PREFIX}FRAMEBUFFER_REGISTER_READY",
             f"{PREFIX}REGISTER_REACHABILITY_SKIPPED",
             f"{PREFIX}PCI_CONFIG_READ_ONLY",
             SUCCESS_MARKER,
@@ -243,11 +245,13 @@ def synthetic_serial_report(network_device: str, command_status: int = 0x2) -> s
                 f"{PREFIX}REGISTER_OFFSET=0x0000000000000008",
                 f"{PREFIX}MMIO_MAPPED",
                 f"{PREFIX}REGISTER_READ_VALUE=0x0000000080000000",
+                f"{PREFIX}FRAMEBUFFER_REGISTER_READY",
                 f"{PREFIX}REGISTER_REACHABILITY_READY",
             )
         )
     else:
         common.append(f"{PREFIX}PCI_MEMORY_SPACE_DISABLED")
+        common.append(f"{PREFIX}FRAMEBUFFER_REGISTER_READY")
         common.append(f"{PREFIX}REGISTER_REACHABILITY_SKIPPED")
     common.extend((f"{PREFIX}PCI_CONFIG_READ_ONLY", SUCCESS_MARKER))
     return "\n".join(common)
