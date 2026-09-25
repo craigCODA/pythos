@@ -90,6 +90,13 @@ or controller operation. Lenovo Wi-Fi, firmware, BAR mapping/MMIO, DMA,
 interrupts, controller ownership, and all later hardware work remain deferred.
 See the [physical evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
 
+The next authorized slice is the read-only register-reachability probe under
+[ADR 0107](decisions/0107-phase-15-network-hardware-register-reachability.md).
+It has passed the synthetic and QEMU `e1000`/`e1000e` gates, including fixed
+status reads at offset `0x08`; physical Lenovo observation of the guarded
+`0x00F4` Realtek status location is pending. It does not authorize controller
+operation, packet movement, DMA, interrupts, firmware, or generalized MMIO.
+
 ## Accepted PythTIG Program Boundary
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is

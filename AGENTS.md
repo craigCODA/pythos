@@ -82,18 +82,19 @@ universal-device work.
 ## Active Milestone
 
 The active owner-invoked milestone is Phase 15's bounded network-hardware
-observation. ADR 0105 accepted the read-only PCI identity probe; ADR 0106 now
-accepts the separate read-only PCI BAR-layout probe. The implementation map is
-`docs/superpowers/plans/2026-09-24-phase-15-network-hardware-bar-layout.md` and
-the current worktree is `agent/phase15-pci-bar-snapshot`. Keep the probe
-configuration-only: no BAR mapping or dereference, MMIO, device-register
-access, DMA, interrupts, firmware, reset, bus mastering, controller ownership,
-queue setup, Ethernet/Wi-Fi operation, or later Phase 15 work.
+observation. ADRs 0105-0106 accept the read-only identity and BAR-layout
+observations. ADR 0107 and
+`docs/superpowers/plans/2026-09-24-phase-15-network-hardware-register-reachability.md`
+now govern the next opt-in slice in `agent/phase15-pci-bar-snapshot`: one fixed
+status-register read through an already-enabled memory BAR. It may map one
+validated 4 KiB window with cache-disabled, NX pages, but never writes PCI or
+MMIO, enables memory space, sets bus mastering, resets, uses firmware, enables
+interrupts, allocates DMA, configures queues, moves packets, or claims
+Ethernet/Wi-Fi operation. The physical Lenovo result is still pending.
 
-The QEMU `e1000`/`e1000e` oracle and target-specific Lenovo evidence are
-recorded in `docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md`.
-Do not treat the target's reported BAR values as proof of reachability. Preserve
-the PythOS architectural names `VirtioTransport`, transport adapter, and
+The QEMU `e1000`/`e1000e` register oracle is recorded in the new plan and the
+physical result will be added beside the existing BAR evidence. Preserve the
+PythOS architectural names `VirtioTransport`, transport adapter, and
 `NetworkPort`; this slice does not alter the Phase 14 ABI or PythTIG.
 
 The following is the completed Slice 3-4 checkpoint, not the new invocation:

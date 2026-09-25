@@ -14,6 +14,14 @@ register access, Ethernet/Wi-Fi operation, DMA, interrupts, firmware, or
 controller ownership. The existing boot handoff and Phase 14 `VirtioTransport`,
 transport adapter, `NetworkPort`, and PythTIG contracts remain unchanged.
 
+ADR 0107 adds the separate `network-hardware-register-probe` profile. It reads
+PCI command status without writing it, requires Memory Space Enable to have
+already been set, maps one validated cache-disabled/NX 4 KiB memory window, and
+performs one fixed volatile status read. QEMU `e1000`/`e1000e` passed the
+`0x08` read; physical Lenovo observation of the target `0x00F4` status location
+is pending. This does not claim physical NIC/Wi-Fi operation or a generalized
+MMIO abstraction.
+
 ## Required EFI Partition Structure
 
 ```text

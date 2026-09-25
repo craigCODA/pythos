@@ -108,6 +108,15 @@ the transport adapter, `NetworkPort`, or the Phase 14 ABI. No BAR mapping or
 dereference, MMIO, Ethernet/Wi-Fi datapath, firmware, DMA, interrupts,
 controller ownership, or later hardware support is claimed.
 
+The next bounded slice is governed by [ADR 0107](decisions/0107-phase-15-network-hardware-register-reachability.md)
+and its [implementation plan](superpowers/plans/2026-09-24-phase-15-network-hardware-register-reachability.md).
+The opt-in `network-hardware-register-probe` requires PCI Memory Space Enable
+to be already set, maps one cache-disabled/NX 4 KiB memory-BAR window, and
+performs one fixed 32-bit status read. QEMU `e1000` and `e1000e` passed; the
+Lenovo physical result remains pending. No PCI/MMIO writes, device enablement,
+bus mastering, reset, firmware, interrupts, DMA, queues, packets, or
+Ethernet/Wi-Fi operation are included.
+
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
 Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted
