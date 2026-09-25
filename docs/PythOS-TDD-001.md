@@ -23,13 +23,13 @@ the framebuffer. QEMU `e1000`/`e1000e` passed the `0x08` read. The Lenovo
 clear and therefore took the safe-skip branch before the target `0x00F4` read.
 This does not claim physical NIC/Wi-Fi operation or a generalized MMIO abstraction.
 
-ADR 0108 proposes a separate opt-in profile for one low-16-bit PCI Command
-register MSE set/read/restore around that same fixed register observation. Its
-first Lenovo attempt exposed a control-path defect: the enable path reused the
-read-only MSE-disabled skip policy and halted on the violet entry screen before
-any write or MMIO read. The corrected enable-aware discovery path is green in
-host tests, bare-metal build, clippy, and QEMU; physical restoration remains a
-separate acceptance gate. See the [correction evidence](evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md).
+ADR 0108 is accepted as a separate opt-in profile for one low-16-bit PCI
+Command-register MSE set/read/restore around that same fixed register
+observation. The corrected Lenovo run recorded `0x00100000` → `0x00100002`,
+fixed register value `0x300034DB`, restored `0x00100000`, and `no bus master`.
+The first attempt exposed a control-path defect and its correction is recorded
+in the [correction evidence](evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md);
+the physical result is in the [Lenovo acceptance record](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
 ## Required EFI Partition Structure
 

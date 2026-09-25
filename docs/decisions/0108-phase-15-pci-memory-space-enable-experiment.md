@@ -1,6 +1,6 @@
 # ADR 0108: Phase 15 Bounded PCI Memory-Space Enable Experiment
 
-**Status:** Proposed for QEMU and explicitly gated physical implementation
+**Status:** Accepted (2026-09-25)
 **Date:** 2026-09-24
 **Owners:** PythOS platform and transport-adapter maintainers
 
@@ -114,11 +114,11 @@ failure marker and never emits the final ready marker.
 3. QEMU `e1000` and `e1000e` pass the already-enabled branch with the fixed
    status read and no configuration write required; synthetic transcripts cover
    the disabled/write/restore branch and all failure ordering.
-4. The physical Lenovo run is attempted only with the corrected opt-in ISO and
-   records the original command, post-enable command, register result or
-   failure, and restored command. Any inability to verify restoration is a
-   failed result. The first violet-screen attempt is diagnostic evidence only,
-   not a completed physical acceptance.
+4. The physical Lenovo run passed with the corrected opt-in ISO. The framebuffer
+   recorded original command `0x00100000`, post-enable command `0x00100002`,
+   fixed register value `0x300034DB`, restored command `0x00100000`, and
+   `no bus master`. The photo evidence is recorded in
+   [the Lenovo acceptance record](../evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 5. Existing ADR 0107, identity, BAR, Phase 14, default, and normal-session
    profiles remain unchanged.
 

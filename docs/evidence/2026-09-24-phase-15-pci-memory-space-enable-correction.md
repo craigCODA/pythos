@@ -1,7 +1,7 @@
 # Phase 15 PCI Memory-Space Enable Correction Record
 
 **Date:** 2026-09-24  
-**Status:** Corrected locally; physical retest pending  
+**Status:** Corrected and physically accepted
 **ADR:** [0108](../decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
 
 ## Observed failure
@@ -49,8 +49,12 @@ touching existing images. The destination hash is the same
 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332` and the
 size is `20,772,864` bytes.
 
-## Next gate
+## Physical acceptance
 
-Boot the corrected ISO on Lenovo once and capture the original command,
-post-enable command, fixed register value, restored command, and final screen.
-Do not mark ADR 0108 accepted until restoration is verified.
+The corrected ISO completed on Lenovo. The framebuffer recorded original
+command `0x00100000`, post-enable command `0x00100002`, fixed register value
+`0x300034DB`, restored command `0x00100000`, `mse restored`, and `no bus
+master`. The photo is recorded at
+[`2026-09-25-phase-15-pci-memory-space-enable-lenovo.md`](2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
+
+ADR 0108 is accepted. No later networking scope is implied.

@@ -123,19 +123,15 @@ No PCI/MMIO writes, device enablement, bus mastering, reset, firmware,
 interrupts, DMA, queues, packets, or Ethernet/Wi-Fi operation are included.
 See the [physical register-probe evidence](evidence/2026-09-24-phase-15-network-hardware-register-reachability.md).
 
-ADR 0108 proposes the next gated experiment: one low-16-bit PCI Command-register
-MSE set/read/restore around the existing fixed register observation. The first
-Lenovo attempt stayed violet because the initial enable path reused ADR 0107's
-MSE-disabled skip policy and halted without a result panel; no PCI write or MMIO
-read was reached. The correction uses a separate enable discovery policy and a
-visible safe-skip renderer. Host tests, bare-metal build, clippy, and QEMU
-`e1000`/`e1000e` are green. The corrected ISO is local at
-`target/pythos-phase15-pci-memory-space-enable-corrected-20260924.iso` with
-SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
-The corrected ISO is now copied to
-`F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso` with
-the stated hash. Physical Lenovo retest and verified command restoration remain
-pending. ADR 0108 is not accepted yet.
+ADR 0108 is accepted after the corrected Lenovo run. The physical framebuffer
+recorded `0x00100000` → `0x00100002`, fixed register value `0x300034DB`,
+restored `0x00100000`, and `no bus master`; the photo and hashes are in
+[`docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md`](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
+The first Lenovo attempt stayed violet because the initial enable path reused
+ADR 0107's MSE-disabled skip policy; that correction and its verified QEMU
+gates are recorded in the linked correction evidence. The tested ISO remains
+at `F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso`
+with SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

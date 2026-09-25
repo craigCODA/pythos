@@ -99,13 +99,14 @@ clear and therefore produced the accepted `PCI_MEMORY_SPACE_DISABLED` safe
 skip before the guarded `0x00F4` read. It does not authorize controller
 operation, packet movement, DMA, interrupts, firmware, or generalized MMIO.
 
-ADR 0108 is the proposed, feature-gated MSE experiment. Its first Lenovo
-attempt stayed on the violet entry color because the initial path reused the
-read-only MSE-disabled discovery skip; the correction now uses an enable-aware
-discovery policy and renders safe skips. QEMU `e1000`/`e1000e`, full Rust
-tests, focused Python tests, bare-metal build, clippy, and prior probe oracles
-are green. Physical retest with the corrected unique ISO is still pending, so
-the ADR remains proposed and no physical register reachability is claimed.
+ADR 0108 is accepted. The corrected Lenovo run recorded MSE
+`0x00100000` → `0x00100002`, fixed register value `0x300034DB`, restored
+`0x00100000`, and `no bus master`. The first Lenovo attempt stayed violet
+because the initial path reused the read-only MSE-disabled discovery skip; the
+correction now uses an enable-aware discovery policy and renders safe skips.
+QEMU `e1000`/`e1000e`, full Rust tests, focused Python tests, bare-metal build,
+clippy, prior probe oracles, and the physical restoration evidence are green.
+No physical NIC/Wi-Fi operation or later networking scope is claimed.
 
 ## Accepted PythTIG Program Boundary
 

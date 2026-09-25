@@ -71,14 +71,14 @@ This remains read-only and does not claim physical NIC/Wi-Fi support, packet
 movement, DMA, interrupts, controller operation, or a generalized MMIO layer.
 See the [physical safe-skip evidence](docs/evidence/2026-09-24-phase-15-network-hardware-register-reachability.md).
 
-The next bounded experiment is proposed under
+The bounded MSE experiment is accepted under
 [ADR 0108](docs/decisions/0108-phase-15-pci-memory-space-enable-experiment.md):
-an opt-in 16-bit PCI Command-register MSE set/read/restore around the same
-single status-register observation. The first Lenovo attempt stayed on the
-violet entry screen because the initial implementation reused the read-only
-MSE-disabled skip policy; no PCI write or MMIO read occurred. The correction is
-recorded in [the correction evidence](docs/evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md).
-QEMU and host verification are green; physical restoration remains pending.
+the corrected Lenovo run recorded `0x00100000` → `0x00100002`, fixed register
+value `0x300034DB`, restored `0x00100000`, and `no bus master`. The first
+Lenovo attempt stayed violet because the initial implementation reused the
+read-only MSE-disabled skip policy; that correction is recorded in [the
+correction evidence](docs/evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md).
+See the [physical acceptance record](docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6

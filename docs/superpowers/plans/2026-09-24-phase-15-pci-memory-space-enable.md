@@ -90,8 +90,8 @@
 - Produce: command-before/after/restored evidence or an explicitly failed restoration result.
 
 - [x] Build and copy the corrected unique ISO without overwriting any existing image under `F:\iso`; the first physical attempt exposed a discovery-policy defect.
-- [ ] Boot the corrected ISO on Lenovo and record command-before, command-after, register result, command-restored, and the photo hash.
-- [ ] Treat missing or mismatched restoration as failure; do not claim register reachability in that case.
+- [x] Boot the corrected ISO on Lenovo and record command-before, command-after, register result, command-restored, and the photo hash.
+- [x] Treat missing or mismatched restoration as failure; do not claim register reachability in that case.
 
 ### Task 5: Final verification and handoff
 
@@ -102,7 +102,7 @@
 - [x] Run focused/full Rust tests, Python tests, clippy, formatting, static safety scans, and prior ADR 0107/BAR oracles for the corrected path.
 - [x] Confirm default and normal-session profiles remain unchanged.
 - [x] Perform the correction scope scan and complete a whole-branch self-review.
-- [ ] Mark ADR 0108 Accepted only after QEMU acceptance and a verified physical restore.
+- [x] Mark ADR 0108 Accepted after QEMU acceptance and the verified physical restore.
 
 ## Self-Review Notes
 
