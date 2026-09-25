@@ -132,8 +132,10 @@ visible safe-skip renderer. Host tests, bare-metal build, clippy, and QEMU
 `e1000`/`e1000e` are green. The corrected ISO is local at
 `target/pythos-phase15-pci-memory-space-enable-corrected-20260924.iso` with
 SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
-The current session cannot see `F:\iso`; physical Lenovo retest and verified
-command restoration remain pending. ADR 0108 is not accepted yet.
+The corrected ISO is now copied to
+`F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso` with
+the stated hash. Physical Lenovo retest and verified command restoration remain
+pending. ADR 0108 is not accepted yet.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 

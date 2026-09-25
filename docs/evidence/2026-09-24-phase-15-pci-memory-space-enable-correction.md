@@ -43,12 +43,14 @@ panel.
 - Corrected ISO size: `20,772,864` bytes
 - Corrected ISO SHA-256: `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`
 
-The current session cannot see an `F:` drive, so the corrected ISO has not been
-copied to `F:\iso` by this session. Existing images were not touched.
+The corrected ISO was copied to
+`F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso` without
+touching existing images. The destination hash is the same
+`4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332` and the
+size is `20,772,864` bytes.
 
 ## Next gate
 
-Copy the corrected ISO under its unique name, boot the Lenovo once, and capture
-the original command, post-enable command, fixed register value, restored
-command, and final screen. Do not mark ADR 0108 accepted until restoration is
-verified.
+Boot the corrected ISO on Lenovo once and capture the original command,
+post-enable command, fixed register value, restored command, and final screen.
+Do not mark ADR 0108 accepted until restoration is verified.

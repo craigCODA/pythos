@@ -89,7 +89,7 @@
 - Consume: QEMU acceptance, the unique ISO, and owner-provided Lenovo photo/serial evidence.
 - Produce: command-before/after/restored evidence or an explicitly failed restoration result.
 
-- [x] Build a unique initial ISO without overwriting any existing image under `F:\iso`; the first physical attempt exposed a discovery-policy defect.
+- [x] Build and copy the corrected unique ISO without overwriting any existing image under `F:\iso`; the first physical attempt exposed a discovery-policy defect.
 - [ ] Boot the corrected ISO on Lenovo and record command-before, command-after, register result, command-restored, and the photo hash.
 - [ ] Treat missing or mismatched restoration as failure; do not claim register reachability in that case.
 
