@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, descriptor, and endpoint-configuration success.">
+    <meta name="description" content="PythOS physical wake acceptance, PCI network BAR-layout observation, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, descriptor, and endpoint-configuration success.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -30,6 +30,47 @@
             the public record so each hardware claim remains scoped and citable.
             Large raw videos are identified by hash rather than stored directly in git.
           </p>
+        </div>
+      </section>
+
+      <section class="band" id="phase-15-network-hardware-bar-layout-2026-09-24">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-09-24 Phase 15 physical PCI configuration observation</p>
+              <h2>Lenovo Network PCI BAR Layout Recorded Read-Only</h2>
+            </div>
+            <p class="lede">
+              The bounded <code>network-hardware-bar-probe</code> image read the
+              selected Lenovo network controller's six standard PCI BAR fields
+              without mapping or dereferencing any BAR. The physical target
+              reported BDF <code>02:00:00</code>, vendor/device
+              <code>10EC:C82F</code>, class/subclass/prog-if
+              <code>02:80:00</code>, an I/O BAR0, and a paired 64-bit memory
+              BAR2.
+            </p>
+            <div class="evidence-stats" aria-label="Phase 15 network BAR layout summary">
+              <span><strong>target</strong> Lenovo 81VS</span>
+              <span><strong>bdf</strong> 02:00:00</span>
+              <span><strong>vid:did</strong> 10EC:C82F</span>
+              <span><strong>BAR0</strong> I/O 1000</span>
+              <span><strong>BAR2</strong> MEM64 E8A00000</span>
+              <span><strong>access</strong> read only</span>
+            </div>
+            <p class="fact"><strong>ISO SHA-256</strong> <code>2AFBE42D6F37A010C1B09B82A40DD56B36C8735255DE423F3235BEF5C3674041</code></p>
+            <p class="fact"><strong>Photo SHA-256</strong> <code>2B661985F7C35294E9CF09D7087C7C77852683A66A4D07E614B9A27F6CFC070C</code></p>
+            <p class="boundary-note">
+              This is target-specific PCI configuration evidence. It does not
+              prove BAR reachability, MMIO, register access, Ethernet or Wi-Fi
+              operation, firmware, DMA, interrupts, queue setup, or generalized
+              physical-hardware support.
+            </p>
+            <p><a href="2026-09-24-phase-15-network-hardware-bar-layout.md">Read the full evidence record and claim boundary</a> · <a href="../decisions/0106-phase-15-network-hardware-bar-layout-probe.md">Read ADR 0106</a></p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-09-24-physical-network-bar-layout-lenovo.jpg" alt="PythOS Phase 15 read-only network PCI BAR layout probe on the Lenovo showing Realtek 10EC C82F and BAR0 I/O plus BAR2 MEM64">
+            <figcaption class="caption">Physical Lenovo observation: BAR2 consumes BAR3 as the 64-bit high half; no BAR is dereferenced.</figcaption>
+          </figure>
         </div>
       </section>
 

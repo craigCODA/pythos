@@ -44,6 +44,17 @@ multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
 persistent state, or PythTIG changes. Phase 15 physical hardware expansion
 remains separate.
 
+Phase 15's accepted BAR-layout slice is recorded under
+[ADR 0106](docs/decisions/0106-phase-15-network-hardware-bar-layout-probe.md).
+The opt-in `network-hardware-bar-probe` reads only the selected controller's
+PCI configuration BAR fields. QEMU `e1000` and `e1000e` pass the bounded oracle,
+and the Lenovo `81VS` observation recorded BDF `02:00:00`, vendor/device
+`10EC:C82F`, BAR0 I/O base `0x1000`, and BAR2 `MEM64` base
+`0x00000000E8A00000`. This is configuration metadata only: it does not claim
+BAR reachability, MMIO, Ethernet or Wi-Fi operation, DMA, interrupts, firmware,
+controller ownership, or generalized physical-hardware support. See the
+[Phase 15 evidence record](docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6
 commit `4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply,

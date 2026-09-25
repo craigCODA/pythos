@@ -1,10 +1,18 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
 Status: Accepted boot-core design and cumulative acceptance reference. Phase
-13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged branch;
-halt before Phase 14; see
-[ROADMAP.md](ROADMAP.md#current-phase-135-boundary) and
-[HANDOVER.md](HANDOVER.md) for current scope and merged acceptance evidence.
+15's read-only PCI identity and BAR-layout observation slices are accepted
+under ADRs 0105-0106; see
+[ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
+[HANDOVER.md](HANDOVER.md) for current scope and acceptance evidence.
+
+The current Phase 15 BAR-layout slice uses a separate
+`network-hardware-bar-probe` profile. It reads only standard PCI configuration
+BAR fields after the network-controller identity scan. Its QEMU and Lenovo
+evidence record configuration metadata, not BAR reachability, MMIO, device
+register access, Ethernet/Wi-Fi operation, DMA, interrupts, firmware, or
+controller ownership. The existing boot handoff and Phase 14 `VirtioTransport`,
+transport adapter, `NetworkPort`, and PythTIG contracts remain unchanged.
 
 ## Required EFI Partition Structure
 

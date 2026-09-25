@@ -1,6 +1,6 @@
 # ADR 0106: Phase 15 Read-Only Network PCI BAR Layout Probe
 
-Status: Proposed for owner review
+Status: Accepted
 Date: 2026-09-24
 
 ## Context
@@ -104,9 +104,10 @@ ordered markers, `-nic none`, exactly one explicit QEMU device, and absence of
 MMIO, DMA, interrupt, bus-master, reset, firmware, frame, and configuration-
 write claims.
 
-The live QEMU harness must pass once for `e1000` and once for `e1000e`, each with
+The live QEMU harness passed once for `e1000` and once for `e1000e`, each with
 one controller, a complete bounded BAR report, one successful QEMU outcome, and
-the read-only marker. Only after that gate may the owner perform the Lenovo
-physical observation. The Phase 15 slice is complete only when the QEMU and,
-if invoked, target-specific evidence are recorded without broadening the
-claim boundary.
+the read-only marker. The owner then performed the Lenovo physical observation;
+the target-specific values and photo hash are recorded in
+`docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md`. The slice
+is accepted with the same configuration-observation boundary and does not
+broaden into BAR reachability or device operation.

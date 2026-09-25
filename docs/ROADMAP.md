@@ -77,15 +77,18 @@ red run 35176094046 is superseded.
 
 ## Current Phase 15 Opening Slice
 
-Phase 15 has started with the dedicated read-only PCI network identity probe
-recorded in [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md).
-The opt-in `network-hardware-probe` profile is separate from the existing
-storage `hardware-probe`: it scans PCI configuration identity only, renders a
-bounded serial/framebuffer report, and halts. QEMU `e1000` and `e1000e` each
-report exactly one expected Ethernet controller with `-nic none` suppressing
-QEMU's implicit NIC. This is an identity proof, not Ethernet or Wi-Fi support.
-Lenovo Wi-Fi behavior, firmware, BAR/MMIO reachability, DMA, interrupts,
-controller ownership, and all later hardware work remain deferred.
+Phase 15 has accepted the dedicated read-only PCI network identity probe under
+[ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md) and the
+follow-up BAR-layout probe under
+[ADR 0106](decisions/0106-phase-15-network-hardware-bar-layout-probe.md). The
+separate `network-hardware-bar-probe` profile reads only the six standard PCI
+configuration BAR fields after identity discovery. QEMU `e1000` and `e1000e`
+pass the bounded oracle; the Lenovo `81VS` observation recorded `02:00:00`,
+`10EC:C82F`, BAR0 I/O base `0x1000`, and BAR2 `MEM64` base
+`0x00000000E8A00000`. This is configuration metadata only, not BAR reachability
+or controller operation. Lenovo Wi-Fi, firmware, BAR mapping/MMIO, DMA,
+interrupts, controller ownership, and all later hardware work remain deferred.
+See the [physical evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
 
 ## Accepted PythTIG Program Boundary
 

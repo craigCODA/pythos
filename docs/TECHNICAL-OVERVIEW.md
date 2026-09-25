@@ -51,6 +51,16 @@ distribution, zero-copy, persistent state, or PythTIG changes. Phase 15
 physical hardware expansion remains separate. See [HANDOVER.md](HANDOVER.md)
 for the exact local evidence and non-claims.
 
+The accepted Phase 15 BAR-layout slice is the read-only PCI configuration
+under [ADR 0106](decisions/0106-phase-15-network-hardware-bar-layout-probe.md).
+Its separate `network-hardware-bar-probe` profile reads only the six standard
+type-0 BAR fields after the identity scan. QEMU `e1000` and `e1000e` pass, and
+the Lenovo `81VS` evidence records `02:00:00` / `10EC:C82F`, BAR0 I/O base
+`0x1000`, and paired BAR2 `MEM64` base `0x00000000E8A00000`. These are PCI
+configuration values, not proof of BAR mapping, MMIO reachability, controller
+operation, Ethernet, Wi-Fi, firmware, DMA, or interrupts. The exact photo and
+hashes are in [the Phase 15 evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6 commit
 `4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply, UDP
