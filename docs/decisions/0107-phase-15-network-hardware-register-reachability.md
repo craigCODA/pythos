@@ -1,6 +1,6 @@
 # ADR 0107: Phase 15 Network Hardware Register Reachability Probe
 
-**Status:** Proposed for bounded implementation
+**Status:** Accepted
 **Date:** 2026-09-24
 **Owners:** PythOS platform and transport-adapter maintainers
 
@@ -125,3 +125,18 @@ multiqueue, offloads, DMA, packet movement, queues, sockets, protocols,
 multiple consumers, zero-copy leases, persistent state, or generalized PCI/MMIO
 types. Any controller-control or register-write work requires a later ADR and
 acceptance gate.
+
+## Physical result
+
+The Lenovo `81VS` boot reached the bounded probe and identified BDF `02:00:00`
+as Realtek `10EC:C82F`. The read-only PCI command/status value was
+`0x00100000`; PCI Memory Space Enable bit 1 was clear, so the probe correctly
+took the `PCI_MEMORY_SPACE_DISABLED` safe-skip branch. No BAR was mapped and no
+register value was read. The framebuffer showed `register read skipped` and
+`no writes`.
+
+The captured screen is recorded at
+`docs/evidence/2026-09-24-phase-15-network-hardware-register-reachability-lenovo-skip.jpg`.
+This result closes the bounded register-reachability decision without claiming
+physical NIC/Wi-Fi operation, BAR reachability, controller operation, or later
+Phase 15 hardware behavior.

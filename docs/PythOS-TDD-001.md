@@ -18,9 +18,10 @@ ADR 0107 adds the separate `network-hardware-register-probe` profile. It reads
 PCI command status without writing it, requires Memory Space Enable to have
 already been set, maps one validated cache-disabled/NX 4 KiB memory window, and
 performs one fixed volatile status read and renders the bounded result panel on
-the framebuffer. QEMU `e1000`/`e1000e` passed the `0x08` read; physical Lenovo
-observation of the target `0x00F4` status location is pending. This does not
-claim physical NIC/Wi-Fi operation or a generalized MMIO abstraction.
+the framebuffer. QEMU `e1000`/`e1000e` passed the `0x08` read. The Lenovo
+`81VS` observation found `10EC:C82F` at BDF `02:00:00` with Memory Space Enable
+clear and therefore took the safe-skip branch before the target `0x00F4` read.
+This does not claim physical NIC/Wi-Fi operation or a generalized MMIO abstraction.
 
 ## Required EFI Partition Structure
 

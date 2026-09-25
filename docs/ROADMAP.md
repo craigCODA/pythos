@@ -90,13 +90,14 @@ or controller operation. Lenovo Wi-Fi, firmware, BAR mapping/MMIO, DMA,
 interrupts, controller ownership, and all later hardware work remain deferred.
 See the [physical evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
 
-The next authorized slice is the read-only register-reachability probe under
+The accepted slice is the read-only register-reachability probe under
 [ADR 0107](decisions/0107-phase-15-network-hardware-register-reachability.md).
 It has passed the synthetic and QEMU `e1000`/`e1000e` gates, including fixed
-status reads at offset `0x08` and framebuffer result rendering; physical
-Lenovo observation of the guarded `0x00F4` Realtek status location is pending.
-It does not authorize controller operation, packet movement, DMA, interrupts,
-firmware, or generalized MMIO.
+status reads at offset `0x08` and framebuffer result rendering. The Lenovo
+`81VS` observation found `10EC:C82F` at `02:00:00` with Memory Space Enable
+clear and therefore produced the accepted `PCI_MEMORY_SPACE_DISABLED` safe
+skip before the guarded `0x00F4` read. It does not authorize controller
+operation, packet movement, DMA, interrupts, firmware, or generalized MMIO.
 
 ## Accepted PythTIG Program Boundary
 

@@ -55,18 +55,21 @@ BAR reachability, MMIO, Ethernet or Wi-Fi operation, DMA, interrupts, firmware,
 controller ownership, or generalized physical-hardware support. See the
 [Phase 15 evidence record](docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
 
-The next opt-in Phase 15 slice is governed by [ADR 0107](docs/decisions/0107-phase-15-network-hardware-register-reachability.md).
+The accepted register-reachability slice is governed by [ADR 0107](docs/decisions/0107-phase-15-network-hardware-register-reachability.md).
 `network-hardware-register-probe` reads PCI command status, requires Memory
 Space Enable to already be set, maps one validated 4 KiB BAR window, and reads
 one fixed status register: `0x08` for QEMU `e1000`/`e1000e`, or `0x00F4` for
 the Lenovo `10EC:C82F` target. QEMU passed with values `0x80080783` and
 `0x00080283`, and the framebuffer result panel is part of the oracle. The
-Lenovo observation is pending. The prepared image is
+Lenovo `81VS` boot found `10EC:C82F` at BDF `02:00:00` with command/status
+`0x00100000`; Memory Space Enable was clear, so the probe safely skipped the
+MMIO read. The prepared image is
 `target/pythos-phase15-network-hardware-register-probe-20260924.iso` with
 SHA-256 `9D2597044B4E120A375257A9F652BE836299F065DD6902310ACE56B06D262CE7`;
 copy it to `F:\iso` under that unique name without removing existing images.
 This remains read-only and does not claim physical NIC/Wi-Fi support, packet
 movement, DMA, interrupts, controller operation, or a generalized MMIO layer.
+See the [physical safe-skip evidence](docs/evidence/2026-09-24-phase-15-network-hardware-register-reachability.md).
 
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6

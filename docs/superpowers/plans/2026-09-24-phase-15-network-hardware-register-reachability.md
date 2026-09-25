@@ -92,8 +92,8 @@
 - Produce a reproducible evidence record that distinguishes a real register read from a safe skip.
 
 - [x] Build a uniquely named ISO without overwriting any existing `F:\iso` file. Local image prepared; `F:` is not mounted in this environment.
-- [ ] Owner boots the Lenovo and supplies the serial/photo result; record BDF, command word, BAR selection, register offset/value or skip reason, image hash, and photo hash.
-- [ ] Update current status documents only after the evidence is captured; leave Phase 15 later scope explicitly pending.
+- [x] Owner boots the Lenovo and supplies the serial/photo result; record BDF, command word, BAR selection, register offset/value or skip reason, image hash, and photo hash. The physical result is the expected `PCI_MEMORY_SPACE_DISABLED` safe skip at BDF `02:00:00`, with command/status `0x00100000`.
+- [x] Update current status documents only after the evidence is captured; leave Phase 15 later scope explicitly pending.
 
 ### Task 5: Final verification and handoff
 
@@ -101,10 +101,10 @@
 - Modify: this plan with completed checkboxes and verification notes.
 - Modify: ADR 0107 status after all acceptance gates pass.
 
-- [ ] Run focused Rust tests, Python tests, Python self-tests, QEMU `e1000`/`e1000e`, formatting, clippy, compile checks, and the no-diff safety scan.
-- [ ] Verify the default feature build and the prior BAR oracle remain green.
-- [ ] Perform a final scope scan for writes, DMA, interrupts, resets, packets, sockets, NetworkPort, and Phase 15-later work.
-- [ ] Mark the ADR Accepted only if the QEMU oracle and physical result satisfy the bounded contract; otherwise retain the explicit safe-skip result and leave the next decision pending.
+- [x] Run focused Rust tests, Python tests, Python self-tests, QEMU `e1000`/`e1000e`, formatting, clippy, compile checks, and the no-diff safety scan.
+- [x] Verify the default feature build and the prior BAR oracle remain green.
+- [x] Perform a final scope scan for writes, DMA, interrupts, resets, packets, sockets, NetworkPort, and Phase 15-later work.
+- [x] Mark the ADR Accepted only if the QEMU oracle and physical result satisfy the bounded contract; the physical safe-skip result satisfies the contract.
 
 ## Self-Review Notes
 
