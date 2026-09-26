@@ -117,7 +117,7 @@ def test_canonical_docs_record_icmp_scope_and_next_boundary():
         "client-only deterministic acceptance proof",
         "bounded UDP datagram proof is accepted locally",
         "TCP is now accepted locally as the finite proof",
-        "Secure transport is the next separately authorized Phase 14 boundary",
+        "Secure transport was the separately authorized Phase 14 boundary",
         "complete RFC 1122 host",
         "Default and normal-session boot remain unchanged",
     )

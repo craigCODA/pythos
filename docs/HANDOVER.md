@@ -2,8 +2,8 @@
 
 ## Current Phase 14 Boundary
 
-Secure transport is the next separately authorized Phase 14 boundary; it is now
-the accepted bounded Phase 14 stopping point.
+Secure transport was the separately authorized Phase 14 boundary and is now the
+accepted bounded Phase 14 stopping point.
 
 Phase 14 bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), building on the frozen
@@ -101,10 +101,14 @@ identity. It is deliberately separate from the storage `hardware-probe` and
 does not alter `VirtioTransport`, the transport adapter, `NetworkPort`, or the
 Phase 14 ABI. QEMU `e1000` and `e1000e` both pass the exact one-controller
 identity proof with `-nic none`; the probe emits serial and framebuffer
-identity evidence and then halts. No Ethernet/Wi-Fi datapath or physical
-hardware support is claimed. Lenovo Wi-Fi behavior, firmware, BAR/MMIO,
-DMA, interrupts, controller ownership, and later hardware slices remain
-deferred.
+identity evidence and then halts. A physical boot on the Lenovo `81VS` also
+reached the terminal framebuffer and reported one controller at BDF `02:00.0`,
+vendor/device `10EC:C82F`, subsystem `17AA:C02F`, and class/subclass/prog-if
+`02/80/00`. The target-specific result is recorded in
+[the physical evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
+No Ethernet/Wi-Fi datapath or physical hardware support is claimed. Lenovo
+Wi-Fi behavior, firmware, BAR/MMIO, DMA, interrupts, controller ownership, and
+later hardware slices remain deferred.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
@@ -1412,9 +1416,11 @@ The accepted Phase 14 stopping point remains the bounded secure-transport
 proof recorded under ADR 0104. It does not establish production TLS, update
 authenticity, physical networking, or a generalized socket/TLS service. The
 accepted Phase 15 opening boundary is the read-only PCI network-identity probe
-under ADR 0105. It does not establish physical networking, Lenovo Wi-Fi,
-controller operation, or later hardware support; subsequent Phase 15 expansion
-remains separately authorized.
+under ADR 0105. Its target-specific physical identity observation is recorded
+in [the 2026-09-24 evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
+That observation does not establish physical networking, Lenovo Wi-Fi
+operation, controller operation, or later hardware support; subsequent Phase 15
+expansion remains separately authorized.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and

@@ -13,8 +13,8 @@ area, stop and raise an ADR proposal instead of expanding scope silently.
 
 ## Current Phase 14 Boundary
 
-Secure transport is the next separately authorized Phase 14 boundary; it is now
-the accepted bounded Phase 14 stopping point.
+Secure transport was the separately authorized Phase 14 boundary and is now the
+accepted bounded Phase 14 stopping point.
 
 Phase 14 bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), above the frozen,
@@ -83,9 +83,14 @@ The opt-in `network-hardware-probe` profile is separate from the existing
 storage `hardware-probe`: it scans PCI configuration identity only, renders a
 bounded serial/framebuffer report, and halts. QEMU `e1000` and `e1000e` each
 report exactly one expected Ethernet controller with `-nic none` suppressing
-QEMU's implicit NIC. This is an identity proof, not Ethernet or Wi-Fi support.
-Lenovo Wi-Fi behavior, firmware, BAR/MMIO reachability, DMA, interrupts,
-controller ownership, and all later hardware work remain deferred.
+QEMU's implicit NIC. The same image was then booted on the Lenovo `81VS`,
+where it reported one controller at BDF `02:00.0`, vendor/device `10EC:C82F`,
+subsystem `17AA:C02F`, and class/subclass/programming interface `02/80/00`.
+The physical observation is recorded in
+[the evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
+This remains an identity proof, not Ethernet or Wi-Fi support. Lenovo Wi-Fi
+operation, firmware, BAR/MMIO reachability, DMA, interrupts, controller
+ownership, and all later hardware work remain deferred.
 
 ## Accepted PythTIG Program Boundary
 

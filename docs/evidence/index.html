@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Evidence - PythOS</title>
-    <meta name="description" content="PythOS physical wake acceptance, evidence terminal, SDHCI/eMMC frames, USB/xHCI probe deployment, physical swap-port evidence, and physical xHCI command-ring, descriptor, and endpoint-configuration success.">
+    <meta name="description" content="PythOS physical wake acceptance, Phase 15 Lenovo network identity, evidence terminal, SDHCI/eMMC frames, and USB/xHCI probe evidence.">
     <link rel="canonical" href="https://craigcoda.github.io/pythos/evidence/">
     <link rel="stylesheet" href="../assets/site.css">
   </head>
@@ -30,6 +30,42 @@
             the public record so each hardware claim remains scoped and citable.
             Large raw videos are identified by hash rather than stored directly in git.
           </p>
+        </div>
+      </section>
+
+      <section class="band" id="phase-15-network-identity">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-09-24 Phase 15 physical identity observation</p>
+              <h2>Lenovo Network Controller Identity Read</h2>
+            </div>
+            <p class="lede">
+              The dedicated Phase 15 <code>network-hardware-probe</code> booted on
+              the Lenovo <code>81VS</code> and reached its read-only PCI identity
+              panel.
+            </p>
+            <div class="evidence-stats" aria-label="Phase 15 Lenovo network identity summary">
+              <span><strong>count</strong> 1</span>
+              <span><strong>bdf</strong> 02:00.0</span>
+              <span><strong>vid:did</strong> 10EC:C82F</span>
+              <span><strong>class</strong> 02 80 00</span>
+            </div>
+            <p class="fact"><strong>Subsystem</strong> <code>17AA:C02F</code></p>
+            <p class="fact"><strong>ISO SHA-256</strong> <code>3F7E5E83A3F23CB74E21A5E29E557124B548899A53E1194B09AF13C966B05CCC</code></p>
+            <p class="fact"><strong>Photo SHA-256</strong> <code>9D692BD05CE5AFD1FFEBC35998FEC27DDAEA331F9E72495A658598C030122C90</code></p>
+            <p class="boundary-note">
+              This is target-specific PCI identity evidence. The class/subclass
+              value is recorded as <code>02/80/00</code> and is deliberately not
+              labeled Wi-Fi. No firmware, BAR/MMIO, DMA, interrupt, controller,
+              or frame operation was attempted.
+            </p>
+            <p><a href="../decisions/0105-phase-15-network-hardware-identity-probe.md">Read ADR 0105</a> · <a href="2026-09-24-phase-15-lenovo-network-identity.md">Read the evidence record</a></p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-09-24-physical-network-identity-lenovo.jpg" alt="PythOS Phase 15 read-only network PCI identity panel on the Lenovo 81VS">
+            <figcaption class="caption">Physical framebuffer capture from the Lenovo identity probe.</figcaption>
+          </figure>
         </div>
       </section>
 

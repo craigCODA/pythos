@@ -1,9 +1,9 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
 Status: Accepted boot-core design and cumulative acceptance reference. Phase
-13.5 Slice 5 is implemented and locally QEMU-accepted on its unmerged branch;
-halt before Phase 14; see
-[ROADMAP.md](ROADMAP.md#current-phase-135-boundary) and
+15's opening read-only PCI network-identity probe is merged and physically
+observed on the Lenovo `81VS`; see
+[ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
 [HANDOVER.md](HANDOVER.md) for current scope and merged acceptance evidence.
 
 ## Required EFI Partition Structure
@@ -156,9 +156,12 @@ Phase 13.5 Slices 1 and 2 are merged and accepted in opt-in QEMU profiles
 through ADRs 0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092.
 Slice 5 is implemented and locally accepted under ADR 0093: default normal boot
 uses the retained session, interrupt-backed waiting, and one-way recovery-shell
-fallback. Durable session state, USB/xHCI session integration, physical
-acceptance, publication, and later phases remain outside these proofs. Halt
-before Phase 14.
+fallback. Phase 14's bounded networking proofs through ADR 0104 and Phase 15's
+opening read-only PCI network-identity probe under ADR 0105 are now merged.
+The Phase 15 probe also has target-specific Lenovo evidence recorded in
+`docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. These records
+do not authorize Wi-Fi operation, controller ownership, firmware, BAR/MMIO,
+DMA, interrupts, frame movement, or generalized physical hardware support.
 
 Until relocation support exists, the loader must reject `ET_DYN` kernel images.
 
