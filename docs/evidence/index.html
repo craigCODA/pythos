@@ -74,6 +74,75 @@
         </div>
       </section>
 
+      <section class="band" id="phase-15-network-hardware-register-reachability-2026-09-24">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-09-24 Phase 15 physical PCI register observation</p>
+              <h2>Lenovo Network Register Reachability Safely Skipped</h2>
+            </div>
+            <p class="lede">
+              The bounded <code>network-hardware-register-probe</code> mapped no
+              device window because the Lenovo controller reported Memory Space
+              Enable clear. The probe recorded the command/status value and
+              stopped before the fixed register read.
+            </p>
+            <div class="evidence-stats" aria-label="Phase 15 register reachability summary">
+              <span><strong>target</strong> Lenovo 81VS</span>
+              <span><strong>bdf</strong> 02:00:00</span>
+              <span><strong>vid:did</strong> 10EC:C82F</span>
+              <span><strong>command</strong> 00100000</span>
+              <span><strong>result</strong> safe skip</span>
+            </div>
+            <p class="boundary-note">
+              This is bounded register-reachability evidence. It does not claim
+              Ethernet or Wi-Fi operation, controller ownership, DMA, interrupts,
+              packet movement, or a generalized MMIO abstraction.
+            </p>
+            <p><a href="2026-09-24-phase-15-network-hardware-register-reachability.md">Read the full evidence record</a> · <a href="../decisions/0107-phase-15-network-hardware-register-reachability.md">Read ADR 0107</a></p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-09-24-phase-15-network-hardware-register-reachability-lenovo-skip.jpg" alt="PythOS Phase 15 Lenovo network register probe showing Memory Space Enable clear and safe skip">
+            <figcaption class="caption">Physical Lenovo result: Memory Space Enable was clear, so the fixed register read was not attempted.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="band" id="phase-15-pci-memory-space-enable-2026-09-25">
+        <div class="content split">
+          <div>
+            <div class="section-head">
+              <p class="kicker">2026-09-25 Phase 15 bounded PCI configuration experiment</p>
+              <h2>Lenovo PCI Memory Space Enable Was Restored</h2>
+            </div>
+            <p class="lede">
+              The opt-in <code>network-hardware-register-enable-probe</code>
+              temporarily set only the PCI Command-register Memory Space Enable
+              bit, read the fixed status register, restored the original command
+              word, and recorded the final readback.
+            </p>
+            <div class="evidence-stats" aria-label="Phase 15 PCI memory-space enable summary">
+              <span><strong>target</strong> Lenovo 81VS</span>
+              <span><strong>before</strong> 00100000</span>
+              <span><strong>enabled</strong> 00100002</span>
+              <span><strong>register</strong> 300034DB</span>
+              <span><strong>restored</strong> 00100000</span>
+              <span><strong>bus master</strong> no</span>
+            </div>
+            <p class="boundary-note">
+              This is a one-shot reversible observation, not controller
+              initialization or operation. No BAR, device register, queue,
+              interrupt, DMA, Ethernet, or Wi-Fi behavior was added.
+            </p>
+            <p><a href="2026-09-25-phase-15-pci-memory-space-enable-lenovo.md">Read the full acceptance record</a> · <a href="../decisions/0108-phase-15-pci-memory-space-enable-experiment.md">Read ADR 0108</a></p>
+          </div>
+          <figure>
+            <img class="evidence-img" src="2026-09-25-phase-15-pci-memory-space-enable-lenovo.jpg" alt="PythOS Phase 15 Lenovo PCI Memory Space Enable experiment showing restored command value and no bus master">
+            <figcaption class="caption">Physical Lenovo result: MSE was temporarily enabled for the fixed read and then restored.</figcaption>
+          </figure>
+        </div>
+      </section>
+
       <section class="band" id="phase-15-network-identity">
         <div class="content split">
           <div>

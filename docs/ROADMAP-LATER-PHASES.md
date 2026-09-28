@@ -244,10 +244,12 @@ destination and port, but is still denied without the grant.
 
 ## Phase 15: Hardware Driver Expansion
 
-The Phase 15 opening identity slice is complete. Its QEMU and Lenovo physical
-evidence only establish bounded, read-only PCI identity. The next hardware
-slice requires a separate scope decision before any BAR/register reachability,
-controller ownership, firmware, DMA, interrupt, or Wi-Fi behavior is attempted.
+The Phase 15 opening sequence through ADR 0108 is complete. Its QEMU and
+Lenovo physical evidence establish bounded PCI identity, BAR layout,
+register-reachability, and one reversible Memory-Space-Enable observation.
+These slices do not claim controller ownership, firmware, DMA, interrupt,
+packet, Ethernet, or Wi-Fi behavior. The next hardware slice requires a
+separate scope decision before any broader operation is attempted.
 
 ### Purpose
 

@@ -53,6 +53,14 @@ or preserves the PCI Bus Master Enable bit on behalf of this experiment. It
 does not write BARs, device registers, queues, interrupt state, firmware state,
 or network data.
 
+The reversible-experiment claim is bounded to the validated controller and the
+ordinary control-flow paths represented by the transcript: enable readback,
+the fixed MMIO read returning, and restore readback. This early diagnostic does
+not add generalized CPU/device-fault recovery around an inaccessible MMIO
+read. Such a fault is a terminal diagnostic failure and is not accepted as
+successful evidence; it must not be interpreted as proof that restoration was
+completed.
+
 The write is permitted only for the selected supported controller and only
 after the existing target/BAR policy validates the intended 4 KiB window. A
 failed write readback, invalid target, mapping failure, or restore readback is
@@ -113,7 +121,9 @@ failure marker and never emits the final ready marker.
    Wi-Fi association, and later Phase 15 markers.
 3. QEMU `e1000` and `e1000e` pass the already-enabled branch with the fixed
    status read and no configuration write required; synthetic transcripts cover
-   the disabled/write/restore branch and all failure ordering.
+   the disabled/write/restore branch, parser ordering, and missing restoration.
+   A fault during the volatile MMIO read is outside the recovery claim and
+   cannot produce accepted success evidence.
 4. The physical Lenovo run passed with the corrected opt-in ISO. The framebuffer
    recorded original command `0x00100000`, post-enable command `0x00100002`,
    fixed register value `0x300034DB`, restored command `0x00100000`, and

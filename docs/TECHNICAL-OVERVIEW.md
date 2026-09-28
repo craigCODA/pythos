@@ -378,7 +378,7 @@ and where the boundary of the work still is.
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
 | Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
-| ADR 0105 read-only network identity probe: QEMU `e1000`/`e1000e` acceptance plus physical Lenovo `81VS` identity observation (`02:00.0`, `10EC:C82F`, `17AA:C02F`, `02/80/00`) | Wi-Fi association, firmware, BAR/MMIO, DMA, interrupts, frame movement, controller operation, or generalized physical networking |
+| Phase 15 ADRs 0105-0108: QEMU `e1000`/`e1000e` identity, BAR-layout, register-reachability, and bounded MSE probes plus physical Lenovo `81VS` observations (`02:00.0`, `10EC:C82F`, `17AA:C02F`, `02/80/00`) | Wi-Fi association, firmware, controller ownership, DMA, interrupts, frame movement, packet operation, or generalized physical networking |
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic USB HID, trackpad, IRQ-driven input, or broad keyboard support |
@@ -1036,6 +1036,9 @@ See:
 - [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088 USB xHCI recurring boot-mouse probe](decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
 - [ADR 0105 Phase 15 network-hardware identity probe](decisions/0105-phase-15-network-hardware-identity-probe.md)
+- [ADR 0106 Phase 15 network-hardware BAR-layout probe](decisions/0106-phase-15-network-hardware-bar-layout-probe.md)
+- [ADR 0107 Phase 15 network-hardware register-reachability probe](decisions/0107-phase-15-network-hardware-register-reachability.md)
+- [ADR 0108 Phase 15 PCI Memory-Space-Enable experiment](decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
 - [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [2026-09-04 physical ADR 0088 recurring report](evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
@@ -1054,6 +1057,9 @@ See:
 - [2026-09-03 physical ADR 0085 endpoint-configuration success frame](evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg)
 - [2026-09-01 Linux Mint USB mouse map archive](evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
 - [2026-09-24 Phase 15 Lenovo network-identity evidence](evidence/2026-09-24-phase-15-lenovo-network-identity.md)
+- [2026-09-24 Phase 15 Lenovo network BAR-layout evidence](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md)
+- [2026-09-24 Phase 15 Lenovo register-reachability evidence](evidence/2026-09-24-phase-15-network-hardware-register-reachability.md)
+- [2026-09-25 Phase 15 PCI Memory-Space-Enable evidence](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md)
 
 This is a target-specific physical result, not a generic hardware-support claim.
 

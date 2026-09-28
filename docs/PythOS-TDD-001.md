@@ -1,8 +1,8 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
 Status: Accepted boot-core design and cumulative acceptance reference. Phase
-15's read-only PCI identity and BAR-layout observation slices are accepted
-under ADRs 0105-0106; see
+15's bounded PCI identity, BAR-layout, register-reachability, and
+Memory-Space-Enable observation slices are accepted under ADRs 0105-0108; see
 [ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
 [HANDOVER.md](HANDOVER.md) for current scope and acceptance evidence.
 
@@ -182,7 +182,7 @@ through ADRs 0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092.
 Slice 5 is implemented and locally accepted under ADR 0093: default normal boot
 uses the retained session, interrupt-backed waiting, and one-way recovery-shell
 fallback. Phase 14's bounded networking proofs through ADR 0104 and Phase 15's
-opening read-only PCI network-identity probe under ADR 0105 are now merged.
+bounded PCI observation slices through ADR 0108 are now merged.
 The Phase 15 probe also has target-specific Lenovo evidence recorded in
 `docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. These records
 do not authorize Wi-Fi operation, controller ownership, firmware, BAR/MMIO,
