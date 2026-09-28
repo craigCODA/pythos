@@ -130,9 +130,12 @@
               <span><strong>bus master</strong> no</span>
             </div>
             <p class="boundary-note">
-              This is a one-shot reversible observation, not controller
-              initialization or operation. No BAR, device register, queue,
-              interrupt, DMA, Ethernet, or Wi-Fi behavior was added.
+              This is a one-shot observation whose reversibility is proven on
+              the ordinary enable/read/restore control-flow path, not a claim
+              of controller initialization or operation. No BAR or device-
+              register writes, queue, interrupt, DMA, Ethernet, or Wi-Fi
+              behavior was added; a fault during the fixed MMIO read is not
+              accepted as successful evidence.
             </p>
             <p><a href="2026-09-25-phase-15-pci-memory-space-enable-lenovo.md">Read the full acceptance record</a> · <a href="../decisions/0108-phase-15-pci-memory-space-enable-experiment.md">Read ADR 0108</a></p>
           </div>
