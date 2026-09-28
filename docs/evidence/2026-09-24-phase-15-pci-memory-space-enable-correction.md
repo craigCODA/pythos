@@ -1,6 +1,6 @@
 # Phase 15 PCI Memory-Space Enable Correction Record
 
-**Date:** 2026-09-24  
+**Date:** 2026-09-24
 **Status:** Corrected and physically accepted
 **ADR:** [0108](../decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
 

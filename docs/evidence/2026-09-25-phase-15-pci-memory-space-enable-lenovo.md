@@ -1,7 +1,7 @@
 # Phase 15 PCI Memory-Space Enable — Lenovo Acceptance
 
-**Date:** 2026-09-25  
-**Status:** Accepted physical evidence  
+**Date:** 2026-09-25
+**Status:** Accepted physical evidence
 **ADR:** [0108](../decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
 
 ## Hardware result
