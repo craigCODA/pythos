@@ -2,8 +2,8 @@
 
 ## Current Phase 14 Boundary
 
-Secure transport is the next separately authorized Phase 14 boundary; it is now
-the accepted bounded Phase 14 stopping point.
+Secure transport was the separately authorized Phase 14 boundary and is now the
+accepted bounded Phase 14 stopping point.
 
 Phase 14 bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md), building on the frozen
@@ -1439,11 +1439,12 @@ The accepted Phase 14 stopping point remains the bounded secure-transport
 proof recorded under ADR 0104. It does not establish production TLS, update
 authenticity, physical networking, or a generalized socket/TLS service. The
 accepted Phase 15 opening boundary now includes the read-only PCI
-network-identity and BAR-layout observations under ADRs 0105 and 0106. The
+network-identity, BAR-layout, register-reachability, and bounded MSE
+observations under ADRs 0105-0108. The
 Lenovo evidence is target-specific configuration metadata; it does not
-establish BAR reachability, physical networking, Lenovo Wi-Fi, controller
-operation, or later hardware support. Subsequent Phase 15 expansion remains
-separately authorized.
+establish physical networking, Lenovo Wi-Fi, controller operation beyond the
+bounded observation, or later hardware support. Subsequent Phase 15 expansion
+remains separately authorized.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and

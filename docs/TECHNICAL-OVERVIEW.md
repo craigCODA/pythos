@@ -12,8 +12,8 @@ evidence, followed by the Phase 12 capability-scoped object locator and the
 Phase 13 local package lifecycle, launch-authority, uninstall, and
 package-defined schema extensibility proofs.
 
-Secure transport is the next separately authorized Phase 14 boundary; it is now
-the accepted bounded Phase 14 stopping point.
+Secure transport was the separately authorized Phase 14 boundary and is now the
+accepted bounded Phase 14 stopping point.
 
 Phase 14 `NetworkPort` remains the bounded, opt-in QEMU capability boundary
 through [ADR 0095](decisions/0095-phase-14-network-port-capability-abi.md),
@@ -60,6 +60,13 @@ the Lenovo `81VS` evidence records `02:00:00` / `10EC:C82F`, BAR0 I/O base
 configuration values, not proof of BAR mapping, MMIO reachability, controller
 operation, Ethernet, Wi-Fi, firmware, DMA, or interrupts. The exact photo and
 hashes are in [the Phase 15 evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+
+The opening identity slice is also recorded under ADR 0105 with the same
+target-specific QEMU and Lenovo evidence. ADR 0107 adds one fixed register
+observation behind a validated mapping and ADR 0108 adds the temporary PCI
+Memory Space Enable set/read/restore experiment. These remain bounded
+observations and do not claim Wi-Fi, Ethernet, firmware, DMA, interrupts,
+controller ownership, or broad physical hardware support.
 
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6 commit
@@ -365,12 +372,13 @@ and where the boundary of the work still is.
 | Kernel-owned page tables | Full Python compatibility |
 | Timer and scheduler proofs | Dynamic application platform |
 | Capability enforcement proofs | General filesystem |
-| Bounded presentation and audio proofs | Networking |
+| Bounded presentation and audio proofs | General-purpose networking |
 | Phase 10 typed-object storage in QEMU | Scalable object database |
 | Ring-3 object shell in QEMU | Arbitrary third-party programs |
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
 | Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
+| ADR 0105 read-only network identity probe: QEMU `e1000`/`e1000e` acceptance plus physical Lenovo `81VS` identity observation (`02:00.0`, `10EC:C82F`, `17AA:C02F`, `02/80/00`) | Wi-Fi association, firmware, BAR/MMIO, DMA, interrupts, frame movement, controller operation, or generalized physical networking |
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic USB HID, trackpad, IRQ-driven input, or broad keyboard support |
@@ -1027,6 +1035,7 @@ See:
 - [ADR 0086 USB xHCI one-shot interrupt transfer probe](decisions/0086-usb-xhci-interrupt-transfer-probe.md)
 - [ADR 0087 USB xHCI one-shot boot-mouse decode probe](decisions/0087-usb-xhci-boot-mouse-decode-probe.md)
 - [ADR 0088 USB xHCI recurring boot-mouse probe](decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
+- [ADR 0105 Phase 15 network-hardware identity probe](decisions/0105-phase-15-network-hardware-identity-probe.md)
 - [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [2026-09-04 physical ADR 0088 recurring report](evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
@@ -1044,6 +1053,7 @@ See:
 - [2026-09-03 physical ADR 0084 configuration success frame](evidence/2026-09-03-physical-usb-xhci-configuration-success.png)
 - [2026-09-03 physical ADR 0085 endpoint-configuration success frame](evidence/2026-09-03-physical-usb-xhci-endpoint-configuration-success.jpg)
 - [2026-09-01 Linux Mint USB mouse map archive](evidence/2026-09-01-linux-mint-usb-mouse-map.tar.gz)
+- [2026-09-24 Phase 15 Lenovo network-identity evidence](evidence/2026-09-24-phase-15-lenovo-network-identity.md)
 
 This is a target-specific physical result, not a generic hardware-support claim.
 
@@ -1113,7 +1123,7 @@ implemented or not claimed:
 
 * conventional desktop-shell authority as the user model;
 * general-purpose filesystem allocation;
-* networking;
+* general-purpose networking beyond the bounded Phase 14 proofs;
 * remote package registries, dependency solving, or package updates;
 * immutable A/B updates;
 * SMP;
