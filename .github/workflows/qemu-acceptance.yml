@@ -229,8 +229,9 @@ jobs:
           python -m unittest tests.test_socket
           python -m unittest tests.test_secure_transport_contract
           python -m unittest tests.test_secure_transport
-          python -m unittest tests.test_network_hardware_probe tests.test_network_hardware_bar_probe tests.test_network_hardware_register_probe tests.test_network_hardware_register_enable_probe
           python -m unittest tests.test_network_hardware_probe
+          python -m unittest tests.test_network_hardware_bar_probe
+          python -m unittest tests.test_network_hardware_register_probe
           python -m unittest tests.test_network_hardware_register_enable_probe
           python -m pytest tests/test_virtio_net.py -q
 
