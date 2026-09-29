@@ -126,6 +126,9 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
             "ENTER",
             "PCI_SCAN_READY",
             "NETWORK_CONTROLLER_FOUND",
+            "NETWORK_BUS=",
+            "NETWORK_DEVICE=",
+            "NETWORK_FUNCTION=",
             "NETWORK_VENDOR=",
             "NETWORK_DEVICE_ID=",
             "NETWORK_SUBSYSTEM_VENDOR=",
@@ -180,12 +183,33 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
         positions = [ready.index(marker) for marker in ready_order]
         self.assertEqual(positions, sorted(positions))
 
+        start = self.boot.index("fn emit_identity")
+        end = self.boot.index("fn emit_ready")
+        identity = self.boot[start:end]
+        identity_order = (
+            "NETWORK_CONTROLLER_FOUND",
+            "NETWORK_BUS=",
+            "NETWORK_DEVICE=",
+            "NETWORK_FUNCTION=",
+            "NETWORK_VENDOR=",
+            "NETWORK_DEVICE_ID=",
+            "NETWORK_SUBSYSTEM_VENDOR=",
+            "NETWORK_SUBSYSTEM_DEVICE=",
+            "NETWORK_CLASS=",
+            "NETWORK_SUBCLASS=",
+            "NETWORK_PROG_IF=",
+        )
+        positions = [identity.index(marker) for marker in identity_order]
+        self.assertEqual(positions, sorted(positions))
+        for controller_field in ("controller.bus", "controller.device", "controller.function"):
+            with self.subTest(controller_field=controller_field):
+                self.assertIn(controller_field, identity)
+
     def test_boot_uses_only_the_bounded_header_and_parser_read_boundary(self):
         for declaration in (
             "network_hardware_probe::run_probe()",
             "report.preferred_controller()",
             "controller, 0x06,",
-            "controller, 0x07,",
             "read_controller_config_byte(controller, 0x34)",
             "read_controller_config_byte(controller, 0x3C)",
             "read_controller_config_byte(controller, 0x3D)",
@@ -194,6 +218,7 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
         ):
             with self.subTest(declaration=declaration):
                 self.assertIn(declaration, self.boot)
+        self.assertNotIn("0x07", self.boot)
 
         for forbidden in (
             "read_controller_bar",
@@ -252,6 +277,17 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
         self.assertIn("FRAMEBUFFER_CAPABILITY_DIAGNOSTIC_READY", malformed)
         self.assertIn("PCI_CONFIG_READ_ONLY", malformed)
         self.assertNotIn("NETWORK_HARDWARE_CAPABILITY_PROBE_READY", malformed)
+
+    def test_controller_not_found_renders_a_diagnostic_without_a_ready_marker(self):
+        start = self.boot.index("fn emit_not_found")
+        end = self.boot.index("fn emit_identity")
+        not_found = self.boot[start:end]
+        self.assertIn("NETWORK_CONTROLLER_NOT_FOUND", not_found)
+        self.assertIn("network_hardware_capability_probe_screen::render_not_found", not_found)
+        self.assertIn("FRAMEBUFFER_CAPABILITY_DIAGNOSTIC_READY", not_found)
+        self.assertIn("FRAMEBUFFER_CAPABILITY_FAILED", not_found)
+        self.assertNotIn("NETWORK_HARDWARE_CAPABILITY_PROBE_READY", not_found)
+        self.assertIn("pub fn render_not_found", self.screen)
 
 
 if __name__ == "__main__":

@@ -76,14 +76,14 @@ pub fn parse_capability_list<R: FnMut(u8) -> u8>(
         let id = read_byte(current);
         let next = read_byte(current + 1);
         let (kind, header_len) = classify_capability(id);
-        if let Some(length) = header_len {
-            if u16::from(current) + u16::from(length) - 1 > u16::from(u8::MAX) {
-                return Err(CapabilityParseError::RecognizedHeaderOutOfBounds {
-                    id,
-                    offset: current,
-                    header_len: length,
-                });
-            }
+        if let Some(length) = header_len
+            && u16::from(current) + u16::from(length) - 1 > u16::from(u8::MAX)
+        {
+            return Err(CapabilityParseError::RecognizedHeaderOutOfBounds {
+                id,
+                offset: current,
+                header_len: length,
+            });
         }
 
         snapshot.entries[snapshot.entry_count] = Some(PciCapabilityEntry {

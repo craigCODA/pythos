@@ -118,6 +118,16 @@ pub fn render_malformed(
     render_lines(framebuffer, &storage, count)
 }
 
+pub fn render_not_found(framebuffer: &PythFramebufferInfo) -> Result<(), ()> {
+    let mut storage = [Line::new(); MAX_LINES];
+    let mut count = 0;
+    push(&mut storage, &mut count, "PythOS");
+    push(&mut storage, &mut count, "network pci caps");
+    push(&mut storage, &mut count, "config read only");
+    push(&mut storage, &mut count, "network not found");
+    render_lines(framebuffer, &storage, count)
+}
+
 fn render_lines(
     framebuffer: &PythFramebufferInfo,
     storage: &[Line; MAX_LINES],

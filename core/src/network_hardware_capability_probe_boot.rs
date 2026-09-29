@@ -17,18 +17,13 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     let report = network_hardware_probe::run_probe();
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:PCI_SCAN_READY");
     let Some(controller) = report.preferred_controller() else {
-        serial::write_line(
-            "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_CONTROLLER_NOT_FOUND",
-        );
-        halt();
+        emit_not_found(boot_info);
     };
 
     emit_identity(controller);
     let status = u16::from(network_hardware_probe::read_controller_config_byte(
         controller, 0x06,
-    )) | (u16::from(network_hardware_probe::read_controller_config_byte(
-        controller, 0x07,
-    )) << 8);
+    ));
     let capability_pointer = network_hardware_probe::read_controller_config_byte(controller, 0x34);
     let interrupt_line = network_hardware_probe::read_controller_config_byte(controller, 0x3C);
     let interrupt_pin = network_hardware_probe::read_controller_config_byte(controller, 0x3D);
@@ -50,8 +45,36 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
     }
 }
 
+fn emit_not_found(boot_info: &'static PythBootInfo) -> ! {
+    serial::write_line(
+        "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_CONTROLLER_NOT_FOUND",
+    );
+    if network_hardware_capability_probe_screen::render_not_found(&boot_info.framebuffer).is_ok() {
+        serial::write_line(
+            "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:FRAMEBUFFER_CAPABILITY_DIAGNOSTIC_READY",
+        );
+    } else {
+        serial::write_line(
+            "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:FRAMEBUFFER_CAPABILITY_FAILED",
+        );
+    }
+    halt();
+}
+
 fn emit_identity(controller: NetworkController) {
     serial::write_line("PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_CONTROLLER_FOUND");
+    emit_byte_marker(
+        "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_BUS=",
+        controller.bus,
+    );
+    emit_byte_marker(
+        "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_DEVICE=",
+        controller.device,
+    );
+    emit_byte_marker(
+        "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_FUNCTION=",
+        controller.function,
+    );
     serial::write_hex_u64(
         "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:NETWORK_VENDOR=",
         u64::from(controller.vendor_id),
@@ -241,6 +264,12 @@ fn write_hex_byte(value: u8) {
     serial::write_str("0x");
     write_hex_nibble(value >> 4);
     write_hex_nibble(value & 0x0F);
+}
+
+fn emit_byte_marker(marker: &str, value: u8) {
+    serial::write_str(marker);
+    write_hex_byte(value);
+    serial::write_line("");
 }
 
 fn write_hex_nibble(value: u8) {
