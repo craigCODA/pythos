@@ -454,6 +454,8 @@ mod network_hardware_bar_probe;
 mod network_hardware_bar_probe_boot;
 #[cfg(any(test, feature = "network-hardware-bar-probe"))]
 mod network_hardware_bar_probe_screen;
+#[cfg(test)]
+mod network_hardware_capability_probe;
 mod network_hardware_probe;
 #[cfg(all(not(test), feature = "network-hardware-probe"))]
 mod network_hardware_probe_boot;
