@@ -1,3 +1,4 @@
+import importlib.util
 from pathlib import Path
 import unittest
 
@@ -7,6 +8,16 @@ CAPABILITY = ROOT / "core" / "src" / "network_hardware_capability_probe.rs"
 BOOT = ROOT / "core" / "src" / "network_hardware_capability_probe_boot.rs"
 SCREEN = ROOT / "core" / "src" / "network_hardware_capability_probe_screen.rs"
 MAIN = ROOT / "core" / "src" / "main.rs"
+ORACLE = ROOT / "scripts" / "test-network-hardware-capability-probe.py"
+
+
+def load_oracle():
+    spec = importlib.util.spec_from_file_location("network_hardware_capability_oracle", ORACLE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"failed to load {ORACLE}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
@@ -16,6 +27,52 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
         cls.boot = BOOT.read_text(encoding="utf-8")
         cls.screen = SCREEN.read_text(encoding="utf-8")
         cls.main = MAIN.read_text(encoding="utf-8")
+        cls.oracle = load_oracle()
+
+    def test_python_oracle_uses_the_isolated_runner_and_expected_models(self):
+        self.assertTrue(ORACLE.is_file())
+        self.assertEqual(set(self.oracle.NETWORK_IDENTITIES), {"e1000", "e1000e"})
+        for model, identity in self.oracle.NETWORK_IDENTITIES.items():
+            with self.subTest(model=model):
+                self.oracle.assert_runner_isolated(model)
+                command = self.oracle.probe_runner_command(model)
+                self.assertIn("--no-audio-device", command)
+                self.assertIn("--no-virtio-blk", command)
+                self.assertIn("--expect-outcome", command)
+                self.assertIn("success", command)
+                self.assertNotIn("--virtio-net", command)
+                self.assertEqual(identity["vendor"], "0x0000000000008086")
+        self.assertEqual(
+            self.oracle.NETWORK_IDENTITIES["e1000"]["device"], "0x000000000000100E"
+        )
+        self.assertEqual(
+            self.oracle.NETWORK_IDENTITIES["e1000e"]["device"], "0x00000000000010D3"
+        )
+
+    def test_python_oracle_accepts_production_grammar_and_absent_list(self):
+        for model in self.oracle.NETWORK_IDENTITIES:
+            with self.subTest(model=model):
+                self.oracle.assert_capability_probe_report(
+                    self.oracle.synthetic_serial_report(model), model
+                )
+        self.oracle.assert_capability_probe_report(
+            self.oracle.synthetic_serial_report("e1000", list_present=False), "e1000"
+        )
+
+    def test_python_oracle_rejects_unsafe_and_malformed_terminal_contracts(self):
+        self.oracle.assert_static_source_safety()
+        ready = self.oracle.synthetic_serial_report("e1000")
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_capability_probe_report(
+                ready + "\nPYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:PCI_CONFIG_WRITE",
+                "e1000",
+            )
+        malformed = self.oracle.synthetic_malformed_diagnostic()
+        self.oracle.assert_malformed_diagnostic(malformed)
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_malformed_diagnostic(
+                malformed + "\nPYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE_READY"
+            )
 
     def test_module_declares_fixed_size_public_parser_contract(self):
         for declaration in (
