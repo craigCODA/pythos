@@ -77,6 +77,7 @@ All exited with status 0. The Rust test build emitted existing unused-code warni
 
 The parser module is deliberately declared only for tests. Task 2 owns the production feature declaration and feature-gated module wiring, so this keeps Task 1 within the requested pure-parser boundary.
 
-## Commit
+## Commits
 
-To be filled after the focused Task 1 commit is created.
+- `140d884` — `feat: add bounded PCI capability parser`
+- `1fb69a1` — `docs: add PCI capability parser task report`
