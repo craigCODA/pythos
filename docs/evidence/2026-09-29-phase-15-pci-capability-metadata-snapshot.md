@@ -1,10 +1,10 @@
-# Phase 15 PCI Capability Metadata Snapshot — QEMU Evidence
+# Phase 15 PCI Capability Metadata Snapshot — QEMU and Lenovo Evidence
 
 **ADR:** [0109 — Bounded PCI Capability Metadata Snapshot](../decisions/0109-phase-15-pci-capability-metadata-snapshot.md)
 
-**ADR status:** Proposed for owner review
+**ADR status:** Accepted
 
-**Evidence scope:** QEMU only
+**Evidence scope:** QEMU and Lenovo `81VS` physical framebuffer observation
 
 **Reviewed implementation commit:** `f413ebd3d723770ded9a2297a819ff6397d70ad2`
 
@@ -63,11 +63,49 @@ The COM1 logs are generated `target/` artifacts rather than tracked source.
 Their paths and hashes above bind this record to the exact bytes reviewed from
 the named implementation commit.
 
-## Lenovo 81VS remains pending
+## Lenovo 81VS physical observation
 
-No Lenovo `81VS` evidence is recorded for ADR 0109. The QEMU Intel-model
-observations do not establish the meaning of the Lenovo Realtek `10EC:C82F`
-capabilities. Task 6 remains pending because `F:\iso` and the physical Lenovo
-target are unavailable for this repository-only fix wave. No physical ISO was
-built, copied, booted, or observed, and existing Ventoy/ISO contents were not
-touched.
+The owner-authorized ISO
+`F:\iso\pythos-phase15-pci-capability-snapshot-20260929.iso` was booted on the
+Lenovo `81VS`. The existing Ventoy/ISO contents were preserved. The ISO size
+was `20,652,032` bytes and its SHA-256 was
+`8F968E0315D6CE46C18E58167D2B273F5EAF8D173477A97B76ACE7488711DDD1`.
+
+The framebuffer reported:
+
+```text
+network pci caps
+config read only
+bdf 02 00 00
+vid did 10EC C82F
+status 0010
+irq line pin FF 01
+list present
+PM 40
+PCIe 70
+MSI 50
+MSIX NONE
+```
+
+This records the Realtek `10EC:C82F` function at BDF `02:00:00`, a present
+conventional capability list, PM at `0x40`, PCIe at `0x70`, MSI at `0x50`, and
+no MSI-X capability. The probe remained configuration-read-only; it did not
+enable any capability, access BAR/MMIO/device registers, configure interrupts,
+initialize the controller, enable bus mastering, perform DMA, move packets,
+or associate with Wi-Fi.
+
+### Physical photo artifact
+
+- Source: `D:\Downloads\Mobile Devices\20260929_080413.jpg`
+- SHA-256: `173F7439A53969C7EF9A790E32470D411F24F436C6C6E644F569FF3483D0EAC1`
+- Size: `1,200,398` bytes
+
+The supplied framebuffer photo is the physical acceptance artifact. No serial
+log was captured for this framebuffer-only run.
+
+## Acceptance conclusion
+
+ADR 0109 passed its QEMU and owner-authorized Lenovo metadata-observation
+gates. The result is target-specific configuration metadata and does not
+establish controller readiness, interrupt delivery, physical networking,
+Lenovo Wi-Fi, or any later controller operation.

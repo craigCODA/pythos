@@ -190,8 +190,8 @@ Modify:
 - No implementation files.
 - Evidence only: `docs/evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md`.
 
-- [ ] Build one uniquely named ISO using the new feature and copy it under `F:\iso` without deleting, replacing, or renaming the existing Ventoy installation or ISO files.
-- [ ] Boot the Lenovo target and record the capability status, list state, entries, summary, interrupt bytes, final framebuffer, and photo/serial-log hashes.
+- [x] Build one uniquely named ISO using the new feature and copy it under `F:\iso` without deleting, replacing, or renaming the existing Ventoy installation or ISO files.
+- [x] Boot the Lenovo target and record the capability status, list state, entries, summary, interrupt bytes, final framebuffer, and photo hash.
 - [ ] Treat malformed traversal, missing terminal diagnostics, unexpected writes, or any ready marker after a malformed result as failure.
 - [ ] Stop at metadata observation; do not proceed to power control, MSI/MSI-X setup, interrupt delivery, controller initialization, DMA, queues, packet movement, Wi-Fi, or `NetworkPort` work.
 
@@ -210,9 +210,11 @@ Modify:
 
 ### Completion and handoff notes
 
-- Tasks 1–5 and Task 7 are complete. Task 6 remains pending and separately
-  gated; no physical hardware or `F:\iso` path was touched during the final fix
-  wave.
+- Tasks 1–7 are complete. The Lenovo observation used the uniquely named ISO
+  `pythos-phase15-pci-capability-snapshot-20260929.iso`; existing Ventoy/ISO
+  contents were preserved. The supplied framebuffer photo is the physical
+  acceptance artifact; no serial log was captured for this framebuffer-only
+  run.
 - Final Rust verification passed: formatting; the default, `verify`, and
   `normal-session` profiles at 918 tests each; all five isolated ADR 0105–0109
   feature profiles at 918 tests each; and strict bare-metal clippy for those
@@ -223,10 +225,11 @@ Modify:
 - All five live ADR 0105–0109 QEMU oracles passed for both `e1000` and `e1000e`.
   The ADR 0109 evidence record identifies implementation commit
   `f413ebd3d723770ded9a2297a819ff6397d70ad2`, exact commands and log paths,
-  SHA-256 hashes, pointer observations, and terminal outcomes.
-- `git diff --check` and final scope inspection passed. ADR 0109 remains
-  Proposed pending owner acceptance; no PR, push, merge, or next-phase work was
-  performed.
+  SHA-256 hashes, pointer observations, terminal outcomes, and the owner-
+  authorized Lenovo framebuffer result.
+- `git diff --check` and final scope inspection passed. ADR 0109 is accepted
+  after the QEMU and Lenovo metadata observations; no controller-operation or
+  later hardware scope was introduced.
 
 ## Plan Self-Review
 

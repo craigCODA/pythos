@@ -1,8 +1,9 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
 Status: Accepted boot-core design and cumulative acceptance reference. Phase
-15's bounded PCI identity, BAR-layout, register-reachability, and
-Memory-Space-Enable observation slices are accepted under ADRs 0105-0108; see
+15's bounded PCI identity, BAR-layout, register-reachability,
+Memory-Space-Enable, and capability-metadata observation slices are accepted
+under ADRs 0105-0109; see
 [ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
 [HANDOVER.md](HANDOVER.md) for current scope and acceptance evidence.
 
@@ -31,17 +32,17 @@ The first attempt exposed a control-path defect and its correction is recorded
 in the [correction evidence](evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md);
 the physical result is in the [Lenovo acceptance record](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
-[ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) remains
-**Proposed for owner review**. The implemented opt-in
+[ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) is
+**Accepted**. The implemented opt-in
 `network-hardware-capability-probe` performs only a bounded, read-only
 conventional PCI capability metadata snapshot. QEMU `e1000` accepted a
 successful absent-list result and `e1000e` accepted a successful four-entry
 PM/MSI/PCIe/MSI-X traversal; neither result interprets capability control
-fields or claims device readiness. The [QEMU-only evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
-records that Lenovo `81VS` evidence is not yet recorded for ADR 0109 and
-remains separately gated under `F:\iso`, preserving existing Ventoy/ISO
-contents. `VirtioTransport`, the transport adapter, and `NetworkPort` remain
-unchanged. No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X
+fields or claims device readiness. The Lenovo `81VS` observation recorded
+Realtek `10EC:C82F` at BDF `02:00:00` with PM, PCIe, and MSI entries and no
+MSI-X entry; see the [QEMU and Lenovo evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md).
+`VirtioTransport`, the transport adapter, and `NetworkPort` remain unchanged.
+No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X
 enablement, power control, bus mastering, DMA, interrupts, reset, queues,
 packets, sockets, Wi-Fi, or physical networking are included.
 
@@ -196,7 +197,7 @@ through ADRs 0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092.
 Slice 5 is implemented and locally accepted under ADR 0093: default normal boot
 uses the retained session, interrupt-backed waiting, and one-way recovery-shell
 fallback. Phase 14's bounded networking proofs through ADR 0104 and Phase 15's
-bounded PCI observation slices through ADR 0108 are now merged.
+bounded PCI observation slices through ADR 0109 are now merged.
 The Phase 15 probe also has target-specific Lenovo evidence recorded in
 `docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. These records
 do not authorize Wi-Fi operation, controller ownership, firmware, BAR/MMIO,

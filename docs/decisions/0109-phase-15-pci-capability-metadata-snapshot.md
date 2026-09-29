@@ -1,6 +1,6 @@
 # ADR 0109: Phase 15 Bounded PCI Capability Metadata Snapshot
 
-**Status:** Proposed for owner review
+**Status:** Accepted
 **Date:** 2026-09-29
 **Owners:** PythOS platform and transport-adapter maintainers
 
@@ -129,13 +129,20 @@ design:
    backend peer, no non-boot block device, and one `QEMU_OUTCOME success`. The
    oracle requires the ordered capability snapshot, framebuffer result,
    `PCI_CONFIG_READ_ONLY`, and the terminal ready marker.
-4. The Lenovo observation, if separately authorized after QEMU acceptance,
-   uses a uniquely named ISO under `F:\iso`, preserves all existing images, and
-   records the capability result and final framebuffer. It does not proceed to
-   power control, interrupt setup, controller initialization, DMA, queues,
-   packet movement, or Wi-Fi association.
+4. The separately authorized Lenovo observation used a uniquely named ISO under
+   `F:\iso`, preserved all existing images, and recorded the capability result
+   and final framebuffer. It did not proceed to power control, interrupt setup,
+   controller initialization, DMA, queues, packet movement, or Wi-Fi
+   association.
 5. Existing identity, BAR, register-reachability, MSE, default, and
    normal-session profiles remain unchanged.
+
+The physical Lenovo result recorded the selected Realtek function at BDF
+`02:00:00` with vendor/device `10EC:C82F`, status `0x0010`, interrupt line
+`0xFF`, interrupt pin `0x01`, and a present conventional capability list. The
+framebuffer reported PM at `0x40`, PCIe at `0x70`, MSI at `0x50`, and no MSI-X
+capability. The observation remained configuration-read-only and made no
+claim about controller readiness or interrupt delivery.
 
 ## Explicit non-goals and next boundary
 
