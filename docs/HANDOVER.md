@@ -134,15 +134,15 @@ at `F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso`
 with SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
 
 [ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) is
-**Proposed for owner review** with its bounded, read-only conventional PCI
-capability metadata snapshot implemented. QEMU `e1000` accepted a successful
-absent-list result; `e1000e` accepted a successful four-entry
-PM/MSI/PCIe/MSI-X traversal. This does not interpret capability control fields
-or claim device readiness. The [QEMU-only evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
-records no Lenovo `81VS` evidence for ADR 0109 yet: any observation remains
-separately gated under `F:\iso` and must preserve existing Ventoy/ISO contents.
-`VirtioTransport`, the transport adapter, and `NetworkPort` are unchanged. No
-PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X enablement, power
+accepted with its bounded, read-only conventional PCI capability metadata
+snapshot. QEMU `e1000` accepted a successful absent-list result; `e1000e`
+accepted a successful four-entry PM/MSI/PCIe/MSI-X traversal. The owner-
+authorized Lenovo `81VS` run recorded Realtek `10EC:C82F` at BDF `02:00:00`,
+status `0x0010`, interrupt line/pin `0xFF`/`0x01`, PM `0x40`, PCIe `0x70`,
+MSI `0x50`, and no MSI-X entry. This does not interpret capability control
+fields or claim device readiness. See the [QEMU and Lenovo evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md).
+`VirtioTransport`, the transport adapter, and `NetworkPort` remain unchanged.
+No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X enablement, power
 control, bus mastering, DMA, interrupts, reset, queues, packets, sockets,
 Wi-Fi, or physical networking are authorized.
 
@@ -1452,8 +1452,8 @@ The accepted Phase 14 stopping point remains the bounded secure-transport
 proof recorded under ADR 0104. It does not establish production TLS, update
 authenticity, physical networking, or a generalized socket/TLS service. The
 accepted Phase 15 opening boundary now includes the read-only PCI
-network-identity, BAR-layout, register-reachability, and bounded MSE
-observations under ADRs 0105-0108. The
+network-identity, BAR-layout, register-reachability, bounded MSE, and
+capability-metadata observations under ADRs 0105-0109. The
 Lenovo evidence is target-specific configuration metadata; it does not
 establish physical networking, Lenovo Wi-Fi, controller operation beyond the
 bounded observation, or later hardware support. Subsequent Phase 15 expansion

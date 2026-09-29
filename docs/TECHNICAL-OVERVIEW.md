@@ -378,7 +378,7 @@ and where the boundary of the work still is.
 | Polling AHCI backend in QEMU | Broad physical hardware support |
 | Polling SDHCI/eMMC backend in QEMU | Generic SDHCI/eMMC support |
 | Physical SDHCI/eMMC backend evidence on O2 Micro `1217:8620` | Physical interactive shell input |
-| Phase 15 ADRs 0105-0108: QEMU `e1000`/`e1000e` identity, BAR-layout, register-reachability, and bounded MSE probes plus physical Lenovo `81VS` observations (`02:00.0`, `10EC:C82F`, `17AA:C02F`, `02/80/00`) | Wi-Fi association, firmware, controller ownership, DMA, interrupts, frame movement, packet operation, or generalized physical networking |
+| Phase 15 ADRs 0105-0109: QEMU `e1000`/`e1000e` identity, BAR-layout, register-reachability, bounded MSE, and capability-metadata probes plus physical Lenovo `81VS` observations (`02:00.0`, `10EC:C82F`, `17AA:C02F`, `02/80/00`) | Wi-Fi association, firmware, controller ownership, DMA, interrupts, frame movement, packet operation, or generalized physical networking |
 | Evidence terminal implemented and QEMU-accepted on `main` | Replacement of COM1 as automated oracle |
 | Five-page physical terminal capture: 313 markers, zero drops, CRC `176F4C6E` | Bit-identical physical/QEMU transcripts |
 | ADR 0074 physical wake diagnostic QEMU-accepted and operator-accepted on one boot machine | Generic USB HID, trackpad, IRQ-driven input, or broad keyboard support |

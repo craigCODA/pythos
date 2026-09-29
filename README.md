@@ -81,19 +81,17 @@ correction evidence](docs/evidence/2026-09-24-phase-15-pci-memory-space-enable-c
 See the [physical acceptance record](docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
 [ADR 0109](docs/decisions/0109-phase-15-pci-capability-metadata-snapshot.md)
-remains **Proposed for owner review**. Its implemented opt-in
-`network-hardware-capability-probe` is a bounded, read-only conventional PCI
-capability metadata snapshot with QEMU `e1000`/`e1000e` acceptance: `e1000`
-successfully reported an absent list, while `e1000e` successfully traversed
-four PM/MSI/PCIe/MSI-X entries. It does not interpret capability control fields
-or claim device readiness. The [QEMU-only evidence record](docs/evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
-also records that Lenovo `81VS` evidence for ADR 0109 is not yet recorded and
-remains a separately gated physical observation under `F:\iso`; existing
-Ventoy/ISO contents must be preserved. `VirtioTransport`, the transport
-adapter, and `NetworkPort` remain unchanged. No PCI writes, BAR mapping,
-MMIO/register access, MSI/MSI-X enablement, power control, bus mastering, DMA,
-interrupts, reset, queues, packets, sockets, Wi-Fi, or physical networking are
-included.
+is **Accepted**. Its opt-in `network-hardware-capability-probe` is a bounded,
+read-only conventional PCI capability metadata snapshot. QEMU `e1000` reported
+an absent list, QEMU `e1000e` traversed four PM/MSI/PCIe/MSI-X entries, and the
+Lenovo `81VS` observation reported Realtek `10EC:C82F` at BDF `02:00:00` with
+PM, PCIe, and MSI entries and no MSI-X entry. It does not interpret capability
+control fields or claim device readiness. See the [QEMU and Lenovo evidence
+record](docs/evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md).
+`VirtioTransport`, the transport adapter, and `NetworkPort` remain unchanged.
+No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X enablement, power
+control, bus mastering, DMA, interrupts, reset, queues, packets, sockets,
+Wi-Fi, or physical networking are included.
 
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6

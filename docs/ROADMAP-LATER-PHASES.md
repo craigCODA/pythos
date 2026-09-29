@@ -40,8 +40,9 @@ Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
 Phase 14 accepted locally              bounded secure-transport proof through
                                       ADR 0104; current stopping point
 Phase 15 opening slices accepted locally  PCI identity, BAR layout, register
-                                       reachability, and bounded MSE experiment;
-                                       ADRs 0105-0108; hardware expansion continues
+                                       reachability, bounded MSE experiment,
+                                       and capability metadata; ADRs 0105-0109;
+                                       broader hardware expansion remains gated
 ```
 
 Phase 14 has locally accepted bounded proofs through secure transport under
@@ -55,14 +56,15 @@ physical networking, or a generalized socket/TLS service. See the [current
 roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
 [handover](HANDOVER.md) for exact local evidence and scope. The separately
 accepted Phase 15 slices are the bounded PCI network observations under ADRs
-0105-0108. They include identity, BAR configuration metadata, one fixed
-register observation, and the temporary Memory Space Enable set/read/restore
-experiment. The Lenovo results remain target-specific evidence; they do not
-establish physical networking, Lenovo Wi-Fi, controller operation, firmware,
-DMA, interrupts, or later hardware support. Later Phase 15 expansion and
-Phases 16-17 remain separately invoked work.
+0105-0109. They include identity, BAR configuration metadata, one fixed
+register observation, the temporary Memory Space Enable set/read/restore
+experiment, and read-only conventional capability metadata. The Lenovo
+results remain target-specific evidence; they do not establish physical
+networking, Lenovo Wi-Fi, controller operation, firmware, DMA, interrupts, or
+later hardware support. Later Phase 15 expansion and Phases 16-17 remain
+separately invoked work.
 
-ADRs are allocated through 0108 in this checkout. Check `docs/decisions/` and
+ADRs are allocated through 0109 in this checkout. Check `docs/decisions/` and
 in-progress branches before allocating another number.
 
 ---
@@ -244,9 +246,10 @@ destination and port, but is still denied without the grant.
 
 ## Phase 15: Hardware Driver Expansion
 
-The Phase 15 opening sequence through ADR 0108 is complete. Its QEMU and
+The Phase 15 opening sequence through ADR 0109 is complete. Its QEMU and
 Lenovo physical evidence establish bounded PCI identity, BAR layout,
-register-reachability, and one reversible Memory-Space-Enable observation.
+register-reachability, one reversible Memory-Space-Enable observation, and a
+read-only conventional PCI capability metadata snapshot.
 These slices do not claim controller ownership, firmware, DMA, interrupt,
 packet, Ethernet, or Wi-Fi behavior. The next hardware slice requires a
 separate scope decision before any broader operation is attempted.
