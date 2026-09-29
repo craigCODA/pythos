@@ -73,40 +73,61 @@ MALFORMED_MARKERS = {
     f"{PREFIX}PCI_CAPABILITY_MALFORMED=ENTRY_LIMIT",
     f"{PREFIX}PCI_CAPABILITY_MALFORMED=RECOGNIZED_HEADER_BOUNDS",
 }
-FORBIDDEN_EVIDENCE_FRAGMENTS = (
-    "PCI_CONFIG_WRITE",
-    "CONFIGURATION_WRITE",
-    "WRITE_CONFIG",
-    "BAR_WRITE",
-    "BAR_MAPPING",
-    "BAR_MAPPED",
-    "BAR_DEREFERENCE",
-    "MMIO",
-    "DEVICE_REGISTER",
-    "REGISTER_ACCESS",
-    "BUS_MASTER",
-    "DMA",
-    "INTERRUPT_ENABLE",
-    "INTERRUPT_HANDLER",
-    "IRQ_",
-    "MSI_ENABLE",
-    "MSIX_ENABLE",
-    "POWER_CONTROL",
-    "POWER_STATE",
-    "RESET",
-    "QUEUE",
-    "NETWORK_FRAME",
-    "PACKET",
-    "SOCKET",
-    "WI_FI",
-    "WIFI",
-    "NETWORKPORT",
-    "VIRTIOTRANSPORT",
-    "NETWORK_HARDWARE_BAR_PROBE",
-    "NETWORK_HARDWARE_REGISTER_PROBE",
-    "NETWORK_HARDWARE_REGISTER_ENABLE_PROBE",
+FORBIDDEN_OPERATION_FRAGMENTS = (
+    "pci_config_write",
+    "configuration_write",
+    "write_config",
+    "bar_write",
+    "bar_read",
+    "read_bar",
+    "read_controller_bar",
+    "bar_mapping",
+    "bar_mapped",
+    "map_bar",
+    "bar_dereference",
+    "dereference_bar",
+    "mmio",
+    "device_register",
+    "register_access",
+    "register_read",
+    "read_register",
+    "register_write",
+    "write_register",
+    "bus_master",
+    "dma",
+    "interrupt_enable",
+    "enable_interrupt",
+    "interrupt_handler",
+    "interrupt_ack",
+    "ack_interrupt",
+    "irq_",
+    "msi_enable",
+    "msix_enable",
+    "msi-x_enable",
+    "power_control",
+    "power_state",
+    "reset",
+    "queue",
+    "network_frame",
+    "ethernet_frame",
+    "frame_access",
+    "read_frame",
+    "write_frame",
+    "packet",
+    "socket",
+    "wi-fi",
+    "wi_fi",
+    "wifi",
+    "network_port",
+    "networkport",
+    "virtio_transport",
+    "virtiotransport",
+    "network_hardware_bar_probe",
+    "network_hardware_register_probe",
+    "network_hardware_register_enable_probe",
 )
-FORBIDDEN_SOURCE_FRAGMENTS = tuple(fragment.lower() for fragment in FORBIDDEN_EVIDENCE_FRAGMENTS)
+FORBIDDEN_EVIDENCE_FRAGMENTS = tuple(fragment.upper() for fragment in FORBIDDEN_OPERATION_FRAGMENTS)
+FORBIDDEN_SOURCE_FRAGMENTS = FORBIDDEN_OPERATION_FRAGMENTS
 SOURCE_SAFETY_FILES = (
     ROOT / "core" / "src" / "network_hardware_capability_probe_boot.rs",
     ROOT / "core" / "src" / "network_hardware_capability_probe_screen.rs",
@@ -179,18 +200,23 @@ def assert_no_forbidden_evidence(serial_lines: list[str]) -> None:
             raise AssertionError(f"forbidden capability-probe evidence: {line}")
 
 
+def assert_source_text_is_safe(source: str, source_name: str = "synthetic source") -> None:
+    normalized = source.lower()
+    for fragment in FORBIDDEN_SOURCE_FRAGMENTS:
+        if fragment in normalized:
+            raise AssertionError(f"forbidden capability-probe source fragment {fragment!r} in {source_name}")
+
+
 def assert_static_source_safety() -> None:
     for path in SOURCE_SAFETY_FILES:
-        source = path.read_text(encoding="utf-8").lower()
-        for fragment in FORBIDDEN_SOURCE_FRAGMENTS:
-            if fragment in source:
-                raise AssertionError(f"forbidden capability-probe source fragment {fragment!r} in {path}")
+        assert_source_text_is_safe(path.read_text(encoding="utf-8"), str(path))
 
 
-def assert_runner_isolated(network_device: str) -> None:
+def assert_runner_args_isolated(runner_args: list[str], network_device: str) -> None:
     if network_device not in NETWORK_IDENTITIES:
         raise ValueError(f"unsupported network device: {network_device}")
-    runner_args = load_qemu_runner().network_device_qemu_args(network_device)
+    if any(value == "-net" or value.startswith("-net=") for value in runner_args):
+        raise AssertionError(f"runner included a legacy network backend: {runner_args!r}")
     nic_pairs = [
         runner_args[index : index + 2]
         for index, value in enumerate(runner_args)
@@ -207,6 +233,13 @@ def assert_runner_isolated(network_device: str) -> None:
         raise AssertionError(f"runner explicit devices are not isolated: {runner_args!r}")
     if any(any(token in value.lower() for token in ("netdev", "socket", "backend")) for value in runner_args):
         raise AssertionError(f"runner included a network backend: {runner_args!r}")
+
+
+def assert_runner_isolated(network_device: str) -> None:
+    if network_device not in NETWORK_IDENTITIES:
+        raise ValueError(f"unsupported network device: {network_device}")
+    runner_args = load_qemu_runner().network_device_qemu_args(network_device)
+    assert_runner_args_isolated(runner_args, network_device)
 
 
 def parse_entry(line: str) -> dict[str, int | str | None]:
@@ -341,9 +374,6 @@ def assert_capability_probe_report(serial: str, network_device: str) -> None:
     status = int(status_value, 16)
     if bool(status & (1 << 4)) != bool(present_count):
         raise AssertionError("capability-list status bit and list-state marker disagree")
-    if list_position <= status_position:
-        raise AssertionError("capability-list state precedes the status marker")
-
     entry_candidates = [
         (index, line)
         for index, line in enumerate(serial_lines)
@@ -357,6 +387,8 @@ def assert_capability_probe_report(serial: str, network_device: str) -> None:
     if len(summary_candidates) != 1:
         raise AssertionError(f"expected exactly one capability summary, found {len(summary_candidates)}")
     summary_position, summary_line = summary_candidates[0]
+    if not status_position < list_position < summary_position:
+        raise AssertionError("capability-list state is not between status and summary")
     if SUMMARY_LINE.fullmatch(summary_line) is None:
         raise AssertionError(f"malformed capability summary: {summary_line}")
     if any(ENTRY_LINE.fullmatch(line) is None for _, line in entry_candidates):
@@ -545,8 +577,27 @@ class NetworkHardwareCapabilityProbeSelfTest(unittest.TestCase):
                 self.assertIn("--no-virtio-blk", command)
                 self.assertNotIn("--virtio-net", command)
 
+    def test_runner_rejects_legacy_net_backends(self) -> None:
+        for backend in ("user", "tap,id=forbidden"):
+            with self.subTest(backend=backend), self.assertRaises(AssertionError):
+                assert_runner_args_isolated(
+                    ["-nic", "none", "-device", "e1000", "-net", backend], "e1000"
+                )
+
     def test_static_source_safety(self) -> None:
         assert_static_source_safety()
+        assert_source_text_is_safe("PCI_CONFIG_READ_ONLY")
+        for fragment in (
+            "bar_read",
+            "register_read",
+            "interrupt_ack",
+            "network_port",
+            "virtio_transport",
+            "wi-fi",
+            "frame_access",
+        ):
+            with self.subTest(fragment=fragment), self.assertRaises(AssertionError):
+                assert_source_text_is_safe(f"fn {fragment}() {{}}")
 
     def test_absent_list_is_a_successful_bounded_observation(self) -> None:
         assert_capability_probe_report(synthetic_serial_report("e1000", list_present=False), "e1000")
@@ -564,10 +615,21 @@ class NetworkHardwareCapabilityProbeSelfTest(unittest.TestCase):
     def test_rejects_malformed_pointer_and_repeated_offset(self) -> None:
         valid = synthetic_serial_report("e1000")
         malformed_pointer = valid.replace("NEXT=0x48", "NEXT=0x42", 1)
-        repeated_offset = valid.replace("OFFSET=0x48", "OFFSET=0x40", 1)
-        for serial in (malformed_pointer, repeated_offset):
-            with self.subTest(serial=serial), self.assertRaises(AssertionError):
-                assert_capability_probe_report(serial, "e1000")
+        with self.assertRaises(AssertionError):
+            assert_capability_probe_report(malformed_pointer, "e1000")
+        repeated_offset = valid.replace("NEXT=0x48", "NEXT=0x40", 1).replace(
+            "OFFSET=0x48", "OFFSET=0x40", 1
+        )
+        with self.assertRaisesRegex(AssertionError, "duplicate capability offset"):
+            assert_capability_probe_report(repeated_offset, "e1000")
+
+    def test_rejects_summary_before_list_state(self) -> None:
+        valid = synthetic_serial_report("e1000", list_present=False)
+        summary = f"{PREFIX}PCI_CAPABILITY_SUMMARY=PM=NONE;PCIE=NONE;MSI=NONE;MSIX=NONE"
+        list_state = f"{PREFIX}PCI_CAPABILITY_LIST_ABSENT"
+        wrong_order = valid.replace(f"{list_state}\n{summary}", f"{summary}\n{list_state}")
+        with self.assertRaisesRegex(AssertionError, "between status and summary"):
+            assert_capability_probe_report(wrong_order, "e1000")
 
     def test_accepts_48_entries_and_rejects_a_49th(self) -> None:
         entries = [(0x7F, 0x40 + index * 4, "UNKNOWN") for index in range(48)]

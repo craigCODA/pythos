@@ -74,6 +74,33 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
                 malformed + "\nPYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE_READY"
             )
 
+    def test_python_oracle_rejects_wrong_ready_order_legacy_net_and_static_operations(self):
+        valid = self.oracle.synthetic_serial_report("e1000", list_present=False)
+        summary = (
+            "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:"
+            "PCI_CAPABILITY_SUMMARY=PM=NONE;PCIE=NONE;MSI=NONE;MSIX=NONE"
+        )
+        list_state = "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:PCI_CAPABILITY_LIST_ABSENT"
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_capability_probe_report(
+                valid.replace(f"{list_state}\n{summary}", f"{summary}\n{list_state}"), "e1000"
+            )
+        with self.assertRaises(AssertionError):
+            self.oracle.assert_runner_args_isolated(
+                ["-nic", "none", "-device", "e1000", "-net", "user"], "e1000"
+            )
+        for fragment in (
+            "bar_read",
+            "register_read",
+            "interrupt_ack",
+            "network_port",
+            "virtio_transport",
+            "wi-fi",
+            "frame_access",
+        ):
+            with self.subTest(fragment=fragment), self.assertRaises(AssertionError):
+                self.oracle.assert_source_text_is_safe(f"fn {fragment}() {{}}")
+
     def test_module_declares_fixed_size_public_parser_contract(self):
         for declaration in (
             "pub const MAX_CAPABILITY_ENTRIES: usize = 48",
