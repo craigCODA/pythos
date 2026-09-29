@@ -52,6 +52,12 @@ KIND_TO_SUMMARY = {
     "MSI": "MSI",
     "MSIX": "MSIX",
 }
+ID_KIND_HEADERS = {
+    0x01: ("POWER_MANAGEMENT", 0x08),
+    0x10: ("PCIE", 0x14),
+    0x05: ("MSI", 0x0A),
+    0x11: ("MSIX", 0x0C),
+}
 HEX64 = re.compile(r"0x[0-9A-F]{16}\Z")
 HEX8 = re.compile(r"0x[0-9A-F]{2}\Z")
 ENTRY_LINE = re.compile(
@@ -155,6 +161,7 @@ READY_VALUE_MARKERS = (
     f"{PREFIX}NETWORK_SUBCLASS=",
     f"{PREFIX}NETWORK_PROG_IF=",
     f"{PREFIX}PCI_CAPABILITIES_STATUS=",
+    f"{PREFIX}PCI_CAPABILITY_POINTER=",
     f"{PREFIX}PCI_CAPABILITY_ENTRY=",
     f"{PREFIX}PCI_CAPABILITY_SUMMARY=",
     f"{PREFIX}PCI_INTERRUPT_METADATA=",
@@ -262,11 +269,12 @@ def validate_capability_entries(entry_lines: list[str]) -> list[dict[str, int | 
     entries = [parse_entry(line) for line in entry_lines]
     offsets: set[int] = set()
     for index, entry in enumerate(entries):
+        identifier = entry["id"]
         offset = entry["offset"]
         next_pointer = entry["next"]
         kind = entry["kind"]
         header_len = entry["header_len"]
-        assert isinstance(offset, int) and isinstance(next_pointer, int)
+        assert isinstance(identifier, int) and isinstance(offset, int) and isinstance(next_pointer, int)
         assert isinstance(kind, str)
         if not 0x40 <= offset <= 0xFC or offset & 0x03:
             raise AssertionError(f"invalid capability offset: 0x{offset:02X}")
@@ -275,15 +283,15 @@ def validate_capability_entries(entry_lines: list[str]) -> list[dict[str, int | 
         offsets.add(offset)
         if next_pointer and (not 0x40 <= next_pointer <= 0xFC or next_pointer & 0x03):
             raise AssertionError(f"invalid capability next pointer: 0x{next_pointer:02X}")
-        if kind == "UNKNOWN":
-            if header_len is not None:
-                raise AssertionError("unknown capability must not claim a header length")
-        else:
-            expected_length = KIND_LENGTHS[kind]
-            if header_len != expected_length:
-                raise AssertionError(f"{kind} header length is not 0x{expected_length:02X}")
-            if offset + expected_length - 1 > 0xFF:
-                raise AssertionError(f"{kind} header crosses PCI configuration space")
+        expected_kind, expected_length = ID_KIND_HEADERS.get(identifier, ("UNKNOWN", None))
+        if (kind, header_len) != (expected_kind, expected_length):
+            raise AssertionError(
+                f"capability ID 0x{identifier:02X} requires "
+                f"{expected_kind}/{('NONE' if expected_length is None else f'0x{expected_length:02X}')}, "
+                f"got {kind}/{('NONE' if header_len is None else f'0x{header_len:02X}')}"
+            )
+        if expected_length is not None and offset + expected_length - 1 > 0xFF:
+            raise AssertionError(f"{kind} header crosses PCI configuration space")
         expected_next = entries[index + 1]["offset"] if index + 1 < len(entries) else 0
         if next_pointer != expected_next:
             raise AssertionError(
@@ -371,6 +379,10 @@ def assert_capability_probe_report(serial: str, network_device: str) -> None:
     if present_count + absent_count != 1:
         raise AssertionError("expected exactly one capability-list state marker")
     list_position = require_exactly_one(serial_lines, present_marker if present_count else absent_marker)
+    pointer_position, pointer_value = require_value(
+        serial_lines, f"{PREFIX}PCI_CAPABILITY_POINTER=", HEX8
+    )
+    pointer = int(pointer_value, 16)
     status = int(status_value, 16)
     if bool(status & (1 << 4)) != bool(present_count):
         raise AssertionError("capability-list status bit and list-state marker disagree")
@@ -387,8 +399,10 @@ def assert_capability_probe_report(serial: str, network_device: str) -> None:
     if len(summary_candidates) != 1:
         raise AssertionError(f"expected exactly one capability summary, found {len(summary_candidates)}")
     summary_position, summary_line = summary_candidates[0]
-    if not status_position < list_position < summary_position:
-        raise AssertionError("capability-list state is not between status and summary")
+    if not status_position < pointer_position < list_position < summary_position:
+        raise AssertionError(
+            "capability pointer/list state is not between status and summary"
+        )
     if SUMMARY_LINE.fullmatch(summary_line) is None:
         raise AssertionError(f"malformed capability summary: {summary_line}")
     if any(ENTRY_LINE.fullmatch(line) is None for _, line in entry_candidates):
@@ -396,6 +410,13 @@ def assert_capability_probe_report(serial: str, network_device: str) -> None:
     if any(not list_position < index < summary_position for index, _ in entry_candidates):
         raise AssertionError("capability entries are outside the bounded traversal section")
     entries = validate_capability_entries([line for _, line in entry_candidates])
+    if present_count:
+        expected_first = entries[0]["offset"] if entries else 0
+        if pointer != expected_first:
+            raise AssertionError(
+                f"raw capability pointer 0x{pointer:02X} does not match first entry "
+                f"0x{expected_first:02X}"
+            )
     summary = parse_summary(summary_line)
     assert_summary_matches_entries(summary, entries)
     if not present_count and (entries or any(value is not None for value in summary.values())):
@@ -503,11 +524,23 @@ def run_probe_boot(network_device: str) -> tuple[str, str]:
     return serial_log.read_text(encoding="utf-8", errors="replace"), output
 
 
-def synthetic_serial_report(network_device: str, entries: list[tuple[int, int, str]] | None = None, *, list_present: bool = True) -> str:
+def synthetic_serial_report(
+    network_device: str,
+    entries: list[tuple[int, int, str]] | None = None,
+    *,
+    list_present: bool = True,
+    capability_pointer: int | None = None,
+) -> str:
     if network_device not in NETWORK_IDENTITIES:
         raise ValueError(f"unsupported network device: {network_device}")
     if entries is None:
         entries = [(0x01, 0x40, "POWER_MANAGEMENT"), (0x10, 0x48, "PCIE"), (0x7F, 0x60, "UNKNOWN")]
+    if not list_present:
+        entries = []
+    if capability_pointer is None:
+        capability_pointer = entries[0][1] if entries else 0
+    if not 0 <= capability_pointer <= 0xFF:
+        raise ValueError(f"capability pointer is not a byte: {capability_pointer}")
     identity = NETWORK_IDENTITIES[network_device]
     status = 0x10 if list_present else 0
     report = [
@@ -526,10 +559,9 @@ def synthetic_serial_report(network_device: str, entries: list[tuple[int, int, s
         f"{PREFIX}NETWORK_PROG_IF={identity['prog_if']}",
         f"{PREFIX}PCI_CONFIG_HEADER_READY",
         f"{PREFIX}PCI_CAPABILITIES_STATUS=0x{status:016X}",
+        f"{PREFIX}PCI_CAPABILITY_POINTER=0x{capability_pointer:02X}",
         f"{PREFIX}{'PCI_CAPABILITY_LIST_PRESENT' if list_present else 'PCI_CAPABILITY_LIST_ABSENT'}",
     ]
-    if not list_present:
-        entries = []
     summary: dict[str, int | None] = {field: None for field in SUMMARY_FIELDS}
     for index, (identifier, offset, kind) in enumerate(entries):
         next_pointer = entries[index + 1][1] if index + 1 < len(entries) else 0
@@ -602,6 +634,14 @@ class NetworkHardwareCapabilityProbeSelfTest(unittest.TestCase):
     def test_absent_list_is_a_successful_bounded_observation(self) -> None:
         assert_capability_probe_report(synthetic_serial_report("e1000", list_present=False), "e1000")
 
+    def test_status_clear_reports_raw_pointer_without_traversing_it(self) -> None:
+        assert_capability_probe_report(
+            synthetic_serial_report(
+                "e1000", list_present=False, capability_pointer=0xA5
+            ),
+            "e1000",
+        )
+
     def test_recognized_and_unknown_entries_follow_the_production_grammar(self) -> None:
         entries = [
             (0x01, 0x40, "POWER_MANAGEMENT"),
@@ -611,6 +651,26 @@ class NetworkHardwareCapabilityProbeSelfTest(unittest.TestCase):
             (0x7F, 0x74, "UNKNOWN"),
         ]
         assert_capability_probe_report(synthetic_serial_report("e1000e", entries), "e1000e")
+
+    def test_rejects_identifier_kind_mismatches(self) -> None:
+        mismatches = (
+            (0x01, "PCIE"),
+            (0x10, "MSI"),
+            (0x05, "MSIX"),
+            (0x11, "POWER_MANAGEMENT"),
+            (0x7F, "MSI"),
+            (0x01, "UNKNOWN"),
+        )
+        for identifier, kind in mismatches:
+            with self.subTest(identifier=identifier, kind=kind), self.assertRaises(
+                AssertionError
+            ):
+                assert_capability_probe_report(
+                    synthetic_serial_report(
+                        "e1000e", [(identifier, 0x40, kind)]
+                    ),
+                    "e1000e",
+                )
 
     def test_rejects_malformed_pointer_and_repeated_offset(self) -> None:
         valid = synthetic_serial_report("e1000")

@@ -158,7 +158,7 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
             'mod network_hardware_capability_probe;',
             '#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]\n'
             'mod network_hardware_capability_probe_boot;',
-            '#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]\n'
+            '#[cfg(any(test, feature = "network-hardware-capability-probe"))]\n'
             'mod network_hardware_capability_probe_screen;',
         ):
             with self.subTest(declaration=declaration):
@@ -222,6 +222,7 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
             "NETWORK_PROG_IF=",
             "PCI_CONFIG_HEADER_READY",
             "PCI_CAPABILITIES_STATUS=",
+            "PCI_CAPABILITY_POINTER=",
             "PCI_CAPABILITY_LIST_PRESENT",
             "PCI_CAPABILITY_LIST_ABSENT",
             "PCI_CAPABILITY_ENTRY=ID=",
@@ -255,6 +256,7 @@ class NetworkHardwareCapabilityProbeContractTest(unittest.TestCase):
         ready = self.boot[start:end]
         ready_order = (
             "PCI_CAPABILITIES_STATUS=",
+            "PCI_CAPABILITY_POINTER=",
             "PCI_CAPABILITY_LIST_PRESENT",
             "emit_entries(&snapshot)",
             "emit_summary(&snapshot)",

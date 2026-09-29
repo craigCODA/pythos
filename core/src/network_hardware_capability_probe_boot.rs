@@ -37,6 +37,7 @@ pub fn run(boot_info: &'static PythBootInfo, _physical_memory: &mut PhysicalMemo
             boot_info,
             controller,
             status,
+            capability_pointer,
             interrupt_line,
             interrupt_pin,
             snapshot,
@@ -109,6 +110,7 @@ fn emit_ready(
     boot_info: &'static PythBootInfo,
     controller: NetworkController,
     status: u16,
+    capability_pointer: u8,
     interrupt_line: u8,
     interrupt_pin: u8,
     snapshot: CapabilitySnapshot,
@@ -116,6 +118,10 @@ fn emit_ready(
     serial::write_hex_u64(
         "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:PCI_CAPABILITIES_STATUS=",
         u64::from(status),
+    );
+    emit_byte_marker(
+        "PYTHOS:CORE:NETWORK_HARDWARE_CAPABILITY_PROBE:PCI_CAPABILITY_POINTER=",
+        capability_pointer,
     );
     let list_present = status & (1 << 4) != 0;
     if list_present {

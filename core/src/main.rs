@@ -491,7 +491,7 @@ mod network_hardware_bar_probe_screen;
 mod network_hardware_capability_probe;
 #[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
 mod network_hardware_capability_probe_boot;
-#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
+#[cfg(any(test, feature = "network-hardware-capability-probe"))]
 mod network_hardware_capability_probe_screen;
 mod network_hardware_probe;
 #[cfg(all(not(test), feature = "network-hardware-probe"))]

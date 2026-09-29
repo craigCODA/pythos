@@ -243,4 +243,29 @@ mod tests {
         assert_eq!(lines[2].as_str(), Some("status 0010"));
         assert_eq!(lines[3].as_str(), Some("irq line pin 0B 01"));
     }
+
+    #[test]
+    fn line_text_is_truncated_at_the_fixed_48_byte_capacity() {
+        let mut line = Line::new();
+        let expected = "123456789012345678901234567890123456789012345678";
+
+        line.text(expected);
+        line.text("overflow");
+
+        assert_eq!(line.len, MAX_BYTES);
+        assert_eq!(line.as_str(), Some(expected));
+    }
+
+    #[test]
+    fn push_stops_at_the_fixed_12_line_capacity() {
+        let mut lines = [Line::new(); MAX_LINES];
+        let mut count = 0;
+
+        for _ in 0..=MAX_LINES {
+            push(&mut lines, &mut count, "bounded");
+        }
+
+        assert_eq!(count, MAX_LINES);
+        assert!(lines.iter().all(|line| line.as_str() == Some("bounded")));
+    }
 }
