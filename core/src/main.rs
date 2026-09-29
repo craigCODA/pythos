@@ -11,6 +11,7 @@
             feature = "network-hardware-bar-probe",
             feature = "network-hardware-register-probe",
             feature = "network-hardware-register-enable-probe",
+            feature = "network-hardware-capability-probe",
             feature = "usb-xhci-probe",
             feature = "virtio-net-probe",
             feature = "network-port-probe",
@@ -120,6 +121,38 @@ compile_error!("network hardware register probe is an isolated diagnostic featur
     )
 ))]
 compile_error!("network hardware register enable probe is an isolated diagnostic feature");
+#[cfg(any(
+    all(
+        feature = "normal-session",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(feature = "verify", feature = "network-hardware-capability-probe"),
+    all(
+        feature = "hardware-probe",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(
+        feature = "usb-xhci-probe",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(
+        feature = "network-hardware-probe",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(
+        feature = "network-hardware-bar-probe",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(
+        feature = "network-hardware-register-probe",
+        feature = "network-hardware-capability-probe"
+    ),
+    all(
+        feature = "network-hardware-register-enable-probe",
+        feature = "network-hardware-capability-probe"
+    )
+))]
+compile_error!("network hardware capability probe is an isolated diagnostic feature");
 #[cfg(all(feature = "socket-api-probe", feature = "socket-api-denied-probe"))]
 compile_error!("features `socket-api-probe` and `socket-api-denied-probe` are mutually exclusive");
 #[cfg(all(
@@ -454,6 +487,12 @@ mod network_hardware_bar_probe;
 mod network_hardware_bar_probe_boot;
 #[cfg(any(test, feature = "network-hardware-bar-probe"))]
 mod network_hardware_bar_probe_screen;
+#[cfg(any(test, feature = "network-hardware-capability-probe"))]
+mod network_hardware_capability_probe;
+#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
+mod network_hardware_capability_probe_boot;
+#[cfg(any(test, feature = "network-hardware-capability-probe"))]
+mod network_hardware_capability_probe_screen;
 mod network_hardware_probe;
 #[cfg(all(not(test), feature = "network-hardware-probe"))]
 mod network_hardware_probe_boot;
@@ -809,6 +848,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     network_hardware_register_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
     network_hardware_register_enable_probe_boot::run(boot_info, &mut physical_memory);
+    #[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
+    network_hardware_capability_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "usb-xhci-probe"))]
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
 

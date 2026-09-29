@@ -98,6 +98,7 @@ jobs:
           cargo test -p pythos-core --no-default-features --features network-hardware-bar-probe
           cargo test -p pythos-core --no-default-features --features network-hardware-register-probe
           cargo test -p pythos-core --no-default-features --features network-hardware-register-enable-probe
+          cargo test -p pythos-core --no-default-features --features network-hardware-capability-probe
           cargo test -p pythos-core pyth_service_supervisor
           cargo test -p pythc
           cargo test -p pythos-user-pyth-runtime
@@ -162,6 +163,7 @@ jobs:
           cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-bar-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-register-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-register-enable-probe -- -D warnings
+          cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-capability-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features verify,sdhci-emmc-backend -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features session-input-bridge-probe -- -D warnings
           cargo clippy -p pythos-core --target x86_64-unknown-none --features link-layer-probe -- -D warnings
@@ -214,6 +216,7 @@ jobs:
           python -m py_compile scripts/test-network-hardware-bar-probe.py tests/test_network_hardware_bar_probe.py
           python -m py_compile scripts/test-network-hardware-register-probe.py tests/test_network_hardware_register_probe.py
           python -m py_compile scripts/test-network-hardware-register-enable-probe.py tests/test_network_hardware_register_enable_probe.py
+          python -m py_compile scripts/test-network-hardware-capability-probe.py tests/test_network_hardware_capability_probe.py
 
       - name: Python harness tests
         run: |
@@ -233,6 +236,7 @@ jobs:
           python -m unittest tests.test_network_hardware_bar_probe
           python -m unittest tests.test_network_hardware_register_probe
           python -m unittest tests.test_network_hardware_register_enable_probe
+          python -m unittest tests.test_network_hardware_capability_probe
           python -m pytest tests/test_virtio_net.py -q
 
       - name: QEMU milestone acceptance
@@ -289,6 +293,8 @@ jobs:
           python scripts/test-network-hardware-register-probe.py
           python scripts/test-network-hardware-register-enable-probe.py --self-test
           python scripts/test-network-hardware-register-enable-probe.py
+          python scripts/test-network-hardware-capability-probe.py --self-test
+          python scripts/test-network-hardware-capability-probe.py
 
       - name: PythTIG physical evidence tooling
         run: |

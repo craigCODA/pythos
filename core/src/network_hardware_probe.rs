@@ -229,6 +229,22 @@ pub fn read_controller_command_status(controller: NetworkController) -> u32 {
     )
 }
 
+#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
+pub(crate) fn read_controller_config_dword(controller: NetworkController, offset: u8) -> u32 {
+    read_config_u32(
+        controller.bus,
+        controller.device,
+        controller.function,
+        offset,
+    )
+}
+
+#[cfg(all(not(test), feature = "network-hardware-capability-probe"))]
+pub(crate) fn read_controller_config_byte(controller: NetworkController, offset: u8) -> u8 {
+    let dword = read_controller_config_dword(controller, offset & 0xFC);
+    ((dword >> ((offset & 0x03) * 8)) & 0xFF) as u8
+}
+
 #[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
 pub fn write_controller_command_word(controller: NetworkController, command: u16) {
     write_config_u16(
