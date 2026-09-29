@@ -95,20 +95,43 @@ physical Wi-Fi probe, or hosted/remote ICMP or UDP evidence is claimed.
 
 ## Current Phase 15 Opening Slice
 
-Phase 15 has started with [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md),
-a dedicated `network-hardware-probe` profile for read-only PCI network-controller
-identity. It is deliberately separate from the storage `hardware-probe` and
-does not alter `VirtioTransport`, the transport adapter, `NetworkPort`, or the
-Phase 14 ABI. QEMU `e1000` and `e1000e` both pass the exact one-controller
-identity proof with `-nic none`; the probe emits serial and framebuffer
-identity evidence and then halts. A physical boot on the Lenovo `81VS` also
-reached the terminal framebuffer and reported one controller at BDF `02:00.0`,
-vendor/device `10EC:C82F`, subsystem `17AA:C02F`, and class/subclass/prog-if
-`02/80/00`. The target-specific result is recorded in
-[the physical evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
-No Ethernet/Wi-Fi datapath or physical hardware support is claimed. Lenovo
-Wi-Fi behavior, firmware, BAR/MMIO, DMA, interrupts, controller ownership, and
-later hardware slices remain deferred.
+Phase 15 has accepted the identity slice under [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md)
+and the bounded BAR-layout slice under [ADR 0106](decisions/0106-phase-15-network-hardware-bar-layout-probe.md).
+The separate `network-hardware-bar-probe` profile reads only the six standard
+PCI configuration BAR fields after identity discovery. QEMU `e1000` and
+`e1000e` pass the exact oracle. The Lenovo `81VS` observation recorded BDF
+`02:00:00`, vendor/device `10EC:C82F`, BAR0 I/O base `0x1000`, and BAR2
+`MEM64` base `0x00000000E8A00000`; the full photo and artifact hashes are in
+[`docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md`](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+The probe remains configuration-read-only and does not alter `VirtioTransport`,
+the transport adapter, `NetworkPort`, or the Phase 14 ABI. No BAR mapping or
+dereference, MMIO, Ethernet/Wi-Fi datapath, firmware, DMA, interrupts,
+controller ownership, or later hardware support is claimed.
+
+The accepted bounded slice is governed by [ADR 0107](decisions/0107-phase-15-network-hardware-register-reachability.md)
+and its [implementation plan](superpowers/plans/2026-09-24-phase-15-network-hardware-register-reachability.md).
+The opt-in `network-hardware-register-probe` requires PCI Memory Space Enable
+to be already set, maps one cache-disabled/NX 4 KiB memory-BAR window, and
+performs one fixed 32-bit status read and renders the bounded result on the
+framebuffer. QEMU `e1000` and `e1000e` passed. The Lenovo `81VS` boot found
+`10EC:C82F` at BDF `02:00:00` with command/status `0x00100000`; Memory Space
+Enable was clear, so the probe safely skipped the MMIO read. The prepared ISO is
+`target/pythos-phase15-network-hardware-register-probe-20260924.iso` with
+SHA-256 `9D2597044B4E120A375257A9F652BE836299F065DD6902310ACE56B06D262CE7`.
+Copy it to `F:\iso` under that unique name and preserve the existing images.
+No PCI/MMIO writes, device enablement, bus mastering, reset, firmware,
+interrupts, DMA, queues, packets, or Ethernet/Wi-Fi operation are included.
+See the [physical register-probe evidence](evidence/2026-09-24-phase-15-network-hardware-register-reachability.md).
+
+ADR 0108 is accepted after the corrected Lenovo run. The physical framebuffer
+recorded `0x00100000` → `0x00100002`, fixed register value `0x300034DB`,
+restored `0x00100000`, and `no bus master`; the photo and hashes are in
+[`docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md`](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
+The first Lenovo attempt stayed violet because the initial enable path reused
+ADR 0107's MSE-disabled skip policy; that correction and its verified QEMU
+gates are recorded in the linked correction evidence. The tested ISO remains
+at `F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso`
+with SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
 
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
@@ -1415,12 +1438,13 @@ ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
 The accepted Phase 14 stopping point remains the bounded secure-transport
 proof recorded under ADR 0104. It does not establish production TLS, update
 authenticity, physical networking, or a generalized socket/TLS service. The
-accepted Phase 15 opening boundary is the read-only PCI network-identity probe
-under ADR 0105. Its target-specific physical identity observation is recorded
-in [the 2026-09-24 evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
-That observation does not establish physical networking, Lenovo Wi-Fi
-operation, controller operation, or later hardware support; subsequent Phase 15
-expansion remains separately authorized.
+accepted Phase 15 opening boundary now includes the read-only PCI
+network-identity, BAR-layout, register-reachability, and bounded MSE
+observations under ADRs 0105-0108. The
+Lenovo evidence is target-specific configuration metadata; it does not
+establish physical networking, Lenovo Wi-Fi, controller operation beyond the
+bounded observation, or later hardware support. Subsequent Phase 15 expansion
+remains separately authorized.
 The current PythTIG stop
 boundary is Phase 7 -> later PythTIG phases.
 `docs/ROADMAP.md`, `docs/ROADMAP-LATER-PHASES.md`, and

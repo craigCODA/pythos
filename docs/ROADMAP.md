@@ -77,20 +77,36 @@ red run 35176094046 is superseded.
 
 ## Current Phase 15 Opening Slice
 
-Phase 15 has started with the dedicated read-only PCI network identity probe
-recorded in [ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md).
-The opt-in `network-hardware-probe` profile is separate from the existing
-storage `hardware-probe`: it scans PCI configuration identity only, renders a
-bounded serial/framebuffer report, and halts. QEMU `e1000` and `e1000e` each
-report exactly one expected Ethernet controller with `-nic none` suppressing
-QEMU's implicit NIC. The same image was then booted on the Lenovo `81VS`,
-where it reported one controller at BDF `02:00.0`, vendor/device `10EC:C82F`,
-subsystem `17AA:C02F`, and class/subclass/programming interface `02/80/00`.
-The physical observation is recorded in
-[the evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
-This remains an identity proof, not Ethernet or Wi-Fi support. Lenovo Wi-Fi
-operation, firmware, BAR/MMIO reachability, DMA, interrupts, controller
-ownership, and all later hardware work remain deferred.
+Phase 15 has accepted the dedicated read-only PCI network identity probe under
+[ADR 0105](decisions/0105-phase-15-network-hardware-identity-probe.md) and the
+follow-up BAR-layout probe under
+[ADR 0106](decisions/0106-phase-15-network-hardware-bar-layout-probe.md). The
+separate `network-hardware-bar-probe` profile reads only the six standard PCI
+configuration BAR fields after identity discovery. QEMU `e1000` and `e1000e`
+pass the bounded oracle; the Lenovo `81VS` observation recorded `02:00:00`,
+`10EC:C82F`, BAR0 I/O base `0x1000`, and BAR2 `MEM64` base
+`0x00000000E8A00000`. This is configuration metadata only, not BAR reachability
+or controller operation. Lenovo Wi-Fi, firmware, BAR mapping/MMIO, DMA,
+interrupts, controller ownership, and all later hardware work remain deferred.
+See the [physical evidence record](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+
+The accepted slice is the read-only register-reachability probe under
+[ADR 0107](decisions/0107-phase-15-network-hardware-register-reachability.md).
+It has passed the synthetic and QEMU `e1000`/`e1000e` gates, including fixed
+status reads at offset `0x08` and framebuffer result rendering. The Lenovo
+`81VS` observation found `10EC:C82F` at `02:00:00` with Memory Space Enable
+clear and therefore produced the accepted `PCI_MEMORY_SPACE_DISABLED` safe
+skip before the guarded `0x00F4` read. It does not authorize controller
+operation, packet movement, DMA, interrupts, firmware, or generalized MMIO.
+
+ADR 0108 is accepted. The corrected Lenovo run recorded MSE
+`0x00100000` → `0x00100002`, fixed register value `0x300034DB`, restored
+`0x00100000`, and `no bus master`. The first Lenovo attempt stayed violet
+because the initial path reused the read-only MSE-disabled discovery skip; the
+correction now uses an enable-aware discovery policy and renders safe skips.
+QEMU `e1000`/`e1000e`, full Rust tests, focused Python tests, bare-metal build,
+clippy, prior probe oracles, and the physical restoration evidence are green.
+No physical NIC/Wi-Fi operation or later networking scope is claimed.
 
 ## Accepted PythTIG Program Boundary
 

@@ -44,6 +44,42 @@ multiqueue/offloads, multiple consumers or packet distribution, zero-copy,
 persistent state, or PythTIG changes. Phase 15 physical hardware expansion
 remains separate.
 
+Phase 15's accepted BAR-layout slice is recorded under
+[ADR 0106](docs/decisions/0106-phase-15-network-hardware-bar-layout-probe.md).
+The opt-in `network-hardware-bar-probe` reads only the selected controller's
+PCI configuration BAR fields. QEMU `e1000` and `e1000e` pass the bounded oracle,
+and the Lenovo `81VS` observation recorded BDF `02:00:00`, vendor/device
+`10EC:C82F`, BAR0 I/O base `0x1000`, and BAR2 `MEM64` base
+`0x00000000E8A00000`. This is configuration metadata only: it does not claim
+BAR reachability, MMIO, Ethernet or Wi-Fi operation, DMA, interrupts, firmware,
+controller ownership, or generalized physical-hardware support. See the
+[Phase 15 evidence record](docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md).
+
+The accepted register-reachability slice is governed by [ADR 0107](docs/decisions/0107-phase-15-network-hardware-register-reachability.md).
+`network-hardware-register-probe` reads PCI command status, requires Memory
+Space Enable to already be set, maps one validated 4 KiB BAR window, and reads
+one fixed status register: `0x08` for QEMU `e1000`/`e1000e`, or `0x00F4` for
+the Lenovo `10EC:C82F` target. QEMU passed with values `0x80080783` and
+`0x00080283`, and the framebuffer result panel is part of the oracle. The
+Lenovo `81VS` boot found `10EC:C82F` at BDF `02:00:00` with command/status
+`0x00100000`; Memory Space Enable was clear, so the probe safely skipped the
+MMIO read. The prepared image is
+`target/pythos-phase15-network-hardware-register-probe-20260924.iso` with
+SHA-256 `9D2597044B4E120A375257A9F652BE836299F065DD6902310ACE56B06D262CE7`;
+copy it to `F:\iso` under that unique name without removing existing images.
+This remains read-only and does not claim physical NIC/Wi-Fi support, packet
+movement, DMA, interrupts, controller operation, or a generalized MMIO layer.
+See the [physical safe-skip evidence](docs/evidence/2026-09-24-phase-15-network-hardware-register-reachability.md).
+
+The bounded MSE experiment is accepted under
+[ADR 0108](docs/decisions/0108-phase-15-pci-memory-space-enable-experiment.md):
+the corrected Lenovo run recorded `0x00100000` → `0x00100002`, fixed register
+value `0x300034DB`, restored `0x00100000`, and `no bus master`. The first
+Lenovo attempt stayed violet because the initial implementation reused the
+read-only MSE-disabled skip policy; that correction is recorded in [the
+correction evidence](docs/evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md).
+See the [physical acceptance record](docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
+
 The bounded UDP datagram proof is accepted locally under
 [ADR 0100](docs/decisions/0100-phase-14-udp-datagram-consumer.md). At Task 6
 commit `4dc5679`, the opt-in consumer completed exactly ARP request, ARP reply,
@@ -436,9 +472,15 @@ Current-state references:
 - [ADR 0088: USB xHCI recurring boot-mouse probe](docs/decisions/0088-usb-xhci-recurring-boot-mouse-probe.md)
 - [ADR 0089: Viewing input routing foundation](docs/decisions/0089-viewing-input-routing-foundation.md)
 - [ADR 0105: Phase 15 network-hardware identity probe](docs/decisions/0105-phase-15-network-hardware-identity-probe.md)
+- [ADR 0106: Phase 15 network-hardware BAR-layout probe](docs/decisions/0106-phase-15-network-hardware-bar-layout-probe.md)
+- [ADR 0107: Phase 15 network-hardware register-reachability probe](docs/decisions/0107-phase-15-network-hardware-register-reachability.md)
+- [ADR 0108: Phase 15 PCI Memory-Space-Enable experiment](docs/decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
 - [Physical ADR 0087 boot-mouse decode report](docs/evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [Physical ADR 0088 recurring boot-mouse report](docs/evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [2026-09-24 Phase 15 Lenovo network-identity evidence](docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md)
+- [2026-09-24 Phase 15 Lenovo network BAR-layout evidence](docs/evidence/2026-09-24-phase-15-network-hardware-bar-layout.md)
+- [2026-09-24 Phase 15 Lenovo register-reachability evidence](docs/evidence/2026-09-24-phase-15-network-hardware-register-reachability.md)
+- [2026-09-25 Phase 15 PCI Memory-Space-Enable evidence](docs/evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md)
 - [Linux Mint field kit](docs/linux-mint-field-kit.md)
 - [Semantic checkpoint contract](docs/semantic-checkpoint-contract.md)
 - [PythTIG acceptance](docs/pyth-tig/ACCEPTANCE.md)

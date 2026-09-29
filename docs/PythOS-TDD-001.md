@@ -1,10 +1,35 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
 Status: Accepted boot-core design and cumulative acceptance reference. Phase
-15's opening read-only PCI network-identity probe is merged and physically
-observed on the Lenovo `81VS`; see
+15's bounded PCI identity, BAR-layout, register-reachability, and
+Memory-Space-Enable observation slices are accepted under ADRs 0105-0108; see
 [ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
-[HANDOVER.md](HANDOVER.md) for current scope and merged acceptance evidence.
+[HANDOVER.md](HANDOVER.md) for current scope and acceptance evidence.
+
+The current Phase 15 BAR-layout slice uses a separate
+`network-hardware-bar-probe` profile. It reads only standard PCI configuration
+BAR fields after the network-controller identity scan. Its QEMU and Lenovo
+evidence record configuration metadata, not BAR reachability, MMIO, device
+register access, Ethernet/Wi-Fi operation, DMA, interrupts, firmware, or
+controller ownership. The existing boot handoff and Phase 14 `VirtioTransport`,
+transport adapter, `NetworkPort`, and PythTIG contracts remain unchanged.
+
+ADR 0107 adds the separate `network-hardware-register-probe` profile. It reads
+PCI command status without writing it, requires Memory Space Enable to have
+already been set, maps one validated cache-disabled/NX 4 KiB memory window, and
+performs one fixed volatile status read and renders the bounded result panel on
+the framebuffer. QEMU `e1000`/`e1000e` passed the `0x08` read. The Lenovo
+`81VS` observation found `10EC:C82F` at BDF `02:00:00` with Memory Space Enable
+clear and therefore took the safe-skip branch before the target `0x00F4` read.
+This does not claim physical NIC/Wi-Fi operation or a generalized MMIO abstraction.
+
+ADR 0108 is accepted as a separate opt-in profile for one low-16-bit PCI
+Command-register MSE set/read/restore around that same fixed register
+observation. The corrected Lenovo run recorded `0x00100000` → `0x00100002`,
+fixed register value `0x300034DB`, restored `0x00100000`, and `no bus master`.
+The first attempt exposed a control-path defect and its correction is recorded
+in the [correction evidence](evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md);
+the physical result is in the [Lenovo acceptance record](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
 ## Required EFI Partition Structure
 
@@ -157,7 +182,7 @@ through ADRs 0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092.
 Slice 5 is implemented and locally accepted under ADR 0093: default normal boot
 uses the retained session, interrupt-backed waiting, and one-way recovery-shell
 fallback. Phase 14's bounded networking proofs through ADR 0104 and Phase 15's
-opening read-only PCI network-identity probe under ADR 0105 are now merged.
+bounded PCI observation slices through ADR 0108 are now merged.
 The Phase 15 probe also has target-specific Lenovo evidence recorded in
 `docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. These records
 do not authorize Wi-Fi operation, controller ownership, firmware, BAR/MMIO,

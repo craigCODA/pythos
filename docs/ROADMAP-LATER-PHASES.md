@@ -39,9 +39,9 @@ Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
                               ADRs 0092-0093
 Phase 14 accepted locally              bounded secure-transport proof through
                                       ADR 0104; current stopping point
-Phase 15 opening slice accepted in QEMU and physically observed
-                                       dedicated PCI network identity probe,
-                                       ADR 0105; hardware expansion continues
+Phase 15 opening slices accepted locally  PCI identity, BAR layout, register
+                                       reachability, and bounded MSE experiment;
+                                       ADRs 0105-0108; hardware expansion continues
 ```
 
 Phase 14 has locally accepted bounded proofs through secure transport under
@@ -54,17 +54,15 @@ one `QEMU_OUTCOME success` and clean artifacts. This bounded proof is Phase
 physical networking, or a generalized socket/TLS service. See the [current
 roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
 [handover](HANDOVER.md) for exact local evidence and scope. The separately
-accepted Phase 15 opening identity slice is the read-only PCI network-identity
-probe under ADR 0105. It passed the QEMU `e1000`/`e1000e` oracle and was
-physically observed on the Lenovo `81VS` with one controller at BDF `02:00.0`,
-vendor/device `10EC:C82F`, subsystem `17AA:C02F`, and class/subclass/prog-if
-`02/80/00`. The target-specific observation is recorded in
-[the physical evidence note](evidence/2026-09-24-phase-15-lenovo-network-identity.md).
-It does not establish physical networking, Lenovo Wi-Fi operation, controller
-operation, or later hardware support. Later Phase 15 expansion and Phases 16-17
-remain separately invoked work.
+accepted Phase 15 slices are the bounded PCI network observations under ADRs
+0105-0108. They include identity, BAR configuration metadata, one fixed
+register observation, and the temporary Memory Space Enable set/read/restore
+experiment. The Lenovo results remain target-specific evidence; they do not
+establish physical networking, Lenovo Wi-Fi, controller operation, firmware,
+DMA, interrupts, or later hardware support. Later Phase 15 expansion and
+Phases 16-17 remain separately invoked work.
 
-ADRs are allocated through 0105 in this checkout. Check `docs/decisions/` and
+ADRs are allocated through 0108 in this checkout. Check `docs/decisions/` and
 in-progress branches before allocating another number.
 
 ---
@@ -246,10 +244,12 @@ destination and port, but is still denied without the grant.
 
 ## Phase 15: Hardware Driver Expansion
 
-The Phase 15 opening identity slice is complete. Its QEMU and Lenovo physical
-evidence only establish bounded, read-only PCI identity. The next hardware
-slice requires a separate scope decision before any BAR/register reachability,
-controller ownership, firmware, DMA, interrupt, or Wi-Fi behavior is attempted.
+The Phase 15 opening sequence through ADR 0108 is complete. Its QEMU and
+Lenovo physical evidence establish bounded PCI identity, BAR layout,
+register-reachability, and one reversible Memory-Space-Enable observation.
+These slices do not claim controller ownership, firmware, DMA, interrupt,
+packet, Ethernet, or Wi-Fi behavior. The next hardware slice requires a
+separate scope decision before any broader operation is attempted.
 
 ### Purpose
 

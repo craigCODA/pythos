@@ -1,10 +1,22 @@
 //! Probe-only PCI network-controller identity evidence.
 //!
-//! This is intentionally separate from the storage hardware probe. It reads
-//! PCI configuration space only, reports bounded identity evidence, and never
-//! maps or operates a network controller.
+//! This is intentionally separate from the storage hardware probe. It reports
+//! bounded identity evidence and exposes only the feature-gated PCI command
+//! word write required by ADR 0108; no general network-controller operation is
+//! provided here.
 
-#![cfg_attr(any(test, not(feature = "network-hardware-probe")), allow(dead_code))]
+#![cfg_attr(
+    any(
+        test,
+        not(any(
+            feature = "network-hardware-probe",
+            feature = "network-hardware-bar-probe",
+            feature = "network-hardware-register-probe",
+            feature = "network-hardware-register-enable-probe"
+        ))
+    ),
+    allow(dead_code)
+)]
 
 #[cfg(not(test))]
 use crate::serial;
@@ -20,6 +32,8 @@ const PCI_CLASS_REVISION_OFFSET: u8 = 0x08;
 const PCI_HEADER_TYPE_OFFSET: u8 = 0x0C;
 const PCI_BUS_NUMBERS_OFFSET: u8 = 0x18;
 const PCI_SUBSYSTEM_VENDOR_DEVICE_OFFSET: u8 = 0x2C;
+const PCI_BAR0_OFFSET: u8 = 0x10;
+const PCI_COMMAND_STATUS_OFFSET: u8 = 0x04;
 const PCI_CLASS_NETWORK: u8 = 0x02;
 const PCI_SUBCLASS_ETHERNET: u8 = 0x00;
 const PCI_CLASS_BRIDGE: u8 = 0x06;
@@ -190,6 +204,43 @@ pub fn run_probe() -> NetworkProbeReport {
 }
 
 #[cfg(not(test))]
+pub fn read_controller_bar_dwords(controller: NetworkController) -> [u32; 6] {
+    let mut raw = [0; 6];
+    let mut slot = 0;
+    while slot < raw.len() {
+        raw[slot] = read_config_u32(
+            controller.bus,
+            controller.device,
+            controller.function,
+            PCI_BAR0_OFFSET + (slot as u8 * 4),
+        );
+        slot += 1;
+    }
+    raw
+}
+
+#[cfg(not(test))]
+pub fn read_controller_command_status(controller: NetworkController) -> u32 {
+    read_config_u32(
+        controller.bus,
+        controller.device,
+        controller.function,
+        PCI_COMMAND_STATUS_OFFSET,
+    )
+}
+
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+pub fn write_controller_command_word(controller: NetworkController, command: u16) {
+    write_config_u16(
+        controller.bus,
+        controller.device,
+        controller.function,
+        PCI_COMMAND_STATUS_OFFSET,
+        command,
+    );
+}
+
+#[cfg(not(test))]
 fn scan_bus(bus: u8, visited: &mut [bool; 256], report: &mut NetworkProbeReport) {
     if visited[usize::from(bus)] {
         return;
@@ -266,6 +317,19 @@ fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     inl(PCI_CONFIG_DATA)
 }
 
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+fn write_config_u16(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    outl(
+        PCI_CONFIG_ADDRESS,
+        0x8000_0000
+            | (u32::from(bus) << 16)
+            | (u32::from(device) << 11)
+            | (u32::from(function) << 8)
+            | u32::from(offset & 0xFC),
+    );
+    outw(PCI_CONFIG_DATA + u16::from(offset & 0x02), value);
+}
+
 #[cfg(not(test))]
 fn outl(port: u16, value: u32) {
     // SAFETY: the dedicated probe supplies only the PCI configuration address
@@ -294,6 +358,21 @@ fn inl(port: u16) -> u32 {
         );
     }
     value
+}
+
+#[cfg(all(not(test), feature = "network-hardware-register-enable-probe"))]
+fn outw(port: u16, value: u16) {
+    // SAFETY: the caller supplies only PCI configuration-data port 0xCFC plus
+    // the command-word lane at offset 0x04; the probe runs before interrupts
+    // or other code can compete for the legacy configuration mechanism.
+    unsafe {
+        asm!(
+            "out dx, ax",
+            in("dx") port,
+            in("ax") value,
+            options(nomem, nostack, preserves_flags)
+        );
+    }
 }
 
 #[cfg(not(test))]

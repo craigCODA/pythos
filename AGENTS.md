@@ -81,16 +81,27 @@ universal-device work.
 
 ## Active Milestone
 
-Phase 15's opening read-only PCI network-identity slice is merged through PR #30
-at `b89b406bbcab3bd2a48e0ef27935dc3656ad71d2`. QEMU `e1000`/`e1000e`
-acceptance is green, and the dedicated image was physically observed on the
-Lenovo `81VS` with target-specific identity evidence recorded in
-`docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. The active
-boundary is now the evidence-backed stopping point: do not infer Wi-Fi
-operation, firmware, BAR/MMIO reachability, DMA, interrupts, controller
-ownership, frame movement, or generalized hardware support from this result.
-Any follow-up hardware slice requires explicit owner invocation and its own
-scope, plan, tests, and evidence.
+The active owner-invoked milestone is Phase 15's bounded network-hardware
+observation. The opening read-only PCI network-identity slice is merged through
+PR #30 at `b89b406bbcab3bd2a48e0ef27935dc3656ad71d2`, with target-specific
+Lenovo `81VS` evidence recorded in
+`docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`.
+
+The active continuation in `agent/phase15-pci-bar-snapshot` includes the
+accepted read-only BAR-layout observation under ADR 0106, the fixed-register
+reachability probe under ADR 0107, and the bounded PCI Memory Space Enable
+experiment under ADR 0108. The register slice may map one validated 4 KiB
+window with cache-disabled, NX pages. The enable experiment may temporarily
+set only PCI Memory Space Enable, perform the approved one-register read, and
+restore the original command word. It never sets bus mastering, resets,
+uses firmware, enables interrupts, allocates DMA, configures queues, moves
+packets, or claims Ethernet/Wi-Fi operation.
+
+The Lenovo evidence records the accepted safe-skip and corrected
+enable/read/restore results. Preserve the PythOS architectural names
+`VirtioTransport`, transport adapter, and `NetworkPort`; these slices do not
+alter the Phase 14 ABI or PythTIG. Any later controller operation or network
+behavior requires a separate owner-invoked ADR.
 
 The following is a completed historical Slice 3-4 checkpoint, not the active
 invocation:
@@ -475,16 +486,12 @@ The Phase 12 `path-adversarial-suite` slice records ADR 0072, reuses the ADR 007
 
 Milestone 1.5, Phase 2, Phase 3, Phase 4, Phase 5, Phase 6, Phase 7, Phase 8, Phase 9, Phase 10, Phase 12, and Phase 13 are complete through `PYTHOS:CORE:PHASE_13_COMPLETE`. ADR 0044 records the Phase 10 journaled allocator format and ADR 0045 records the fragmentation/compaction policy. Phase 11 physical-hardware smoke-test findings are recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`; that is target-specific evidence, not generic hardware support. Phase 12 `path-vs-graph-decision` is recorded through ADR 0069 and `docs/semantic-checkpoint-contract.md`; Phase 12 `path-resolution` is recorded through ADR 0070 and `PYTHOS:CORE:OBJECT_LOCATOR_RESOLUTION_READY`; ADR 0071 records the finite loader read-bound increase required by the Slice 2 debug acceptance image; Phase 12 `path-adversarial-suite` is recorded through ADR 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`; Phase 13 package lifecycle and schema extensibility are recorded through ADR 0073 and `PYTHOS:CORE:PHASE_13_COMPLETE`.
 
-Phase 13.5 Slices 1 and 2 are accepted in opt-in QEMU profiles through ADRs
-0090 and 0091. Slices 3 and 4 are locally accepted under ADR 0092; Slice 5 is
-locally accepted under ADR 0093 as described under Active Milestone. These are
-completed historical checkpoints. Phase 14's bounded networking proofs through
-ADR 0104 and Phase 15's opening read-only PCI identity probe through ADR 0105
-are merged; the latter also has target-specific Lenovo evidence in
-`docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`. Any later
-hardware expansion still requires explicit owner invocation. This does not
-authorize Wi-Fi operation, controller ownership, updates, AI, SMP, or later
-PythTIG work.
+Phase 13.5 Slices 1 through 5 are historical accepted work under ADRs
+0090-0093. Phase 14 is accepted through ADR 0104. Phase 15 identity is merged
+under ADR 0105; the active continuation records bounded BAR layout, register
+reachability, and PCI Memory Space Enable observations under ADRs 0106-0108.
+These records do not authorize Wi-Fi, controller operation, networking
+datapaths, updates, AI, SMP, or later PythTIG work.
 
 For `vm-ready`, PythCore builds and owns replacement page tables, switches `CR3` a second time, removes the broad loader identity mapping from active translation, keeps the first 2 MiB unmapped, preserves W^X kernel mappings, retains framebuffer and COM1 access, keeps boot information and the memory map accessible, retains a guarded active kernel stack, and emits `PYTHOS:CORE:VM_READY` only after post-switch validation. The follow-up `identity-map-removed` proof deliberately reads from an address that should only have been reachable through the old broad identity map, recovers from the expected page fault, and emits `PYTHOS:CORE:IDENTITY_MAP_REMOVED`. Loader page-table frames are not reclaimed in this slice.
 
