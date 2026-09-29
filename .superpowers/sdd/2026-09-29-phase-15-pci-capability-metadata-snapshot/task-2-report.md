@@ -73,6 +73,4 @@ green.
 
 ## Commit
 
-- `7c23155` initially created the Task 2 implementation.
-- The final amended commit ID is reported by Git after the required ignored
-  report file is added.
+- `079401ad` is the final Task 2 implementation commit.
