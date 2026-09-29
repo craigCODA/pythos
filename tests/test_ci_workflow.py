@@ -116,18 +116,22 @@ class CiWorkflowTest(unittest.TestCase):
         "cargo test -p pythos-core --no-default-features --features network-hardware-bar-probe",
         "cargo test -p pythos-core --no-default-features --features network-hardware-register-probe",
         "cargo test -p pythos-core --no-default-features --features network-hardware-register-enable-probe",
+        "cargo test -p pythos-core --no-default-features --features network-hardware-capability-probe",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-probe -- -D warnings",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-bar-probe -- -D warnings",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-register-probe -- -D warnings",
         "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-register-enable-probe -- -D warnings",
+        "cargo clippy -p pythos-core --target x86_64-unknown-none --no-default-features --features network-hardware-capability-probe -- -D warnings",
         "python -m py_compile scripts/test-network-hardware-probe.py tests/test_network_hardware_probe.py",
         "python -m py_compile scripts/test-network-hardware-bar-probe.py tests/test_network_hardware_bar_probe.py",
         "python -m py_compile scripts/test-network-hardware-register-probe.py tests/test_network_hardware_register_probe.py",
         "python -m py_compile scripts/test-network-hardware-register-enable-probe.py tests/test_network_hardware_register_enable_probe.py",
+        "python -m py_compile scripts/test-network-hardware-capability-probe.py tests/test_network_hardware_capability_probe.py",
         "python -m unittest tests.test_network_hardware_probe",
         "python -m unittest tests.test_network_hardware_bar_probe",
         "python -m unittest tests.test_network_hardware_register_probe",
         "python -m unittest tests.test_network_hardware_register_enable_probe",
+        "python -m unittest tests.test_network_hardware_capability_probe",
         "python scripts/test-network-hardware-probe.py --self-test",
         "python scripts/test-network-hardware-probe.py",
         "python scripts/test-network-hardware-bar-probe.py --self-test",
@@ -136,6 +140,8 @@ class CiWorkflowTest(unittest.TestCase):
         "python scripts/test-network-hardware-register-probe.py",
         "python scripts/test-network-hardware-register-enable-probe.py --self-test",
         "python scripts/test-network-hardware-register-enable-probe.py",
+        "python scripts/test-network-hardware-capability-probe.py --self-test",
+        "python scripts/test-network-hardware-capability-probe.py",
     )
     SESSION_RUNTIME_MILESTONE_ONLY_COMMANDS = (
         "cargo test -p pythos-user-session-runtime",
@@ -835,6 +841,20 @@ class CiWorkflowTest(unittest.TestCase):
             commands.index("python scripts/test-network-hardware-probe.py --self-test"),
             commands.index("python scripts/test-network-hardware-probe.py"),
         )
+        ordered_profiles = (
+            "python scripts/test-network-hardware-probe.py",
+            "python scripts/test-network-hardware-bar-probe.py",
+            "python scripts/test-network-hardware-register-probe.py",
+            "python scripts/test-network-hardware-register-enable-probe.py",
+            "python scripts/test-network-hardware-capability-probe.py --self-test",
+            "python scripts/test-network-hardware-capability-probe.py",
+        )
+        for predecessor, successor in zip(ordered_profiles, ordered_profiles[1:]):
+            self.assertLess(
+                commands.index(predecessor),
+                commands.index(successor),
+                f"network hardware gate must follow predecessor: {predecessor}",
+            )
 
 
     def test_pull_requests_do_not_also_run_feature_branch_push_acceptance(self) -> None:

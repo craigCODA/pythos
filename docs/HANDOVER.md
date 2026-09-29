@@ -133,6 +133,19 @@ gates are recorded in the linked correction evidence. The tested ISO remains
 at `F:\iso\pythos-phase15-pci-memory-space-enable-corrected-20260924.iso`
 with SHA-256 `4DC6855E8EE14036EF40D1EC88442839EABA58D4F79C6F64A7A6DBC989A33332`.
 
+[ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) is
+**Proposed for owner review** with its bounded, read-only conventional PCI
+capability metadata snapshot implemented. QEMU `e1000` accepted a successful
+absent-list result; `e1000e` accepted a successful four-entry
+PM/MSI/PCIe/MSI-X traversal. This does not interpret capability control fields
+or claim device readiness. The [QEMU-only evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
+records no Lenovo `81VS` evidence for ADR 0109 yet: any observation remains
+separately gated under `F:\iso` and must preserve existing Ventoy/ISO contents.
+`VirtioTransport`, the transport adapter, and `NetworkPort` are unchanged. No
+PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X enablement, power
+control, bus mastering, DMA, interrupts, reset, queues, packets, sockets,
+Wi-Fi, or physical networking are authorized.
+
 ## Prior Phase 13.5 Slice 5 Normal Session Checkpoint (2026-09-14)
 
 Local continuation: Phase 13.5 Slice 5 is implemented and locally QEMU-accepted

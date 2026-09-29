@@ -108,6 +108,20 @@ QEMU `e1000`/`e1000e`, full Rust tests, focused Python tests, bare-metal build,
 clippy, prior probe oracles, and the physical restoration evidence are green.
 No physical NIC/Wi-Fi operation or later networking scope is claimed.
 
+[ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) is
+**Proposed for owner review**. Its implemented `network-hardware-capability-probe`
+is a bounded, read-only conventional PCI capability metadata snapshot accepted
+in QEMU: `e1000` produced a successful absent-list result, and `e1000e`
+produced a successful four-entry PM/MSI/PCIe/MSI-X traversal. It does not
+interpret capability control fields or claim device readiness. See the
+[QEMU-only evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md).
+Lenovo `81VS` evidence is not yet recorded for ADR 0109; it remains a
+separately gated physical observation under `F:\iso` that preserves existing
+Ventoy/ISO contents. `VirtioTransport`, the transport adapter, and `NetworkPort`
+remain unchanged. No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X
+enablement, power control, bus mastering, DMA, interrupts, reset, queues,
+packets, sockets, Wi-Fi, or physical networking are included.
+
 ## Accepted PythTIG Program Boundary
 
 The Pyth Native Typed Instruction Graph program, abbreviated PythTIG, is

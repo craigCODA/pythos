@@ -31,6 +31,20 @@ The first attempt exposed a control-path defect and its correction is recorded
 in the [correction evidence](evidence/2026-09-24-phase-15-pci-memory-space-enable-correction.md);
 the physical result is in the [Lenovo acceptance record](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md).
 
+[ADR 0109](decisions/0109-phase-15-pci-capability-metadata-snapshot.md) remains
+**Proposed for owner review**. The implemented opt-in
+`network-hardware-capability-probe` performs only a bounded, read-only
+conventional PCI capability metadata snapshot. QEMU `e1000` accepted a
+successful absent-list result and `e1000e` accepted a successful four-entry
+PM/MSI/PCIe/MSI-X traversal; neither result interprets capability control
+fields or claims device readiness. The [QEMU-only evidence record](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
+records that Lenovo `81VS` evidence is not yet recorded for ADR 0109 and
+remains separately gated under `F:\iso`, preserving existing Ventoy/ISO
+contents. `VirtioTransport`, the transport adapter, and `NetworkPort` remain
+unchanged. No PCI writes, BAR mapping, MMIO/register access, MSI/MSI-X
+enablement, power control, bus mastering, DMA, interrupts, reset, queues,
+packets, sockets, Wi-Fi, or physical networking are included.
+
 ## Required EFI Partition Structure
 
 ```text
