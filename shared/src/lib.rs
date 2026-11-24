@@ -37,4 +37,6 @@ pub mod task_abi;
 pub mod tcp_markers;
 pub mod udp_markers;
 pub mod user_program_manifest;
+#[cfg(feature = "vault-pulse-proof")]
+pub mod vault_pulse;
 pub mod viewing;

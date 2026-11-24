@@ -231,6 +231,11 @@ pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
     }
 }
 
+#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+pub(crate) fn select_vault_proof_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
+    scan_primary_bus_for_virtio()
+}
+
 #[cfg(feature = "sdhci-emmc-backend")]
 pub fn select_device_with_sdhci_emmc(
     sdhci_emmc_device: Option<crate::sdhci_emmc::SdhciEmmcBlockDevice>,

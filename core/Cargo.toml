@@ -161,6 +161,8 @@ physical-keyboard-console = []
 # Opt-in normal boot framebuffer breadcrumbs for serial-less physical hardware
 # diagnosis. This does not change default boot behavior.
 normal-boot-diagnostic = []
+# ADR 0110 opt-in recovery proof on an exclusively owned disposable Virtio image.
+vault-pulse-probe = ["pythos-shared/vault-pulse-proof"]
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

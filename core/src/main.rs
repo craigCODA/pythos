@@ -716,6 +716,10 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
+#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+mod vault_pulse_probe;
+#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+mod vault_pulse_store;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
@@ -852,6 +856,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     network_hardware_capability_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "usb-xhci-probe"))]
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
+    #[cfg(all(not(test), feature = "vault-pulse-probe"))]
+    vault_pulse_probe::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
     // boot branches away before it, near the end of this function.
@@ -2988,7 +2994,12 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     // ADR 0052: normal boot skips the verification proof sequence above
     // entirely and constructs only the production substrate, then stays
     // alive — the pivot from "proofs that terminate" to "a system that runs".
-    #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+    #[cfg(all(
+        not(test),
+        not(feature = "verify"),
+        not(feature = "hardware-probe"),
+        not(feature = "vault-pulse-probe")
+    ))]
     normal_boot::run(boot_info, &mut physical_memory);
 
     #[cfg(test)]

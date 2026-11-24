@@ -20,6 +20,7 @@ members = [
     "user/probes/tcp",
     "user/probes/dns",
     "user/probes/socket",
+    "user/probes/vault-pulse",
 ]
 
 [workspace.package]
