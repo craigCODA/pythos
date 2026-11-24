@@ -48,6 +48,8 @@ The proof uses a private, versioned block layout. Sector 0 identifies a 16 MiB p
 
 Use PythOS under QEMU with an isolated writable block image and ordered serial evidence. The harness writes only the intake and interruption controls for ordinary runs. The guest admits the input and publishes all program and checkpoint generations. Guest-side barriers freeze progress at the two interruption points so the host kills the process at the observed boundary. Inspect the committed disk generation and receipts as well as the guest's output.
 
+On-screen boot stages identify worker preparation, memory mapping, Virtio storage selection, and checkpoint recovery. A missing Virtio device displays `Virtio test disk unavailable` before halting. The acceptance test boots without Virtio and checks both the exact serial failure and the rendered text panel.
+
 | Run | Required result |
 |---|---|
 | Start a task | The guest admits the program and its `step = 1` event. At most two steps run per pulse. The second commit leaves `x = 4` and the event active. Kill QEMU after observing that commit. |
@@ -67,6 +69,8 @@ Run `py -3 -B scripts/test-vault-pulse.py` for the native fixture. Pass `--progr
 QEMU 11.0.50 completed all 17 cases using the counter compiled from Raw Vault's `pulse-example.vault`. Both interruption windows restored generation 3 at `x = 4`. The counter finished at generation 7 with `x = 11` and one processed receipt. The checked disk bytes also confirmed the original wait receipt, queued wake delivery, arithmetic rejection, and recovery after restoration of the exact program revision. The acceptance run ended with `VAULT_PULSE_TEST_OK`.
 
 `cargo test --workspace` passed 1,362 tests. The default normal-session QEMU check ended with `NORMAL_SESSION_TWO_BOOT_ACCEPTANCE_OK` using a sandbox-compatible temporary directory allocator for the Windows test process.
+
+The boot-status ISO passed all 18 optical-boot cases, including the missing-disk framebuffer check. Without Virtio, the earlier build left a uniform post-IDT frame on screen. The updated image displayed the storage error and restart instruction.
 
 ## Firmware handoff
 

@@ -415,9 +415,7 @@ pub fn render_launcher_screen(
     Ok(())
 }
 
-/// Render fixed hardware-probe identity lines for machines without serial
-/// capture. This is deliberately a text panel only; the storage probe has
-/// already completed and no storage hardware is touched here.
+/// Render fixed boot diagnostic lines on a framebuffer text panel.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn render_hardware_probe_lines(
     framebuffer: &PythFramebufferInfo,

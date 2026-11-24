@@ -26,6 +26,13 @@ KILL_CANDIDATE = PREFIX + "KILL_BEFORE_COMMIT"
 USER_RETURN = "PYTHOS:CORE:USER_MODE:RETURN"
 
 
+def load_script(name):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def program_bytes(entry, limit, initial, goal, links):
     header = struct.pack("<8sHBBB3xQQ", b"PYVPRG01", 1, limit, entry, len(links), initial, goal)
     return (header + b"".join(bytes(link) for link in links)).ljust(64, b"\0")
@@ -85,9 +92,7 @@ def build_artifacts(scratch):
             if result.returncode:
                 raise AssertionError(f"Build failed. See {build_log}")
 
-    spec = importlib.util.spec_from_file_location("build_image", ROOT / "scripts/build-image.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_script("build-image")
     worker = (build / "user/x86_64-unknown-none/debug/pythos-user-vault-pulse-probe").read_bytes()
     named = module.build_named_user_program(b"vault-pulse.elf", 0x50595650554C0001, worker)
     package = module.build_init_pak(module.build_init_bundle([(module.INIT_BUNDLE_NAMED_USER_ELF_TYPE, named)]))
@@ -154,6 +159,7 @@ def boot(esp, disk, phase, expected, kill=None):
     serial = output.splitlines()
     assert serial.count(f"QEMU_OUTCOME {outcome}") == 1, phase
     assert "PYTHOS:PANIC" not in output, phase
+    assert "PYTHOS:VAULT_SCREEN:RENDER_FAILED" not in output, phase
     assert serial.index("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK") < serial.index(PREFIX + "BOOT"), phase
     lines = [line for line in serial if line.startswith(PREFIX) or line == USER_RETURN]
     transcript = [PREFIX + "BOOT"]
@@ -163,6 +169,39 @@ def boot(esp, disk, phase, expected, kill=None):
         transcript.append(PREFIX + line)
     assert lines == transcript, (phase, lines)
     print(f"{phase} passed")
+
+
+def verify_missing_disk(esp, scratch):
+    log = scratch / "no-virtio.log"
+    screen = scratch / "no-virtio.ppm"
+    command = [
+        sys.executable, "scripts/run-qemu.py", "--esp", str(esp), "--serial-log", str(log),
+        "--no-virtio-blk", "--no-audio-device", "--expect-outcome", "panic",
+        "--screendump", str(screen), "--timeout", "30",
+    ]
+    result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, errors="replace", timeout=60)
+    output = result.stdout + result.stderr
+    (scratch / "no-virtio-runner.log").write_text(output, encoding="utf-8")
+    serial = output.splitlines()
+    assert result.returncode == 20 and serial.count("QEMU_OUTCOME panic") == 1, log
+    assert "PYTHOS:VAULT_SCREEN:RENDER_FAILED" not in output, log
+    assert [line for line in serial if line.startswith(PREFIX)] == [
+        PREFIX + "BOOT", PREFIX + "ERROR:VIRTIO_BLOCK",
+    ], log
+    assert serial.index("PYTHOS:CORE:IDT_READY") < serial.index(PREFIX + "ERROR:VIRTIO_BLOCK")
+    assert screen.is_file(), "The missing-disk path exited before a diagnostic screen was visible."
+
+    width, height, pixels = load_script("test-evidence-terminal").parse_ppm(screen.read_bytes())
+    assert width >= 480 and height >= 124
+    assert pixels[:3] == bytes((4, 12, 10)), "Expected the boot diagnostic background."
+    for top, rows, color in ((32, 24, (80, 255, 150)), (80, 16, (230, 245, 235)), (108, 16, (230, 245, 235))):
+        matching = sum(
+            pixels[offset:offset + 3] == bytes(color)
+            for y in range(top, top + rows)
+            for offset in range((y * width + 32) * 3, (y * width + 480) * 3, 3)
+        )
+        assert matching > 80, f"The diagnostic text row at {top} is missing."
+    print("missing-disk screen passed")
 
 
 def checkpoint(disk):
@@ -295,6 +334,7 @@ def main():
     scratch.mkdir(parents=True)
     print(f"QEMU evidence in {scratch}", flush=True)
     esp = build_artifacts(scratch)
+    verify_missing_disk(esp, scratch)
     verify_counter(esp, scratch, program, step)
     verify_wait(esp, scratch)
     verify_queued_wake(esp, scratch)

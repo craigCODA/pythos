@@ -2,7 +2,7 @@
 
 use crate::{
     architecture::x86_64::interrupts,
-    block_device,
+    block_device, framebuffer,
     memory::{
         physical::PhysicalMemory,
         r#virtual::{
@@ -33,12 +33,21 @@ const MAX_PULSES_PER_BOOT: usize = 32;
 
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     serial::write_line("PYTHOS:VAULT:BOOT");
+    show_screen(boot, "Starting vault runtime", "");
     match run_proof(boot, memory) {
         Ok(()) => {
             serial::write_line("PYTHOS:VAULT:BOOT_DONE");
             qemu_exit::success();
         }
         Err(stage) => {
+            let (message, detail) = match stage {
+                "VIRTIO_BLOCK" => ("Virtio test disk unavailable", "Restart to exit"),
+                "PROOF_DEVICE" | "PROOF_IMAGE" => {
+                    ("Marked Virtio test disk required", "Restart to exit")
+                }
+                _ => ("Vault boot stopped", stage),
+            };
+            show_screen(boot, message, detail);
             serial::write_str("PYTHOS:VAULT:ERROR:");
             serial::write_line(stage);
             serial::write_line("PYTHOS:PANIC");
@@ -47,13 +56,26 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     }
 }
 
+fn show_screen(boot: &PythBootInfo, message: &str, detail: &str) {
+    if framebuffer::render_hardware_probe_lines(
+        &boot.framebuffer,
+        &["PythOS vault", message, detail],
+    )
+    .is_err()
+    {
+        serial::write_line("PYTHOS:VAULT_SCREEN:RENDER_FAILED");
+    }
+}
+
 fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'static str> {
     interrupts::initialize().map_err(|_| "INTERRUPTS")?;
+    show_screen(boot, "Preparing vault worker", "");
     let mut identities = ServiceIdentityTable::new();
     let holder = identities
         .register_task(TaskId::new(1))
         .map_err(|_| "SERVICE_ID")?;
     let worker = Worker::prepare(boot, memory, holder)?;
+    show_screen(boot, "Mapping kernel memory", "");
     let kernel = KernelAddressSpace::build(memory, boot, KernelAddressSpaceBuildOptions::new())
         .map_err(|_| "KERNEL_ROOT")?;
     // SAFETY: the freshly built kernel root retains all boot, stack, trap,
@@ -62,8 +84,10 @@ fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'s
     kernel.validate_active(boot).map_err(|_| "KERNEL_MAPPING")?;
     syscall::initialize();
     user_stacks::initialize().map_err(|_| "USER_STACKS")?;
+    show_screen(boot, "Checking Virtio storage", "");
     let device = block_device::select_vault_proof_device().map_err(|_| "VIRTIO_BLOCK")?;
     let mut store = Store::open(device, worker.process.service_id())?;
+    show_screen(boot, "Recovering vault checkpoint", "");
     let (mut checkpoint, program, mut pending) = match store.recover()? {
         Some(checkpoint) => {
             serial::write_str("PYTHOS:VAULT:RESTORED");
