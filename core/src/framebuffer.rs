@@ -22,6 +22,9 @@ use pythos_shared::boot_protocol::{
     PythFramebufferInfo,
 };
 
+#[cfg(all(not(test), feature = "vault-pulse-view"))]
+pub(crate) mod vault_view;
+
 const BYTES_PER_PIXEL: u64 = 4;
 const GLYPH_WIDTH: u64 = 8;
 

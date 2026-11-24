@@ -24,6 +24,7 @@ TERMINAL = PREFIX + "BOOT_DONE"
 KILL_COMMITTED = PREFIX + "KILL_AFTER_COMMIT"
 KILL_CANDIDATE = PREFIX + "KILL_BEFORE_COMMIT"
 USER_RETURN = "PYTHOS:CORE:USER_MODE:RETURN"
+VIEW = "PYTHOS:VAULT_VIEW:"
 
 
 def load_script(name):
@@ -72,9 +73,9 @@ def compile_counter(source):
     return program_bytes(names.index(args["entry"]), budget, state["x"], goal["value"], links), event["step"]
 
 
-def build_artifacts(scratch):
+def build_artifacts(scratch, feature="vault-pulse-probe"):
     build = ROOT / "target" / "vault-pulse" / "build"
-    core = ["cargo", "build", "-p", "pythos-core", "--no-default-features", "--features", "vault-pulse-probe",
+    core = ["cargo", "build", "-p", "pythos-core", "--no-default-features", "--features", feature,
             "--target", "x86_64-unknown-none", "--target-dir", str(build / "core")]
     boot = ["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi",
             "--target-dir", str(build / "boot")]
@@ -145,11 +146,14 @@ def create_disk(path, mode, event, program):
     return path
 
 
-def boot(esp, disk, phase, expected, kill=None):
+def boot(media, disk, phase, expected, kill=None, screen=None):
     log = disk.parent / f"{phase}.log"
-    command = [sys.executable, "scripts/run-qemu.py", "--esp", str(esp), "--storage-image", str(disk),
+    command = [sys.executable, "scripts/run-qemu.py", "--esp" if media.is_dir() else "--iso", str(media),
+               "--storage-image", str(disk),
                "--serial-log", str(log), "--timeout", "45", "--no-audio-device", "--success-marker", TERMINAL]
     command += ["--kill-after-marker", kill] if kill else ["--expect-outcome", "success"]
+    if screen is not None:
+        command += ["--screendump", str(screen)]
     result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, errors="replace", timeout=75)
     output = result.stdout + result.stderr
     (log.parent / f"{phase}-runner.log").write_text(output, encoding="utf-8")
@@ -160,6 +164,7 @@ def boot(esp, disk, phase, expected, kill=None):
     assert serial.count(f"QEMU_OUTCOME {outcome}") == 1, phase
     assert "PYTHOS:PANIC" not in output, phase
     assert "PYTHOS:VAULT_SCREEN:RENDER_FAILED" not in output, phase
+    assert VIEW + "RENDER_FAILED" not in output, phase
     assert serial.index("PYTHOS:LOADER:EXIT_BOOT_SERVICES_OK") < serial.index(PREFIX + "BOOT"), phase
     lines = [line for line in serial if line.startswith(PREFIX) or line == USER_RETURN]
     transcript = [PREFIX + "BOOT"]
@@ -169,13 +174,15 @@ def boot(esp, disk, phase, expected, kill=None):
         transcript.append(PREFIX + line)
     assert lines == transcript, (phase, lines)
     print(f"{phase} passed")
+    return serial
 
 
-def verify_missing_disk(esp, scratch):
+def verify_missing_disk(media, scratch, boot_view=False):
     log = scratch / "no-virtio.log"
     screen = scratch / "no-virtio.ppm"
     command = [
-        sys.executable, "scripts/run-qemu.py", "--esp", str(esp), "--serial-log", str(log),
+        sys.executable, "scripts/run-qemu.py", "--esp" if media.is_dir() else "--iso", str(media),
+        "--serial-log", str(log),
         "--no-virtio-blk", "--no-audio-device", "--expect-outcome", "panic",
         "--screendump", str(screen), "--timeout", "30",
     ]
@@ -193,6 +200,13 @@ def verify_missing_disk(esp, scratch):
 
     width, height, pixels = load_script("test-evidence-terminal").parse_ppm(screen.read_bytes())
     assert width >= 480 and height >= 124
+    if boot_view:
+        expect_view(serial, ["NODE CORE", "NODE WORKER", "NODE MEMORY", "NODE STORAGE", "BOOT_LINKS",
+                             "STOP VIRTIO_BLOCK"])
+        graph_pixels = pixels[height // 5 * width * 3:height * 4 // 5 * width * 3]
+        assert graph_pixels.count(bytes((255, 180, 100))) > 80, "The unavailable storage node was not drawn."
+        print("missing-disk graph passed")
+        return
     assert pixels[:3] == bytes((4, 12, 10)), "Expected the boot diagnostic background."
     for top, rows, color in ((32, 24, (80, 255, 150)), (80, 16, (230, 245, 235)), (108, 16, (230, 245, 235))):
         matching = sum(
@@ -267,7 +281,7 @@ def verify_wait(esp, scratch):
     first, second = event_bytes(1, 1, 1), event_bytes(3, 2, 1)
     disk = create_disk(scratch / "wait.img", 0, first, program)
     wait = ["WAITING kind:2", "BOOT_DONE"]
-    boot(esp, disk, "wait", ["ADMITTED", pulse(2, 0, 1, "waiting", 1), *wait])
+    waiting = boot(esp, disk, "wait", ["ADMITTED", pulse(2, 0, 1, "waiting", 1), *wait])
     receipt = (first, 2, 0, 1, 2)
     assert checkpoint(disk) == (2, 0, 1, 2, bytes(24), [receipt])
     stable = read_sectors(disk, 2, 5)
@@ -278,14 +292,15 @@ def verify_wait(esp, scratch):
     boot(esp, disk, "invalid-arithmetic", [restored(2, 0, 1), "REJECTED:ARITHMETIC event:2", *wait])
     assert read_sectors(disk, 2, 5) == stable
     deliver(disk, second)
-    boot(esp, disk, "wake", [restored(2, 0, 1), pulse(3, 1, 2, "finished"), "ACCEPTED event:3",
-                              "FINISHED", "BOOT_DONE"])
+    woken = boot(esp, disk, "wake", [restored(2, 0, 1), pulse(3, 1, 2, "finished"), "ACCEPTED event:3",
+                                   "FINISHED", "BOOT_DONE"])
     assert checkpoint(disk) == (3, 1, 2, 3, bytes(24), [receipt, (second, 3, 1, 2, 3)])
     stable = read_sectors(disk, 2, 5)
     deliver(disk, first)
     boot(esp, disk, "replay-wait", [restored(3, 1, 2), "DUPLICATE event:1 generation:2 x:0 cursor:1 status:waiting",
                                     "FINISHED", "BOOT_DONE"])
     assert read_sectors(disk, 2, 5) == stable
+    return waiting, woken
 
 
 def verify_queued_wake(esp, scratch):
@@ -322,9 +337,62 @@ def verify_unavailable_revision(esp, scratch, program, step):
     assert checkpoint(disk) == (7, 11, 0, 3, bytes(24), [(event, 7, 11, 0, 3)])
 
 
+def expect_view(serial, expected):
+    actual = [line.removeprefix(VIEW) for line in serial if line.startswith(VIEW)]
+    assert actual == expected, actual
+
+
+def verify_boot_view(iso, scratch):
+    verify_missing_disk(iso, scratch, boot_view=True)
+    program = program_bytes(0, 2, 0, 9, [(2, 1, 1, 4), (1, 0, 2, 0), (1, 0, 3, 0),
+                                          (1, 0, 1, 0), (3, 2, 1, 0)])
+    event = event_bytes(1, 1, 1)
+    disk = create_disk(scratch / "view.img", 1, event, program)
+    graph = ["NODE CORE", "NODE WORKER", "NODE MEMORY", "NODE VAULT", "BOOT_LINKS",
+             "ADDRESS 0", "ADDRESS 1", "ADDRESS 2", "ADDRESS 3", "ADDRESS 4",
+             "LINK 0 1", "LINK 0 4", "LINK 1 2", "LINK 2 3", "LINK 3 1", "LINK 4 1"]
+    serial = boot(iso, disk, "view-interrupted",
+                  ["ADMITTED", pulse(2, 1, 2), pulse(3, 3, 1), "KILL_AFTER_COMMIT"], kill=KILL_COMMITTED)
+    expect_view(serial, [*graph, "STATE admitted generation:1 x:0 cursor:0 status:active",
+                         "STATE pulse generation:2 x:1 cursor:2 status:active",
+                         "STATE pulse generation:3 x:3 cursor:1 status:active"])
+    assert checkpoint(disk) == (3, 3, 1, 1, event, [])
+
+    deliver(disk)
+    set_interrupt(disk, 0)
+    screen = scratch / "view-resumed.ppm"
+    serial = boot(iso, disk, "view-resumed",
+                  [restored(3, 3, 1), pulse(4, 5, 3), pulse(5, 7, 2), pulse(6, 9, 1, "finished"),
+                   "FINISHED", "BOOT_DONE"], screen=screen)
+    finished = "generation:6 x:9 cursor:1 status:finished"
+    expect_view(serial, [*graph, "STATE restored generation:3 x:3 cursor:1 status:active",
+                         "STATE pulse generation:4 x:5 cursor:3 status:active",
+                         "STATE pulse generation:5 x:7 cursor:2 status:active", f"STATE pulse {finished}"])
+    assert serial.index(PREFIX + pulse(6, 9, 1, "finished")) < serial.index(VIEW + f"STATE pulse {finished}")
+    assert checkpoint(disk) == (6, 9, 1, 3, bytes(24), [(event, 6, 9, 1, 3)])
+    width, height, pixels = load_script("test-evidence-terminal").parse_ppm(screen.read_bytes())
+    graph_pixels = pixels[height // 5 * width * 3:height * 4 // 5 * width * 3]
+    assert graph_pixels.count(bytes((109, 255, 192))) > 80, "The current instruction node was not drawn."
+    assert graph_pixels.count(bytes((163, 132, 233))) > 20, "The alternate link was not drawn."
+
+    stable = read_sectors(disk, 2, 5)
+    deliver(disk, event)
+    serial = boot(iso, disk, "view-replayed", [restored(6, 9, 1), "DUPLICATE event:1 " + finished,
+                                               "FINISHED", "BOOT_DONE"])
+    expect_view(serial, [*graph, f"STATE restored {finished}"])
+    assert read_sectors(disk, 2, 5) == stable
+
+    waiting, woken = verify_wait(iso, scratch)
+    assert VIEW + "STATE pulse generation:2 x:0 cursor:1 status:waiting" in waiting
+    assert VIEW + "STATE restored generation:2 x:0 cursor:1 status:waiting" in woken
+    assert VIEW + "STATE pulse generation:3 x:1 cursor:2 status:finished" in woken
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--program", type=Path, help="Raw Vault operation 55 counter to use in the proof")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--program", type=Path, help="Raw Vault operation 55 counter to use in the proof")
+    mode.add_argument("--boot-view", action="store_true", help="Build and test the native Kai boot-view ISO")
     args = parser.parse_args()
     program, step = compile_counter(args.program)
     if (struct.unpack("<8sHBBB3xQQ", program[:32])[3:] != (0, 1, 0, 11)
@@ -333,7 +401,17 @@ def main():
     scratch = ROOT / "target" / "vault-pulse" / f"run-{uuid4().hex[:10]}"
     scratch.mkdir(parents=True)
     print(f"QEMU evidence in {scratch}", flush=True)
-    esp = build_artifacts(scratch)
+    feature = "vault-pulse-view" if args.boot_view else "vault-pulse-probe"
+    esp = build_artifacts(scratch, feature)
+    if args.boot_view:
+        builder = load_script("build-iso")
+        files = {path.relative_to(esp).as_posix(): path.read_bytes() for path in esp.rglob("*") if path.is_file()}
+        iso = scratch / "pythos-kai-boot-view.iso"
+        iso.write_bytes(builder.build_iso_bytes(builder.build_esp_image(files), files))
+        verify_boot_view(iso, scratch)
+        print(f"BOOT_VIEW_ISO {iso}")
+        print("VAULT_BOOT_VIEW_TEST_OK")
+        return
     verify_missing_disk(esp, scratch)
     verify_counter(esp, scratch, program, step)
     verify_wait(esp, scratch)

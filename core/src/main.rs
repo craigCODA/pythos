@@ -720,6 +720,8 @@ mod value_validation;
 mod vault_pulse_probe;
 #[cfg(all(not(test), feature = "vault-pulse-probe"))]
 mod vault_pulse_store;
+#[cfg(all(not(test), feature = "vault-pulse-view"))]
+mod vault_pulse_view;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",

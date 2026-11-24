@@ -1,6 +1,7 @@
 //! Private encodings for the ADR 0110 proof.
 
 pub const PROGRAM_LEN: usize = 64;
+pub const MAX_PROGRAM_ADDRESSES: usize = 8;
 pub const EVENT_LEN: usize = 24;
 pub const INVOCATION_LEN: usize = 24 + PROGRAM_LEN + EVENT_LEN;
 pub const OUTCOME_LEN: usize = 32;
@@ -82,6 +83,14 @@ impl Event {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Program([u8; PROGRAM_LEN]);
 
+/// Read-only description of one address in a validated proof program.
+#[derive(Clone, Copy)]
+pub enum Instruction {
+    Add { next: u8 },
+    Branch { on: EventKind, yes: u8, no: u8 },
+    Wait { for_kind: EventKind, next: u8 },
+}
+
 impl Program {
     pub fn decode(bytes: [u8; PROGRAM_LEN]) -> Result<Self, InvalidPulse> {
         let program = Self(bytes);
@@ -89,7 +98,7 @@ impl Program {
         if &bytes[..8] != b"PYVPRG01"
             || bytes[8..10] != EVALUATOR_VERSION.to_le_bytes()
             || !(1..=8).contains(&program.budget())
-            || !(1..=8).contains(&count)
+            || !(1..=MAX_PROGRAM_ADDRESSES).contains(&usize::from(count))
             || program.entry() >= count
             || bytes[13..16] != [0; 3]
             || program.initial_x() > program.goal()
@@ -150,6 +159,26 @@ impl Program {
             EventKind::decode(kind).ok()
         } else {
             None
+        }
+    }
+
+    pub fn instruction(self, cursor: u8) -> Option<Instruction> {
+        if !self.has_address(cursor) {
+            return None;
+        }
+        let [operation, argument, next, alternative] = self.link(cursor);
+        match operation {
+            ADD_EVENT_VALUE => Some(Instruction::Add { next }),
+            BRANCH_ON_KIND => Some(Instruction::Branch {
+                on: EventKind::decode(argument).ok()?,
+                yes: next,
+                no: alternative,
+            }),
+            WAIT_FOR_KIND => Some(Instruction::Wait {
+                for_kind: EventKind::decode(argument).ok()?,
+                next,
+            }),
+            _ => None,
         }
     }
 

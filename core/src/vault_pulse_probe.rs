@@ -1,8 +1,10 @@
 //! Boot and run the one isolated worker selected by ADR 0110.
 
+mod display;
+
 use crate::{
     architecture::x86_64::interrupts,
-    block_device, framebuffer,
+    block_device,
     memory::{
         physical::PhysicalMemory,
         r#virtual::{
@@ -18,6 +20,7 @@ use crate::{
     user_elf, user_mode, user_stacks,
     vault_pulse_store::{Checkpoint, Delivery, Store},
 };
+use display::{BootDisplay, BootStage, Origin};
 use pythos_shared::{
     boot_protocol::PythBootInfo,
     vault_pulse::{
@@ -33,10 +36,12 @@ const MAX_PULSES_PER_BOOT: usize = 32;
 
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     serial::write_line("PYTHOS:VAULT:BOOT");
-    show_screen(boot, "Starting vault runtime", "");
-    match run_proof(boot, memory) {
+    let mut display = BootDisplay::new(&boot.framebuffer);
+    display.stage(BootStage::Core);
+    match run_proof(boot, memory, &mut display) {
         Ok(()) => {
             serial::write_line("PYTHOS:VAULT:BOOT_DONE");
+            display.hold_terminal();
             qemu_exit::success();
         }
         Err(stage) => {
@@ -47,7 +52,7 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
                 }
                 _ => ("Vault boot stopped", stage),
             };
-            show_screen(boot, message, detail);
+            display.stop(stage, message, detail);
             serial::write_str("PYTHOS:VAULT:ERROR:");
             serial::write_line(stage);
             serial::write_line("PYTHOS:PANIC");
@@ -56,26 +61,19 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     }
 }
 
-fn show_screen(boot: &PythBootInfo, message: &str, detail: &str) {
-    if framebuffer::render_hardware_probe_lines(
-        &boot.framebuffer,
-        &["PythOS vault", message, detail],
-    )
-    .is_err()
-    {
-        serial::write_line("PYTHOS:VAULT_SCREEN:RENDER_FAILED");
-    }
-}
-
-fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'static str> {
+fn run_proof(
+    boot: &PythBootInfo,
+    memory: &mut PhysicalMemory,
+    display: &mut BootDisplay<'_>,
+) -> Result<(), &'static str> {
     interrupts::initialize().map_err(|_| "INTERRUPTS")?;
-    show_screen(boot, "Preparing vault worker", "");
+    display.prepare_worker();
     let mut identities = ServiceIdentityTable::new();
     let holder = identities
         .register_task(TaskId::new(1))
         .map_err(|_| "SERVICE_ID")?;
     let worker = Worker::prepare(boot, memory, holder)?;
-    show_screen(boot, "Mapping kernel memory", "");
+    display.stage(BootStage::Worker);
     let kernel = KernelAddressSpace::build(memory, boot, KernelAddressSpaceBuildOptions::new())
         .map_err(|_| "KERNEL_ROOT")?;
     // SAFETY: the freshly built kernel root retains all boot, stack, trap,
@@ -84,27 +82,33 @@ fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'s
     kernel.validate_active(boot).map_err(|_| "KERNEL_MAPPING")?;
     syscall::initialize();
     user_stacks::initialize().map_err(|_| "USER_STACKS")?;
-    show_screen(boot, "Checking Virtio storage", "");
+    display.stage(BootStage::Memory);
     let device = block_device::select_vault_proof_device().map_err(|_| "VIRTIO_BLOCK")?;
     let mut store = Store::open(device, worker.process.service_id())?;
-    show_screen(boot, "Recovering vault checkpoint", "");
-    let (mut checkpoint, program, mut pending) = match store.recover()? {
+    display.stage(BootStage::Vault);
+    let (mut checkpoint, program, mut pending, origin) = match store.recover()? {
         Some(checkpoint) => {
             serial::write_str("PYTHOS:VAULT:RESTORED");
             write_checkpoint_fields(checkpoint);
             serial::write_line("");
             let Some(program) = store.saved_program(checkpoint)? else {
                 serial::write_line("PYTHOS:VAULT:BLOCKED:PROGRAM_REVISION");
+                display.stop(
+                    "PROGRAM_REVISION",
+                    "Saved program unavailable",
+                    "Checkpoint retained",
+                );
                 return Ok(());
             };
             let pending = store
                 .receive()?
                 .and_then(|delivery| screen_delivery(checkpoint, program, delivery));
-            (checkpoint, program, pending)
+            (checkpoint, program, pending, Origin::Restored)
         }
         None => {
             let Some(delivery) = store.receive()? else {
                 serial::write_line("PYTHOS:VAULT:IDLE");
+                display.stop("IDLE", "Waiting for a task", "Vault is ready");
                 return Ok(());
             };
             let program = delivery.program.ok_or("INITIAL_PROGRAM")?;
@@ -115,9 +119,10 @@ fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'s
             store.admit_program(program)?;
             store.publish(0, checkpoint)?;
             serial::write_line("PYTHOS:VAULT:ADMITTED");
-            (checkpoint, program, None)
+            (checkpoint, program, None, Origin::Admitted)
         }
     };
+    display.program(program, checkpoint, origin);
 
     for _ in 0..MAX_PULSES_PER_BOOT {
         let incoming = if checkpoint.active.is_none() {
@@ -149,12 +154,14 @@ fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'s
                 break;
             }
             serial::write_line("PYTHOS:VAULT:BLOCKED:ARITHMETIC");
+            display.stop("ARITHMETIC", "Arithmetic error", "Checkpoint retained");
             return Ok(());
         };
         let candidate = working.advance(outcome)?;
         store.publish(checkpoint.generation, candidate)?;
         checkpoint = candidate;
         report_pulse(checkpoint, outcome.steps);
+        display.pulse(checkpoint);
         if let Some(event) = incoming {
             report_event("ACCEPTED", event.id);
         }
@@ -168,7 +175,14 @@ fn run_proof(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'s
             serial::write_line("");
         }
         Status::Finished => serial::write_line("PYTHOS:VAULT:FINISHED"),
-        Status::Active => serial::write_line("PYTHOS:VAULT:YIELDED"),
+        Status::Active => {
+            serial::write_line("PYTHOS:VAULT:YIELDED");
+            display.stop(
+                "YIELDED",
+                "Pulse budget reached",
+                "Checkpoint ready to resume",
+            );
+        }
     }
     Ok(())
 }

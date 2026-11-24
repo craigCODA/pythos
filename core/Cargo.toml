@@ -163,6 +163,7 @@ physical-keyboard-console = []
 normal-boot-diagnostic = []
 # ADR 0110 opt-in recovery proof on an exclusively owned disposable Virtio image.
 vault-pulse-probe = ["pythos-shared/vault-pulse-proof"]
+vault-pulse-view = ["vault-pulse-probe"]
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }
