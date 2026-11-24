@@ -164,6 +164,8 @@ normal-boot-diagnostic = []
 # ADR 0110 opt-in recovery proof on an exclusively owned disposable Virtio image.
 vault-pulse-probe = ["pythos-shared/vault-pulse-proof"]
 vault-pulse-view = ["vault-pulse-probe"]
+# ADR 0112 polling read of one disposable NVMe namespace in QEMU.
+nvme-read-probe = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

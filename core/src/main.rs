@@ -13,6 +13,7 @@
             feature = "network-hardware-register-enable-probe",
             feature = "network-hardware-capability-probe",
             feature = "usb-xhci-probe",
+            feature = "nvme-read-probe",
             feature = "virtio-net-probe",
             feature = "network-port-probe",
             feature = "link-layer-probe",
@@ -844,6 +845,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         normal_boot_diagnostic::NormalBootDiagnosticStage::CoreReady,
     );
 
+    #[cfg(all(not(test), feature = "nvme-read-probe"))]
+    block_device::nvme_probe::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "hardware-probe"))]
     hardware_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "network-hardware-probe"))]
@@ -3000,7 +3003,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         not(test),
         not(feature = "verify"),
         not(feature = "hardware-probe"),
-        not(feature = "vault-pulse-probe")
+        not(feature = "vault-pulse-probe"),
+        not(feature = "nvme-read-probe")
     ))]
     normal_boot::run(boot_info, &mut physical_memory);
 

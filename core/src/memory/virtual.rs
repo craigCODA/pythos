@@ -176,6 +176,8 @@ pub type PhysicalDeviceMapping = (u64, u64, u64);
 pub struct KernelAddressSpaceBuildOptions {
     pub hda_mmio: Option<PhysicalDeviceMapping>,
     pub ahci_mmio: Option<PhysicalDeviceMapping>,
+    #[cfg(feature = "nvme-read-probe")]
+    pub nvme_mmio: Option<PhysicalDeviceMapping>,
     pub sdhci_emmc_mmio: Option<PhysicalDeviceMapping>,
     pub xhci_mmio: Option<PhysicalDeviceMapping>,
     pub network_hardware_register_mmio: Option<PhysicalDeviceMapping>,
@@ -188,6 +190,8 @@ impl KernelAddressSpaceBuildOptions {
         Self {
             hda_mmio: None,
             ahci_mmio: None,
+            #[cfg(feature = "nvme-read-probe")]
+            nvme_mmio: None,
             sdhci_emmc_mmio: None,
             xhci_mmio: None,
             network_hardware_register_mmio: None,
@@ -257,6 +261,15 @@ impl KernelAddressSpace {
         // kernel device window, uncacheable: device registers reflect live
         // hardware state and must never be served from a stale cache line.
         if let Some((phys, virt, len)) = options.ahci_mmio {
+            tables.map_physical_range(
+                virt,
+                phys,
+                len,
+                PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
+            )?;
+        }
+        #[cfg(feature = "nvme-read-probe")]
+        if let Some((phys, virt, len)) = options.nvme_mmio {
             tables.map_physical_range(
                 virt,
                 phys,

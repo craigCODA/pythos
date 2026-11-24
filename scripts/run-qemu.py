@@ -70,11 +70,25 @@ def classify_qemu_exit(
     serial: str,
     timed_out: bool = False,
     success_marker: str = SUCCESS_MARKER,
+    require_debug_exit: bool = False,
 ) -> QemuOutcome:
+    terminal = None
     if any(marker in serial for marker in PANIC_MARKERS):
-        return QemuOutcome.PANIC
-    if success_marker in serial:
-        return QemuOutcome.SUCCESS
+        terminal = QemuOutcome.PANIC
+    elif success_marker in serial:
+        terminal = QemuOutcome.SUCCESS
+
+    if require_debug_exit:
+        if timed_out or returncode is None:
+            return QemuOutcome.TIMEOUT
+        if terminal is not None and returncode == debug_exit_status(terminal.value):
+            return terminal
+        if terminal is not None or returncode in (debug_exit_status("success"), debug_exit_status("panic")):
+            return QemuOutcome.MARKER_ORDER_VIOLATION
+        return QemuOutcome.RESET
+
+    if terminal is not None:
+        return terminal
     if returncode == debug_exit_status("success"):
         return QemuOutcome.SUCCESS
     if returncode == debug_exit_status("panic"):
@@ -387,6 +401,10 @@ def main() -> int:
     parser.add_argument("--screendump", type=Path)
     parser.add_argument("--expect-outcome", choices=[outcome.value for outcome in QemuOutcome])
     parser.add_argument(
+        "--require-debug-exit", action="store_true",
+        help="wait for the guest's isa-debug-exit code and require a matching serial marker",
+    )
+    parser.add_argument(
         "--success-marker",
         default=SUCCESS_MARKER,
         help="serial marker that lets the runner classify the boot as success",
@@ -415,6 +433,8 @@ def main() -> int:
         action="store_true",
         help="do not attach the default legacy virtio-blk storage device",
     )
+    parser.add_argument("--nvme-read-only-image", type=Path, help="attach a read-only NVMe test image")
+    parser.add_argument("--nvme-serial", help="override the serial of the read-only NVMe test device")
     parser.add_argument(
         "--virtio-net",
         action="store_true",
@@ -528,6 +548,13 @@ def main() -> int:
     ovmf = Path(find_ovmf(args.ovmf_code))
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
+    if args.nvme_serial is not None:
+        if args.nvme_read_only_image is None:
+            raise SystemExit("--nvme-serial requires --nvme-read-only-image")
+        if not 1 <= len(args.nvme_serial) <= 20 or not all(
+            char.isascii() and (char.isalnum() or char in "-_") for char in args.nvme_serial
+        ):
+            raise SystemExit("--nvme-serial requires 1 to 20 ASCII letters, digits, hyphens, or underscores")
     if args.virtio_net_peer_port is not None and not args.virtio_net:
         raise SystemExit("--virtio-net-peer-port requires --virtio-net")
     if args.network_device and args.virtio_net:
@@ -584,10 +611,12 @@ def main() -> int:
         f"file:{args.serial_log}",
         "-display",
         args.display,
-        "-no-shutdown",
         "-device",
         "isa-debug-exit,iobase=0x501,iosize=0x04",
     ]
+    # Recent QEMU versions deliver isa-debug-exit as a guest shutdown request.
+    if not args.require_debug_exit:
+        command.append("-no-shutdown")
     if not args.allow_reboot:
         command.append("-no-reboot")
     if args.shell_port is not None:
@@ -696,6 +725,23 @@ def main() -> int:
             "-device",
             "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
         ]
+    if args.nvme_read_only_image is not None:
+        image = args.nvme_read_only_image.resolve()
+        if not image.is_file():
+            raise SystemExit("--nvme-read-only-image requires an existing regular file")
+        block = {
+            "driver": "raw",
+            "node-name": "pythos_nvme_image",
+            "read-only": True,
+            "file": {"driver": "file", "filename": str(image), "read-only": True},
+        }
+        serial = args.nvme_serial or "PYTHOS-NVME-READ"
+        command += [
+            "-device", "pcie-root-port,id=pythos_nvme_port,slot=7,chassis=7",
+            "-blockdev", json.dumps(block, separators=(",", ":")),
+            "-device", f"nvme,bus=pythos_nvme_port,drive=pythos_nvme_image,serial={serial},"
+            "logical_block_size=512,physical_block_size=4096,bootindex=-1",
+        ]
     if args.virtio_net:
         command += virtio_net_qemu_args(args.virtio_net_peer_port)
     if args.network_device:
@@ -785,7 +831,7 @@ def main() -> int:
                 process.kill()
                 process.wait(timeout=2)
                 break
-            if not requested_quit:
+            if not requested_quit and not args.require_debug_exit:
                 terminal_outcome = None
                 if any(marker in serial for marker in PANIC_MARKERS):
                     terminal_outcome = QemuOutcome.PANIC
@@ -828,6 +874,7 @@ def main() -> int:
         serial,
         timed_out,
         success_marker=args.success_marker,
+        require_debug_exit=args.require_debug_exit,
     )
     final_outcome = sequence_completion_outcome(
         outcome,
@@ -842,6 +889,8 @@ def main() -> int:
             file=sys.stderr,
         )
     outcome = final_outcome
+    if args.require_debug_exit:
+        print(f"QEMU_PROCESS_EXIT {process.returncode}")
     print(f"QEMU_OUTCOME {outcome.value}")
     if (
         hotplug_error is not None
