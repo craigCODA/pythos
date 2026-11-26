@@ -6,6 +6,7 @@ use pythos_shared::qemu_exit;
 #[cfg(any(
     feature = "verify",
     feature = "vault-pulse-probe",
+    feature = "world-session-probe",
     feature = "nvme-read-probe"
 ))]
 pub fn success() -> ! {

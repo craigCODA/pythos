@@ -145,7 +145,7 @@ impl ActiveUserProcess {
         ))
     }
 
-    #[cfg(any(test, feature = "vault-pulse-probe"))]
+    #[cfg(any(test, feature = "vault-pulse-probe", feature = "world-session-probe"))]
     pub const fn with_copy_map(self, copy_map: UserCopyMap) -> Self {
         Self {
             service_id: self.service_id,

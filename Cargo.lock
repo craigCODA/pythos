@@ -573,6 +573,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-world-session"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"

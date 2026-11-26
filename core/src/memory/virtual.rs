@@ -176,7 +176,7 @@ pub type PhysicalDeviceMapping = (u64, u64, u64);
 pub struct KernelAddressSpaceBuildOptions {
     pub hda_mmio: Option<PhysicalDeviceMapping>,
     pub ahci_mmio: Option<PhysicalDeviceMapping>,
-    #[cfg(feature = "nvme-read-probe")]
+    #[cfg(any(feature = "nvme-read-probe", feature = "world-session-nvme"))]
     pub nvme_mmio: Option<PhysicalDeviceMapping>,
     pub sdhci_emmc_mmio: Option<PhysicalDeviceMapping>,
     pub xhci_mmio: Option<PhysicalDeviceMapping>,
@@ -190,7 +190,7 @@ impl KernelAddressSpaceBuildOptions {
         Self {
             hda_mmio: None,
             ahci_mmio: None,
-            #[cfg(feature = "nvme-read-probe")]
+            #[cfg(any(feature = "nvme-read-probe", feature = "world-session-nvme"))]
             nvme_mmio: None,
             sdhci_emmc_mmio: None,
             xhci_mmio: None,
@@ -268,7 +268,7 @@ impl KernelAddressSpace {
                 PTE_WRITE | PTE_NO_EXECUTE | PTE_CACHE_DISABLE,
             )?;
         }
-        #[cfg(feature = "nvme-read-probe")]
+        #[cfg(any(feature = "nvme-read-probe", feature = "world-session-nvme"))]
         if let Some((phys, virt, len)) = options.nvme_mmio {
             tables.map_physical_range(
                 virt,

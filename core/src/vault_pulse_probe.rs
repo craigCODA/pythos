@@ -7,17 +7,14 @@ use crate::{
     block_device,
     memory::{
         physical::PhysicalMemory,
-        r#virtual::{
-            KernelAddressSpace, KernelAddressSpaceBuildOptions, RetainedUserAddressSpace,
-            UserAddressSpace, UserPayloadMapping, with_writable_physical_frame,
-        },
+        r#virtual::{KernelAddressSpace, KernelAddressSpaceBuildOptions},
     },
-    process_context::{self, ActiveUserProcess},
-    qemu_exit, runtime_loader, serial,
-    service_identity::{ServiceId, ServiceIdentityTable},
+    proof_worker::ProofWorker,
+    qemu_exit, serial,
+    service_identity::ServiceIdentityTable,
     syscall,
     tasks::TaskId,
-    user_elf, user_mode, user_stacks,
+    user_stacks,
     vault_pulse_store::{Checkpoint, Delivery, Store},
 };
 use display::{BootDisplay, BootStage, Origin};
@@ -29,9 +26,6 @@ use pythos_shared::{
     },
 };
 
-const INPUT_ADDRESS: u64 = 0x7300_0000;
-const RESULT_ADDRESS: u64 = INPUT_ADDRESS + PAGE_SIZE;
-const PAGE_SIZE: u64 = 4096;
 const MAX_PULSES_PER_BOOT: usize = 32;
 
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
@@ -72,7 +66,13 @@ fn run_proof(
     let holder = identities
         .register_task(TaskId::new(1))
         .map_err(|_| "SERVICE_ID")?;
-    let worker = Worker::prepare(boot, memory, holder)?;
+    let worker = ProofWorker::<INVOCATION_LEN, OUTCOME_LEN>::prepare(
+        boot,
+        memory,
+        holder,
+        b"vault-pulse.elf",
+        PRINCIPAL,
+    )?;
     display.stage(BootStage::Worker);
     let kernel = KernelAddressSpace::build(memory, boot, KernelAddressSpaceBuildOptions::new())
         .map_err(|_| "KERNEL_ROOT")?;
@@ -84,7 +84,7 @@ fn run_proof(
     user_stacks::initialize().map_err(|_| "USER_STACKS")?;
     display.stage(BootStage::Memory);
     let device = block_device::select_vault_proof_device().map_err(|_| "VIRTIO_BLOCK")?;
-    let mut store = Store::open(device, worker.process.service_id())?;
+    let mut store = Store::open(device, worker.service_id())?;
     display.stage(BootStage::Vault);
     let (mut checkpoint, program, mut pending, origin) = match store.recover()? {
         Some(checkpoint) => {
@@ -148,7 +148,7 @@ fn run_proof(
             program,
             event,
         };
-        let Some(outcome) = worker.invoke(&kernel, invocation)? else {
+        let Some(outcome) = invoke(&worker, &kernel, invocation)? else {
             if let Some(event) = incoming {
                 report_event("REJECTED:ARITHMETIC", event.id);
                 break;
@@ -271,113 +271,18 @@ fn field(label: &str, value: u64) {
     serial::write_dec_u64_value(value);
 }
 
-struct Worker {
-    process: ActiveUserProcess,
-    root: RetainedUserAddressSpace,
-    entry: u64,
-    stack_top: u64,
-    input_frame: u64,
-    result_frame: u64,
-}
-
-impl Worker {
-    fn prepare(
-        boot: &PythBootInfo,
-        memory: &mut PhysicalMemory,
-        holder: ServiceId,
-    ) -> Result<Self, &'static str> {
-        let manifest = runtime_loader::load_named_user_program(boot, b"vault-pulse.elf")
-            .map_err(|_| "WORKER_MANIFEST")?;
-        if manifest.principal_id() != PRINCIPAL {
-            return Err("WORKER_PRINCIPAL");
-        }
-        let image = user_elf::validate(manifest.elf()).map_err(|_| "WORKER_ELF")?;
-        let input_frame = memory.allocate_zeroed_page().map_err(|_| "INPUT_PAGE")?;
-        let result_frame = memory.allocate_zeroed_page().map_err(|_| "RESULT_PAGE")?;
-        let mappings = [
-            UserPayloadMapping::read_only(INPUT_ADDRESS, input_frame, PAGE_SIZE),
-            UserPayloadMapping::read_write(RESULT_ADDRESS, result_frame, PAGE_SIZE),
-        ];
-        let (root, _) = UserAddressSpace::build_with_user_elf_payloads_and_supervisor_mappings(
-            memory,
-            boot,
-            &image,
-            manifest.elf(),
-            &mappings,
-            &[],
-        )
-        .map_err(|_| "WORKER_ROOT")?;
-        root.validate_user_elf_entry(image.entry())
-            .map_err(|_| "WORKER_ENTRY")?;
-        root.validate_user_payload_mapping(INPUT_ADDRESS, false)
-            .map_err(|_| "INPUT_MAPPING")?;
-        root.validate_user_payload_mapping(RESULT_ADDRESS, true)
-            .map_err(|_| "RESULT_MAPPING")?;
-        let stack = user_stacks::regions()[0];
-        let process = ActiveUserProcess::from_user_elf_launch(
-            holder,
-            PRINCIPAL,
-            manifest.elf_digest(),
-            &image,
-            stack,
-        )
-        .map_err(|_| "WORKER_CONTEXT")?;
-        let mut copy_map = process.copy_map();
-        copy_map
-            .add_mapping(INPUT_ADDRESS, INVOCATION_LEN as u64, true, false)
-            .map_err(|_| "INPUT_COPY_MAP")?;
-        copy_map
-            .add_mapping(RESULT_ADDRESS, OUTCOME_LEN as u64, true, true)
-            .map_err(|_| "RESULT_COPY_MAP")?;
-        Ok(Self {
-            process: process.with_copy_map(copy_map),
-            root: root.retain_for_boot(),
-            entry: image.entry(),
-            stack_top: stack.stack_start + stack.stack_len - 16,
-            input_frame,
-            result_frame,
-        })
+fn invoke(
+    worker: &ProofWorker<INVOCATION_LEN, OUTCOME_LEN>,
+    kernel: &KernelAddressSpace,
+    input: Invocation,
+) -> Result<Option<Outcome>, &'static str> {
+    let bytes = worker.exchange(kernel, &input.encode())?;
+    if bytes == arithmetic_failure(input.generation) {
+        return Ok(None);
     }
-
-    fn invoke(
-        &self,
-        kernel: &KernelAddressSpace,
-        input: Invocation,
-    ) -> Result<Option<Outcome>, &'static str> {
-        with_writable_physical_frame(self.input_frame, |page| {
-            page[..INVOCATION_LEN].copy_from_slice(&input.encode());
-        })
-        .map_err(|_| "INPUT_WRITE")?;
-        with_writable_physical_frame(self.result_frame, |page| page[..OUTCOME_LEN].fill(0))
-            .map_err(|_| "RESULT_CLEAR")?;
-        // SAFETY: prepare validated this worker's entry, guarded stack, and
-        // bounded payload mappings. This is the only active user root.
-        unsafe { self.root.activate() };
-        let returned = user_mode::run_returnable_user_process(
-            self.process,
-            self.entry,
-            self.stack_top,
-            INPUT_ADDRESS,
-            RESULT_ADDRESS,
-        );
-        // SAFETY: the validated kernel root stays live throughout the worker
-        // call. The trap path has returned to its retained kernel stack.
-        unsafe { kernel.activate() };
-        returned.map_err(|_| "WORKER_RETURN")?;
-        if process_context::current_caller().is_ok() {
-            return Err("WORKER_CONTEXT_LEAK");
-        }
-        let bytes: [u8; OUTCOME_LEN] = with_writable_physical_frame(self.result_frame, |page| {
-            page[..OUTCOME_LEN].try_into().unwrap()
-        })
-        .map_err(|_| "RESULT_READ")?;
-        if bytes == arithmetic_failure(input.generation) {
-            return Ok(None);
-        }
-        let result = Outcome::decode(&bytes).map_err(|_| "RESULT_FORMAT")?;
-        result
-            .validate_for(input)
-            .map_err(|_| "RESULT_VALIDATION")?;
-        Ok(Some(result))
-    }
+    let result = Outcome::decode(&bytes).map_err(|_| "RESULT_FORMAT")?;
+    result
+        .validate_for(input)
+        .map_err(|_| "RESULT_VALIDATION")?;
+    Ok(Some(result))
 }

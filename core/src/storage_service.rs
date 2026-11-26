@@ -85,14 +85,18 @@ impl StorageAccess {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StorageService {
-    device: BlockDeviceInfo,
+    capacity_sectors: u64,
     resource: ResourceId,
 }
 
 impl StorageService {
     pub const fn new(device: BlockDeviceInfo) -> Self {
+        Self::with_capacity(device.capacity_sectors())
+    }
+
+    pub(crate) const fn with_capacity(capacity_sectors: u64) -> Self {
         Self {
-            device,
+            capacity_sectors,
             resource: STORAGE_RESOURCE_ID,
         }
     }
@@ -121,7 +125,7 @@ impl StorageService {
             .start_sector
             .checked_add(u64::from(request.sector_count))
             .ok_or(StorageServiceError::InvalidRange)?;
-        if end > self.device.capacity_sectors() {
+        if end > self.capacity_sectors {
             return Err(StorageServiceError::InvalidRange);
         }
         Ok(())
@@ -151,7 +155,7 @@ pub fn run_self_test(device: BlockDeviceInfo) -> Result<(), StorageServiceError>
         STORAGE_RESOURCE_ID,
         RightsMask::new(RightsMask::READ),
     )?;
-    if service.device.queue_size() == 0 {
+    if device.queue_size() == 0 {
         return Err(StorageServiceError::InvalidRange);
     }
     service.authorize_request(&table, writer, read_only, StorageRequest::read(0, 1))?;

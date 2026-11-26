@@ -65,6 +65,12 @@ def debug_exit_status(outcome: str) -> int:
     return (DEBUG_EXIT_CODES[outcome] << 1) | 1
 
 
+def interrupt_reason(path):
+    if path is not None and path.is_file():
+        return "QEMU_INTERRUPTED"
+    return None
+
+
 def classify_qemu_exit(
     returncode: int | None,
     serial: str,
@@ -215,7 +221,7 @@ def network_device_qemu_args(network_device: str) -> list[str]:
     ]
 
 
-QMP_PORT = 4488
+QMP_PORT = int(os.environ.get("PYTHOS_QMP_PORT", "4488"))
 USB_MOUSE_SEQUENCE_LENGTH = 16
 
 
@@ -433,8 +439,10 @@ def main() -> int:
         action="store_true",
         help="do not attach the default legacy virtio-blk storage device",
     )
-    parser.add_argument("--nvme-read-only-image", type=Path, help="attach a read-only NVMe test image")
-    parser.add_argument("--nvme-serial", help="override the serial of the read-only NVMe test device")
+    nvme = parser.add_mutually_exclusive_group()
+    nvme.add_argument("--nvme-read-only-image", type=Path, help="attach a read-only NVMe test image")
+    nvme.add_argument("--nvme-world-image", type=Path, help="attach a writable NVMe world test image")
+    parser.add_argument("--nvme-serial", help="override the serial of the NVMe test device")
     parser.add_argument(
         "--virtio-net",
         action="store_true",
@@ -487,6 +495,11 @@ def main() -> int:
         help="attach a USB mouse to the qemu-xhci controller",
     )
     parser.add_argument(
+        "--usb-keyboard",
+        action="store_true",
+        help="attach a boot keyboard to xHCI and disable the emulated PS/2 controller",
+    )
+    parser.add_argument(
         "--xhci-usb-storage",
         action="store_true",
         help="attach a removable USB storage device to the qemu-xhci controller",
@@ -535,6 +548,7 @@ def main() -> int:
         help="QMP-inject fourteen mouse movements then left press/release for marker occurrences",
     )
     parser.add_argument("--kill-after-marker")
+    parser.add_argument("--interrupt-file", type=Path, help="terminate this QEMU child when this file exists")
     parser.add_argument(
         "--allow-reboot",
         action="store_true",
@@ -548,9 +562,10 @@ def main() -> int:
     ovmf = Path(find_ovmf(args.ovmf_code))
     if args.iso and args.esp != DEFAULT_ESP:
         raise SystemExit("--esp and --iso are mutually exclusive")
+    nvme_image = args.nvme_read_only_image or args.nvme_world_image
     if args.nvme_serial is not None:
-        if args.nvme_read_only_image is None:
-            raise SystemExit("--nvme-serial requires --nvme-read-only-image")
+        if nvme_image is None:
+            raise SystemExit("--nvme-serial requires --nvme-read-only-image or --nvme-world-image")
         if not 1 <= len(args.nvme_serial) <= 20 or not all(
             char.isascii() and (char.isalnum() or char in "-_") for char in args.nvme_serial
         ):
@@ -570,6 +585,8 @@ def main() -> int:
         raise SystemExit("--emmc requires --sdhci")
     if args.usb_mouse and not args.xhci:
         raise SystemExit("--usb-mouse requires --xhci")
+    if args.usb_keyboard and not args.xhci:
+        raise SystemExit("--usb-keyboard requires --xhci")
     if args.xhci_usb_storage and not args.xhci:
         raise SystemExit("--xhci-usb-storage requires --xhci")
     if args.remove_usb_device_after_marker and not args.xhci:
@@ -600,7 +617,7 @@ def main() -> int:
     command += qemu_firmware_args(ovmf)
     command += [
         "-machine",
-        "q35",
+        "q35,i8042=off" if args.usb_keyboard else "q35",
         "-cpu",
         "qemu64",
         "-smp",
@@ -703,6 +720,12 @@ def main() -> int:
                 "-device",
                 "usb-mouse,bus=pythos_xhci.0,port=1",
             ]
+        if args.usb_keyboard:
+            port = 2 if args.usb_mouse else 1
+            command += [
+                "-device",
+                f"usb-kbd,bus=pythos_xhci.0,port={port}",
+            ]
         if args.xhci_usb_storage:
             ensure_storage_image(args.xhci_usb_storage_image)
             command += [
@@ -725,22 +748,27 @@ def main() -> int:
             "-device",
             "virtio-blk-pci,drive=pythos_store,disable-modern=on,disable-legacy=off,bootindex=-1",
         ]
-    if args.nvme_read_only_image is not None:
-        image = args.nvme_read_only_image.resolve()
+    if nvme_image is not None:
+        image = nvme_image.resolve()
+        read_only = args.nvme_world_image is None
+        option = "--nvme-read-only-image" if read_only else "--nvme-world-image"
         if not image.is_file():
-            raise SystemExit("--nvme-read-only-image requires an existing regular file")
+            raise SystemExit(f"{option} requires an existing regular file")
         block = {
             "driver": "raw",
             "node-name": "pythos_nvme_image",
-            "read-only": True,
-            "file": {"driver": "file", "filename": str(image), "read-only": True},
+            "read-only": read_only,
+            "file": {"driver": "file", "filename": str(image), "read-only": read_only},
         }
-        serial = args.nvme_serial or "PYTHOS-NVME-READ"
+        serial = args.nvme_serial or ("PYTHOS-NVME-READ" if read_only else "PYTHOS-NVME-WORLD")
+        write_cache = ",write-cache=on" if not read_only else ""
+        if not read_only:
+            block["file"]["cache"] = {"direct": False, "no-flush": False}
         command += [
             "-device", "pcie-root-port,id=pythos_nvme_port,slot=7,chassis=7",
             "-blockdev", json.dumps(block, separators=(",", ":")),
             "-device", f"nvme,bus=pythos_nvme_port,drive=pythos_nvme_image,serial={serial},"
-            "logical_block_size=512,physical_block_size=4096,bootindex=-1",
+            f"logical_block_size=512,physical_block_size=4096,bootindex=-1{write_cache}",
         ]
     if args.virtio_net:
         command += virtio_net_qemu_args(args.virtio_net_peer_port)
@@ -750,11 +778,17 @@ def main() -> int:
         args.screendump.parent.mkdir(parents=True, exist_ok=True)
     command += ["-qmp", f"tcp:127.0.0.1:{QMP_PORT},server=on,wait=off"]
 
+    reason = interrupt_reason(args.interrupt_file)
+    if reason:
+        print(reason)
+        print("QEMU_OUTCOME reset")
+        return SCRIPT_EXIT_CODES["reset"]
     process = subprocess.Popen(command)
     deadline = time.monotonic() + args.timeout
     screendump_at = deadline - 2.0
     screendump_pending = args.screendump is not None
     timed_out = False
+    interrupted = None
     requested_quit = False
     hotplug_done = False
     hotplug_error = None
@@ -768,6 +802,11 @@ def main() -> int:
     try:
         while time.monotonic() < deadline:
             if process.poll() is not None:
+                break
+            interrupted = interrupt_reason(args.interrupt_file)
+            if interrupted:
+                process.kill()
+                process.wait(timeout=2)
                 break
             serial = read_serial_log(args.serial_log)
             if (
@@ -876,6 +915,10 @@ def main() -> int:
         success_marker=args.success_marker,
         require_debug_exit=args.require_debug_exit,
     )
+    if interrupted:
+        print(interrupted)
+        if outcome != QemuOutcome.PANIC:
+            outcome = QemuOutcome.RESET
     final_outcome = sequence_completion_outcome(
         outcome,
         bool(args.sequence_usb_mouse_after_marker),

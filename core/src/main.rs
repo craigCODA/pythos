@@ -51,6 +51,23 @@ compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
 compile_error!("features `verify` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "normal-session", feature = "network-hardware-probe"))]
 compile_error!("features `normal-session` and `network-hardware-probe` are mutually exclusive");
+#[cfg(all(
+    feature = "world-session-probe",
+    any(
+        feature = "normal-session",
+        feature = "verify",
+        feature = "vault-pulse-probe",
+        feature = "nvme-read-probe",
+        feature = "hardware-probe",
+        feature = "network-hardware-probe",
+        feature = "network-hardware-bar-probe",
+        feature = "network-hardware-register-probe",
+        feature = "network-hardware-register-enable-probe",
+        feature = "network-hardware-capability-probe",
+        feature = "usb-xhci-probe",
+    )
+))]
+compile_error!("select world-session-probe as the sole boot profile with --no-default-features");
 #[cfg(all(feature = "hardware-probe", feature = "network-hardware-probe"))]
 compile_error!("features `hardware-probe` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "usb-xhci-probe", feature = "network-hardware-probe"))]
@@ -629,6 +646,11 @@ mod process;
 mod process_context;
 mod process_launch;
 mod process_model;
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "world-session-probe")
+))]
+mod proof_worker;
 mod ps2;
 mod pyth_graph_loader;
 mod pyth_runtime_launch;
@@ -704,9 +726,15 @@ mod tcp_probe;
 mod typed_object_format;
 #[cfg(any(test, feature = "udp-probe"))]
 mod udp_probe;
-#[cfg(any(test, feature = "usb-xhci-command-probe"))]
+#[cfg(any(test, feature = "world-session-nvme-usb"))]
+mod usb_boot_keyboard;
+#[cfg(any(
+    test,
+    feature = "usb-xhci-command-probe",
+    feature = "world-session-nvme-usb"
+))]
 mod usb_xhci_driver;
-#[cfg(any(test, feature = "usb-xhci-probe"))]
+#[cfg(any(test, feature = "usb-xhci-probe", feature = "world-session-nvme-usb"))]
 mod usb_xhci_probe;
 #[cfg(all(not(test), feature = "usb-xhci-probe"))]
 mod usb_xhci_probe_boot;
@@ -750,6 +778,8 @@ mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
+#[cfg(all(not(test), feature = "world-session-probe"))]
+mod world_session;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -863,6 +893,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "vault-pulse-probe"))]
     vault_pulse_probe::run(boot_info, &mut physical_memory);
+    #[cfg(all(not(test), feature = "world-session-probe"))]
+    world_session::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
     // boot branches away before it, near the end of this function.
@@ -3004,6 +3036,7 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         not(feature = "verify"),
         not(feature = "hardware-probe"),
         not(feature = "vault-pulse-probe"),
+        not(feature = "world-session-probe"),
         not(feature = "nvme-read-probe")
     ))]
     normal_boot::run(boot_info, &mut physical_memory);

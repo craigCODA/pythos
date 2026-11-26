@@ -1,0 +1,18 @@
+[package]
+name = "pythos-user-world-session"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pythos-shared = { path = "../../../shared", features = ["world-session-proof"] }
+
+[features]
+native = []
+
+[[bin]]
+name = "pythos-user-world-session"
+path = "src/main.rs"
+required-features = ["native"]

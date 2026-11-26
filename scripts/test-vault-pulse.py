@@ -73,29 +73,34 @@ def compile_counter(source):
     return program_bytes(names.index(args["entry"]), budget, state["x"], goal["value"], links), event["step"]
 
 
-def build_artifacts(scratch, feature="vault-pulse-probe"):
-    build = ROOT / "target" / "vault-pulse" / "build"
+def build_artifacts(scratch, feature="vault-pulse-probe", *,
+                    worker_package="pythos-user-vault-pulse-probe", worker_features=(),
+                    worker_name=b"vault-pulse.elf", principal=0x50595650554C0001, build_dir=None,
+                    core_environment=None):
+    build = build_dir if build_dir is not None else ROOT / "target" / "vault-pulse" / "build"
     core = ["cargo", "build", "-p", "pythos-core", "--no-default-features", "--features", feature,
             "--target", "x86_64-unknown-none", "--target-dir", str(build / "core")]
     boot = ["cargo", "build", "-p", "pythos-boot", "--target", "x86_64-unknown-uefi",
             "--target-dir", str(build / "boot")]
-    user = ["cargo", "build", "-p", "pythos-user-vault-pulse-probe", "--target", "x86_64-unknown-none",
+    user = ["cargo", "build", "-p", worker_package, "--target", "x86_64-unknown-none",
             "--target-dir", str(build / "user")]
+    if worker_features:
+        user.extend(["--features", ",".join(worker_features)])
     user_environment = os.environ.copy()
     linker = ROOT / "user/probes/session-input/linker.ld"
     user_environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
         ("-C", "relocation-model=static", "-C", f"link-arg=-T{linker}", "-C", "link-arg=--no-pie"))
     build_log = scratch / "build.log"
     with build_log.open("w", encoding="utf-8") as log:
-        for command, environment in ((core, None), (boot, None), (user, user_environment)):
+        for command, environment in ((core, core_environment), (boot, None), (user, user_environment)):
             print("+ " + " ".join(command), file=log, flush=True)
             result = subprocess.run(command, cwd=ROOT, env=environment, stdout=log, stderr=subprocess.STDOUT)
             if result.returncode:
                 raise AssertionError(f"Build failed. See {build_log}")
 
     module = load_script("build-image")
-    worker = (build / "user/x86_64-unknown-none/debug/pythos-user-vault-pulse-probe").read_bytes()
-    named = module.build_named_user_program(b"vault-pulse.elf", 0x50595650554C0001, worker)
+    worker = (build / "user/x86_64-unknown-none/debug" / worker_package).read_bytes()
+    named = module.build_named_user_program(worker_name, principal, worker)
     package = module.build_init_pak(module.build_init_bundle([(module.INIT_BUNDLE_NAMED_USER_ELF_TYPE, named)]))
     esp = scratch / "esp"
     files = {

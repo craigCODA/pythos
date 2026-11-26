@@ -7,7 +7,10 @@ use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{Ordering, compiler_fence};
 
-#[cfg(all(not(test), feature = "nvme-read-probe"))]
+#[cfg(all(
+    not(test),
+    any(feature = "nvme-read-probe", feature = "world-session-nvme")
+))]
 pub(crate) mod nvme_probe;
 
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
@@ -232,7 +235,13 @@ pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
     }
 }
 
-#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+#[cfg(all(
+    not(test),
+    any(
+        feature = "vault-pulse-probe",
+        all(feature = "world-session-probe", not(feature = "world-session-nvme"))
+    )
+))]
 pub(crate) fn select_vault_proof_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
     scan_primary_bus_for_virtio()
 }
@@ -1213,12 +1222,22 @@ fn config_address(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 #[cfg(not(test))]
-fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+pub(crate) fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     outl(
         PCI_CONFIG_ADDRESS,
         config_address(bus, device, function, offset),
     );
     inl(PCI_CONFIG_DATA)
+}
+
+#[cfg(all(not(test), feature = "world-session-nvme-target"))]
+pub(crate) fn write_pci_config_word(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    assert!(offset.is_multiple_of(2));
+    outl(
+        PCI_CONFIG_ADDRESS,
+        config_address(bus, device, function, offset),
+    );
+    outw(PCI_CONFIG_DATA + u16::from(offset & 2), value);
 }
 
 #[cfg(test)]

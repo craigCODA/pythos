@@ -1,8 +1,20 @@
-//! ADR 0112: one native, read-only QEMU NVMe block request.
+//! Polled NVMe transport for the read and world checkpoint profiles.
+
+#[cfg(feature = "world-session-nvme")]
+mod world_disk;
+#[cfg(feature = "world-session-nvme")]
+pub(crate) use world_disk::WorldDisk;
+#[cfg(feature = "world-session-nvme-target")]
+mod target;
+#[cfg(feature = "world-session-nvme-usb")]
+pub(crate) use target::disable_pci_message_interrupts;
+#[cfg(feature = "world-session-nvme-target")]
+pub(crate) const EMULATED_TARGET: bool = target::TARGET.emulated;
 
 use core::arch::asm;
 use core::sync::atomic::{Ordering, fence};
 
+#[cfg(feature = "nvme-read-probe")]
 use pythos_shared::{boot_protocol::PythBootInfo, sha256::sha256};
 
 use super::{
@@ -12,17 +24,36 @@ use super::{
 };
 use crate::{
     memory::{
-        physical::{PAGE_SIZE, PhysicalMemory},
-        r#virtual::{KernelAddressSpace, KernelAddressSpaceBuildOptions, translate_active_address},
+        physical::PAGE_SIZE,
+        r#virtual::{PhysicalDeviceMapping, translate_active_address},
     },
-    qemu_exit, serial,
+    serial,
     storage_probe::{self, MemoryBar, StorageController, StorageControllerKind},
 };
+#[cfg(feature = "nvme-read-probe")]
+use crate::{
+    memory::{
+        physical::PhysicalMemory,
+        r#virtual::{KernelAddressSpace, KernelAddressSpaceBuildOptions},
+    },
+    qemu_exit,
+};
 
+#[cfg(feature = "nvme-read-probe")]
 const PREFIX: &str = "PYTHOS:CORE:NVME_READ:";
+#[cfg(feature = "world-session-nvme")]
+const PREFIX: &str = "PYTHOS:CORE:NVME_WORLD:";
+#[cfg(not(feature = "world-session-nvme-target"))]
 const QEMU_VENDOR_ID: u16 = 0x1b36;
+#[cfg(not(feature = "world-session-nvme-target"))]
 const QEMU_DEVICE_ID: u16 = 0x0010;
+#[cfg(feature = "nvme-read-probe")]
 const QEMU_SERIAL: &[u8; 20] = b"PYTHOS-NVME-READ    ";
+#[cfg(all(
+    feature = "world-session-nvme",
+    not(feature = "world-session-nvme-target")
+))]
+const QEMU_SERIAL: &[u8; 20] = b"PYTHOS-NVME-WORLD   ";
 const MMIO_VIRT: u64 = 0xFFFF_C000_1006_0000;
 const MMIO_LEN: u64 = 2 * PAGE_SIZE;
 const PCI_INTX_DISABLE: u16 = 1 << 10;
@@ -47,9 +78,10 @@ const QUEUE_DEPTH: u16 = 2;
 const SUBMISSION_BYTES: usize = 64;
 const COMPLETION_BYTES: usize = 16;
 const DMA_PAGE_BYTES: usize = PAGE_SIZE as usize;
-const POLL_LIMIT: usize = 4_000_000;
+const IO_TIMEOUT_MILLISECONDS: u64 = 5000;
 const IO_QUEUE_ID: u16 = 1;
 const NAMESPACE_ID: u32 = 1;
+#[cfg(feature = "nvme-read-probe")]
 const READ_LBA: u64 = 23;
 
 static ADMIN_SUBMISSION: DmaBytes<DMA_PAGE_BYTES> =
@@ -62,8 +94,8 @@ static IO_COMPLETION: DmaBytes<DMA_PAGE_BYTES> =
     DmaBytes(core::cell::UnsafeCell::new([0; DMA_PAGE_BYTES]));
 static DATA: DmaBytes<DMA_PAGE_BYTES> = DmaBytes(core::cell::UnsafeCell::new([0; DMA_PAGE_BYTES]));
 
+#[cfg(feature = "nvme-read-probe")]
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
-    mark("ENTER");
     match probe(boot, memory) {
         Ok(()) => {
             mark("COMPLETE");
@@ -79,34 +111,11 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     }
 }
 
+#[cfg(feature = "nvme-read-probe")]
 fn probe(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'static str> {
-    let report = storage_probe::run_probe();
-    let mut candidates = (0..report.count())
-        .filter_map(|index| report.controller_at(index))
-        .filter(|controller| {
-            controller.kind == StorageControllerKind::Nvme
-                && controller.vendor_id == QEMU_VENDOR_ID
-                && controller.device_id == QEMU_DEVICE_ID
-        });
-    let pci = candidates.next().ok_or("CONTROLLER_ABSENT")?;
-    if report.overflowed() || candidates.next().is_some() {
-        return Err("CONTROLLER_AMBIGUOUS");
-    }
-    mark("CONTROLLER_FOUND");
-
-    // The QEMU NVMe BAR includes the controller register page and the first
-    // doorbell page. This profile uses only queue pairs 0 and 1 in that window.
-    let physical = match pci.bar0 {
-        Some(MemoryBar::Memory32(base) | MemoryBar::Memory64(base))
-            if base != 0 && base.is_multiple_of(MMIO_LEN) =>
-        {
-            base
-        }
-        _ => return Err("BAR0"),
-    };
-    let last_physical = physical.checked_add(MMIO_LEN - 1).ok_or("BAR0")?;
+    let location = NvmeLocation::discover()?;
     let mut options = KernelAddressSpaceBuildOptions::new();
-    options.nvme_mmio = Some((physical, MMIO_VIRT, MMIO_LEN));
+    options.nvme_mmio = Some(location.mapping());
     let address_space =
         KernelAddressSpace::build(memory, boot, options).map_err(|_| "MMIO_MAPPING")?;
 
@@ -119,22 +128,104 @@ fn probe(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'stati
     address_space
         .validate_active(boot)
         .map_err(|_| "MMIO_MAPPING")?;
-    if !matches!(translate_active_address(MMIO_VIRT), Ok(start) if start == physical)
-        || !matches!(translate_active_address(MMIO_VIRT + MMIO_LEN - 1), Ok(end) if end == last_physical)
-    {
-        return Err("MMIO_MAPPING");
-    }
-    mark("MMIO_READY");
-    read_and_quiesce(pci)
+    location.with_namespace(READ_LBA, |mut namespace| {
+        let bytes = namespace.read_sector(READ_LBA)?;
+        number("READ_LBA=", READ_LBA);
+        let digest = sha256(&bytes);
+        serial::write_str(PREFIX);
+        serial::write_str("READ_SHA256=");
+        for word in digest.chunks_exact(8) {
+            serial::write_hex_u64_value(u64::from_be_bytes(word.try_into().unwrap()));
+        }
+        serial::write_line("");
+        Ok(())
+    })
 }
 
-fn read_and_quiesce(pci: StorageController) -> Result<(), &'static str> {
+pub(crate) struct NvmeLocation {
+    pci: StorageController,
+    physical: u64,
+}
+
+impl NvmeLocation {
+    pub(crate) fn discover() -> Result<Self, &'static str> {
+        mark("ENTER");
+        let report = storage_probe::run_probe();
+        let mut candidates = (0..report.count())
+            .filter_map(|index| report.controller_at(index))
+            .filter(|controller| {
+                controller.kind == StorageControllerKind::Nvme && matches_pci(*controller)
+            });
+        let pci = candidates.next().ok_or("CONTROLLER_ABSENT")?;
+        if report.overflowed() || candidates.next().is_some() {
+            return Err("CONTROLLER_AMBIGUOUS");
+        }
+        mark("CONTROLLER_FOUND");
+
+        // Each selected BAR covers the controller register page and the
+        // first doorbell page. The CAP check bounds the actual doorbells.
+        let physical = match pci.bar0 {
+            Some(MemoryBar::Memory32(base) | MemoryBar::Memory64(base))
+                if base != 0
+                    && base.is_multiple_of(MMIO_LEN)
+                    && base.checked_add(MMIO_LEN - 1).is_some() =>
+            {
+                base
+            }
+            _ => return Err("BAR0"),
+        };
+        Ok(Self { pci, physical })
+    }
+
+    pub(crate) fn mapping(&self) -> PhysicalDeviceMapping {
+        (self.physical, MMIO_VIRT, MMIO_LEN)
+    }
+
+    #[cfg(feature = "world-session-nvme")]
+    pub(crate) fn with_world_disk(
+        self,
+        run: impl FnOnce(WorldDisk) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
+        self.with_namespace(1, |namespace| run(WorldDisk::open(namespace)?))
+    }
+
+    fn with_namespace(
+        self,
+        last_required_lba: u64,
+        run: impl FnOnce(NvmeNamespace) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
+        let last_physical = self.physical + (MMIO_LEN - 1);
+        if !matches!(translate_active_address(MMIO_VIRT), Ok(start) if start == self.physical)
+            || !matches!(translate_active_address(MMIO_VIRT + MMIO_LEN - 1), Ok(end) if end == last_physical)
+        {
+            return Err("MMIO_MAPPING");
+        }
+        mark("MMIO_READY");
+        #[cfg(feature = "world-session-nvme-target")]
+        target::start_clock()?;
+        use_namespace_and_quiesce(self.pci, last_required_lba, run)
+    }
+}
+
+fn use_namespace_and_quiesce(
+    pci: StorageController,
+    last_required_lba: u64,
+    run: impl FnOnce(NvmeNamespace) -> Result<(), &'static str>,
+) -> Result<(), &'static str> {
     let original = pci_command(pci);
     let stopped_command = original & !PCI_COMMAND_BUS_MASTER;
     let register_access = stopped_command | PCI_COMMAND_MEMORY_SPACE | PCI_INTX_DISABLE;
     if !set_pci_command(pci, register_access) {
         return Err(if set_pci_command(pci, stopped_command) {
             "PCI_ENABLE"
+        } else {
+            "PCI_QUIESCE"
+        });
+    }
+    #[cfg(feature = "world-session-nvme-target")]
+    if let Err(reason) = target::disable_message_interrupts(pci) {
+        return Err(if set_pci_command(pci, stopped_command) {
+            reason
         } else {
             "PCI_QUIESCE"
         });
@@ -151,7 +242,8 @@ fn read_and_quiesce(pci: StorageController) -> Result<(), &'static str> {
             });
         }
     };
-    let result = read_known_block(registers, stride, pci, register_access);
+    let result =
+        open_namespace(registers, stride, pci, register_access, last_required_lba).and_then(run);
     let disabled = registers.disable();
     let dma_off = set_pci_command(pci, stopped_command);
     if !dma_off {
@@ -162,22 +254,23 @@ fn read_and_quiesce(pci: StorageController) -> Result<(), &'static str> {
     result
 }
 
-fn read_known_block(
+fn open_namespace(
     registers: Registers,
     stride: usize,
     pci: StorageController,
     register_access: u16,
-) -> Result<(), &'static str> {
+    last_required_lba: u64,
+) -> Result<NvmeNamespace, &'static str> {
     registers.disable()?;
     let mut admin = Queue::new(0, stride, &ADMIN_SUBMISSION, &ADMIN_COMPLETION)?;
-    let mut io = Queue::new(IO_QUEUE_ID, stride, &IO_SUBMISSION, &IO_COMPLETION)?;
+    let io = Queue::new(IO_QUEUE_ID, stride, &IO_SUBMISSION, &IO_COMPLETION)?;
     let data = DmaPage::new(&DATA)?;
 
     let size = u32::from(QUEUE_DEPTH - 1);
     registers.write(AQA, size | (size << 16));
     registers.write_address(ASQ, admin.submission.physical);
     registers.write_address(ACQ, admin.completion.physical);
-    // The QEMU profile uses OVMF's polling setup with MSI-X disabled.
+    // The controller uses polling and leaves the completion interrupts masked.
     registers.write(INTMS, 1);
     if !set_pci_command(pci, register_access | PCI_COMMAND_BUS_MASTER) {
         return Err("PCI_BUS_MASTER");
@@ -187,7 +280,11 @@ fn read_known_block(
     mark("ADMIN_READY");
 
     admin.submit(registers, Command::identify(1, 0, data.physical))?;
-    if &data.copy_bytes::<20>(4) != QEMU_SERIAL {
+    #[cfg(feature = "world-session-nvme-target")]
+    let expected_serial = &target::TARGET.serial;
+    #[cfg(not(feature = "world-session-nvme-target"))]
+    let expected_serial = QEMU_SERIAL;
+    if &data.copy_bytes::<20>(4) != expected_serial {
         return Err("CONTROLLER_IDENTITY");
     }
     mark("CONTROLLER_IDENTIFIED");
@@ -197,7 +294,11 @@ fn read_known_block(
     number("NAMESPACE=", u64::from(NAMESPACE_ID));
     number("BLOCK_BYTES=", SECTOR_SIZE as u64);
     number("BLOCKS=", blocks);
-    if READ_LBA >= blocks {
+    #[cfg(feature = "world-session-nvme-target")]
+    if blocks != target::TARGET.namespace_blocks {
+        return Err("NAMESPACE_TARGET_SIZE");
+    }
+    if last_required_lba >= blocks {
         return Err("READ_RANGE");
     }
 
@@ -218,16 +319,70 @@ fn read_known_block(
     )?;
     mark("IO_READY");
 
-    io.submit(registers, Command::read_one(READ_LBA, data.physical))?;
-    number("READ_LBA=", READ_LBA);
-    let digest = sha256(&data.copy_bytes::<SECTOR_SIZE>(0));
-    serial::write_str(PREFIX);
-    serial::write_str("READ_SHA256=");
-    for word in digest.chunks_exact(8) {
-        serial::write_hex_u64_value(u64::from_be_bytes(word.try_into().unwrap()));
+    Ok(NvmeNamespace {
+        registers,
+        io,
+        data,
+        blocks,
+    })
+}
+
+struct NvmeNamespace {
+    registers: Registers,
+    io: Queue,
+    data: DmaPage,
+    blocks: u64,
+}
+
+impl NvmeNamespace {
+    fn read_sector(&mut self, lba: u64) -> Result<[u8; SECTOR_SIZE], &'static str> {
+        if lba >= self.blocks {
+            return Err("READ_RANGE");
+        }
+        self.io.submit(
+            self.registers,
+            Command::transfer(0x02, lba, 1, self.data.physical),
+        )?;
+        Ok(self.data.copy_bytes(0))
     }
-    serial::write_line("");
-    Ok(())
+
+    #[cfg(feature = "world-session-nvme")]
+    fn write_page_and_flush(
+        &mut self,
+        lba: u64,
+        record: &[u8; SECTOR_SIZE],
+    ) -> Result<(), &'static str> {
+        let page_blocks = (DMA_PAGE_BYTES / SECTOR_SIZE) as u16;
+        if !lba.is_multiple_of(u64::from(page_blocks))
+            || lba
+                .checked_add(u64::from(page_blocks))
+                .is_none_or(|end| end > self.blocks)
+        {
+            return Err("WRITE_RANGE");
+        }
+
+        // There is one synchronous request in flight. Fill the aligned DMA
+        // page before submitting Write and keep it intact through completion.
+        let mut page = [0; DMA_PAGE_BYTES];
+        page[..SECTOR_SIZE].copy_from_slice(record);
+        for (index, bytes) in page.chunks_exact(4).enumerate() {
+            write_u32(
+                self.data.base,
+                index * 4,
+                u32::from_le_bytes(bytes.try_into().unwrap()),
+            );
+        }
+        self.io.submit(
+            self.registers,
+            Command::transfer(0x01, lba, page_blocks, self.data.physical),
+        )?;
+        number("WRITE_LBA=", lba);
+        let mut flush = Command::new(0x00);
+        flush.0[1] = NAMESPACE_ID;
+        self.io.submit(self.registers, flush)?;
+        number("FLUSHED_LBA=", lba);
+        Ok(())
+    }
 }
 
 fn namespace_blocks(identify: &[u8; 192]) -> Result<u64, &'static str> {
@@ -258,6 +413,17 @@ fn pci_command(controller: StorageController) -> u16 {
         controller.function,
         PCI_COMMAND_OFFSET,
     ) as u16
+}
+
+fn matches_pci(controller: StorageController) -> bool {
+    #[cfg(feature = "world-session-nvme-target")]
+    {
+        target::matches_pci(controller)
+    }
+    #[cfg(not(feature = "world-session-nvme-target"))]
+    {
+        controller.vendor_id == QEMU_VENDOR_ID && controller.device_id == QEMU_DEVICE_ID
+    }
 }
 
 fn set_pci_command(controller: StorageController, command: u16) -> bool {
@@ -336,17 +502,14 @@ impl Registers {
     }
 
     fn wait_ready(self, ready: bool) -> Result<(), &'static str> {
-        for _ in 0..POLL_LIMIT {
+        let timeout_units = u64::from(self.read(CAP) >> 24).max(1);
+        poll(timeout_units * 500, "CONTROLLER_TIMEOUT", || {
             let status = self.read(CSTS);
             if status == u32::MAX || (ready && status & CSTS_FATAL != 0) {
                 return Err("CONTROLLER_STATUS");
             }
-            if (status & CSTS_READY != 0) == ready {
-                return Ok(());
-            }
-            core::hint::spin_loop();
-        }
-        Err("CONTROLLER_TIMEOUT")
+            Ok(((status & CSTS_READY != 0) == ready).then_some(()))
+        })
     }
 }
 
@@ -420,13 +583,13 @@ impl Command {
         command
     }
 
-    fn read_one(lba: u64, physical: u64) -> Self {
-        let mut command = Self::new(0x02);
+    fn transfer(opcode: u8, lba: u64, blocks: u16, physical: u64) -> Self {
+        let mut command = Self::new(opcode);
         command.0[1] = NAMESPACE_ID;
         command.set_prp(physical);
         command.0[10] = lba as u32;
         command.0[11] = (lba >> 32) as u32;
-        // CDW12.NLB is zero for one logical block.
+        command.0[12] = u32::from(blocks - 1);
         command
     }
 }
@@ -478,7 +641,7 @@ impl Queue {
         registers.write(self.submission_doorbell, u32::from(self.tail));
 
         let entry = usize::from(self.head) * COMPLETION_BYTES;
-        for _ in 0..POLL_LIMIT {
+        poll(IO_TIMEOUT_MILLISECONDS, "COMMAND_TIMEOUT", || {
             let footer = self.completion.read_completion_dword(entry + 12);
             let status = (footer >> 16) as u16;
             if (status & 1 != 0) == self.phase {
@@ -499,14 +662,36 @@ impl Queue {
                     number("COMMAND_STATUS=", u64::from(status >> 1));
                     return Err("COMMAND_STATUS");
                 }
-                return Ok(());
+                return Ok(Some(()));
             }
             if registers.read(CSTS) & CSTS_FATAL != 0 {
                 return Err("CONTROLLER_STATUS");
             }
+            Ok(None)
+        })
+    }
+}
+
+fn poll<T>(
+    milliseconds: u64,
+    timeout: &'static str,
+    step: impl FnMut() -> Result<Option<T>, &'static str>,
+) -> Result<T, &'static str> {
+    #[cfg(feature = "world-session-nvme-target")]
+    {
+        target::poll(milliseconds, timeout, step)
+    }
+    #[cfg(not(feature = "world-session-nvme-target"))]
+    {
+        let _ = milliseconds;
+        let mut step = step;
+        for _ in 0..4_000_000 {
+            if let Some(value) = step()? {
+                return Ok(value);
+            }
             core::hint::spin_loop();
         }
-        Err("COMMAND_TIMEOUT")
+        Err(timeout)
     }
 }
 

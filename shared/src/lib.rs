@@ -40,3 +40,5 @@ pub mod user_program_manifest;
 #[cfg(feature = "vault-pulse-proof")]
 pub mod vault_pulse;
 pub mod viewing;
+#[cfg(feature = "world-session-proof")]
+pub mod world_session;

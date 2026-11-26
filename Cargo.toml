@@ -21,6 +21,7 @@ members = [
     "user/probes/dns",
     "user/probes/socket",
     "user/probes/vault-pulse",
+    "user/probes/world-session",
 ]
 
 [workspace.package]

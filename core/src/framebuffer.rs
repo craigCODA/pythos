@@ -24,6 +24,8 @@ use pythos_shared::boot_protocol::{
 
 #[cfg(all(not(test), feature = "vault-pulse-view"))]
 pub(crate) mod vault_view;
+#[cfg(all(not(test), feature = "world-session-probe"))]
+pub(crate) mod world_scene;
 
 const BYTES_PER_PIXEL: u64 = 4;
 const GLYPH_WIDTH: u64 = 8;
