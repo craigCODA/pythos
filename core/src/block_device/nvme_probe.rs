@@ -2,6 +2,8 @@
 
 #[cfg(feature = "world-session-nvme")]
 mod world_disk;
+#[cfg(feature = "world-session-graph-window")]
+pub(crate) use world_disk::RecordCompletion;
 #[cfg(feature = "world-session-nvme")]
 pub(crate) use world_disk::WorldDisk;
 #[cfg(feature = "world-session-nvme-target")]
@@ -12,6 +14,8 @@ pub(crate) use target::disable_pci_message_interrupts;
 pub(crate) const EMULATED_TARGET: bool = target::TARGET.emulated;
 
 use core::arch::asm;
+#[cfg(feature = "world-session-graph-window")]
+use core::sync::atomic::AtomicBool;
 use core::sync::atomic::{Ordering, fence};
 
 #[cfg(feature = "nvme-read-probe")]
@@ -93,6 +97,10 @@ static IO_SUBMISSION: DmaBytes<DMA_PAGE_BYTES> =
 static IO_COMPLETION: DmaBytes<DMA_PAGE_BYTES> =
     DmaBytes(core::cell::UnsafeCell::new([0; DMA_PAGE_BYTES]));
 static DATA: DmaBytes<DMA_PAGE_BYTES> = DmaBytes(core::cell::UnsafeCell::new([0; DMA_PAGE_BYTES]));
+// Queue initialization uses the loader-zeroed DMA pages. The graph proof
+// owns them for one controller session per boot, including through teardown.
+#[cfg(feature = "world-session-graph-window")]
+static GRAPH_WORLD_CLAIMED: AtomicBool = AtomicBool::new(false);
 
 #[cfg(feature = "nvme-read-probe")]
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
@@ -181,12 +189,31 @@ impl NvmeLocation {
         (self.physical, MMIO_VIRT, MMIO_LEN)
     }
 
-    #[cfg(feature = "world-session-nvme")]
+    #[cfg(all(
+        feature = "world-session-nvme",
+        not(feature = "world-session-graph-window")
+    ))]
     pub(crate) fn with_world_disk(
         self,
         run: impl FnOnce(WorldDisk) -> Result<(), &'static str>,
     ) -> Result<(), &'static str> {
         self.with_namespace(1, |namespace| run(WorldDisk::open(namespace)?))
+    }
+
+    #[cfg(feature = "world-session-graph-window")]
+    pub(crate) fn with_world_disk(
+        self,
+        run: impl FnOnce(&mut WorldDisk) -> Result<(), &'static str>,
+    ) -> Result<(), &'static str> {
+        if GRAPH_WORLD_CLAIMED.swap(true, Ordering::AcqRel) {
+            return Err("WORLD_DISK_ALREADY_CLAIMED");
+        }
+        self.with_namespace(1, |namespace| {
+            let mut disk = WorldDisk::open(namespace)?;
+            // The borrow ends before controller disable and bus-master
+            // teardown on either callback result.
+            run(&mut disk)
+        })
     }
 
     fn with_namespace(
@@ -336,22 +363,42 @@ struct NvmeNamespace {
 
 impl NvmeNamespace {
     fn read_sector(&mut self, lba: u64) -> Result<[u8; SECTOR_SIZE], &'static str> {
-        if lba >= self.blocks {
-            return Err("READ_RANGE");
-        }
-        self.io.submit(
-            self.registers,
-            Command::transfer(0x02, lba, 1, self.data.physical),
-        )?;
+        let command = self.read_command(lba)?;
+        self.io.submit(self.registers, command)?;
         Ok(self.data.copy_bytes(0))
     }
 
-    #[cfg(feature = "world-session-nvme")]
+    fn read_command(&self, lba: u64) -> Result<Command, &'static str> {
+        if lba >= self.blocks {
+            return Err("READ_RANGE");
+        }
+        Ok(Command::transfer(0x02, lba, 1, self.data.physical))
+    }
+
+    #[cfg(all(
+        feature = "world-session-nvme",
+        not(feature = "world-session-graph-window")
+    ))]
     fn write_page_and_flush(
         &mut self,
         lba: u64,
         record: &[u8; SECTOR_SIZE],
     ) -> Result<(), &'static str> {
+        let write = self.prepare_page_write(lba, record)?;
+        self.io.submit(self.registers, write)?;
+        number("WRITE_LBA=", lba);
+        self.io.submit(self.registers, Command::flush())?;
+        number("FLUSHED_LBA=", lba);
+        Ok(())
+    }
+
+    #[cfg(feature = "world-session-nvme")]
+    fn prepare_page_write(
+        &mut self,
+        lba: u64,
+        record: &[u8; SECTOR_SIZE],
+    ) -> Result<Command, &'static str> {
+        self.io.require_idle()?;
         let page_blocks = (DMA_PAGE_BYTES / SECTOR_SIZE) as u16;
         if !lba.is_multiple_of(u64::from(page_blocks))
             || lba
@@ -361,27 +408,24 @@ impl NvmeNamespace {
             return Err("WRITE_RANGE");
         }
 
-        // There is one synchronous request in flight. Fill the aligned DMA
-        // page before submitting Write and keep it intact through completion.
-        let mut page = [0; DMA_PAGE_BYTES];
-        page[..SECTOR_SIZE].copy_from_slice(record);
-        for (index, bytes) in page.chunks_exact(4).enumerate() {
+        // The idle queue owns this aligned DMA page. Fill it before submission
+        // and leave it intact while the controller owns the request.
+        for (index, bytes) in record.chunks_exact(4).enumerate() {
             write_u32(
                 self.data.base,
                 index * 4,
                 u32::from_le_bytes(bytes.try_into().unwrap()),
             );
         }
-        self.io.submit(
-            self.registers,
-            Command::transfer(0x01, lba, page_blocks, self.data.physical),
-        )?;
-        number("WRITE_LBA=", lba);
-        let mut flush = Command::new(0x00);
-        flush.0[1] = NAMESPACE_ID;
-        self.io.submit(self.registers, flush)?;
-        number("FLUSHED_LBA=", lba);
-        Ok(())
+        for offset in (SECTOR_SIZE..DMA_PAGE_BYTES).step_by(4) {
+            write_u32(self.data.base, offset, 0);
+        }
+        Ok(Command::transfer(
+            0x01,
+            lba,
+            page_blocks,
+            self.data.physical,
+        ))
     }
 }
 
@@ -592,6 +636,21 @@ impl Command {
         command.0[12] = u32::from(blocks - 1);
         command
     }
+
+    #[cfg(feature = "world-session-nvme")]
+    fn flush() -> Self {
+        let mut command = Self::new(0x00);
+        command.0[1] = NAMESPACE_ID;
+        command
+    }
+}
+
+struct CommandCompletion(u16);
+
+impl CommandCompletion {
+    fn failed(&self) -> bool {
+        self.0 & 0x0ffe != 0
+    }
 }
 
 struct Queue {
@@ -602,6 +661,7 @@ struct Queue {
     head: u16,
     phase: bool,
     next_cid: u16,
+    in_flight: Option<u16>,
     submission_doorbell: usize,
     completion_doorbell: usize,
 }
@@ -623,12 +683,33 @@ impl Queue {
             // Controller phase starts at one against the loader-zeroed page.
             phase: true,
             next_cid: 1,
+            in_flight: None,
             submission_doorbell: doorbell,
             completion_doorbell: doorbell + stride,
         })
     }
 
-    fn submit(&mut self, registers: Registers, mut command: Command) -> Result<(), &'static str> {
+    fn submit(&mut self, registers: Registers, command: Command) -> Result<(), &'static str> {
+        self.begin(registers, command)?;
+        let completion = poll(IO_TIMEOUT_MILLISECONDS, "COMMAND_TIMEOUT", || {
+            self.poll_completion(registers)
+        })?;
+        if completion.failed() {
+            number("COMMAND_STATUS=", u64::from(completion.0 >> 1));
+            return Err("COMMAND_STATUS");
+        }
+        Ok(())
+    }
+
+    fn require_idle(&self) -> Result<(), &'static str> {
+        if self.in_flight.is_some() {
+            return Err("COMMAND_BUSY");
+        }
+        Ok(())
+    }
+
+    fn begin(&mut self, registers: Registers, mut command: Command) -> Result<(), &'static str> {
+        self.require_idle()?;
         let cid = self.next_cid;
         self.next_cid = self.next_cid.wrapping_add(1);
         command.0[0] |= u32::from(cid) << 16;
@@ -637,38 +718,39 @@ impl Queue {
             write_u32(self.submission.base, entry + index * 4, word);
         }
         self.tail = (self.tail + 1) % QUEUE_DEPTH;
+        self.in_flight = Some(cid);
         fence(Ordering::SeqCst);
         registers.write(self.submission_doorbell, u32::from(self.tail));
+        Ok(())
+    }
 
+    fn poll_completion(
+        &mut self,
+        registers: Registers,
+    ) -> Result<Option<CommandCompletion>, &'static str> {
+        let cid = self.in_flight.ok_or("COMMAND_NOT_PENDING")?;
         let entry = usize::from(self.head) * COMPLETION_BYTES;
-        poll(IO_TIMEOUT_MILLISECONDS, "COMMAND_TIMEOUT", || {
-            let footer = self.completion.read_completion_dword(entry + 12);
-            let status = (footer >> 16) as u16;
-            if (status & 1 != 0) == self.phase {
-                fence(Ordering::Acquire);
-                let route = self.completion.read_completion_dword(entry + 8);
-                if footer as u16 != cid
-                    || (route >> 16) as u16 != self.id
-                    || route as u16 != self.tail
-                {
-                    return Err("COMPLETION_IDENTITY");
-                }
-                self.head = (self.head + 1) % QUEUE_DEPTH;
-                if self.head == 0 {
-                    self.phase = !self.phase;
-                }
-                registers.write(self.completion_doorbell, u32::from(self.head));
-                if status & 0x0ffe != 0 {
-                    number("COMMAND_STATUS=", u64::from(status >> 1));
-                    return Err("COMMAND_STATUS");
-                }
-                return Ok(Some(()));
-            }
+        let footer = self.completion.read_completion_dword(entry + 12);
+        let status = (footer >> 16) as u16;
+        if (status & 1 != 0) != self.phase {
             if registers.read(CSTS) & CSTS_FATAL != 0 {
                 return Err("CONTROLLER_STATUS");
             }
-            Ok(None)
-        })
+            return Ok(None);
+        }
+
+        fence(Ordering::Acquire);
+        let route = self.completion.read_completion_dword(entry + 8);
+        if footer as u16 != cid || (route >> 16) as u16 != self.id || route as u16 != self.tail {
+            return Err("COMPLETION_IDENTITY");
+        }
+        self.head = (self.head + 1) % QUEUE_DEPTH;
+        if self.head == 0 {
+            self.phase = !self.phase;
+        }
+        registers.write(self.completion_doorbell, u32::from(self.head));
+        self.in_flight = None;
+        Ok(Some(CommandCompletion(status)))
     }
 }
 

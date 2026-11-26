@@ -1,5 +1,10 @@
 //! Partition-relative world records on the identified NVMe namespace.
 
+#[cfg(feature = "world-session-graph-window")]
+mod records;
+#[cfg(feature = "world-session-graph-window")]
+pub(crate) use records::RecordCompletion;
+
 use pythos_shared::evidence_log::crc32_iso_hdlc;
 
 #[cfg(feature = "world-session-nvme-target")]
@@ -7,8 +12,13 @@ use super::target::TARGET;
 use super::{DMA_PAGE_BYTES, NvmeNamespace, SECTOR_SIZE, number};
 
 const RECORD_BLOCKS: u64 = (DMA_PAGE_BYTES / SECTOR_SIZE) as u64;
-#[cfg(feature = "world-session-nvme-initialize")]
+#[cfg(any(
+    feature = "world-session-nvme-initialize",
+    feature = "world-session-graph-window"
+))]
 const CHECKPOINT_RECORDS: core::ops::Range<u64> = 1..5;
+#[cfg(feature = "world-session-graph-window")]
+const MAX_SAVE_DELAY_TICKS: u64 = 500;
 const GPT_HEADER_BYTES: usize = 92;
 const ENTRY_BYTES: usize = 128;
 const ENTRY_COUNT: usize = 128;
@@ -32,6 +42,8 @@ pub(crate) struct WorldDisk {
     first_lba: u64,
     records: u64,
     interrupt_before: u64,
+    #[cfg(feature = "world-session-graph-window")]
+    request: records::RecordRequest,
 }
 
 impl WorldDisk {
@@ -44,14 +56,30 @@ impl WorldDisk {
             first_lba,
             records: (last_lba - first_lba + 1) / RECORD_BLOCKS,
             interrupt_before: 0,
+            #[cfg(feature = "world-session-graph-window")]
+            request: records::RecordRequest::Idle,
         };
         #[cfg(not(feature = "world-session-nvme-target"))]
         {
             let header = disk.read(0)?;
-            if &header[..8] != b"PYWNVM01" || header[16..].iter().any(|byte| *byte != 0) {
+            #[cfg(feature = "world-session-graph-window")]
+            let magic = b"PYWGNV01";
+            #[cfg(not(feature = "world-session-graph-window"))]
+            let magic = b"PYWNVM01";
+            if &header[..8] != magic || header[16..].iter().any(|byte| *byte != 0) {
                 return Err("WORLD_IMAGE");
             }
             disk.interrupt_before = u64_field(&header, 8);
+            // In the graph fixture this field describes only a bounded delay
+            // in the session's save state machine, measured in PIT ticks.
+            #[cfg(feature = "world-session-graph-window")]
+            if disk.interrupt_before > MAX_SAVE_DELAY_TICKS {
+                return Err("WORLD_IMAGE");
+            }
+            #[cfg(feature = "world-session-graph-window")]
+            if disk.capacity_sectors() < CHECKPOINT_RECORDS.end {
+                return Err("WORLD_DEVICE");
+            }
         }
         #[cfg(feature = "world-session-nvme-target")]
         disk.open_target_header()?;
@@ -138,10 +166,18 @@ impl WorldDisk {
     }
 
     pub(crate) fn read(&mut self, record: u64) -> Result<[u8; SECTOR_SIZE], &'static str> {
+        #[cfg(feature = "world-session-graph-window")]
+        self.require_record_idle()?;
         let lba = self.record_lba(record)?;
-        self.namespace.read_sector(lba)
+        let result = self.namespace.read_sector(lba);
+        #[cfg(feature = "world-session-graph-window")]
+        if result.is_err() {
+            self.cancel_record();
+        }
+        result
     }
 
+    #[cfg(not(feature = "world-session-graph-window"))]
     pub(crate) fn write(
         &mut self,
         record: u64,
@@ -152,6 +188,14 @@ impl WorldDisk {
         }
         let lba = self.record_lba(record)?;
         self.namespace.write_page_and_flush(lba, bytes)
+    }
+
+    #[cfg(feature = "world-session-graph-window")]
+    fn checkpoint_lba(&self, record: u64) -> Result<u64, &'static str> {
+        if !CHECKPOINT_RECORDS.contains(&record) {
+            return Err("WRITE_RANGE");
+        }
+        self.record_lba(record)
     }
 
     fn record_lba(&self, record: u64) -> Result<u64, &'static str> {

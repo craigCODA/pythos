@@ -76,7 +76,7 @@ def compile_counter(source):
 def build_artifacts(scratch, feature="vault-pulse-probe", *,
                     worker_package="pythos-user-vault-pulse-probe", worker_features=(),
                     worker_name=b"vault-pulse.elf", principal=0x50595650554C0001, build_dir=None,
-                    core_environment=None):
+                    core_environment=None, release=False, named_graph=None):
     build = build_dir if build_dir is not None else ROOT / "target" / "vault-pulse" / "build"
     core = ["cargo", "build", "-p", "pythos-core", "--no-default-features", "--features", feature,
             "--target", "x86_64-unknown-none", "--target-dir", str(build / "core")]
@@ -86,6 +86,10 @@ def build_artifacts(scratch, feature="vault-pulse-probe", *,
             "--target-dir", str(build / "user")]
     if worker_features:
         user.extend(["--features", ",".join(worker_features)])
+    profile = "release" if release else "debug"
+    if release:
+        core.append("--release")
+        user.append("--release")
     user_environment = os.environ.copy()
     linker = ROOT / "user/probes/session-input/linker.ld"
     user_environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(
@@ -99,13 +103,18 @@ def build_artifacts(scratch, feature="vault-pulse-probe", *,
                 raise AssertionError(f"Build failed. See {build_log}")
 
     module = load_script("build-image")
-    worker = (build / "user/x86_64-unknown-none/debug" / worker_package).read_bytes()
+    worker = (build / "user/x86_64-unknown-none" / profile / worker_package).read_bytes()
     named = module.build_named_user_program(worker_name, principal, worker)
-    package = module.build_init_pak(module.build_init_bundle([(module.INIT_BUNDLE_NAMED_USER_ELF_TYPE, named)]))
+    records = [(module.INIT_BUNDLE_NAMED_USER_ELF_TYPE, named)]
+    if named_graph is not None:
+        graph_name, graph_bytes = named_graph
+        records.append((module.INIT_BUNDLE_PYTH_GRAPH_TYPE,
+                        module.build_named_pyth_graph(graph_name, principal, graph_bytes)))
+    package = module.build_init_pak(module.build_init_bundle(records))
     esp = scratch / "esp"
     files = {
         "EFI/BOOT/BOOTX64.EFI": (build / "boot/x86_64-unknown-uefi/debug" / module.BOOT_EFI.name).read_bytes(),
-        "PYTHOS/PYTHCORE.ELF": (build / "core/x86_64-unknown-none/debug/pythcore").read_bytes(),
+        "PYTHOS/PYTHCORE.ELF": (build / "core/x86_64-unknown-none" / profile / "pythcore").read_bytes(),
         "PYTHOS/BOOT.CFG": module.BOOT_CFG,
         "PYTHOS/INIT.PAK": package,
         "PYTHOS/FONT.PSF": module.FONT_PSF,

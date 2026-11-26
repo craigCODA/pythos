@@ -1,8 +1,17 @@
 //! Native world input, returnable world worker, and committed presentation.
 
+#[cfg(feature = "world-session-graph-window")]
+mod graph_window;
 #[cfg(feature = "world-session-nvme-usb")]
 mod keyboard;
+#[cfg(not(feature = "world-session-graph-window"))]
 mod store;
+
+#[cfg(all(
+    feature = "world-session-graph-window",
+    feature = "world-session-nvme-target"
+))]
+compile_error!("the graph window proof uses the emulated NVMe fixture");
 
 use core::arch::asm;
 
@@ -10,24 +19,28 @@ use core::arch::asm;
 use crate::block_device;
 #[cfg(feature = "world-session-nvme")]
 use crate::block_device::nvme_probe::NvmeLocation;
-#[cfg(not(feature = "world-session-nvme-usb"))]
+#[cfg(not(any(
+    feature = "world-session-nvme-usb",
+    feature = "world-session-graph-window"
+)))]
 use crate::ps2;
+#[cfg(not(feature = "world-session-graph-window"))]
+use crate::{architecture::x86_64::interrupts, proof_worker::ProofWorker, session_input};
 use crate::{
-    architecture::x86_64::interrupts,
     framebuffer,
     memory::{
         physical::PhysicalMemory,
         r#virtual::{KernelAddressSpace, KernelAddressSpaceBuildOptions},
     },
-    proof_worker::ProofWorker,
     qemu_exit, serial,
     service_identity::{ServiceId, ServiceIdentityTable},
-    session_input, syscall,
+    syscall,
     tasks::TaskId,
     user_stacks,
 };
+use pythos_shared::boot_protocol::PythBootInfo;
+#[cfg(not(feature = "world-session-graph-window"))]
 use pythos_shared::{
-    boot_protocol::PythBootInfo,
     session_input_abi::{KEY_DIGIT0, SESSION_INPUT_KIND_KEY_DOWN},
     world_session::{FRAME_LEN, Frame, INVOCATION_LEN, Invocation, Notice, PRINCIPAL, World},
 };
@@ -106,11 +119,16 @@ fn finish(success: bool) -> ! {
 }
 
 fn run_session(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &'static str> {
-    interrupts::initialize().map_err(|_| "INTERRUPTS")?;
+    crate::architecture::x86_64::interrupts::initialize().map_err(|_| "INTERRUPTS")?;
     let mut identities = ServiceIdentityTable::new();
     let holder = identities
         .register_task(TaskId::new(1))
         .map_err(|_| "WORLD_IDENTITY")?;
+    #[cfg(feature = "world-session-graph-window")]
+    let graph = graph_window::admit(boot)?;
+    #[cfg(feature = "world-session-graph-window")]
+    let worker = graph_window::prepare(boot, memory, holder)?;
+    #[cfg(not(feature = "world-session-graph-window"))]
     let worker = ProofWorker::<INVOCATION_LEN, FRAME_LEN>::prepare(
         boot,
         memory,
@@ -152,7 +170,18 @@ fn run_session(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &
             store::Store::open(device, worker.service_id())?,
         )
     }
-    #[cfg(feature = "world-session-nvme")]
+    #[cfg(feature = "world-session-graph-window")]
+    {
+        nvme.with_world_disk(|disk| {
+            let result = graph_window::run(boot, &kernel, holder, &worker, &graph, disk);
+            disk.cancel_record();
+            result
+        })
+    }
+    #[cfg(all(
+        feature = "world-session-nvme",
+        not(feature = "world-session-graph-window")
+    ))]
     {
         nvme.with_world_disk(|device| {
             let store = store::Store::open(device, worker.service_id())?;
@@ -170,6 +199,7 @@ fn run_session(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> Result<(), &
     }
 }
 
+#[cfg(not(feature = "world-session-graph-window"))]
 fn run_world(
     boot: &PythBootInfo,
     kernel: &KernelAddressSpace,
@@ -235,6 +265,7 @@ fn run_world(
     }
 }
 
+#[cfg(not(feature = "world-session-graph-window"))]
 fn present(boot: &PythBootInfo, frame: Frame) -> Result<(), &'static str> {
     with_input_interrupts(|| framebuffer::world_scene::render(&boot.framebuffer, &frame))
         .inspect_err(|_| {
@@ -260,6 +291,7 @@ fn with_input_interrupts<T>(work: impl FnOnce() -> T) -> T {
     result
 }
 
+#[cfg(not(feature = "world-session-graph-window"))]
 fn report(stage: &str, frame: Frame) {
     serial::write_str("PYTHOS:WORLD:");
     serial::write_str(stage);
@@ -274,6 +306,7 @@ fn report(stage: &str, frame: Frame) {
     serial::write_line("");
 }
 
+#[cfg(not(feature = "world-session-graph-window"))]
 fn report_edit(world: World) {
     serial::write_str("PYTHOS:WORLD:EDIT");
     field(" revision:", world.revision);

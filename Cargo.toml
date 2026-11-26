@@ -22,6 +22,7 @@ members = [
     "user/probes/socket",
     "user/probes/vault-pulse",
     "user/probes/world-session",
+    "user/probes/graph-window",
 ]
 
 [workspace.package]

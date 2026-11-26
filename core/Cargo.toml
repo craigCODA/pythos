@@ -168,6 +168,8 @@ vault-pulse-view = ["vault-pulse-probe"]
 world-session-probe = ["pythos-shared/world-session-proof"]
 # ADR 0115 native world checkpoints in a marked QEMU NVMe GPT partition.
 world-session-nvme = ["world-session-probe"]
+# ADR 0118 live graph-authored window on the emulated NVMe fixture.
+world-session-graph-window = ["world-session-nvme", "pythos-shared/graph-window-proof"]
 # ADR 0116 builds the same native world for one locally identified NVMe target.
 world-session-nvme-target = ["world-session-nvme"]
 # First-boot preparation of a blank, identity-bound native world store.

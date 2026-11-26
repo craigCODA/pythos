@@ -105,7 +105,7 @@ def viewport(path):
     width, height = map(int, size.split())
     assert magic == b"P6" and intensity == b"255", path
     assert width >= 600 and height >= 400 and len(pixels) == width * height * 3, path
-    return pixels[66 * width * 3:(height - 98) * width * 3]
+    return width, pixels[84 * width * 3:(height - 98) * width * 3]
 
 
 class Guest:
@@ -186,8 +186,10 @@ def proof():
 
     with guest(esp, disk, scratch, "author") as first:
         first.wait(state("READY", 0, 0))
-        blank = first.frame(scratch / "blank.ppm")
-        assert bytes((26, 47, 56)) in blank and bytes((24, 55, 52)) in blank
+        width, blank = first.frame(scratch / "blank.ppm")
+        sky_column = width // 3 * 3
+        samples = [row * width * 3 + sky_column for row in range(0, 96, 8)]
+        assert len({blank[offset:offset + 3] for offset in samples}) >= 6, "Expected graded sky"
         first.keys("w")
         first.wait(state("FRAME", 0, 0, z=-1000))
         first.keys("1", "d", "3", "d", "3", "c")
@@ -209,7 +211,7 @@ def proof():
         resumed.wait(state("READY", 6, 3, focus=2))
         resumed.keys("c", "f")
         resumed.wait(state("FRAME", 7, 3, selected=1, target=3, focus=3))
-        visible = resumed.frame(scratch / "recovered.ppm")
+        _, visible = resumed.frame(scratch / "recovered.ppm")
         selected, focused = bytes((246, 194, 120)), bytes((139, 242, 201))
         assert selected not in blank and focused not in blank
         assert selected in visible and focused in visible

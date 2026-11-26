@@ -6,23 +6,22 @@ use core::{
 };
 use pythos_shared::{
     boot_protocol::PythFramebufferInfo,
-    world_session::{Frame, HALF_WIDTH_MM, Kind, Object, Pose},
+    world_session::{Frame, HALF_WIDTH_MM, Pose},
 };
 
-use super::{Rgb, Surface};
+use super::{GLYPH_WIDTH, Rgb, Surface};
 
-const SKY: Rgb = rgb(26, 47, 56);
-const GROUND: Rgb = rgb(24, 55, 52);
-const GRID: Rgb = rgb(43, 78, 73);
-const MAJOR: Rgb = rgb(58, 102, 94);
-const EDGE: Rgb = rgb(120, 179, 164);
-const PANEL: Rgb = rgb(12, 26, 30);
-const TEXT: Rgb = rgb(222, 239, 234);
-const MUTED: Rgb = rgb(149, 185, 185);
-const MINT: Rgb = rgb(139, 242, 201);
-const AMBER: Rgb = rgb(246, 194, 120);
-const TARGET: Rgb = rgb(150, 183, 240);
-const OBJECT: Rgb = rgb(76, 159, 147);
+mod landscape;
+mod objects;
+
+const GRID: Rgb = rgb(38, 56, 71);
+const MAJOR: Rgb = rgb(51, 77, 94);
+const EDGE: Rgb = rgb(95, 136, 152);
+const PANEL: Rgb = rgb(13, 21, 34);
+const PANEL_EDGE: Rgb = rgb(57, 77, 98);
+const TEXT: Rgb = rgb(230, 238, 248);
+const MUTED: Rgb = rgb(161, 181, 203);
+const STATUS: Rgb = rgb(148, 218, 222);
 const NEAR: i64 = 450;
 const EYE_MM: i64 = 1650;
 
@@ -64,215 +63,161 @@ impl Camera {
         ]
     }
 
-    fn ground_line(&self, surface: &Surface, from: [i32; 2], to: [i32; 2], color: Rgb) {
+    fn ground_line(&self, surface: &Surface, from: [i32; 2], to: [i32; 2], far: i64, color: Rgb) {
         let mut a = self.transform(from[0], from[1]);
         let mut b = self.transform(to[0], to[1]);
-        if a[1].max(b[1]) < NEAR {
+        if a[1].max(b[1]) < NEAR || a[1].min(b[1]) > far {
             return;
         }
         if a[1] < NEAR {
-            a = clip_near(a, b);
+            a = clip_depth(a, b, NEAR);
         }
         if b[1] < NEAR {
-            b = clip_near(b, a);
+            b = clip_depth(b, a, NEAR);
+        }
+        if a[1] > far {
+            a = clip_depth(a, b, far);
+        }
+        if b[1] > far {
+            b = clip_depth(b, a, far);
         }
         line(surface, self.project(a, 0), self.project(b, 0), color);
     }
 }
 
-fn clip_near([side, depth]: [i64; 2], [other_side, other_depth]: [i64; 2]) -> [i64; 2] {
+fn clip_depth(
+    [side, depth]: [i64; 2],
+    [other_side, other_depth]: [i64; 2],
+    plane: i64,
+) -> [i64; 2] {
     [
-        side + (other_side - side) * (NEAR - depth) / (other_depth - depth),
-        NEAR,
+        side + (other_side - side) * (plane - depth) / (other_depth - depth),
+        plane,
     ]
 }
 
 pub(crate) fn render(info: &PythFramebufferInfo, frame: &Frame) -> Result<(), &'static str> {
     let surface = Surface::new(info).map_err(|_| "WORLD_SURFACE")?;
+    draw_environment(&surface, frame)?;
+    let cx = surface.width as i64 / 2;
+    let cy = surface.height as i64 * 52 / 100;
+    for sign in [-1, 1] {
+        line(&surface, [cx + sign * 3, cy], [cx + sign * 8, cy], TEXT);
+        line(&surface, [cx, cy + sign * 3], [cx, cy + sign * 8], TEXT);
+    }
+    rect(&surface, cx, cy, 1, 1, STATUS);
+    draw_controls(&surface, frame)
+}
+
+pub(super) fn draw_environment(surface: &Surface, frame: &Frame) -> Result<(), &'static str> {
     if surface.width < 600 || surface.height < 400 {
         return Err("WORLD_VIEWPORT");
     }
-    let camera = Camera::new(&surface, frame.view.pose);
-    let horizon = camera.horizon as u64;
-    surface.fill_rect(0, 0, surface.width, horizon, SKY);
-    surface.fill_rect(0, horizon, surface.width, surface.height - horizon, GROUND);
+    let camera = Camera::new(surface, frame.view.pose);
+    landscape::draw(surface, &camera);
     let edge = HALF_WIDTH_MM;
     for metre in -22..=22 {
         let at = metre * 1000;
-        let color = if metre % 5 == 0 { MAJOR } else { GRID };
-        camera.ground_line(&surface, [-edge, at], [edge, at], color);
-        camera.ground_line(&surface, [at, -edge], [at, edge], color);
+        let (far, color) = if metre % 5 == 0 {
+            (70_000, MAJOR)
+        } else {
+            (16_000, GRID)
+        };
+        camera.ground_line(surface, [-edge, at], [edge, at], far, color);
+        camera.ground_line(surface, [at, -edge], [at, edge], far, color);
     }
     for limit in [-edge, edge] {
-        camera.ground_line(&surface, [-edge, limit], [edge, limit], EDGE);
-        camera.ground_line(&surface, [limit, -edge], [limit, edge], EDGE);
+        camera.ground_line(surface, [-edge, limit], [edge, limit], 70_000, EDGE);
+        camera.ground_line(surface, [limit, -edge], [limit, edge], 70_000, EDGE);
     }
 
     let mut objects = frame.world.slots;
     objects
         .sort_unstable_by_key(|object| Reverse(camera.transform(object.pose.x, object.pose.z)[1]));
     for object in objects.iter().filter(|object| object.id != 0) {
-        draw_object(&surface, &camera, frame, *object).map_err(|_| "WORLD_OBJECT_LABEL")?;
+        objects::draw(surface, &camera, frame, *object).map_err(|_| "WORLD_OBJECT_LABEL")?;
     }
-    let cx = camera.centre;
-    let cy = surface.height as i64 * 52 / 100;
-    line(&surface, [cx - 5, cy], [cx + 5, cy], MUTED);
-    line(&surface, [cx, cy - 5], [cx, cy + 5], MUTED);
-    draw_controls(&surface, frame)
-}
 
-fn draw_object(
-    surface: &Surface,
-    camera: &Camera,
-    frame: &Frame,
-    object: Object,
-) -> Result<(), ()> {
-    let point = camera.transform(object.pose.x, object.pose.z);
-    let depth = point[1];
-    if depth < NEAR {
-        return Ok(());
-    }
-    let [x, floor] = camera.project(point, 0);
-    let scale = |millimetres: i64| (millimetres * camera.focal / depth).max(2);
-    let tone = if frame.world.focus == object.id {
-        MINT
-    } else if frame.view.selected == object.id {
-        AMBER
-    } else if frame.view.target == object.id {
-        TARGET
-    } else {
-        OBJECT
-    };
-    let height = match object.kind {
-        Kind::Prop => {
-            let width = scale(560);
-            let height = scale(1060);
-            rect(surface, x - width / 2, floor - height, width, height, tone);
-            rect(
-                surface,
-                x - width * 3 / 5,
-                floor - height,
-                width * 6 / 5,
-                scale(100),
-                TEXT,
-            );
-            height
-        }
-        Kind::Screen => {
-            let width = scale(2050);
-            let height = scale(1120);
-            let top = floor - scale(1850);
-            let stand = scale(130);
-            rect(
-                surface,
-                x - stand / 2,
-                top + height,
-                stand,
-                floor - (top + height),
-                tone,
-            );
-            rect(surface, x - width / 2, top, width, height, tone);
-            rect(
-                surface,
-                x - width / 2 + 3,
-                top + 3,
-                width - 6,
-                height - 6,
-                PANEL,
-            );
-            floor - top
-        }
-        Kind::Anchor => {
-            let width = scale(820);
-            rect(
-                surface,
-                x - width / 2,
-                floor - scale(90),
-                width,
-                scale(90),
-                tone,
-            );
-            line(
-                surface,
-                [x, floor - scale(380)],
-                [x - width / 2, floor - scale(90)],
-                tone,
-            );
-            line(
-                surface,
-                [x, floor - scale(380)],
-                [x + width / 2, floor - scale(90)],
-                tone,
-            );
-            scale(380)
-        }
-        Kind::Empty => return Ok(()),
-    };
-    let y = floor - height - 18;
-    if x >= 0 && x < surface.width as i64 && y >= 75 && y < surface.height as i64 - 100 {
-        let mut text = Text::new();
-        write!(text, "{} {}", object.kind.label(), object.id).map_err(|_| ())?;
-        surface.draw_text((x - 30).max(0) as u64, y as u64, 1, text.as_str(), tone)?;
-    }
     Ok(())
 }
 
+fn panel(surface: &Surface, x: u64, y: u64, width: u64, height: u64) {
+    surface.fill_rect(x, y, width, height, PANEL);
+    surface.fill_rect(x, y, width, 1, PANEL_EDGE);
+    surface.fill_rect(x, y + height - 1, width, 1, PANEL_EDGE);
+    surface.fill_rect(x, y, 1, height, PANEL_EDGE);
+    surface.fill_rect(x + width - 1, y, 1, height, PANEL_EDGE);
+}
+
 fn draw_controls(surface: &Surface, frame: &Frame) -> Result<(), &'static str> {
-    surface.fill_rect(0, 0, surface.width, 66, PANEL);
+    panel(surface, 16, 16, 224, 66);
+    surface.fill_rect(16, 16, 3, 66, STATUS);
     surface
-        .draw_text(20, 13, 2, "PythOS  Native World", TEXT)
+        .draw_text(30, 26, 2, "PythOS", TEXT)
         .map_err(|_| "WORLD_TITLE")?;
     surface
-        .draw_text(20, 43, 1, "HALF ACRE  44.98 x 44.98 m", MUTED)
+        .draw_text(30, 49, 1, "44.98 m x 44.98 m", MUTED)
         .map_err(|_| "WORLD_SIZE_LABEL")?;
+    let mut pose = Text::new();
+    write!(pose, "X {}  Z {} mm", frame.view.pose.x, frame.view.pose.z)
+        .map_err(|_| "WORLD_POSITION_TEXT")?;
     surface
-        .draw_text(surface.width - 312, 43, 1, frame.view.notice.label(), MINT)
-        .map_err(|_| "WORLD_NOTICE")?;
+        .draw_text(30, 64, 1, pose.as_str(), MUTED)
+        .map_err(|_| "WORLD_POSITION_LABEL")?;
 
-    let top = surface.height - 98;
-    surface.fill_rect(0, top, surface.width, 98, PANEL);
+    let mut checkpoint = Text::new();
+    let count = frame
+        .world
+        .slots
+        .iter()
+        .filter(|object| object.id != 0)
+        .count();
+    write!(
+        checkpoint,
+        "Objects {}   Rev {}",
+        count, frame.world.revision
+    )
+    .map_err(|_| "WORLD_STATUS_TEXT")?;
+    let notice = frame.view.notice.label();
+    let status_width = (notice.len().max(checkpoint.len) as u64 * GLYPH_WIDTH + 34).max(176);
+    let status_x = surface.width - 16 - status_width;
+    panel(surface, status_x, 16, status_width, 51);
+    surface.fill_rect(status_x + 13, 29, 5, 5, STATUS);
+    surface
+        .draw_text(status_x + 26, 28, 1, notice, TEXT)
+        .map_err(|_| "WORLD_NOTICE")?;
+    surface
+        .draw_text(status_x + 13, 46, 1, checkpoint.as_str(), MUTED)
+        .map_err(|_| "WORLD_STATUS_LABEL")?;
+
+    let width = (surface.width - 32).min(592);
+    let left = (surface.width - width) / 2;
+    let top = surface.height - 94;
+    panel(surface, left, top, width, 78);
     let mut text = Text::new();
     write!(
         text,
-        "X {} mm  Z {} mm   SELECT {}   TARGET {}   FOCUS {}   REV {}",
-        frame.view.pose.x,
-        frame.view.pose.z,
-        frame.view.selected,
-        frame.view.target,
-        frame.world.focus,
-        frame.world.revision,
+        "Select {}   Target {}   Focus {}",
+        frame.view.selected, frame.view.target, frame.world.focus,
     )
-    .map_err(|_| "WORLD_POSITION_TEXT")?;
+    .map_err(|_| "WORLD_SELECTION_TEXT")?;
     surface
-        .draw_text(20, top + 9, 1, text.as_str(), TEXT)
-        .map_err(|_| "WORLD_POSITION_LABEL")?;
-    surface
-        .draw_text(
-            20,
-            top + 31,
-            1,
-            "WASD WALK  Q/E TURN  1 PROP  2 SCREEN  3 ANCHOR  4 TEMPLATE",
-            MUTED,
-        )
-        .map_err(|_| "WORLD_HELP")?;
-    surface
-        .draw_text(
-            20,
-            top + 51,
-            1,
-            "C SELECT  T TARGET  B BIND  F USE  M MOVE  X REMOVE",
-            MUTED,
-        )
-        .map_err(|_| "WORLD_HELP")?;
-    surface
-        .draw_text(
-            20,
-            top + 71,
-            1,
-            "G GO TO ANCHOR  H SET ARRIVAL  ESC CLEAR  0 EXIT",
-            MUTED,
-        )
-        .map_err(|_| "WORLD_HELP")
+        .draw_text(left + 14, top + 10, 1, text.as_str(), STATUS)
+        .map_err(|_| "WORLD_SELECTION_LABEL")?;
+    surface.fill_rect(left + 14, top + 23, width - 28, 1, PANEL_EDGE);
+    for (offset, help) in [
+        (
+            30,
+            "WASD Walk  Q/E Turn   1 Prop  2 Screen  3 Anchor  4 Template",
+        ),
+        (45, "C Select   T Target   B Bind  F Use  M Move  X Remove"),
+        (60, "G Go to anchor   H Set arrival   Esc Clear   0 Exit"),
+    ] {
+        surface
+            .draw_text(left + 14, top + offset, 1, help, MUTED)
+            .map_err(|_| "WORLD_HELP")?;
+    }
+    Ok(())
 }
 
 fn rect(surface: &Surface, x: i64, y: i64, width: i64, height: i64, color: Rgb) {
@@ -315,6 +260,17 @@ fn line(surface: &Surface, [x, y]: [i64; 2], [end_x, end_y]: [i64; 2], color: Rg
 
 const fn rgb(red: u8, green: u8, blue: u8) -> Rgb {
     Rgb { red, green, blue }
+}
+
+fn mix(from: Rgb, to: Rgb, weight: u8) -> Rgb {
+    let amount = u16::from(weight);
+    let channel =
+        |a: u8, b: u8| ((u16::from(a) * (255 - amount) + u16::from(b) * amount + 127) / 255) as u8;
+    rgb(
+        channel(from.red, to.red),
+        channel(from.green, to.green),
+        channel(from.blue, to.blue),
+    )
 }
 
 struct Text {

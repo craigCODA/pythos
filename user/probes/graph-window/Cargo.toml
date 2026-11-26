@@ -1,0 +1,22 @@
+[package]
+name = "pythos-user-graph-window"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+pythos-shared = { path = "../../../shared", features = ["graph-window-proof"] }
+pythos-user-pyth-runtime = { path = "../../pyth-runtime" }
+
+[dev-dependencies]
+pythc = { path = "../../../tools/pythc" }
+
+[features]
+native = []
+
+[[bin]]
+name = "pythos-user-graph-window"
+path = "src/main.rs"
+required-features = ["native"]

@@ -477,6 +477,9 @@ mod font;
 mod font_system;
 mod framebuffer;
 mod general_storage_persistence;
+#[cfg(all(test, feature = "world-session-graph-window"))]
+#[path = "world_session/graph_window/layout.rs"]
+mod graph_window_layout_test;
 #[cfg(all(not(test), feature = "hardware-probe"))]
 mod hardware_probe_boot;
 #[cfg(any(test, feature = "hardware-probe"))]

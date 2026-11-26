@@ -5,6 +5,8 @@ pub mod boot_protocol;
 pub mod capability_abi;
 pub mod dns_markers;
 pub mod evidence_log;
+#[cfg(feature = "graph-window-proof")]
+pub mod graph_window;
 pub mod icmp_markers;
 pub mod init_bundle;
 pub mod init_pak;
