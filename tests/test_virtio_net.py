@@ -166,7 +166,7 @@ def test_ci_runs_focused_and_self_test_suites_before_live_nic_acceptance():
         encoding="utf-8"
     )
     assert 'QEMU_VERSION: "11.1.1"' in workflow
-    assert 'OVMF_VERSION: "2024.02-2ubuntu0.9"' in workflow
+    assert 'OVMF_VERSION: "2024.02-2ubuntu0.10"' in workflow
     commands = (
         "python -m pytest tests/test_virtio_net.py -q",
         "python scripts/test-virtio-net.py --self-test",
