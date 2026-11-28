@@ -1,5 +1,8 @@
 # ADR 0118 — Native PythTIG window proof
 
+Status: Bounded presentation proof. Its surface and saved pose are
+projection state under [ADR 0121](0121-kai-native-interaction.md).
+
 The owner invoked a native window whose graphics come from PythTIG, whose
 animation continues during mouse drag, and whose last placement survives a
 restart. The first slice is an opt-in QEMU boot into the native spatial view

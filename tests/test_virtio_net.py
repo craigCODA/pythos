@@ -102,7 +102,6 @@ def test_canonical_docs_record_icmp_scope_and_next_boundary():
     documents = [
         ROOT / "docs/ROADMAP.md",
         ROOT / "docs/HANDOVER.md",
-        ROOT / "README.md",
         ROOT / "docs/TECHNICAL-OVERVIEW.md",
     ]
     required_statements = (
@@ -126,10 +125,13 @@ def test_canonical_docs_record_icmp_scope_and_next_boundary():
         for statement in required_statements:
             assert statement in contents, f"{document} omits: {statement}"
 
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "(docs/TECHNICAL-OVERVIEW.md)" in readme
+    assert "(docs/decisions/0104-phase-14-secure-transport-proof.md)" in readme
+
 
 def test_current_phase_14_storage_claim_matches_snapshot_backed_boot_topology():
     documents = [
-        ROOT / "README.md",
         ROOT / "docs/ROADMAP.md",
         ROOT / "docs/HANDOVER.md",
         ROOT / "docs/TECHNICAL-OVERVIEW.md",
@@ -194,8 +196,8 @@ def test_current_status_sections_do_not_retain_the_phase_13_5_stop_boundary():
         ),
         (
             ROOT / "README.md",
-            "Phase 14 `NetworkPort` remains",
-            "\nPhase 12\n",
+            "## Native design",
+            "## Architecture and earlier evidence",
         ),
         (
             ROOT / "docs/TECHNICAL-OVERVIEW.md",

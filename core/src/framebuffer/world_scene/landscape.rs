@@ -1,12 +1,12 @@
 use super::{Camera, Rgb, Surface, mix, rect, rgb};
 use pythos_shared::world_session::Pose;
 
-const ZENITH: Rgb = rgb(14, 23, 42);
-const TWILIGHT: Rgb = rgb(43, 62, 91);
-const HAZE: Rgb = rgb(175, 115, 119);
-const SUN: Rgb = rgb(255, 216, 176);
-const GROUND_FAR: Rgb = rgb(37, 48, 63);
-const GROUND_NEAR: Rgb = rgb(19, 32, 44);
+const ZENITH: Rgb = rgb(78, 144, 184);
+const LOWER_SKY: Rgb = rgb(162, 204, 216);
+const HAZE: Rgb = rgb(242, 218, 173);
+const SUN: Rgb = rgb(255, 247, 211);
+const GROUND_FAR: Rgb = rgb(171, 191, 169);
+const GROUND_NEAR: Rgb = rgb(118, 157, 144);
 
 // One full turn in azimuth, with heights in thousandths of the viewport.
 const FAR_RIDGE: [u8; 32] = [
@@ -23,8 +23,20 @@ pub(super) fn draw(surface: &Surface, camera: &Camera) {
         surface.fill_rect(0, y as u64, surface.width, 1, sky(y, camera.horizon));
     }
     draw_sun(surface, camera);
-    ridge(surface, camera, &FAR_RIDGE, rgb(65, 63, 82));
-    ridge(surface, camera, &NEAR_RIDGE, rgb(43, 52, 70));
+    ridge(
+        surface,
+        camera,
+        &FAR_RIDGE,
+        rgb(177, 193, 188),
+        rgb(119, 148, 156),
+    );
+    ridge(
+        surface,
+        camera,
+        &NEAR_RIDGE,
+        rgb(124, 161, 148),
+        rgb(57, 113, 111),
+    );
 
     let ground = surface.height - camera.horizon as u64;
     for row in 0..ground {
@@ -42,10 +54,10 @@ pub(super) fn draw(surface: &Surface, camera: &Camera) {
 fn sky(y: i64, horizon: i64) -> Rgb {
     let middle = horizon * 57 / 100;
     if y < middle {
-        mix(ZENITH, TWILIGHT, (y * 255 / middle) as u8)
+        mix(ZENITH, LOWER_SKY, (y * 255 / middle) as u8)
     } else {
         mix(
-            TWILIGHT,
+            LOWER_SKY,
             HAZE,
             ((y - middle) * 255 / (horizon - middle)) as u8,
         )
@@ -72,10 +84,12 @@ fn draw_sun(surface: &Surface, camera: &Camera) {
     }
 
     for (radius, weight) in [
-        (r * 4, 7),
-        (r * 3, 13),
-        (r * 2, 23),
-        (r * 3 / 2, 38),
+        (r * 4, 4),
+        (r * 7 / 2, 8),
+        (r * 3, 14),
+        (r * 5 / 2, 22),
+        (r * 2, 33),
+        (r * 3 / 2, 49),
         (r, 255),
     ] {
         let first = (cy - radius).max(0);
@@ -89,7 +103,7 @@ fn draw_sun(surface: &Surface, camera: &Camera) {
     }
 }
 
-fn ridge(surface: &Surface, camera: &Camera, heights: &[u8; 32], color: Rgb) {
+fn ridge(surface: &Surface, camera: &Camera, heights: &[u8; 32], lowland: Rgb, crest: Rgb) {
     let heading = i64::from(camera.origin.heading) * 2048;
     for x in 0..surface.width as i64 {
         let direction = heading + (x - camera.centre) * 4096 / camera.focal;
@@ -98,7 +112,10 @@ fn ridge(surface: &Surface, camera: &Camera, heights: &[u8; 32], color: Rgb) {
         let fraction = phase % 1024;
         let start = i64::from(heights[sample]);
         let next = i64::from(heights[(sample + 1) % heights.len()]);
-        let height = (start * 1024 + (next - start) * fraction) * surface.height as i64 / 1_024_000;
+        let elevation = start * 1024 + (next - start) * fraction;
+        let height = elevation * surface.height as i64 / 1_024_000;
+        let shade = (elevation * 255 / (128 * 1024)).min(255) as u8;
+        let color = mix(lowland, crest, shade);
         rect(surface, x, camera.horizon - height, 1, height, color);
     }
 }

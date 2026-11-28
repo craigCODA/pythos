@@ -1,5 +1,13 @@
 # PythOS Agent Instructions
 
+Start with the [current Kai checkpoint](docs/HANDOVER.md#current-kai-checkpoint)
+and the [roadmap](docs/ROADMAP.md#current-kai-workstream). Apply the owner
+direction in [ADR 0121](docs/decisions/0121-kai-native-interaction.md).
+
+In the permanent PythOS workspace, also read its `CURRENT-STATE.md` and
+workspace instructions. Update that checkpoint and the active evidence
+ledger when the decision, verified status, or stopping point changes.
+
 Read `docs/PythOS-SAS-001.md` and `docs/PythOS-TDD-001.md` before editing.
 
 Implement only the active milestone.
@@ -28,6 +36,13 @@ Do not claim full security where only logical isolation exists.
 AI remains outside the trusted core.
 
 ## Interface Model Guardrails
+
+ADR 0121 records the owner's binding anti-desktop direction for Kai.
+Reject POSIX or Unix derivation in the interaction, runtime, authority,
+or relational model. Begin with native task and object identities,
+versioned relationships, and capability-scoped effects. Stop and
+reassess any slice that requires inherited OS semantics, including when
+those semantics are renamed or presented through a graph.
 
 ADR 0066 supersedes the desktop-shell authority portions of ADRs 0018, 0023,
 0024, 0049, and 0053.
@@ -81,14 +96,22 @@ universal-device work.
 
 ## Active Milestone
 
-The active owner-invoked milestone is Phase 15's bounded network-hardware
-observation. The opening read-only PCI network-identity slice is merged through
+The current Kai checkpoint is the bounded
+[NVMe vault boot and recovery proof](docs/decisions/0120-kai-vault-boot-root.md).
+Native world editing and PythTIG presentation have their own QEMU proofs.
+ADR 0121 governs the next interaction design. The proposed authored-object
+action still requires explicit invocation and its own acceptance contract.
+
+### Historical hardware observation baseline
+
+Phase 15 established bounded network-hardware observation through ADR 0109.
+The opening read-only PCI network-identity slice is merged through
 PR #30 at `b89b406bbcab3bd2a48e0ef27935dc3656ad71d2`, with target-specific
 Lenovo `81VS` evidence recorded in
 `docs/evidence/2026-09-24-phase-15-lenovo-network-identity.md`.
 
-The active continuation in `agent/phase15-pci-bar-snapshot` includes the
-accepted read-only BAR-layout observation under ADR 0106, the fixed-register
+The Phase 15 continuation includes the accepted read-only BAR-layout
+observation under ADR 0106, the fixed-register
 reachability probe under ADR 0107, and the bounded PCI Memory Space Enable
 experiment under ADR 0108. The register slice may map one validated 4 KiB
 window with cache-disabled, NX pages. The enable experiment may temporarily
@@ -126,9 +149,8 @@ records the finite loader read-bound increase required for the Slice 2 debug
 acceptance image. Phase 12 `path-adversarial-suite` is recorded through ADR
 0072 and `PYTHOS:CORE:PHASE_12_COMPLETE`. Phase 13 package lifecycle and schema
 extensibility are recorded through ADR 0073 and
-`PYTHOS:CORE:PHASE_13_COMPLETE`. No later implementation starts until
-the owner explicitly invokes a follow-up slice beyond the merged Phase 15
-opening identity boundary. Treat the older
+`PYTHOS:CORE:PHASE_13_COMPLETE`. Further implementation requires an
+explicitly invoked slice. Treat the older
 `milestone/phase8-real-hardware-isolation` and
 `milestone/phase11-real-hardware-boot` branch names as historical context, not
 the current branch target.

@@ -1,5 +1,8 @@
 # Kai WebGL workspace
 
+This development preview reads observations from a saved QEMU trace.
+PythOS draws the native boot view with its framebuffer renderer.
+
 Run the development preview from this directory with Node.js 24.
 
 ```powershell
@@ -9,13 +12,7 @@ npm start
 ```
 
 Open http://127.0.0.1:4173. The project serves its pinned Three.js dependency
-locally. Set `KAI_WEBGL_PORT` to choose another loopback port. On the PythOS
-workstation, this checkout also has a workspace-local npm cache for an offline
-install.
-
-```powershell
-npm ci --offline --cache D:\PythOS-Workspace\.cache\kai-webgl\npm
-```
+locally. Set `KAI_WEBGL_PORT` to choose another loopback port.
 
 The default trace comes from the QEMU boot that recovered checkpoint 3 and
 finished at checkpoint 6. Use **Open trace** to load a serial log from another

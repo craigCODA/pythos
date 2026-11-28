@@ -14,14 +14,15 @@ use super::{GLYPH_WIDTH, Rgb, Surface};
 mod landscape;
 mod objects;
 
-const GRID: Rgb = rgb(38, 56, 71);
-const MAJOR: Rgb = rgb(51, 77, 94);
-const EDGE: Rgb = rgb(95, 136, 152);
-const PANEL: Rgb = rgb(13, 21, 34);
-const PANEL_EDGE: Rgb = rgb(57, 77, 98);
-const TEXT: Rgb = rgb(230, 238, 248);
-const MUTED: Rgb = rgb(161, 181, 203);
-const STATUS: Rgb = rgb(148, 218, 222);
+const GRID: Rgb = rgb(114, 151, 138);
+const MAJOR: Rgb = rgb(101, 140, 127);
+const EDGE: Rgb = rgb(78, 118, 107);
+const PANEL: Rgb = rgb(28, 46, 53);
+const PANEL_EDGE: Rgb = rgb(83, 111, 109);
+const TEXT: Rgb = rgb(232, 242, 238);
+const MUTED: Rgb = rgb(172, 196, 190);
+const STATUS: Rgb = rgb(176, 231, 211);
+const RETICLE: Rgb = rgb(51, 80, 77);
 const NEAR: i64 = 450;
 const EYE_MM: i64 = 1650;
 
@@ -102,8 +103,8 @@ pub(crate) fn render(info: &PythFramebufferInfo, frame: &Frame) -> Result<(), &'
     let cx = surface.width as i64 / 2;
     let cy = surface.height as i64 * 52 / 100;
     for sign in [-1, 1] {
-        line(&surface, [cx + sign * 3, cy], [cx + sign * 8, cy], TEXT);
-        line(&surface, [cx, cy + sign * 3], [cx, cy + sign * 8], TEXT);
+        line(&surface, [cx + sign * 3, cy], [cx + sign * 8, cy], RETICLE);
+        line(&surface, [cx, cy + sign * 3], [cx, cy + sign * 8], RETICLE);
     }
     rect(&surface, cx, cy, 1, 1, STATUS);
     draw_controls(&surface, frame)

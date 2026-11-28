@@ -18,6 +18,7 @@ impl BootStage {
         match self {
             Self::Core => "Starting vault runtime",
             Self::Worker => "Mapping kernel memory",
+            Self::Memory if cfg!(feature = "kai-vault-boot") => "Checking vault NVMe partition",
             Self::Memory => "Checking Virtio storage",
             Self::Vault => "Recovering vault checkpoint",
         }
@@ -126,11 +127,13 @@ impl<'a> BootDisplay<'a> {
     }
 
     fn text(&self, message: &str, detail: &str) {
-        if framebuffer::render_hardware_probe_lines(
-            self.framebuffer,
-            &["PythOS vault", message, detail],
-        )
-        .is_err()
+        let title = if cfg!(feature = "kai-vault-boot") {
+            "PythOS Kai session"
+        } else {
+            "PythOS vault"
+        };
+        if framebuffer::render_hardware_probe_lines(self.framebuffer, &[title, message, detail])
+            .is_err()
         {
             serial::write_line("PYTHOS:VAULT_SCREEN:RENDER_FAILED");
         }

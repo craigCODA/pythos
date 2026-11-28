@@ -1,13 +1,20 @@
 # PythOS-TDD-001: Boot Core Handoff Technical Design
 
-Status: Accepted boot-core design and cumulative acceptance reference. Phase
-15's bounded PCI identity, BAR-layout, register-reachability,
+Status: Accepted boot-core design and cumulative acceptance reference.
+
+The opt-in Kai boot proof uses this UEFI loader, `PythBootInfo` ABI, and
+PythCore entry. After core initialization it admits an identity-bound NVMe
+root, enters the protected pulse evaluator, and publishes a checked
+continuation. [Kai boot root](decisions/0120-kai-vault-boot-root.md) ·
+[Current Kai checkpoint](HANDOVER.md#current-kai-checkpoint)
+
+Phase 15's bounded PCI identity, BAR-layout, register-reachability,
 Memory-Space-Enable, and capability-metadata observation slices are accepted
 under ADRs 0105-0109; see
 [ROADMAP.md](ROADMAP.md#current-phase-15-opening-slice) and
-[HANDOVER.md](HANDOVER.md) for current scope and acceptance evidence.
+[HANDOVER.md](HANDOVER.md#current-phase-15-opening-slice) for acceptance evidence.
 
-The current Phase 15 BAR-layout slice uses a separate
+The Phase 15 BAR-layout slice uses a separate
 `network-hardware-bar-probe` profile. It reads only standard PCI configuration
 BAR fields after the network-controller identity scan. Its QEMU and Lenovo
 evidence record configuration metadata, not BAR reachability, MMIO, device

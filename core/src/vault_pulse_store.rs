@@ -1,9 +1,12 @@
-//! Checkpoint publication on the ADR 0110 proof's dedicated block image.
+//! Vault checkpoint publication on dedicated boot media.
 
+#[cfg(feature = "kai-vault-boot")]
+use crate::block_device::nvme_probe::{EMULATED_TARGET, WorldDisk};
+use crate::{block_device::SECTOR_SIZE, serial};
+#[cfg(not(feature = "kai-vault-boot"))]
 use crate::{
-    block_device::{self, BlockDeviceInfo, SECTOR_SIZE},
+    block_device::{self, BlockDeviceInfo},
     capabilities::{CapabilityHandle, CapabilityTable, RightsMask},
-    serial,
     service_identity::ServiceId,
     storage_service::{STORAGE_RESOURCE_ID, StorageRequest, StorageService},
 };
@@ -12,7 +15,10 @@ use pythos_shared::{
     vault_pulse::{EVENT_LEN, Event, Outcome, PROGRAM_LEN, Program, Status},
 };
 
+#[cfg(not(feature = "kai-vault-boot"))]
 const IMAGE_SECTORS: u64 = 16 * 1024 * 1024 / SECTOR_SIZE as u64;
+#[cfg(feature = "kai-vault-boot")]
+const KAI_RECORD_BASE: u64 = 8;
 const PROGRAM_SECTOR: u64 = 2;
 const SLOT_SECTORS: [u64; 2] = [3, 5];
 const END_SECTOR: u64 = 7;
@@ -212,6 +218,7 @@ impl Checkpoint {
     }
 }
 
+#[derive(Clone, Copy)]
 pub(crate) struct Delivery {
     pub(crate) task: u64,
     pub(crate) event: Event,
@@ -240,16 +247,30 @@ impl Delivery {
 }
 
 pub(crate) struct Store {
-    device: BlockDeviceInfo,
-    service: StorageService,
-    capabilities: CapabilityTable,
-    holder: ServiceId,
-    cap: CapabilityHandle,
+    medium: Medium,
     generation: u64,
     interruption: u8,
+    #[cfg(feature = "kai-vault-boot")]
+    root: Delivery,
+}
+
+struct Medium {
+    #[cfg(not(feature = "kai-vault-boot"))]
+    device: BlockDeviceInfo,
+    #[cfg(not(feature = "kai-vault-boot"))]
+    service: StorageService,
+    #[cfg(not(feature = "kai-vault-boot"))]
+    capabilities: CapabilityTable,
+    #[cfg(not(feature = "kai-vault-boot"))]
+    holder: ServiceId,
+    #[cfg(not(feature = "kai-vault-boot"))]
+    cap: CapabilityHandle,
+    #[cfg(feature = "kai-vault-boot")]
+    disk: WorldDisk,
 }
 
 impl Store {
+    #[cfg(not(feature = "kai-vault-boot"))]
     pub(crate) fn open(device: BlockDeviceInfo, holder: ServiceId) -> Result<Self, &'static str> {
         if !matches!(device, BlockDeviceInfo::Virtio(_))
             || device.capacity_sectors() != IMAGE_SECTORS
@@ -265,11 +286,13 @@ impl Store {
             )
             .map_err(|_| "STORAGE_CAPABILITY")?;
         let mut store = Self {
-            device,
-            service: StorageService::new(device),
-            capabilities,
-            holder,
-            cap,
+            medium: Medium {
+                device,
+                service: StorageService::new(device),
+                capabilities,
+                holder,
+                cap,
+            },
             generation: 0,
             interruption: 0,
         };
@@ -281,7 +304,60 @@ impl Store {
         Ok(store)
     }
 
-    pub(crate) fn receive(&self) -> Result<Option<Delivery>, &'static str> {
+    #[cfg(feature = "kai-vault-boot")]
+    pub(crate) fn open_kai(disk: WorldDisk) -> Result<Self, &'static str> {
+        if disk.capacity_sectors() < KAI_RECORD_BASE + END_SECTOR {
+            return Err("KAI_ROOT_RANGE");
+        }
+        let mut medium = Medium { disk };
+        let header = medium.read(0)?;
+        if zero(&header) {
+            return Err("KAI_ROOT_REQUIRED");
+        }
+        let task = number(&header, 8);
+        let interruption = header[72];
+        let max_interruption = if EMULATED_TARGET { 2 } else { 0 };
+        if &header[..8] != b"PYKAIRT1"
+            || task == 0
+            || interruption > max_interruption
+            || !zero(&header[73..])
+        {
+            return Err("KAI_ROOT_FORMAT");
+        }
+        let event = Event::decode(&header[48..72])
+            .ok()
+            .filter(|event| event.kind == pythos_shared::vault_pulse::EventKind::Task)
+            .ok_or("KAI_ROOT_EVENT")?;
+        let program = read_program(medium.read(PROGRAM_SECTOR)?)
+            .filter(|program| sha256(program.bytes()) == header[16..48])
+            .ok_or("KAI_PROGRAM_REVISION")?;
+        Ok(Self {
+            medium,
+            generation: 0,
+            interruption,
+            root: Delivery {
+                task,
+                event,
+                program: Some(program),
+            },
+        })
+    }
+
+    #[cfg(feature = "kai-vault-boot")]
+    pub(crate) fn root_task(&self) -> u64 {
+        self.root.task
+    }
+
+    pub(crate) fn initial_delivery(&mut self) -> Result<Option<Delivery>, &'static str> {
+        #[cfg(feature = "kai-vault-boot")]
+        {
+            Ok(Some(self.root))
+        }
+        #[cfg(not(feature = "kai-vault-boot"))]
+        self.receive()
+    }
+
+    pub(crate) fn receive(&mut self) -> Result<Option<Delivery>, &'static str> {
         let sector = self.read(1)?;
         if zero(&sector) {
             return Ok(None);
@@ -306,9 +382,29 @@ impl Store {
             if let Some(checkpoint) = Checkpoint::decode(&body)
                 && marker == commit_marker(checkpoint.generation, &body)
                 && slot_index(checkpoint.generation) == index
-                && newest.is_none_or(|old: Checkpoint| checkpoint.generation > old.generation)
             {
-                newest = Some(checkpoint);
+                #[cfg(feature = "kai-vault-boot")]
+                {
+                    let boot_event = checkpoint
+                        .receipts
+                        .into_iter()
+                        .flatten()
+                        .next()
+                        .map(|receipt| receipt.event)
+                        .or(checkpoint.active);
+                    if checkpoint.task != self.root.task
+                        || boot_event != Some(self.root.event)
+                        || self
+                            .root
+                            .program
+                            .is_none_or(|program| !checkpoint.program_matches(program))
+                    {
+                        return Err("KAI_CHECKPOINT_ROOT");
+                    }
+                }
+                if newest.is_none_or(|old: Checkpoint| checkpoint.generation > old.generation) {
+                    newest = Some(checkpoint);
+                }
             }
         }
         if let Some(checkpoint) = newest {
@@ -320,27 +416,32 @@ impl Store {
     }
 
     pub(crate) fn saved_program(
-        &self,
+        &mut self,
         checkpoint: Checkpoint,
     ) -> Result<Option<Program>, &'static str> {
-        let sector = self.read(PROGRAM_SECTOR)?;
-        if !zero(&sector[PROGRAM_LEN..]) {
-            return Ok(None);
-        }
-        Ok(Program::decode(sector[..PROGRAM_LEN].try_into().unwrap())
-            .ok()
-            .filter(|program| checkpoint.program_matches(*program)))
+        #[cfg(feature = "kai-vault-boot")]
+        let program = self.root.program;
+        #[cfg(not(feature = "kai-vault-boot"))]
+        let program = read_program(self.read(PROGRAM_SECTOR)?);
+        Ok(program.filter(|program| checkpoint.program_matches(*program)))
     }
 
-    pub(crate) fn admit_program(&self, program: Program) -> Result<(), &'static str> {
+    pub(crate) fn admit_program(&mut self, program: Program) -> Result<(), &'static str> {
         if self.generation != 0 {
             return Err("PROGRAM_IMMUTABLE");
         }
-        let mut body = [0; SECTOR_SIZE];
-        body[..PROGRAM_LEN].copy_from_slice(program.bytes());
-        self.write(PROGRAM_SECTOR, &body)?;
-        if self.read(PROGRAM_SECTOR)? != body {
-            return Err("PROGRAM_READBACK");
+        #[cfg(feature = "kai-vault-boot")]
+        if self.root.program != Some(program) {
+            return Err("KAI_PROGRAM_REVISION");
+        }
+        #[cfg(not(feature = "kai-vault-boot"))]
+        {
+            let mut body = [0; SECTOR_SIZE];
+            body[..PROGRAM_LEN].copy_from_slice(program.bytes());
+            self.write(PROGRAM_SECTOR, &body)?;
+            if self.read(PROGRAM_SECTOR)? != body {
+                return Err("PROGRAM_READBACK");
+            }
         }
         Ok(())
     }
@@ -381,10 +482,24 @@ impl Store {
         }
     }
 
-    fn read(&self, sector: u64) -> Result<Sector, &'static str> {
+    fn read(&mut self, sector: u64) -> Result<Sector, &'static str> {
         if sector >= END_SECTOR {
             return Err("STORAGE_RANGE");
         }
+        self.medium.read(sector)
+    }
+
+    fn write(&mut self, sector: u64, bytes: &Sector) -> Result<(), &'static str> {
+        if !(PROGRAM_SECTOR..END_SECTOR).contains(&sector) {
+            return Err("STORAGE_RANGE");
+        }
+        self.medium.write(sector, bytes)
+    }
+}
+
+impl Medium {
+    #[cfg(not(feature = "kai-vault-boot"))]
+    fn read(&mut self, sector: u64) -> Result<Sector, &'static str> {
         self.service
             .authorize_request(
                 &self.capabilities,
@@ -396,10 +511,8 @@ impl Store {
         block_device::read_sector(self.device, sector).map_err(|_| "STORAGE_READ")
     }
 
-    fn write(&self, sector: u64, bytes: &Sector) -> Result<(), &'static str> {
-        if !(PROGRAM_SECTOR..END_SECTOR).contains(&sector) {
-            return Err("STORAGE_RANGE");
-        }
+    #[cfg(not(feature = "kai-vault-boot"))]
+    fn write(&mut self, sector: u64, bytes: &Sector) -> Result<(), &'static str> {
         self.service
             .authorize_request(
                 &self.capabilities,
@@ -410,6 +523,26 @@ impl Store {
             .map_err(|_| "STORAGE_WRITE_AUTHORITY")?;
         block_device::write_sector(self.device, sector, bytes).map_err(|_| "STORAGE_WRITE")
     }
+
+    #[cfg(feature = "kai-vault-boot")]
+    fn read(&mut self, sector: u64) -> Result<Sector, &'static str> {
+        self.disk.read(KAI_RECORD_BASE + sector)
+    }
+
+    #[cfg(feature = "kai-vault-boot")]
+    fn write(&mut self, sector: u64, bytes: &Sector) -> Result<(), &'static str> {
+        if !(SLOT_SECTORS[0]..END_SECTOR).contains(&sector) {
+            return Err("KAI_CHECKPOINT_RANGE");
+        }
+        self.disk.write(KAI_RECORD_BASE + sector, bytes)
+    }
+}
+
+fn read_program(sector: Sector) -> Option<Program> {
+    if !zero(&sector[PROGRAM_LEN..]) {
+        return None;
+    }
+    Program::decode(sector[..PROGRAM_LEN].try_into().unwrap()).ok()
 }
 
 fn number(bytes: &[u8], offset: usize) -> u64 {

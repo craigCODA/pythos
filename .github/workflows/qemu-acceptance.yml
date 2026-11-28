@@ -391,6 +391,15 @@ jobs:
       - name: Full QEMU slice handoff suite
         run: python -m unittest tests.boot_core_handoff
 
+      - name: Native Kai and spatial world acceptance
+        run: |
+          python -B scripts/test-vault-pulse.py
+          python -B scripts/test-vault-pulse.py --boot-view
+          python -B scripts/test-nvme-target.py
+          python -B scripts/test-nvme-world.py
+          python -B scripts/test-graph-window.py
+          python -B scripts/test-kai-vault-boot.py
+
       - name: Upload handoff logs
         if: always()
         uses: actions/upload-artifact@v4

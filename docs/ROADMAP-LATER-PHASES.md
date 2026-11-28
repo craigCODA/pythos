@@ -1,11 +1,17 @@
-# PythOS Roadmap: Phase 11 Closure And What's Left
+# PythOS later-phase roadmap
 
-This supersedes the Phase 9/10 planning sections of the older later-phases
-sketch with verified actuals, records the Phase 11 closure state, and carries
-the remaining phases forward with the naming and ADR conventions established in
-practice.
+Kai is the current workstream. The opt-in NVMe boot proof selects and recovers
+bounded work in local QEMU. The owner directs new interaction work to start
+with typed objects, tasks, revisions, relationships, and capabilities. PythOS
+rejects POSIX and Unix derivation across runtime, interaction, authority,
+and the relational model. [Kai handover](HANDOVER.md#current-kai-checkpoint) ·
+[Native interaction decision](decisions/0121-kai-native-interaction.md) ·
+[NVMe boot proof](decisions/0120-kai-vault-boot-root.md)
 
-## Status Recap (Verified, Not Assumed)
+The phase records below retain the findings and accepted boundaries from the
+earlier roadmap. Further implementation requires explicit owner invocation.
+
+## Phase status
 
 ```text
 Phase 1.5 - 8    complete   foundation: boot, memory, scheduling, IPC,
@@ -37,35 +43,26 @@ Phase 13.5 slice 1 accepted in QEMU   session-input bridge, ADR 0090
 Phase 13.5 slice 2 accepted in QEMU   bounded retained runtime, ADR 0091
 Phase 13.5       accepted   retained Viewing, normal-session boot and recovery,
                               ADRs 0092-0093
-Phase 14 accepted locally              bounded secure-transport proof through
-                                      ADR 0104; current stopping point
-Phase 15 opening slices accepted locally  PCI identity, BAR layout, register
-                                       reachability, bounded MSE experiment,
-                                       and capability metadata; ADRs 0105-0109;
-                                       broader hardware expansion remains gated
+Phase 14         accepted   bounded secure-transport proof, ADR 0104
+Phase 15         accepted opening slices   PCI identity, BAR layout, register
+                              reachability, bounded Memory Space Enable, and
+                              capability metadata, ADRs 0105-0109
 ```
 
-Phase 14 has locally accepted bounded proofs through secure transport under
-[ADR 0104](decisions/0104-phase-14-secure-transport-proof.md). Granted and
-tamper each used 21 frames with exactly nine and eight ordered markers;
-tamper preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED` and released no
-plaintext. Denied used zero frames and exactly four markers. Every case had
-one `QEMU_OUTCOME success` and clean artifacts. This bounded proof is Phase
-14's current stopping point, not production TLS, update authenticity,
-physical networking, or a generalized socket/TLS service. See the [current
-roadmap boundary](ROADMAP.md#current-phase-14-boundary) and
-[handover](HANDOVER.md) for exact local evidence and scope. The separately
-accepted Phase 15 slices are the bounded PCI network observations under ADRs
-0105-0109. They include identity, BAR configuration metadata, one fixed
-register observation, the temporary Memory Space Enable set/read/restore
-experiment, and read-only conventional capability metadata. The Lenovo
-results remain target-specific evidence; they do not establish physical
-networking, Lenovo Wi-Fi, controller operation, firmware, DMA, interrupts, or
-later hardware support. Later Phase 15 expansion and Phases 16-17 remain
-separately invoked work.
+Phase 14 completed bounded proofs through secure transport. Granted and
+tamper each used 21 frames, with nine ordered markers for granted and eight
+for tamper. The tamper case preserved `REQUEST_ENCRYPTED > TAMPER_REJECTED`
+and released no plaintext. Denied used zero frames and four ordered markers.
+Every case had one `QEMU_OUTCOME success` and clean artifacts. The accepted
+Phase 14 scope ends at those exchanges and the matching authority checks.
+[ADR 0104 secure-transport acceptance](decisions/0104-phase-14-secure-transport-proof.md)
 
-ADRs are allocated through 0109 in this checkout. Check `docs/decisions/` and
-in-progress branches before allocating another number.
+Phase 15 covers bounded PCI observations under ADRs 0105-0109. The QEMU and
+target-specific Lenovo results record identity, BAR configuration metadata,
+one fixed register observation, the temporary Memory Space Enable
+set/read/restore experiment, and read-only conventional capability metadata.
+Further Phase 15 work and Phases 16-17 each require owner invocation.
+[Phase 15 PCI capability evidence](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
 
 ---
 

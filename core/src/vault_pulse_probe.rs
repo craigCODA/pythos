@@ -2,9 +2,12 @@
 
 mod display;
 
+#[cfg(not(feature = "kai-vault-boot"))]
+use crate::block_device;
+#[cfg(feature = "kai-vault-boot")]
+use crate::block_device::nvme_probe::{EMULATED_TARGET, NvmeLocation};
 use crate::{
     architecture::x86_64::interrupts,
-    block_device,
     memory::{
         physical::PhysicalMemory,
         r#virtual::{KernelAddressSpace, KernelAddressSpaceBuildOptions},
@@ -27,6 +30,7 @@ use pythos_shared::{
 };
 
 const MAX_PULSES_PER_BOOT: usize = 32;
+type PulseWorker = ProofWorker<INVOCATION_LEN, OUTCOME_LEN>;
 
 pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
     serial::write_line("PYTHOS:VAULT:BOOT");
@@ -36,7 +40,7 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
         Ok(()) => {
             serial::write_line("PYTHOS:VAULT:BOOT_DONE");
             display.hold_terminal();
-            qemu_exit::success();
+            finish(true);
         }
         Err(stage) => {
             let (message, detail) = match stage {
@@ -44,15 +48,38 @@ pub(crate) fn run(boot: &PythBootInfo, memory: &mut PhysicalMemory) -> ! {
                 "PROOF_DEVICE" | "PROOF_IMAGE" => {
                     ("Marked Virtio test disk required", "Restart to exit")
                 }
+                "KAI_ROOT_REQUIRED" => {
+                    ("Kai boot root required", "Vault records are unprovisioned")
+                }
+                "KAI_PROGRAM_REVISION" => {
+                    ("Kai program revision unavailable", "Checkpoint retained")
+                }
                 _ => ("Vault boot stopped", stage),
             };
             display.stop(stage, message, detail);
             serial::write_str("PYTHOS:VAULT:ERROR:");
             serial::write_line(stage);
             serial::write_line("PYTHOS:PANIC");
-            qemu_exit::panic();
+            finish(false);
         }
     }
+}
+
+fn finish(success: bool) -> ! {
+    #[cfg(feature = "kai-vault-boot")]
+    if !EMULATED_TARGET {
+        loop {
+            // SAFETY: the boot CPU owns this stack. The storage callback and
+            // worker have returned, and the controller has been quiesced.
+            // The terminal framebuffer needs no IRQ or user address space.
+            // CLI and HLT use no pointers or memory operand.
+            unsafe { core::arch::asm!("cli", "hlt", options(nomem, nostack)) };
+        }
+    }
+    if success {
+        qemu_exit::success();
+    }
+    qemu_exit::panic();
 }
 
 fn run_proof(
@@ -66,16 +93,17 @@ fn run_proof(
     let holder = identities
         .register_task(TaskId::new(1))
         .map_err(|_| "SERVICE_ID")?;
-    let worker = ProofWorker::<INVOCATION_LEN, OUTCOME_LEN>::prepare(
-        boot,
-        memory,
-        holder,
-        b"vault-pulse.elf",
-        PRINCIPAL,
-    )?;
+    let worker = PulseWorker::prepare(boot, memory, holder, b"vault-pulse.elf", PRINCIPAL)?;
     display.stage(BootStage::Worker);
-    let kernel = KernelAddressSpace::build(memory, boot, KernelAddressSpaceBuildOptions::new())
-        .map_err(|_| "KERNEL_ROOT")?;
+    let options = KernelAddressSpaceBuildOptions::new();
+    #[cfg(feature = "kai-vault-boot")]
+    let location = NvmeLocation::discover()?;
+    #[cfg(feature = "kai-vault-boot")]
+    let options = KernelAddressSpaceBuildOptions {
+        nvme_mmio: Some(location.mapping()),
+        ..options
+    };
+    let kernel = KernelAddressSpace::build(memory, boot, options).map_err(|_| "KERNEL_ROOT")?;
     // SAFETY: the freshly built kernel root retains all boot, stack, trap,
     // and supervisor scratch mappings needed by this single-core proof.
     unsafe { kernel.activate() };
@@ -83,8 +111,30 @@ fn run_proof(
     syscall::initialize();
     user_stacks::initialize().map_err(|_| "USER_STACKS")?;
     display.stage(BootStage::Memory);
-    let device = block_device::select_vault_proof_device().map_err(|_| "VIRTIO_BLOCK")?;
-    let mut store = Store::open(device, worker.service_id())?;
+    #[cfg(feature = "kai-vault-boot")]
+    {
+        location.with_world_disk(|disk| {
+            let store = Store::open_kai(disk)?;
+            serial::write_str("PYTHOS:VAULT:KAI_ROOT");
+            field(" task:", store.root_task());
+            serial::write_line("");
+            run_pulses(store, &worker, &kernel, display)
+        })
+    }
+    #[cfg(not(feature = "kai-vault-boot"))]
+    {
+        let device = block_device::select_vault_proof_device().map_err(|_| "VIRTIO_BLOCK")?;
+        let store = Store::open(device, worker.service_id())?;
+        run_pulses(store, &worker, &kernel, display)
+    }
+}
+
+fn run_pulses(
+    mut store: Store,
+    worker: &PulseWorker,
+    kernel: &KernelAddressSpace,
+    display: &mut BootDisplay<'_>,
+) -> Result<(), &'static str> {
     display.stage(BootStage::Vault);
     let (mut checkpoint, program, mut pending, origin) = match store.recover()? {
         Some(checkpoint) => {
@@ -106,7 +156,7 @@ fn run_proof(
             (checkpoint, program, pending, Origin::Restored)
         }
         None => {
-            let Some(delivery) = store.receive()? else {
+            let Some(delivery) = store.initial_delivery()? else {
                 serial::write_line("PYTHOS:VAULT:IDLE");
                 display.stop("IDLE", "Waiting for a task", "Vault is ready");
                 return Ok(());
@@ -148,7 +198,7 @@ fn run_proof(
             program,
             event,
         };
-        let Some(outcome) = invoke(&worker, &kernel, invocation)? else {
+        let Some(outcome) = invoke(worker, kernel, invocation)? else {
             if let Some(event) = incoming {
                 report_event("REJECTED:ARITHMETIC", event.id);
                 break;
@@ -173,8 +223,22 @@ fn run_proof(
             serial::write_str("PYTHOS:VAULT:WAITING");
             field(" kind:", kind as u64);
             serial::write_line("");
+            #[cfg(feature = "kai-vault-boot")]
+            display.stop(
+                "WAITING",
+                "Kai session waiting",
+                "Vault checkpoint committed",
+            );
         }
-        Status::Finished => serial::write_line("PYTHOS:VAULT:FINISHED"),
+        Status::Finished => {
+            serial::write_line("PYTHOS:VAULT:FINISHED");
+            #[cfg(feature = "kai-vault-boot")]
+            display.stop(
+                "FINISHED",
+                "Kai boot task complete",
+                "Vault checkpoint committed",
+            );
+        }
         Status::Active => {
             serial::write_line("PYTHOS:VAULT:YIELDED");
             display.stop(

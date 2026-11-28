@@ -68,6 +68,15 @@ compile_error!("features `normal-session` and `network-hardware-probe` are mutua
     )
 ))]
 compile_error!("select world-session-probe as the sole boot profile with --no-default-features");
+#[cfg(all(
+    feature = "kai-vault-boot",
+    any(
+        feature = "world-session-graph-window",
+        feature = "world-session-nvme-initialize",
+        feature = "world-session-nvme-usb",
+    )
+))]
+compile_error!("select the Kai boot profile on an already provisioned world partition");
 #[cfg(all(feature = "hardware-probe", feature = "network-hardware-probe"))]
 compile_error!("features `hardware-probe` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "usb-xhci-probe", feature = "network-hardware-probe"))]
@@ -748,9 +757,15 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
-#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+))]
 mod vault_pulse_probe;
-#[cfg(all(not(test), feature = "vault-pulse-probe"))]
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+))]
 mod vault_pulse_store;
 #[cfg(all(not(test), feature = "vault-pulse-view"))]
 mod vault_pulse_view;
@@ -781,7 +796,11 @@ mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
-#[cfg(all(not(test), feature = "world-session-probe"))]
+#[cfg(all(
+    not(test),
+    feature = "world-session-probe",
+    not(feature = "kai-vault-boot")
+))]
 mod world_session;
 
 #[cfg(not(test))]
@@ -894,9 +913,16 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     network_hardware_capability_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "usb-xhci-probe"))]
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
-    #[cfg(all(not(test), feature = "vault-pulse-probe"))]
+    #[cfg(all(
+        not(test),
+        any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+    ))]
     vault_pulse_probe::run(boot_info, &mut physical_memory);
-    #[cfg(all(not(test), feature = "world-session-probe"))]
+    #[cfg(all(
+        not(test),
+        feature = "world-session-probe",
+        not(feature = "kai-vault-boot")
+    ))]
     world_session::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
