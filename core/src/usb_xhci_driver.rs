@@ -5,6 +5,13 @@
 use core::cell::UnsafeCell;
 use core::sync::atomic::{Ordering, compiler_fence};
 
+#[cfg(feature = "world-session-nvme-usb")]
+mod world_keyboard;
+#[cfg(feature = "world-session-nvme-usb")]
+pub(crate) use world_keyboard::{
+    XhciWorldKeyboard, claim_keyboard_controller, stop_keyboard_controller,
+};
+
 pub const XHCI_TRB_TYPE_ENABLE_SLOT: u8 = 9;
 pub const XHCI_TRB_TYPE_ADDRESS_DEVICE: u8 = 11;
 pub const XHCI_TRB_TYPE_CONFIGURE_ENDPOINT: u8 = 12;
@@ -22,7 +29,10 @@ pub const XHCI_TRB_ADDRESS_DEVICE_BSR: u32 = 1 << 9;
 pub const XHCI_DRIVER_MMIO_LEN: u64 = 0x4000;
 
 const XHCI_COMMAND_RING_TRBS: usize = 16;
+#[cfg(not(feature = "world-session-nvme-usb"))]
 const XHCI_CONTROL_RING_TRBS: usize = 16;
+#[cfg(feature = "world-session-nvme-usb")]
+const XHCI_CONTROL_RING_TRBS: usize = 32;
 const XHCI_INTERRUPT_RING_TRBS: usize = 16;
 const XHCI_EVENT_RING_TRBS: usize = 16;
 const XHCI_DCBAA_ENTRIES: usize = 256;
@@ -692,7 +702,7 @@ impl XhciInterruptTransferProducer {
         if self.index == XHCI_INTERRUPT_RING_TRBS - 1 {
             self.index = 0;
             self.cycle = !self.cycle;
-            self.wrap_count += 1;
+            self.wrap_count = self.wrap_count.saturating_add(1);
             Ok(true)
         } else {
             Ok(false)
@@ -731,7 +741,7 @@ impl XhciEventRingConsumer {
         if self.index == XHCI_EVENT_RING_TRBS {
             self.index = 0;
             self.expected_cycle = !self.expected_cycle;
-            self.wrap_count += 1;
+            self.wrap_count = self.wrap_count.saturating_add(1);
         }
     }
 
@@ -930,12 +940,13 @@ struct XhciDmaState {
     interrupt_report_buffer_phys: u64,
 }
 
-#[cfg(feature = "usb-xhci-command-probe")]
+#[cfg(any(feature = "usb-xhci-command-probe", feature = "world-session-nvme-usb"))]
 struct XhciCommandProbeState {
     result: XhciCommandProbeResult,
     dma: XhciDmaState,
     event_consumer: XhciEventRingConsumer,
     control_index: usize,
+    next_command_index: usize,
 }
 
 #[cfg(any(test, feature = "usb-xhci-interrupt-transfer-probe"))]
@@ -981,7 +992,10 @@ pub fn run_descriptor_probe(
     device_descriptor_from_command_state(registers, &mut state, address)
 }
 
-#[cfg(feature = "usb-xhci-descriptor-probe")]
+#[cfg(any(
+    feature = "usb-xhci-descriptor-probe",
+    feature = "world-session-nvme-usb"
+))]
 fn device_descriptor_from_command_state(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     state: &mut XhciCommandProbeState,
@@ -1066,18 +1080,26 @@ pub fn run_configuration_probe(
     port_number: u8,
 ) -> Result<XhciConfigurationProbeResult, XhciDriverError> {
     let mut state = initialize_command_probe(registers, port_number)?;
-    configuration_from_command_state(registers, port_number, &mut state)
+    configuration_from_command_state(registers, port_number, &mut state, None)
 }
 
-#[cfg(feature = "usb-xhci-configuration-probe")]
+#[cfg(any(
+    feature = "usb-xhci-configuration-probe",
+    feature = "world-session-nvme-usb"
+))]
 fn configuration_from_command_state(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     port_number: u8,
     state: &mut XhciCommandProbeState,
+    boot_protocol: Option<u8>,
 ) -> Result<XhciConfigurationProbeResult, XhciDriverError> {
     let address = address_device_from_command_state(registers, port_number, state)?;
     if address.address_device_completion_code != XHCI_COMPLETION_SUCCESS {
         return Err(XhciDriverError::AddressDeviceNonSuccess);
+    }
+    #[cfg(feature = "world-session-nvme-usb")]
+    if boot_protocol == Some(1) {
+        world_keyboard::apply_device_control_packet_size(registers, state, address)?;
     }
     let descriptor = device_descriptor_from_command_state(registers, state, address)?;
     if descriptor.descriptor_completion_code != XHCI_COMPLETION_SUCCESS {
@@ -1140,8 +1162,11 @@ fn configuration_from_command_state(
     compiler_fence(Ordering::SeqCst);
     let configuration_bytes =
         read_configuration_descriptor_buffer(usize::from(header.total_length))?;
-    let configuration =
-        parse_configuration_descriptor(&configuration_bytes, usize::from(header.total_length))?;
+    let configuration = parse_configuration_interface(
+        &configuration_bytes,
+        usize::from(header.total_length),
+        boot_protocol,
+    )?;
     emit_hex(
         "PYTHOS:CORE:USB_XHCI_PROBE:XHCI_CONFIGURATION_INTERFACE_NUMBER=",
         u64::from(configuration.interface_number),
@@ -1342,7 +1367,19 @@ fn endpoint_configuration_from_command_state(
     port_number: u8,
     state: &mut XhciCommandProbeState,
 ) -> Result<XhciEndpointConfigurationProbeResult, XhciDriverError> {
-    let configuration = configuration_from_command_state(registers, port_number, state)?;
+    let configuration = configuration_from_command_state(registers, port_number, state, None)?;
+    configure_interrupt_endpoint(registers, state, configuration)
+}
+
+#[cfg(any(
+    feature = "usb-xhci-endpoint-configuration-probe",
+    feature = "world-session-nvme-usb"
+))]
+fn configure_interrupt_endpoint(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    state: &mut XhciCommandProbeState,
+    configuration: XhciConfigurationProbeResult,
+) -> Result<XhciEndpointConfigurationProbeResult, XhciDriverError> {
     let address = configuration.descriptor.address;
     let endpoint = configuration.configuration;
     let endpoint_context = prepare_interrupt_in_endpoint_context(
@@ -1366,7 +1403,7 @@ fn endpoint_configuration_from_command_state(
     let configure_endpoint = submit_command_trb_observe_completion(
         registers,
         state.dma,
-        3,
+        state.next_command_index,
         configure_endpoint_command_trb(state.dma.input_context_phys, state.result.slot_id, true),
         XHCI_TRB_TYPE_COMMAND_COMPLETION_EVENT,
         &mut state.event_consumer,
@@ -1428,7 +1465,7 @@ fn endpoint_configuration_from_command_state(
     })
 }
 
-#[cfg(feature = "usb-xhci-address-probe")]
+#[cfg(any(feature = "usb-xhci-address-probe", feature = "world-session-nvme-usb"))]
 fn address_device_from_command_state(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     port_number: u8,
@@ -1508,7 +1545,7 @@ fn address_device_from_command_state(
     })
 }
 
-#[cfg(feature = "usb-xhci-command-probe")]
+#[cfg(any(feature = "usb-xhci-command-probe", feature = "world-session-nvme-usb"))]
 fn initialize_command_probe(
     registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
     port_number: u8,
@@ -1606,6 +1643,7 @@ fn initialize_command_probe(
         dma,
         event_consumer,
         control_index: 0,
+        next_command_index: 3,
     })
 }
 
@@ -2127,6 +2165,21 @@ fn prepare_interrupt_transfer_at(
         return Err(XhciDriverError::InvalidInterruptTransferProducerState);
     }
     zero_dma_page(interrupt_report_buffer_ptr());
+    if cursor.index == XHCI_INTERRUPT_RING_TRBS - 2 {
+        // Enable the Link TRB for this traversal before the last Normal TRB
+        // becomes visible. Every trip around the ring uses the opposite cycle.
+        write_trb(
+            interrupt_ring_ptr(),
+            XHCI_INTERRUPT_RING_TRBS - 1,
+            XhciTrb::new(
+                dma.interrupt_ring_phys,
+                0,
+                0,
+                command_trb_control(XHCI_TRB_TYPE_LINK, cursor.cycle) | XHCI_TRB_LINK_TOGGLE_CYCLE,
+            ),
+        );
+        compiler_fence(Ordering::SeqCst);
+    }
     write_trb(
         interrupt_ring_ptr(),
         cursor.index,
@@ -2322,6 +2375,14 @@ pub fn parse_configuration_descriptor(
     bytes: &[u8],
     total_length: usize,
 ) -> Result<XhciConfigurationDescriptorSnapshot, XhciDriverError> {
+    parse_configuration_interface(bytes, total_length, None)
+}
+
+fn parse_configuration_interface(
+    bytes: &[u8],
+    total_length: usize,
+    boot_protocol: Option<u8>,
+) -> Result<XhciConfigurationDescriptorSnapshot, XhciDriverError> {
     if total_length < XHCI_CONFIGURATION_DESCRIPTOR_HEADER_LENGTH || total_length > bytes.len() {
         return Err(XhciDriverError::MalformedConfigurationDescriptor);
     }
@@ -2385,22 +2446,29 @@ pub fn parse_configuration_descriptor(
                     else {
                         return Err(XhciDriverError::MissingConfigurationInterface);
                     };
-                    return Ok(XhciConfigurationDescriptorSnapshot {
-                        header,
-                        interface_number,
-                        alternate_setting,
-                        endpoint_count,
-                        interface_class,
-                        interface_subclass,
-                        interface_protocol,
-                        interrupt_in_endpoint_address: endpoint_address,
-                        interrupt_in_attributes: endpoint_attributes,
-                        interrupt_in_max_packet_size: u16::from_le_bytes([
-                            bytes[offset + 4],
-                            bytes[offset + 5],
-                        ]),
-                        interrupt_in_interval: bytes[offset + 6],
-                    });
+                    if boot_protocol.is_none_or(|protocol| {
+                        alternate_setting == 0
+                            && interface_class == 3
+                            && interface_subclass == 1
+                            && interface_protocol == protocol
+                    }) {
+                        return Ok(XhciConfigurationDescriptorSnapshot {
+                            header,
+                            interface_number,
+                            alternate_setting,
+                            endpoint_count,
+                            interface_class,
+                            interface_subclass,
+                            interface_protocol,
+                            interrupt_in_endpoint_address: endpoint_address,
+                            interrupt_in_attributes: endpoint_attributes,
+                            interrupt_in_max_packet_size: u16::from_le_bytes([
+                                bytes[offset + 4],
+                                bytes[offset + 5],
+                            ]),
+                            interrupt_in_interval: bytes[offset + 6],
+                        });
+                    }
                 }
             }
             _ => {}
@@ -2604,15 +2672,29 @@ fn submit_ep0_set_configuration_request(
     control_index: &mut usize,
     configuration_value: u8,
 ) -> Result<XhciTrb, XhciDriverError> {
+    submit_ep0_no_data_request(
+        registers,
+        dma,
+        slot_id,
+        event_consumer,
+        control_index,
+        set_configuration_setup_trb(configuration_value, true),
+    )
+}
+
+fn submit_ep0_no_data_request(
+    registers: crate::usb_xhci_probe::XhciRegisterSnapshot,
+    dma: XhciDmaState,
+    slot_id: u8,
+    event_consumer: &mut XhciEventRingConsumer,
+    control_index: &mut usize,
+    setup: XhciTrb,
+) -> Result<XhciTrb, XhciDriverError> {
     if slot_id == 0 {
         return Err(XhciDriverError::MissingSlotId);
     }
     let slots = reserve_no_data_control_transfer(control_index)?;
-    write_trb(
-        control_ring_ptr(),
-        slots.setup,
-        set_configuration_setup_trb(configuration_value, true),
-    );
+    write_trb(control_ring_ptr(), slots.setup, setup);
     write_trb(
         control_ring_ptr(),
         slots.status,
@@ -3720,6 +3802,26 @@ mod tests {
         assert_eq!(descriptor.interrupt_in_attributes, 0x03);
         assert_eq!(descriptor.interrupt_in_max_packet_size, 4);
         assert_eq!(descriptor.interrupt_in_interval, 10);
+    }
+
+    #[test]
+    fn composite_boot_keyboard_selects_its_own_interrupt_endpoint() {
+        let bytes = [
+            9, 2, 50, 0, 2, 1, 0, 0x80, 50, 9, 4, 0, 0, 1, 3, 1, 2, 0, 7, 5, 0x81, 3, 4, 0, 10, 9,
+            4, 1, 0, 1, 3, 1, 1, 0, 9, 0x21, 0x11, 0x01, 0, 1, 0x22, 0x40, 0, 7, 5, 0x82, 3, 8, 0,
+            10,
+        ];
+        let keyboard = parse_configuration_interface(&bytes, bytes.len(), Some(1)).unwrap();
+        assert_eq!(keyboard.interface_number, 1);
+        assert_eq!(keyboard.interface_protocol, 1);
+        assert_eq!(keyboard.interrupt_in_endpoint_address, 0x82);
+        assert_eq!(keyboard.interrupt_in_max_packet_size, 8);
+        assert_eq!(
+            parse_configuration_descriptor(&bytes, bytes.len())
+                .unwrap()
+                .interface_number,
+            0
+        );
     }
 
     #[test]

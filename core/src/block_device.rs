@@ -7,6 +7,12 @@ use core::arch::asm;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{Ordering, compiler_fence};
 
+#[cfg(all(
+    not(test),
+    any(feature = "nvme-read-probe", feature = "world-session-nvme")
+))]
+pub(crate) mod nvme_probe;
+
 const PCI_CONFIG_ADDRESS: u16 = 0xCF8;
 const PCI_CONFIG_DATA: u16 = 0xCFC;
 const PCI_BUS: u8 = 0;
@@ -101,18 +107,16 @@ pub const AHCI_MMIO_LEN: u64 = 0x4000;
 struct DmaBytes<const N: usize>(UnsafeCell<[u8; N]>);
 
 // SAFETY:
-// 1. Invariant: the wrapped static byte array is only accessed through this
-//    module's synchronous virtio request path.
-// 2. Established by: Phase 7 block I/O has no public mutable references to the
-//    DMA buffers and submits one request at a time.
+// 1. Invariant: each wrapped array belongs to one synchronous block I/O path.
+// 2. Established by: storage paths use separate buffers, expose no mutable
+//    references to DMA memory, and submit one request at a time.
 // 3. Lifetime: the buffers are static for all of PythCore.
-// 4. Pointer ownership: this module owns all mutation of the buffers.
+// 4. Pointer ownership: the driver controls CPU access and grants only the
+//    configured DMA access to its controller.
 // 5. Alignment: `DmaBytes` has page alignment for DMA setup.
 // 6. Mapped length: each const generic `N` is the mapped byte length.
-// 7. Concurrency: Phase 7 runs this path on one boot CPU with no concurrent
-//    block requests.
-// 8. Violation: concurrent aliasing would corrupt the in-flight virtqueue or
-//    request buffer.
+// 7. Concurrency: one boot CPU runs each path with no concurrent requests.
+// 8. Violation: concurrent CPU ownership could corrupt a queue or payload.
 unsafe impl<const N: usize> Sync for DmaBytes<N> {}
 
 static VIRTQUEUE: DmaBytes<VIRTQUEUE_BYTES> = DmaBytes(UnsafeCell::new([0; VIRTQUEUE_BYTES]));
@@ -229,6 +233,17 @@ pub fn select_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
         Err(BlockDeviceError::DeviceAbsent) => select_ahci_device(),
         Err(error) => Err(error),
     }
+}
+
+#[cfg(all(
+    not(test),
+    any(
+        feature = "vault-pulse-probe",
+        all(feature = "world-session-probe", not(feature = "world-session-nvme"))
+    )
+))]
+pub(crate) fn select_vault_proof_device() -> Result<BlockDeviceInfo, BlockDeviceError> {
+    scan_primary_bus_for_virtio()
 }
 
 #[cfg(feature = "sdhci-emmc-backend")]
@@ -1207,12 +1222,22 @@ fn config_address(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
 }
 
 #[cfg(not(test))]
-fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
+pub(crate) fn read_config_u32(bus: u8, device: u8, function: u8, offset: u8) -> u32 {
     outl(
         PCI_CONFIG_ADDRESS,
         config_address(bus, device, function, offset),
     );
     inl(PCI_CONFIG_DATA)
+}
+
+#[cfg(all(not(test), feature = "world-session-nvme-target"))]
+pub(crate) fn write_pci_config_word(bus: u8, device: u8, function: u8, offset: u8, value: u16) {
+    assert!(offset.is_multiple_of(2));
+    outl(
+        PCI_CONFIG_ADDRESS,
+        config_address(bus, device, function, offset),
+    );
+    outw(PCI_CONFIG_DATA + u16::from(offset & 2), value);
 }
 
 #[cfg(test)]
@@ -1341,14 +1366,15 @@ fn inl(_port: u16) -> u32 {
 #[cfg(not(test))]
 fn outw(port: u16, value: u16) {
     // SAFETY:
-    // 1. Invariant: `port` names a selected legacy virtio-blk word register.
-    // 2. Established by: caller derives the port from the selected virtio-blk
-    //    I/O BAR plus a fixed register offset.
+    // 1. Invariant: `port` names a selected legacy virtio-blk word register
+    //    or the PCI config-data port for the selected function's command word.
+    // 2. Established by: the caller bounds the Virtio BAR offset or selects
+    //    the PCI function's command register just before this word write.
     // 3. Lifetime: the I/O transaction completes before this helper returns.
     // 4. Pointer ownership: no memory pointers are used.
     // 5. Alignment: not applicable to port I/O.
     // 6. Mapped length: not applicable; port I/O is CPU-mediated.
-    // 7. Concurrency: Phase 7 device selection runs single-core during boot.
+    // 7. Concurrency: the storage paths run single-core during boot.
     // 8. Violation: writing a wrong port could reconfigure unrelated hardware.
     unsafe {
         asm!(

@@ -10,7 +10,10 @@ use std::sync::{Mutex, MutexGuard};
 const PIT_CHANNEL0: u16 = 0x40;
 const PIT_COMMAND: u16 = 0x43;
 const PIT_INPUT_HZ: u32 = 1_193_182;
+#[cfg(not(feature = "world-session-graph-window"))]
 pub const TIMER_HZ: u32 = 100;
+#[cfg(feature = "world-session-graph-window")]
+pub const TIMER_HZ: u32 = 120;
 const PIT_DIVISOR: u16 = (PIT_INPUT_HZ / TIMER_HZ) as u16;
 const PIT_COMMAND_RATE_GENERATOR: u8 = 0x34;
 const FIRST_TICK_SPIN_LIMIT: usize = 20_000_000;
@@ -106,7 +109,10 @@ mod tests {
 
     #[test]
     fn pit_divisor_matches_requested_tick_rate() {
+        #[cfg(not(feature = "world-session-graph-window"))]
         assert_eq!(PIT_DIVISOR, 11_931);
+        #[cfg(feature = "world-session-graph-window")]
+        assert_eq!(PIT_DIVISOR, 9_943);
     }
 
     #[test]

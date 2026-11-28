@@ -13,6 +13,7 @@
             feature = "network-hardware-register-enable-probe",
             feature = "network-hardware-capability-probe",
             feature = "usb-xhci-probe",
+            feature = "nvme-read-probe",
             feature = "virtio-net-probe",
             feature = "network-port-probe",
             feature = "link-layer-probe",
@@ -50,6 +51,32 @@ compile_error!("features `verify` and `hardware-probe` are mutually exclusive");
 compile_error!("features `verify` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "normal-session", feature = "network-hardware-probe"))]
 compile_error!("features `normal-session` and `network-hardware-probe` are mutually exclusive");
+#[cfg(all(
+    feature = "world-session-probe",
+    any(
+        feature = "normal-session",
+        feature = "verify",
+        feature = "vault-pulse-probe",
+        feature = "nvme-read-probe",
+        feature = "hardware-probe",
+        feature = "network-hardware-probe",
+        feature = "network-hardware-bar-probe",
+        feature = "network-hardware-register-probe",
+        feature = "network-hardware-register-enable-probe",
+        feature = "network-hardware-capability-probe",
+        feature = "usb-xhci-probe",
+    )
+))]
+compile_error!("select world-session-probe as the sole boot profile with --no-default-features");
+#[cfg(all(
+    feature = "kai-vault-boot",
+    any(
+        feature = "world-session-graph-window",
+        feature = "world-session-nvme-initialize",
+        feature = "world-session-nvme-usb",
+    )
+))]
+compile_error!("select the Kai boot profile on an already provisioned world partition");
 #[cfg(all(feature = "hardware-probe", feature = "network-hardware-probe"))]
 compile_error!("features `hardware-probe` and `network-hardware-probe` are mutually exclusive");
 #[cfg(all(feature = "usb-xhci-probe", feature = "network-hardware-probe"))]
@@ -459,6 +486,9 @@ mod font;
 mod font_system;
 mod framebuffer;
 mod general_storage_persistence;
+#[cfg(all(test, feature = "world-session-graph-window"))]
+#[path = "world_session/graph_window/layout.rs"]
+mod graph_window_layout_test;
 #[cfg(all(not(test), feature = "hardware-probe"))]
 mod hardware_probe_boot;
 #[cfg(any(test, feature = "hardware-probe"))]
@@ -628,6 +658,11 @@ mod process;
 mod process_context;
 mod process_launch;
 mod process_model;
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "world-session-probe")
+))]
+mod proof_worker;
 mod ps2;
 mod pyth_graph_loader;
 mod pyth_runtime_launch;
@@ -703,9 +738,15 @@ mod tcp_probe;
 mod typed_object_format;
 #[cfg(any(test, feature = "udp-probe"))]
 mod udp_probe;
-#[cfg(any(test, feature = "usb-xhci-command-probe"))]
+#[cfg(any(test, feature = "world-session-nvme-usb"))]
+mod usb_boot_keyboard;
+#[cfg(any(
+    test,
+    feature = "usb-xhci-command-probe",
+    feature = "world-session-nvme-usb"
+))]
 mod usb_xhci_driver;
-#[cfg(any(test, feature = "usb-xhci-probe"))]
+#[cfg(any(test, feature = "usb-xhci-probe", feature = "world-session-nvme-usb"))]
 mod usb_xhci_probe;
 #[cfg(all(not(test), feature = "usb-xhci-probe"))]
 mod usb_xhci_probe_boot;
@@ -716,6 +757,18 @@ mod user_elf;
 mod user_mode;
 mod user_stacks;
 mod value_validation;
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+))]
+mod vault_pulse_probe;
+#[cfg(all(
+    not(test),
+    any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+))]
+mod vault_pulse_store;
+#[cfg(all(not(test), feature = "vault-pulse-view"))]
+mod vault_pulse_view;
 #[cfg(any(
     test,
     feature = "viewing-input-probe",
@@ -743,6 +796,12 @@ mod virtio_net;
 mod widgets;
 mod window_interaction;
 mod workspace_objects;
+#[cfg(all(
+    not(test),
+    feature = "world-session-probe",
+    not(feature = "kai-vault-boot")
+))]
+mod world_session;
 
 #[cfg(not(test))]
 use core::panic::PanicInfo;
@@ -838,6 +897,8 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
         normal_boot_diagnostic::NormalBootDiagnosticStage::CoreReady,
     );
 
+    #[cfg(all(not(test), feature = "nvme-read-probe"))]
+    block_device::nvme_probe::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "hardware-probe"))]
     hardware_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "network-hardware-probe"))]
@@ -852,6 +913,17 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     network_hardware_capability_probe_boot::run(boot_info, &mut physical_memory);
     #[cfg(all(not(test), feature = "usb-xhci-probe"))]
     usb_xhci_probe_boot::run(boot_info, &mut physical_memory);
+    #[cfg(all(
+        not(test),
+        any(feature = "vault-pulse-probe", feature = "kai-vault-boot")
+    ))]
+    vault_pulse_probe::run(boot_info, &mut physical_memory);
+    #[cfg(all(
+        not(test),
+        feature = "world-session-probe",
+        not(feature = "kai-vault-boot")
+    ))]
+    world_session::run(boot_info, &mut physical_memory);
 
     // ADR 0052: the full proof sequence below is verification-only; normal
     // boot branches away before it, near the end of this function.
@@ -2988,7 +3060,14 @@ pub unsafe extern "C" fn pythcore_entry(boot_info: *const PythBootInfo) -> ! {
     // ADR 0052: normal boot skips the verification proof sequence above
     // entirely and constructs only the production substrate, then stays
     // alive — the pivot from "proofs that terminate" to "a system that runs".
-    #[cfg(all(not(test), not(feature = "verify"), not(feature = "hardware-probe")))]
+    #[cfg(all(
+        not(test),
+        not(feature = "verify"),
+        not(feature = "hardware-probe"),
+        not(feature = "vault-pulse-probe"),
+        not(feature = "world-session-probe"),
+        not(feature = "nvme-read-probe")
+    ))]
     normal_boot::run(boot_info, &mut physical_memory);
 
     #[cfg(test)]

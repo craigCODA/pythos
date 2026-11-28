@@ -1,0 +1,13 @@
+{
+  "name": "kai-webgl",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node --test --test-isolation=none"
+  },
+  "dependencies": {
+    "three": "0.186.1"
+  }
+}

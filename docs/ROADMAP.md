@@ -11,6 +11,21 @@ unless the phase gate for it has explicitly reopened.
 If a slice's exit condition cannot be reached without touching a forbidden
 area, stop and raise an ADR proposal instead of expanding scope silently.
 
+## Current Kai workstream
+
+The [current checkpoint](HANDOVER.md#current-kai-checkpoint) is the
+[bounded NVMe vault boot proof](decisions/0120-kai-vault-boot-root.md).
+[ADR 0121](decisions/0121-kai-native-interaction.md) governs interaction,
+runtime, and authority, including the relational model. It rejects POSIX,
+Unix, and desktop derivation.
+
+The proposed follow-up connects an authored object to a saved task and
+revision. Its acceptance contract needs a capability check, one bounded
+effect, a durable receipt, restart recovery, and an observable denial.
+Implementation requires a separately invoked slice.
+
+The phase records below preserve the earlier acceptance history.
+
 ## Current Phase 14 Boundary
 
 Secure transport was the separately authorized Phase 14 boundary and is now the

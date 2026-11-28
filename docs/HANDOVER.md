@@ -1,5 +1,33 @@
 # PythOS Handover
 
+## Current Kai checkpoint
+
+Kai is the native work session PythOS is building toward.
+The opt-in `kai-vault-boot` profile admits a task and pinned program from
+an identity-bound NVMe vault root after the UEFI handoff. A protected
+PythOS task evaluates a bounded pulse and PythCore commits its continuation
+and receipt. The proof covers disk selection, interruption, restart,
+duplicate delivery, and invalid root rejection. [ADR 0120](decisions/0120-kai-vault-boot-root.md)
+
+The authored world has a separate editing and recovery proof. Its native
+PythTIG presentation follows the validated scene and placement records.
+[World editing](decisions/0114-native-editable-world.md) ·
+[Graph presentation](decisions/0118-native-graph-window.md)
+
+Run `python -B scripts/test-kai-vault-boot.py` from the repository root.
+The QEMU handoff job also runs the earlier vault, boot display, NVMe target,
+world, and graph-window proofs on disposable disks.
+[QEMU acceptance workflow](../.github/workflows/qemu-acceptance.yml)
+
+Physical Kai boot requires root provisioning and hardware acceptance.
+The resident Kai session and firmware-stage graph need additional design
+and verification. The next interaction candidate addresses a saved task
+through an authored object's typed relationship and requires an explicit
+capability for the effect. The owner must invoke that implementation slice.
+[ADR 0121](decisions/0121-kai-native-interaction.md)
+
+The following sections retain earlier phase boundaries and evidence.
+
 ## Current Phase 14 Boundary
 
 Secure transport was the separately authorized Phase 14 boundary and is now the
@@ -271,7 +299,7 @@ Fresh gates passed: `cargo fmt --check`, `cargo test --workspace`, both strict
 session-runtime Clippy profiles, 54 focused Python tests, full Python discovery
 at 155/155, both oracle self-tests, the live Slice 1 bridge, normal fast boot,
 and persistent storage.
-GitHub CI is pinned to QEMU 11.1.1 and OVMF `2024.02-2ubuntu0.9`.
+Those hosted runs used QEMU 11.1.1 and OVMF `2024.02-2ubuntu0.9`.
 The successful hosted runs at the feature and merge commits are linked above;
 their acceptance remains emulator evidence only.
 
@@ -757,11 +785,11 @@ is unaffected because HDA init is skipped when no controller is present. AMD
 ACP/I2S laptop-speaker support remains parked, and real-hardware HDA audio is
 not claimed until a physical headphone-jack boot records evidence.
 
-## Verify First
+## Foundation regression commands
 
-Run these from `D:\PythOS-Workspace\repo\pythos` before implementation work.
-Use Git and the checkpoint above to confirm the baseline first; the remaining
-commands are the acceptance checks to reproduce when implementation is invoked.
+Run these from the repository root to reproduce the earlier foundation
+checks. Use the [Kai checkpoint](#current-kai-checkpoint) and its workflow
+for current acceptance scope.
 
 ```powershell
 git status --short --branch
@@ -799,7 +827,7 @@ python scripts\test-boot.py --slice milestone-1 --media iso
 The successful boot harness output must include `QEMU_OUTCOME success`.
 Timeout termination is not success evidence.
 
-## Expected Branch And Stop Point
+## Historical Phase 13.5 branch and stop point
 
 Expected branch:
 
@@ -1405,9 +1433,9 @@ The ISO path is:
 C:\Users\NeverAMoment\pythos\target\pythos.iso
 ```
 
-## What Does Not Exist Yet
+## Historical Phase 13.5 implementation limits
 
-Do not assume any of the following exists:
+The Phase 13.5 checkpoint recorded these limits:
 
 ```text
 filesystem
@@ -1436,7 +1464,7 @@ bounded synchronous snapshot presentation in the opt-in QEMU profile.
 These accepted surfaces do not establish unrestricted hostile-code security,
 a production persistent Session Manager, or generic physical hardware support.
 
-## Next Boundary
+## Prior phase boundaries
 
 Phase 10 is complete, and Phase 11 physical-hardware smoke-test findings are
 recorded through ADR 0046 and `docs/phase-11-real-hardware-findings.md`. The
@@ -1472,7 +1500,7 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 ```
 
-The owner-invoked work binds ADR 0089's `SessionControlInterpreter`
+The Phase 13.5 implementation binds ADR 0089's `SessionControlInterpreter`
 and session-lifetime `ViewingState` to the ADR 0091 retained owner. Preserve
 one-way, idempotent `Space Space Backspace Backspace` activation, exclusive
 Traversal/FocusMark motion routing, non-durable state, and presentation that

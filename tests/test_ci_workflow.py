@@ -219,7 +219,7 @@ class CiWorkflowTest(unittest.TestCase):
             "runs-on: ubuntu-24.04",
             'QEMU_VERSION: "11.1.1"',
             'QEMU_SHA256: "079ffbff8a7111bbc89022107cbabf3bbfd614d5fc9d7cc675991196aca12482"',
-            'OVMF_VERSION: "2024.02-2ubuntu0.9"',
+            'OVMF_VERSION: "2024.02-2ubuntu0.10"',
             "uses: actions/cache@v4",
             "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz",
             "sha256sum --check --strict",

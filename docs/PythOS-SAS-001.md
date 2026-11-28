@@ -24,14 +24,18 @@ work.
 
 ## Vision
 
-PythOS is a graphical operating system whose primary system and tool language
-is Python. Python is not the first instruction executed by the processor.
-PythOS uses a deliberately small native foundation for firmware handoff,
-processor control, memory ownership, virtual memory, interrupts, scheduling,
-IPC primitives, capability validation, hardware access primitives, and Python
-runtime bootstrap.
+PythOS is an anti-desktop operating environment built around typed objects,
+tasks, and explicit relationships in an authored world. PythCore owns the
+privileged mechanisms for firmware handoff, memory, interrupts, scheduling,
+IPC, capabilities, and device access. Higher-level work belongs in isolated
+services. Pyth is the source language for native procedures and PythTIG is
+the typed graph package format. [Native program architecture](decisions/0064-pyth-native-typed-instruction-graph.md)
 
-Everything reasonably possible above that boundary belongs in isolated system services, primarily in Python.
+Kai is the work session that uses the vault's durable state, procedure
+versions, continuations, and evidence. The bounded Kai boot proof restores
+a vault-selected task after PythCore starts, evaluates a pulse in a
+protected task, and publishes a checked continuation. The authored world
+projects task and object state. [Current Kai checkpoint](HANDOVER.md#current-kai-checkpoint)
 
 ## Architecture
 
@@ -40,20 +44,9 @@ Hardware
 -> UEFI firmware
 -> PythOS UEFI loader
 -> PythCore native executive
--> Python runtime environment
--> Python system services
--> Typed task and object environment
--> Typed objects, executable tool objects, semantic relationships, projections,
-   automation, and optional AI
-```
-
-```text
-Typed Task And Object Environment
-Executable Tool Objects
-Python Services
-Python Runtime Environment
-PythCore Native Executive
-Hardware
+-> Protected native runtime and typed services
+-> Vault-backed tasks, procedures, relations, and evidence
+-> Projections of the authored world and optional planning services
 ```
 
 ## Binding Principles
@@ -87,6 +80,10 @@ primitives may visually resemble familiar controls, but they must project typed
 objects, task state, semantic relationships, executable tool objects, and
 capability-permitted actions.
 
+[ADR 0121](decisions/0121-kai-native-interaction.md) applies the anti-desktop
+boundary to Kai's relational model. Reject POSIX or Unix derivation in object
+identity, relationships, runtime, or authority and reassess the affected design.
+
 The system must be inspectable without AI explanation. Boot phases, service transitions, capability requests, crashes, storage transactions, package changes, update activation, recovery actions, and security-relevant denials should be recorded and exposed.
 
 ## Boundaries
@@ -95,10 +92,10 @@ Boundary A is the UEFI loader. It starts as an x86-64 EFI application, initializ
 
 Boundary B is PythCore. It owns physical page ownership, page allocation, virtual address spaces, descriptor tables, exceptions, interrupt dispatch, timer support, task scheduling, context switching, system calls, IPC, capabilities, runtime bootstrap, panic diagnostics, and controlled hardware primitives.
 
-Boundary C is the initial system runtime. It eventually provides embedded
-Python, service registration, dependency resolution, service lifecycles,
-display service, input service, audio service, object storage, typed task
-environments, policy/object inspection, and executable tool objects.
+Boundary C is the protected system runtime. Its responsibilities include
+typed procedure execution, service registration and lifecycle, object and
+task access, policy inspection, and display, input, and audio services.
+The deployed proof profiles and pending work are recorded in the handover.
 
 Do not blur these boundaries.
 
@@ -130,6 +127,8 @@ Raw pointers crossing a boundary must include address type, length, alignment, l
 
 Interrupt handlers must remain small, bounded, nonblocking, and allocation-free where practical.
 
-Capability security must be enforced below Python. During early single-runtime prototypes, capability separation may be logical rather than hostile-code secure, and documentation must say so honestly.
+PythCore enforces capability checks below the protected runtime. Document
+which boundaries have been verified with hostile code and which provide
+only logical isolation.
 
 AI remains an untrusted optional planner outside the trusted core.

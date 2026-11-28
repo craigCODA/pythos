@@ -13,3 +13,6 @@ path = "src/lib.rs"
 default = []
 pyth-tig = []
 pyth-tig-test-support = ["pyth-tig"]
+vault-pulse-proof = []
+world-session-proof = []
+graph-window-proof = ["pyth-tig"]

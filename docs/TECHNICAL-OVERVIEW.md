@@ -1,16 +1,45 @@
 # PythOS: Verification-Driven Operating System Prototype
 
-PythOS is an x86-64 operating-system prototype built around one rule: claims
-about the system must be backed by executable evidence. It boots through UEFI,
-takes ownership of memory and execution from firmware, builds a native PythCore
-execution substrate, brings up service identity and capability mechanisms,
-persists typed objects across QEMU reboots, runs a capability-controlled ring-3
-object shell, and verifies storage through virtio, AHCI, and opt-in
-SDHCI/eMMC block backends in QEMU. `main` also contains the accepted PythTIG
-version 1 graph-package implementation through Phase 7 cutover/cross-target
-evidence, followed by the Phase 12 capability-scoped object locator and the
-Phase 13 local package lifecycle, launch-authority, uninstall, and
-package-defined schema extensibility proofs.
+PythOS is an x86-64 anti-desktop operating environment. Its authored worlds
+project typed objects, tasks, revisions, and explicit relationships from the
+vault. PythCore enforces the capabilities that authorize effects. The current
+workstream is Kai, the work session PythOS is building toward.
+[Current Kai handover](HANDOVER.md#current-kai-checkpoint)
+
+## Kai's native boot and interaction
+
+PythOS rejects POSIX and Unix derivation across runtime, interaction,
+authority, and relationships. Establish identity, naming, traversal, execution,
+and service lifetime from the native object and task model. Stop and reassess
+a slice when it starts to depend on an inherited model.
+[Kai's native interaction decision](decisions/0121-kai-native-interaction.md)
+
+After the UEFI handoff, the opt-in Kai boot profile admits an NVMe vault
+partition and reads its task identity, program digest, and initial event.
+A protected task evaluates the bounded program. PythCore verifies the
+candidate and owns checkpoint and receipt publication. Local QEMU boots
+used the same ISO with two different roots to select different tasks.
+After interruption during publication, the first task recovered generation 3
+and finished at generation 7 with one receipt. Repeated delivery and invalid
+roots left their images unchanged.
+[Kai vault boot proof](decisions/0120-kai-vault-boot-root.md)
+
+The native world proof recovers authored objects and committed bindings.
+The PythTIG presentation proof renders a validated graph-authored scene and
+preserves animation during drag and save. After an interrupted save, it
+restores the last committed pose. These are bounded QEMU profiles.
+[Editable world proof](decisions/0114-native-editable-world.md) ·
+[PythTIG presentation proof](decisions/0118-native-graph-window.md)
+
+## Earlier verification
+
+Earlier proofs established the UEFI handoff and native execution substrate,
+service identity, capability checks, typed-object storage across QEMU reboots,
+and a capability-controlled ring-3 object shell. QEMU tests exercised Virtio,
+AHCI, and opt-in SDHCI/eMMC block backends. The accepted PythTIG v1 graph-package
+line includes Phase 7 cutover and cross-target evidence. Phase 12 established
+the capability-scoped object locator and Phase 13 proved the local package
+lifecycle and package-defined schema extensibility.
 
 Secure transport was the separately authorized Phase 14 boundary and is now the
 accepted bounded Phase 14 stopping point.
@@ -360,15 +389,13 @@ be recorded, so that physical acceptance is transcription-backed rather than
 media-backed. Recurring reports, button transitions, and cursor behavior remain
 unproven.
 
-This is not a README and not a setup guide. It is the external-facing technical
-account of what the current repository proves, how those claims are verified,
-and where the boundary of the work still is.
+## Verification summary
 
-## Status At A Glance
-
-| Verified now | Not yet claimed |
+| Verified result | Scope boundary |
 | --- | --- |
-| UEFI-to-PythCore handoff | General-purpose desktop |
+| Boot-root selection, interrupted publication recovery, and repeat-event handling | Opt-in Kai QEMU profile using disposable NVMe images |
+| Authored world edits, durable bindings, and graph-authored presentation with placement recovery | Bounded world and PythTIG QEMU proofs |
+| UEFI-to-PythCore handoff | x86-64 UEFI boot |
 | Kernel-owned page tables | Full Python compatibility |
 | Timer and scheduler proofs | Dynamic application platform |
 | Capability enforcement proofs | General filesystem |
@@ -404,38 +431,25 @@ and where the boundary of the work still is.
 
 ## What PythOS Is
 
-PythOS is intended to be a graphical operating system whose primary system and
-tool language is Python. Python is not the first instruction executed by
-the processor. A small native executive, PythCore, owns the privileged machinery:
-firmware handoff, page tables, exceptions, interrupts, scheduling, IPC,
-capability validation, syscall entry, and controlled hardware primitives.
-
-The architecture is deliberately layered:
+The UEFI loader hands control to PythCore. The executive owns page tables,
+exceptions, interrupts, scheduling, IPC, capability validation, syscall entry,
+and controlled hardware access. The native Kai proofs use protected PythOS
+tasks and typed vault records above that boundary.
 
 ```text
-Hardware
--> UEFI firmware
--> PythOS UEFI loader
--> PythCore native executive
--> Python runtime environment (currently a custom-minimal proof runtime)
--> Python system services (currently bounded service proofs)
--> Typed task and object environment
--> Typed objects, executable tool objects, semantic relationships, projections,
-   automation, and optional AI
+UEFI and PythOS loader
+-> PythCore
+-> Protected PythOS task evaluates an admitted program
+-> PythCore publishes the checked vault transition
+-> Native presentation projects validated records
 ```
 
-The project has completed the roadmap's bounded architecture proofs through
-Phase 13, `applications-and-packaging`, in QEMU. `main` also contains the first
-persistent ring-3 object shell, an opt-in polling SDHCI/eMMC backend, the
-PythTIG Phase 1-7 acceptance implementation, the Phase 12 object-locator
-resolver plus adversarial denial suite, and the Phase 13 local package
-lifecycle. Phase 13.5 Slices 1 and 2 add the bounded session-input bridge and
-retained runtime. Slices 3 and 4 add session-owned Viewing and bounded snapshot
-presentation. Slice 5 locally accepts default normal-session operation,
-interrupt-backed waiting and one-way recovery. Durable sessions, USB/xHCI
-session integration, networking, updates, broad physical hardware expansion,
-SMP, semantic indexing, and optional AI remain later work requiring explicit
-invocation.
+The system architecture also calls for capability-scoped Python services.
+The custom-minimal interpreter and earlier service slices exercise bounded
+parts of that design. The Phase 13.5 slices prove an input bridge, a retained
+runtime, session-owned Viewing, bounded snapshots, and normal-session boot
+with interrupt-backed waiting and one-way recovery.
+[System architecture](PythOS-SAS-001.md) · [Roadmap](ROADMAP.md)
 
 ## Development Method
 
@@ -1039,6 +1053,7 @@ See:
 - [ADR 0106 Phase 15 network-hardware BAR-layout probe](decisions/0106-phase-15-network-hardware-bar-layout-probe.md)
 - [ADR 0107 Phase 15 network-hardware register-reachability probe](decisions/0107-phase-15-network-hardware-register-reachability.md)
 - [ADR 0108 Phase 15 PCI Memory-Space-Enable experiment](decisions/0108-phase-15-pci-memory-space-enable-experiment.md)
+- [ADR 0109 Phase 15 PCI capability metadata snapshot](decisions/0109-phase-15-pci-capability-metadata-snapshot.md)
 - [2026-09-04 physical ADR 0087 evidence report](evidence/2026-09-04-physical-usb-xhci-boot-mouse-decode-report.md)
 - [2026-09-04 physical ADR 0088 recurring report](evidence/2026-09-04-physical-usb-xhci-recurring-boot-mouse-report.md)
 - [Linux Mint field kit](linux-mint-field-kit.md)
@@ -1060,6 +1075,7 @@ See:
 - [2026-09-24 Phase 15 Lenovo network BAR-layout evidence](evidence/2026-09-24-phase-15-network-hardware-bar-layout.md)
 - [2026-09-24 Phase 15 Lenovo register-reachability evidence](evidence/2026-09-24-phase-15-network-hardware-register-reachability.md)
 - [2026-09-25 Phase 15 PCI Memory-Space-Enable evidence](evidence/2026-09-25-phase-15-pci-memory-space-enable-lenovo.md)
+- [2026-09-29 Phase 15 PCI capability metadata evidence](evidence/2026-09-29-phase-15-pci-capability-metadata-snapshot.md)
 
 This is a target-specific physical result, not a generic hardware-support claim.
 
@@ -1116,18 +1132,27 @@ The persistent-storage harness boots, persists typed object state, reboots
 against the same storage image, verifies object/relationship/revision metadata,
 kills QEMU during a commit window, then verifies torn-write recovery.
 
+From the repository root, run the current opt-in proofs with
+`python -B scripts/test-kai-vault-boot.py` and
+`python -B scripts/test-graph-window.py`. The first verifies ordered boot
+evidence and the contents of disposable NVMe images after recovery and replay.
+The second checks native animation, saved placement, and the committed disk
+records. [Local run instructions](../README.md#run-locally)
+
 The repository also has Rust unit tests, Python harness tests, clippy, rustfmt,
 and a GitHub Actions workflow under `.github/workflows/qemu-acceptance.yml`.
 The CI workflow runs formatting, Rust unit tests, clippy, Python harness tests,
 QEMU milestone acceptance, the no-audio fallback path, ISO boot, and the full
 QEMU slice handoff suite.
 
-## What Is Not Claimed
+## Proof boundaries
 
-PythOS is not currently a general-purpose desktop OS. The following are not
-implemented or not claimed:
+Physical Kai boot still requires NVMe root provisioning and hardware
+acceptance. The resident Kai session and firmware-stage graph remain design
+work. [Current Kai handover](HANDOVER.md#current-kai-checkpoint)
 
-* conventional desktop-shell authority as the user model;
+The earlier proofs have bounded coverage. Areas beyond that coverage include
+
 * general-purpose filesystem allocation;
 * general-purpose networking beyond the bounded Phase 14 proofs;
 * remote package registries, dependency solving, or package updates;
@@ -1136,12 +1161,11 @@ implemented or not claimed:
 * broad physical hardware support;
 * generic SDHCI/eMMC support;
 * durable physical eMMC persistence through the object/package path;
-* interrupt-driven or DMA-backed storage;
+* a general interrupt-driven storage service;
 * partitions or filesystems on the SDHCI/eMMC target;
-* POSIX paths as authoritative object identity;
-* production persistent Session Manager, durable session state, or production
-  USB/xHCI input delivery;
-* WakeContext, First Waking, or Kai;
+* production persistent Session Manager, durable Phase 13.5 session state,
+  or production USB/xHCI input delivery;
+* WakeContext and First Waking;
 * later PythTIG phases beyond the merged Phase 7 acceptance line;
 * generic physical keyboard, USB HID, trackpad, or IRQ-driven input support;
 * physical interrupt transfers or HID report polling;
@@ -1213,6 +1237,8 @@ docs/PythOS-TDD-001.md
 docs/ROADMAP.md
 docs/ROADMAP-LATER-PHASES.md
 docs/HANDOVER.md
+docs/decisions/0121-kai-native-interaction.md
+docs/decisions/0120-kai-vault-boot-root.md
 docs/THREAT-MODEL.md
 docs/milestones/2026-08-01-physical-emmc-phase10.md
 docs/evidence/2026-08-08-physical-evidence-terminal.md
@@ -1261,6 +1287,10 @@ Verification entry points:
 scripts/test-boot.py
 scripts/run-qemu.py
 scripts/test-persistent-storage.py
+scripts/test-vault-pulse.py
+scripts/test-kai-vault-boot.py
+scripts/test-world-session.py
+scripts/test-graph-window.py
 scripts/test-object-shell.py
 scripts/test-ahci-block-device.py
 scripts/test-sdhci-emmc-block-device.py

@@ -24,6 +24,7 @@ use crate::architecture::x86_64::interrupts;
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 use crate::input_drivers::PhysicalKeyboardDecoder;
@@ -32,6 +33,7 @@ use crate::input_drivers::PhysicalKeyboardDecoder;
     not(any(
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
+        feature = "world-session-probe",
         all(feature = "normal-session", not(feature = "verify"))
     ))
 ))]
@@ -216,6 +218,7 @@ pub fn handle_keyboard_interrupt() {
     #[cfg(any(
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
+        feature = "world-session-probe",
         all(feature = "normal-session", not(feature = "verify"))
     ))]
     {
@@ -234,6 +237,7 @@ pub fn handle_keyboard_interrupt() {
     #[cfg(not(any(
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
+        feature = "world-session-probe",
         all(feature = "normal-session", not(feature = "verify"))
     )))]
     if let Some(key) = scancode_to_keycode(scancode) {
@@ -245,6 +249,7 @@ pub fn handle_keyboard_interrupt() {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
@@ -257,6 +262,7 @@ fn publish_keyboard_byte(decoder: &mut PhysicalKeyboardDecoder, byte: u8) {
     test,
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 const fn session_probe_keyboard_decoder() -> PhysicalKeyboardDecoder {
@@ -268,6 +274,7 @@ const fn session_probe_keyboard_decoder() -> PhysicalKeyboardDecoder {
 #[cfg(any(
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
@@ -284,6 +291,7 @@ struct KeyboardDecoder(UnsafeCell<PhysicalKeyboardDecoder>);
 #[cfg(any(
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 unsafe impl Sync for KeyboardDecoder {}
@@ -291,6 +299,7 @@ unsafe impl Sync for KeyboardDecoder {}
 #[cfg(any(
     feature = "session-input-bridge-probe",
     feature = "session-runtime-probe",
+    feature = "world-session-probe",
     all(feature = "normal-session", not(feature = "verify"))
 ))]
 static KEYBOARD_DECODER: KeyboardDecoder =
@@ -307,6 +316,7 @@ pub fn handle_mouse_interrupt() {
     #[cfg(any(
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
+        feature = "world-session-probe",
         all(feature = "normal-session", not(feature = "verify"))
     ))]
     if byte != MOUSE_ACK && !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {
@@ -315,6 +325,7 @@ pub fn handle_mouse_interrupt() {
     #[cfg(not(any(
         feature = "session-input-bridge-probe",
         feature = "session-runtime-probe",
+        feature = "world-session-probe",
         all(feature = "normal-session", not(feature = "verify"))
     )))]
     if !MOUSE_IRQ_FIRED.swap(true, Ordering::SeqCst) {

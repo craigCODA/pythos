@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kai · Vault boot replay</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script type="importmap">{ "imports": { "three": "/vendor/three.module.js" } }</script>
+  <script type="module" src="/src/main.js"></script>
+</head>
+<body>
+  <main>
+    <header class="masthead">
+      <div class="identity">
+        <h1>Kai</h1>
+        <span>Vault boot replay</span>
+      </div>
+      <button id="open-trace" type="button">Open trace</button>
+      <input id="trace-file" type="file" accept=".log,.txt,text/plain" hidden>
+    </header>
+
+    <section class="viewport" aria-label="Kai's instruction graph">
+      <canvas id="graph" aria-label="Three-dimensional view of the recorded vault graph"></canvas>
+      <div id="node-labels"></div>
+      <div class="scene-heading">
+        <span id="phase">Loading trace</span>
+        <h2 id="message" role="status"></h2>
+      </div>
+      <p id="error" role="alert" hidden></p>
+    </section>
+
+    <section class="timeline" aria-label="Trace playback">
+      <div class="transport">
+        <button id="play" type="button" disabled>Replay</button>
+        <label class="sr-only" for="step">Trace step</label>
+        <input id="step" type="range" min="1" max="1" value="1" disabled>
+        <output id="position" for="step">—</output>
+      </div>
+      <dl id="checkpoint" hidden>
+        <div><dt>Checkpoint</dt><dd id="generation"></dd></div>
+        <div><dt>X</dt><dd id="value"></dd></div>
+        <div><dt>Address</dt><dd id="address"></dd></div>
+      </dl>
+    </section>
+
+    <footer>
+      <span id="source">QEMU recovery trace</span>
+      <span id="renderer"></span>
+    </footer>
+    <noscript>Enable JavaScript to replay the vault graph.</noscript>
+  </main>
+</body>
+</html>

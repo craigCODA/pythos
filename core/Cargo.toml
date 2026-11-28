@@ -161,6 +161,25 @@ physical-keyboard-console = []
 # Opt-in normal boot framebuffer breadcrumbs for serial-less physical hardware
 # diagnosis. This does not change default boot behavior.
 normal-boot-diagnostic = []
+# ADR 0110 opt-in recovery proof on an exclusively owned disposable Virtio image.
+vault-pulse-probe = ["pythos-shared/vault-pulse-proof"]
+vault-pulse-view = ["vault-pulse-probe"]
+# ADR 0120 boot-selected vault work on an already provisioned NVMe partition.
+kai-vault-boot = ["world-session-nvme-target", "pythos-shared/vault-pulse-proof"]
+# ADR 0114 native editable world on an isolated Virtio image.
+world-session-probe = ["pythos-shared/world-session-proof"]
+# ADR 0115 native world checkpoints in a marked QEMU NVMe GPT partition.
+world-session-nvme = ["world-session-probe"]
+# ADR 0118 live graph-authored window on the emulated NVMe fixture.
+world-session-graph-window = ["world-session-nvme", "pythos-shared/graph-window-proof"]
+# ADR 0116 builds the same native world for one locally identified NVMe target.
+world-session-nvme-target = ["world-session-nvme"]
+# First-boot preparation of a blank, identity-bound native world store.
+world-session-nvme-initialize = ["world-session-nvme-target"]
+# Native keyboard input for the identity-bound world.
+world-session-nvme-usb = ["world-session-nvme-target"]
+# ADR 0112 polling read of one disposable NVMe namespace in QEMU.
+nvme-read-probe = []
 
 [dependencies]
 pythos-shared = { path = "../shared", features = ["pyth-tig"] }

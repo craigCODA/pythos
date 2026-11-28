@@ -1,0 +1,50 @@
+program graph_window principal 0x505957494e440001 {
+    import workspace: capability<object.workspace, create>;
+
+    fn main() -> unit {
+        let window: object_id = object.create(workspace, 2);
+        let window_edit: capability = object.created_capability();
+        object.revise(window_edit, window, 1, "window|352|208|1|1|350|35");
+
+        let border: object_id = object.create(workspace, 2);
+        let border_edit: capability = object.created_capability();
+        object.revise(border_edit, border, 1, "rect|0|0|352|208|375369");
+
+        let panel: object_id = object.create(workspace, 2);
+        let panel_edit: capability = object.created_capability();
+        object.revise(panel_edit, panel, 1, "rect|1|1|350|206|121F31");
+
+        let title_bar: object_id = object.create(workspace, 2);
+        let title_bar_edit: capability = object.created_capability();
+        object.revise(title_bar_edit, title_bar, 1, "rect|1|1|350|35|20374A");
+
+        let title: object_id = object.create(workspace, 2);
+        let title_edit: capability = object.created_capability();
+        object.revise(title_edit, title, 1, "text|17|11|240|16|E5EFF8|GRAPH PULSE");
+
+        let runtime: object_id = object.create(workspace, 2);
+        let runtime_edit: capability = object.created_capability();
+        object.revise(runtime_edit, runtime, 1, "text|20|61|312|16|A8C1D3|PYTHTIG  /  RING 3");
+
+        let track: object_id = object.create(workspace, 2);
+        let track_edit: capability = object.created_capability();
+        object.revise(track_edit, track, 1, "rect|20|105|312|60|0B1726");
+
+        let rail: object_id = object.create(workspace, 2);
+        let rail_edit: capability = object.created_capability();
+        object.revise(rail_edit, rail, 1, "rect|32|133|288|4|365366");
+
+        let pulse: object_id = object.create(workspace, 2);
+        let pulse_edit: capability = object.created_capability();
+        object.revise(pulse_edit, pulse, 1, "rect|32|124|40|22|70F2CD");
+
+        let help: object_id = object.create(workspace, 2);
+        let help_edit: capability = object.created_capability();
+        object.revise(help_edit, help, 1, "text|20|180|312|16|A8C1D3|DRAG TITLE BAR TO MOVE");
+
+        let motion: object_id = object.create(workspace, 2);
+        let motion_edit: capability = object.created_capability();
+        object.revise(motion_edit, motion, 1, "horizontal|7|120|0|32|30|120|60|280|90|170");
+        return;
+    }
+}

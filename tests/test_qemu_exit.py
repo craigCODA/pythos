@@ -65,6 +65,30 @@ class QemuExitTest(unittest.TestCase):
             run_qemu.QemuOutcome.PANIC,
         )
 
+    def test_required_debug_exit_needs_matching_code_and_marker(self) -> None:
+        run_qemu = load_run_qemu_module()
+        classify = run_qemu.classify_qemu_exit
+        outcome = run_qemu.QemuOutcome
+        marker = "PYTHOS:CORE:MILESTONE_1_COMPLETE"
+        for code, serial, expected in (
+            (33, marker, outcome.SUCCESS),
+            (35, "PYTHOS:PANIC", outcome.PANIC),
+            (0, marker, outcome.MARKER_ORDER_VIOLATION),
+            (35, marker, outcome.MARKER_ORDER_VIOLATION),
+            (33, "", outcome.MARKER_ORDER_VIOLATION),
+        ):
+            with self.subTest(code=code, serial=serial):
+                self.assertEqual(classify(code, serial, require_debug_exit=True), expected)
+
+    def test_required_debug_exit_cannot_turn_a_timeout_into_success(self) -> None:
+        run_qemu = load_run_qemu_module()
+        self.assertEqual(
+            run_qemu.classify_qemu_exit(
+                0, "PYTHOS:CORE:MILESTONE_1_COMPLETE", timed_out=True, require_debug_exit=True,
+            ),
+            run_qemu.QemuOutcome.TIMEOUT,
+        )
+
     def test_marker_order_exit_code_matches_runner_contract(self) -> None:
         run_qemu = load_run_qemu_module()
         test_boot = load_test_boot_module()

@@ -18,10 +18,11 @@ uses a positive QMP y-axis value to move the cursor *down* the screen.
 from __future__ import annotations
 
 import json
+import os
 import socket
 import time
 
-QMP_PORT = 4488
+QMP_PORT = int(os.environ.get("PYTHOS_QMP_PORT", "4488"))
 
 # Move well inside the launcher tile's fixed geometry
 # (`framebuffer.rs`'s `LAUNCHER_TILE_X/Y/WIDTH/HEIGHT`: 200,350,320,56) from

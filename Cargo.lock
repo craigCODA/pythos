@@ -468,6 +468,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "pythos-user-graph-window"
+version = "0.1.0"
+dependencies = [
+ "pythc",
+ "pythos-shared",
+ "pythos-user-pyth-runtime",
+]
+
+[[package]]
 name = "pythos-user-icmp-probe"
 version = "0.1.0"
 dependencies = [
@@ -563,6 +572,20 @@ dependencies = [
  "pythos-user-arp-probe",
  "pythos-user-ipv4-probe",
  "pythos-user-link-layer-probe",
+]
+
+[[package]]
+name = "pythos-user-vault-pulse-probe"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
+]
+
+[[package]]
+name = "pythos-user-world-session"
+version = "0.1.0"
+dependencies = [
+ "pythos-shared",
 ]
 
 [[package]]

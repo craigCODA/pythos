@@ -478,6 +478,16 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
             0b0111_1000,
             0,
         ],
+        b'j' => [
+            0b0001_1000,
+            0,
+            0b0011_1000,
+            0b0001_1000,
+            0b0001_1000,
+            0b0001_1000,
+            0b1001_1000,
+            0b0111_0000,
+        ],
         b'k' => [
             0b1100_0000,
             0b1100_0000,
@@ -688,6 +698,13 @@ pub fn glyph(byte: u8) -> Option<[u8; 8]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_world_status_has_the_job_glyph() {
+        for byte in b"Choose a job target" {
+            assert!(glyph(*byte).is_some(), "missing glyph {}", *byte as char);
+        }
+    }
 
     #[test]
     fn phase_6_wake_phrase_has_fixed_boot_glyphs() {

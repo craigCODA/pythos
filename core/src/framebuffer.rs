@@ -22,6 +22,13 @@ use pythos_shared::boot_protocol::{
     PythFramebufferInfo,
 };
 
+#[cfg(all(not(test), feature = "world-session-graph-window"))]
+pub(crate) mod graph_window;
+#[cfg(all(not(test), feature = "vault-pulse-view"))]
+pub(crate) mod vault_view;
+#[cfg(all(not(test), feature = "world-session-probe"))]
+pub(crate) mod world_scene;
+
 const BYTES_PER_PIXEL: u64 = 4;
 const GLYPH_WIDTH: u64 = 8;
 
@@ -415,9 +422,7 @@ pub fn render_launcher_screen(
     Ok(())
 }
 
-/// Render fixed hardware-probe identity lines for machines without serial
-/// capture. This is deliberately a text panel only; the storage probe has
-/// already completed and no storage hardware is touched here.
+/// Render fixed boot diagnostic lines on a framebuffer text panel.
 #[cfg_attr(not(test), allow(dead_code))]
 pub fn render_hardware_probe_lines(
     framebuffer: &PythFramebufferInfo,
@@ -1235,17 +1240,17 @@ impl Surface {
             return;
         };
         // SAFETY:
-        // 1. Invariant: `self.base` is the loader-mapped framebuffer virtual
-        //    base and `offset * 4` stays below the validated `byte_length`.
-        // 2. Established by: the loader mapped `byte_length` bytes at
-        //    `mapped_virtual_base` writable, `Surface::new` re-validated the
-        //    metadata, and the bounds checks above rejected overruns.
-        // 3. Lifetime: the loader-built device mapping persists through early
-        //    core initialization; nothing unmaps it before this write.
-        // 4. Pointer ownership: PythCore exclusively owns framebuffer output
-        //    after firmware exit.
-        // 5. Alignment: the base is page aligned and `offset` indexes whole
-        //    `u32` pixels, keeping 4-byte alignment.
+        // 1. Invariant: `self.base` is a mapped writable pixel span and
+        //    `offset * 4` stays below its validated `byte_length`.
+        // 2. Established by: the loader and Surface::new for the device
+        //    mapping, or the private graph presenter for a borrowed RAM
+        //    pixel slice. The checks above reject overruns.
+        // 3. Lifetime: the device mapping persists through this write. A
+        //    software target exists only inside the borrow that backs it.
+        // 4. Pointer ownership: PythCore holds exclusive device output or
+        //    the software target's mutable borrow.
+        // 5. Alignment: both bases are aligned for `u32` and `offset`
+        //    indexes whole pixels.
         // 6. Mapped length: `byte_length` bytes, checked against `end` above.
         // 7. Concurrency: single-core execution; no other framebuffer writer.
         // 8. Violation: an out-of-range write would corrupt adjacent MMIO or

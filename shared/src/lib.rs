@@ -5,6 +5,8 @@ pub mod boot_protocol;
 pub mod capability_abi;
 pub mod dns_markers;
 pub mod evidence_log;
+#[cfg(feature = "graph-window-proof")]
+pub mod graph_window;
 pub mod icmp_markers;
 pub mod init_bundle;
 pub mod init_pak;
@@ -37,4 +39,8 @@ pub mod task_abi;
 pub mod tcp_markers;
 pub mod udp_markers;
 pub mod user_program_manifest;
+#[cfg(feature = "vault-pulse-proof")]
+pub mod vault_pulse;
 pub mod viewing;
+#[cfg(feature = "world-session-proof")]
+pub mod world_session;

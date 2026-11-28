@@ -48,7 +48,7 @@ static STORAGE: ProbeStorage = ProbeStorage(UnsafeCell::new(ProbeBuffers {
 
 static EXECUTION_PHASE: AtomicU8 = AtomicU8::new(0);
 
-#[unsafe(no_mangle)]
+#[cfg_attr(not(test), unsafe(no_mangle))]
 pub extern "C" fn _start(bootstrap_ptr: u64, console_raw: u64) -> ! {
     let console = PackedCapability::from_raw(console_raw);
     let bootstrap = unsafe { (bootstrap_ptr as *const NetworkPortBootstrapV1).read() };
