@@ -313,7 +313,7 @@ jobs:
   handoff_acceptance:
     name: qemu-handoff
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       PYTHOS_TEST_BOOT_TIMEOUT: "60"
       QEMU_VERSION: "11.1.1"

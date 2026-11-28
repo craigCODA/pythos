@@ -118,13 +118,15 @@ pub(super) fn run(
         let frame = (now - origin) / TICKS_PER_FRAME;
         if frame > last_frame {
             with_input_interrupts(|| {
-                presenter.draw(&scene, layout.position, layout.cursor, frame)?;
-                report_frame(&scene, &layout, frame, journal.saving())
+                presenter.draw(&scene, layout.position, layout.cursor, frame)
             })?;
+            report_frame(&scene, &layout, frame, journal.saving())?;
             last_frame = frame;
         }
 
-        match with_input_interrupts(|| journal.service(now))? {
+        // Keep COM1 records intact when the input IRQ first reports activity.
+        // NVMe service submits or polls once and returns without waiting.
+        match journal.service(now)? {
             Progress::Idle => {}
             Progress::Pending(placement) => {
                 report_save("GRAPH_WINDOW_SAVE_PENDING", placement);
